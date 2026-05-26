@@ -1,0 +1,31 @@
+[
+  {
+    "id": "sensexperience_ego",
+    "name": "Sense Experience Ego",
+    "description": "IO-AI sample dataset (ego view)",
+    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+  },
+  {
+    "id": "lerobot-v3-sample",
+    "name": "LeRobot v3 Sample",
+    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+  },
+  {
+    "id": "sample-2",
+    "name": "Sample Dataset 2",
+    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
+  },
+  {
+    "id": "sample-3",
+    "name": "Sample Dataset 3",
+    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
+    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+  }
+]

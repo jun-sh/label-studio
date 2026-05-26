@@ -1,0 +1,56 @@
+# Data Lab platform overlay — zero Label Studio source changes.
+#
+# Usage (from repo root):
+#   docker compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml up -d --build
+#
+# Unified entry: http://10.10.10.34:8080
+# LeRobot visualizer: http://10.10.10.34:8080/lerobot/
+# Embedded route:     http://10.10.10.34:8080/lerobot-data
+
+services:
+  nginx:
+    environment:
+      - APP_HOST=app
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}
+    volumes:
+      - ./data-lab-platform/gateway/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./data-lab-platform/gateway/nginx/snippets:/etc/nginx/snippets:ro
+      - ./data-lab-platform/client:/extensions:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      lerobot:
+        condition: service_healthy
+
+  app:
+    environment:
+      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}
+      - DATA_LAB_PUBLIC_BASE_URL=${DATA_LAB_PUBLIC_BASE_URL:-http://10.10.10.34:8080}
+
+  lerobot:
+    build:
+      context: ./data-lab-platform/lerobot-studio
+    image: ${LEROBOT_IMAGE:-data-lab-lerobot-studio:local}
+    restart: unless-stopped
+    expose:
+      - "7860"
+    volumes:
+      - lerobot-studio-data:/srv/lerobot
+    environment:
+      - PORT=7860
+      - NODE_ENV=production
+      - LEROBOT_STUDIO_ROOT=/srv/lerobot
+      - LEROBOT_STUDIO_UPSTREAM=${LEROBOT_STUDIO_UPSTREAM:-https://io-ai.tech}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:7860/lerobot/ >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 300s
+
+volumes:
+  lerobot-studio-data:

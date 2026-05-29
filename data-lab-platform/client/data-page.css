@@ -1,0 +1,62 @@
+/**
+ * /data embed page — standalone, no Label Studio react-app bundle.
+ */
+
+:root {
+  --color-neutral-background: #f9fafb;
+  --color-neutral-content: #222;
+  --color-primary-content: #4c5fa9;
+}
+
+html[data-color-scheme="dark"] {
+  --color-neutral-background: #1f1f1f;
+  --color-neutral-content: #e5e7eb;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.datalab-data-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  background: var(--color-neutral-background);
+  color: var(--color-neutral-content);
+  font-family: Figtree, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.datalab-login-hint {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  font-size: 14px;
+  background: #fff3cd;
+  color: #664d03;
+  border-bottom: 1px solid #ffecb5;
+}
+
+html[data-color-scheme="dark"] .datalab-login-hint {
+  background: #3d3520;
+  color: #ffe8a3;
+  border-bottom-color: #5c4e1f;
+}
+
+.datalab-login-hint a {
+  color: var(--color-primary-content);
+  font-weight: 600;
+}
+
+.datalab-data-page__frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: #0b1220;
+}

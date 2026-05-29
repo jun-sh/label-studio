@@ -1,0 +1,73 @@
+/**
+ * /data page — login hint + visualizer iframe synced to Label Studio ui_locale.
+ * Does not auto-open a dataset; user picks samples on the welcome screen.
+ */
+(function () {
+  "use strict";
+
+  var UI_LOCALE_KEY = "ui_locale";
+
+  var frame = document.getElementById("datalab-viz-frame");
+  var hint = document.getElementById("datalab-login-hint");
+
+  function mapUiLocaleToVisualizer(uiLocale) {
+    var loc = String(uiLocale || "en").toLowerCase();
+    if (loc.indexOf("zh") === 0) return "zh";
+    return "en";
+  }
+
+  function readStoredUiLocale() {
+    try {
+      return window.localStorage.getItem(UI_LOCALE_KEY) || window.localStorage.getItem("i18nextLng") || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function applyPageLocale(uiLocale) {
+    var normalized = mapUiLocaleToVisualizer(uiLocale);
+    document.documentElement.lang = normalized === "zh" ? "zh-Hans" : "en";
+    return normalized;
+  }
+
+  function buildVisualizerSrc(lang) {
+    var params = new URLSearchParams();
+    params.set("datalab_embed", "1");
+    params.set("lang", lang || "en");
+    return "/lerobot/?" + params.toString();
+  }
+
+  function setIframeSrc(lang) {
+    if (!frame) return;
+    frame.setAttribute("src", buildVisualizerSrc(lang));
+  }
+
+  function bootstrapLocale(uiLocale) {
+    var lang = applyPageLocale(uiLocale || readStoredUiLocale() || "en");
+    setIframeSrc(lang);
+  }
+
+  bootstrapLocale(readStoredUiLocale());
+
+  fetch("/api/current-user/whoami", { credentials: "same-origin" })
+    .then(function (response) {
+      if (!response.ok) {
+        if (hint) hint.hidden = false;
+        return null;
+      }
+      return response.json();
+    })
+    .then(function (user) {
+      if (!user || !user.id) {
+        if (hint) hint.hidden = false;
+        bootstrapLocale(readStoredUiLocale());
+        return;
+      }
+      if (hint) hint.hidden = true;
+      bootstrapLocale(user.ui_locale || readStoredUiLocale() || "en");
+    })
+    .catch(function () {
+      if (hint) hint.hidden = false;
+      bootstrapLocale(readStoredUiLocale());
+    });
+})();

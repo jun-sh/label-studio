@@ -1,4 +1,5 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { StaticContent } from "../../app/StaticContent/StaticContent";
 import {
   IconBook,
@@ -10,8 +11,6 @@ import {
   IconPin,
   IconTerminal,
   IconDoor,
-  IconGithub,
-  IconSlack,
 } from "@humansignal/icons";
 import { LSLogo } from "../../assets/images";
 import { Button, Userpic, ThemeToggle } from "@humansignal/ui";
@@ -33,6 +32,7 @@ import { pages } from "@humansignal/app-common";
 import { isFF } from "../../utils/feature-flags";
 import { ff } from "@humansignal/core";
 import { openHotkeyHelp } from "@humansignal/app-common/pages/AccountSettings/sections/Hotkeys/Help";
+import { getDataLabLinks } from "../../config/dataLabLinks";
 
 export const MenubarContext = createContext();
 
@@ -55,12 +55,18 @@ const RightContextMenu = ({ className, ...props }) => {
 };
 
 export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSidebarToggle, onSidebarPin }) => {
+  const { t } = useTranslation("common");
   const menuDropdownRef = useRef();
   const useMenuRef = useRef();
   const { user, isLoading } = useAuth();
   const location = useFixedLocation();
 
   const config = useConfig();
+  const dataLabLinks = useMemo(() => getDataLabLinks(), []);
+  const isCollectionViz =
+    location.pathname.replace(/\/$/, "") === "/collection" &&
+    Boolean(new URLSearchParams(location.search).get("station"));
+
   const [sidebarOpened, setSidebarOpened] = useState(defaultOpened ?? false);
   const [sidebarPinned, setSidebarPinned] = useState(defaultPinned ?? false);
   const [PageContext, setPageContext] = useState({
@@ -133,13 +139,17 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
     useMenuRef?.current?.close();
   }, [location]);
 
+  useEffect(() => {
+    window.dispatchEvent(new Event("resize"));
+  }, [sidebarPinned, sidebarOpened]);
+
   return (
     <div className={contentClass}>
       {enabled && (
         <div className={menubarClass}>
           <Dropdown.Trigger dropdown={menuDropdownRef} closeOnClickOutside={!sidebarPinned}>
             <div className={`${menubarClass.elem("trigger")} main-menu-trigger`}>
-              <LSLogo className={`${menubarClass.elem("logo")}`} alt="Label Studio Logo" />
+              <LSLogo className={`${menubarClass.elem("logo")}`} alt={t("shell.menubar.logo_alt")} />
               <Hamburger opened={sidebarOpened} />
             </div>
           </Dropdown.Trigger>
@@ -154,7 +164,7 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
               <Button
                 variant="neutral"
                 look="outlined"
-                tooltip="Keyboard Shortcuts"
+                tooltip={t("shell.menubar.hotkeys_tooltip")}
                 data-testid="hotkeys-button"
                 size="small"
                 onClick={() => {
@@ -174,7 +184,15 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
             </div>
           </div>
 
-          {ff.isActive(ff.FF_THEME_TOGGLE) && <ThemeToggle />}
+          {ff.isActive(ff.FF_THEME_TOGGLE) && (
+            <ThemeToggle
+              labels={{
+                Auto: t("shell.theme.auto"),
+                Light: t("shell.theme.light"),
+                Dark: t("shell.theme.dark"),
+              }}
+            />
+          )}
 
           <Dropdown.Trigger
             ref={useMenuRef}
@@ -183,11 +201,11 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
               <Menu>
                 <Menu.Item
                   icon={<IconPersonInCircle />}
-                  label="Account &amp; Settings"
+                  label={t("shell.menubar.account_settings")}
                   href={pages.AccountSettingsPage.path}
                 />
                 {/* <Menu.Item label="Dark Mode"/> */}
-                <Menu.Item icon={<IconDoor />} label="Log Out" href={absoluteURL("/logout")} data-external />
+                <Menu.Item icon={<IconDoor />} label={t("shell.menubar.logout")} href={absoluteURL("/logout")} data-external />
                 {showNewsletterDot && (
                   <>
                     <Menu.Divider />
@@ -195,7 +213,7 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
                       className={cn("newsletter-menu-item").toClassName()}
                       href={pages.AccountSettingsPage.path}
                     >
-                      <span>Please check new notification settings in the Account & Settings page</span>
+                      <span>{t("shell.menubar.newsletter_notice")}</span>
                       <span className={cn("newsletter-menu-badge").toClassName()} />
                     </Menu.Item>
                   </>
@@ -223,35 +241,57 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
               style={{ width: 240 }}
             >
               <Menu>
-                {isFF(FF_HOMEPAGE) && <Menu.Item label="Home" to="/" icon={<IconHome />} data-external exact />}
-                <Menu.Item label="Projects" to="/projects" icon={<IconFolder />} data-external exact />
-                <Menu.Item label="Organization" to="/organization" icon={<IconPeople />} data-external exact />
+                {isFF(FF_HOMEPAGE) && (
+                  <Menu.Item
+                    label={
+                      isCollectionViz ? t("shell.menubar.back_to_collection_list") : t("shell.menubar.home")
+                    }
+                    to={isCollectionViz ? undefined : "/"}
+                    href={isCollectionViz ? "/collection" : undefined}
+                    title={
+                      isCollectionViz ? t("shell.menubar.back_to_collection_list") : t("shell.menubar.home")
+                    }
+                    icon={<IconHome />}
+                    data-external
+                    exact={!isCollectionViz}
+                    forceReload={isCollectionViz}
+                  />
+                )}
+                <Menu.Item
+                  label={t("shell.menubar.projects")}
+                  to="/projects"
+                  icon={<IconFolder />}
+                  data-external
+                  exact
+                />
+                <Menu.Item
+                  label={t("shell.menubar.organization")}
+                  to="/organization"
+                  icon={<IconPeople />}
+                  data-external
+                  exact
+                />
 
                 <Menu.Spacer />
 
                 <VersionNotifier showNewVersion />
 
-                <Menu.Item
-                  label="API"
-                  href="https://api.labelstud.io/api-reference/introduction/getting-started"
-                  icon={<IconTerminal />}
-                  target="_blank"
-                />
-                <Menu.Item label="Docs" href="https://labelstud.io/guide" icon={<IconBook />} target="_blank" />
-                <Menu.Item
-                  label="GitHub"
-                  href="https://github.com/HumanSignal/label-studio"
-                  icon={<IconGithub />}
-                  target="_blank"
-                  rel="noreferrer"
-                />
-                <Menu.Item
-                  label="Slack Community"
-                  href="https://slack.labelstud.io/?source=product-menu"
-                  icon={<IconSlack />}
-                  target="_blank"
-                  rel="noreferrer"
-                />
+                {dataLabLinks.apiDocs ? (
+                  <Menu.Item
+                    label={t("shell.menubar.api")}
+                    href={dataLabLinks.apiDocs}
+                    icon={<IconTerminal />}
+                    target="_blank"
+                  />
+                ) : null}
+                {dataLabLinks.documentation ? (
+                  <Menu.Item
+                    label={t("shell.menubar.docs")}
+                    href={dataLabLinks.documentation}
+                    icon={<IconBook />}
+                    target="_blank"
+                  />
+                ) : null}
 
                 <VersionNotifier showCurrentVersion />
 
@@ -263,7 +303,7 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
                   onClick={sidebarPin}
                   active={sidebarPinned}
                 >
-                  {sidebarPinned ? "Unpin menu" : "Pin menu"}
+                  {sidebarPinned ? t("shell.menubar.unpin_menu") : t("shell.menubar.pin_menu")}
                 </Menu.Item>
               </Menu>
             </Dropdown>

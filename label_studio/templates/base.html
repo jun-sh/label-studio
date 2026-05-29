@@ -4,10 +4,10 @@
 {% load filters %}
 
 <!doctype html>
-<html lang="en">
+<html lang="{% if user.is_authenticated %}{{ user.ui_locale|default:'en' }}{% else %}en{% endif %}">
 <head>
   <meta charset="utf-8"/>
-  <meta name="author" content="Label Studio"/>
+  <meta name="author" content="Data Lab"/>
   <meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=0.9, shrink-to-fit=no">
 
@@ -61,7 +61,7 @@
   </script>
 
   {% block page_labeling %}
-    <title>Label Studio</title>
+    <title>Data Lab</title>
     <link href="{{settings.HOSTNAME}}{% static 'images/favicon.ico' %}" rel="shortcut icon"/>
   {% endblock %}
 
@@ -171,8 +171,12 @@
       {% if user.avatar %}
       avatar: "{{user.avatar_url|safe}}",
       {% endif %}
+      {% if user.is_authenticated %}
+      ui_locale: "{{ user.ui_locale|default:'en'|escapejs }}",
+      {% endif %}
       {% block app_user_extra %}{% endblock %}
     },
+    locale: {% if user.is_authenticated %}"{{ user.ui_locale|default:'en'|escapejs }}"{% else %}null{% endif %},
     lookupHotkey: lookupHotkey,
     debug: {{settings.DEBUG|yesno:"true,false"}},
     polling: {% if feature_flags.fflag_dev_disable_polling_killswitch_short %}false{% else %}true{% endif %},
@@ -195,7 +199,12 @@
     },
 
     {% block app_more_settings %}
-      page_title: "Label Studio",
+      page_title: "Data Lab",
+      data_lab_links: {
+        documentation: "{{ settings.DATA_LAB_DOCUMENTATION_URL|escapejs }}",
+        api_docs: "{{ settings.DATA_LAB_API_DOCS_URL|escapejs }}",
+        changelog: "{{ settings.DATA_LAB_CHANGELOG_URL|escapejs }}",
+      },
       flags: {
         allow_organization_webhooks: {{settings.ALLOW_ORGANIZATION_WEBHOOKS|yesno:"true,false"}},
         storage_persistence: {{ settings.STORAGE_PERSISTENCE|yesno:"true,false" }},

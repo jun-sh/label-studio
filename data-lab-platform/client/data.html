@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<!-- Deprecated: /data is rendered by Label Studio SPA (DataVizPage). Kept for reference only. -->
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>数据 | Data Lab</title>
+  <link rel="shortcut icon" href="/static/images/favicon.ico" />
+  <link rel="stylesheet" href="/_datalab/data-page.css?v=3" />
+  <script>
+    (function () {
+      var theme = window.localStorage.getItem("preferred-color-scheme");
+      if (theme === "Auto") {
+        theme =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "Dark"
+            : "Light";
+      }
+      if (!theme) theme = "Light";
+      document.documentElement.setAttribute("data-color-scheme", theme.toLowerCase());
+    })();
+  </script>
+</head>
+<body class="datalab-data-page">
+  <div id="datalab-login-hint" class="datalab-login-hint" hidden>
+    请先 <a href="/user/login/?next=%2Fdata">登录</a> 后使用数据可视化（或登录后刷新本页）。
+  </div>
+  <iframe
+    id="datalab-viz-frame"
+    class="datalab-data-page__frame"
+    src="/lerobot/?datalab_embed=1&lang=en"
+    title="具身智能数据集可视化"
+    allow="fullscreen"
+  ></iframe>
+  <script src="/_datalab/data-page.js?v=5"></script>
+</body>
+</html>

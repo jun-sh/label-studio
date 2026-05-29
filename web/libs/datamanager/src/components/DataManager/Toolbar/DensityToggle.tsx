@@ -1,5 +1,6 @@
 import { inject, observer } from "mobx-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 // @ts-ignore - RadioGroup is a .jsx file without types
 import { RadioGroup } from "../../Common/RadioGroup/RadioGroup";
 import { IconRows3, IconRows4 } from "@humansignal/icons";
@@ -29,6 +30,7 @@ const densityInjector = inject(({ store }: any) => ({
 
 export const DensityToggle = densityInjector(
   observer(({ size, onChange, storageKey, view, ...rest }: DensityToggleProps) => {
+    const { t } = useTranslation("common");
     const key = storageKey ?? DENSITY_STORAGE_KEY;
     const [density, setDensity] = useState<Density>(() => {
       return (localStorage.getItem(key) as Density) ?? DENSITY_COMFORTABLE;
@@ -56,20 +58,20 @@ export const DensityToggle = densityInjector(
         style={{ "--button-padding": "0 var(--spacing-tighter)" } as React.CSSProperties}
         data-testid="density-toggle"
       >
-        <Tooltip title="Comfortable density">
+        <Tooltip title={t("dm.toolbar.comfortable_density")}>
           <div>
             <RadioGroup.Button
               value={DENSITY_COMFORTABLE}
-              aria-label="Comfortable density"
+              aria-label={t("dm.toolbar.comfortable_density")}
               data-testid="density-comfortable"
             >
               <IconRows3 />
             </RadioGroup.Button>
           </div>
         </Tooltip>
-        <Tooltip title="Compact density">
+        <Tooltip title={t("dm.toolbar.compact_density")}>
           <div>
-            <RadioGroup.Button value={DENSITY_COMPACT} aria-label="Compact density" data-testid="density-compact">
+            <RadioGroup.Button value={DENSITY_COMPACT} aria-label={t("dm.toolbar.compact_density")} data-testid="density-compact">
               <IconRows4 />
             </RadioGroup.Button>
           </div>

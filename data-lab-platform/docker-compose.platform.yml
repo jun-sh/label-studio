@@ -5,7 +5,7 @@
 #
 # Unified entry: http://10.10.10.34:8080
 # LeRobot visualizer: http://10.10.10.34:8080/lerobot/
-# Embedded route:     http://10.10.10.34:8080/lerobot-data
+# Embedded route:     http://10.10.10.34:8080/data
 
 services:
   nginx:
@@ -27,6 +27,17 @@ services:
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}
       - DATA_LAB_PUBLIC_BASE_URL=${DATA_LAB_PUBLIC_BASE_URL:-http://10.10.10.34:8080}
 
+  stream-parquet-sync:
+    build:
+      context: ./data-lab-platform/lerobot-studio
+      dockerfile: Dockerfile.stream-sync
+    image: ${LEROBOT_STREAM_SYNC_IMAGE:-data-lab-stream-parquet-sync:local}
+    restart: unless-stopped
+    volumes:
+      - lerobot-stream-data:/srv/stream
+    environment:
+      - STREAM_SYNC_INTERVAL=5
+
   lerobot:
     build:
       context: ./data-lab-platform/lerobot-studio
@@ -36,11 +47,16 @@ services:
       - "7860"
     volumes:
       - lerobot-studio-data:/srv/lerobot
+      - lerobot-bundled-data:/srv/bundled
+      - lerobot-stream-data:/srv/stream
+      - ./data-storage/samples:/datalab-samples:ro
     environment:
       - PORT=7860
       - NODE_ENV=production
       - LEROBOT_STUDIO_ROOT=/srv/lerobot
       - LEROBOT_STUDIO_UPSTREAM=${LEROBOT_STUDIO_UPSTREAM:-https://io-ai.tech}
+      - DATALAB_SAMPLES_DIR=/datalab-samples
+      - LEROBOT_SAMPLES_COS=https://io-lerobot-examples-1328702871.cos.accelerate.myqcloud.com
     healthcheck:
       test:
         [
@@ -54,3 +70,5 @@ services:
 
 volumes:
   lerobot-studio-data:
+  lerobot-bundled-data:
+  lerobot-stream-data:

@@ -1,6 +1,7 @@
 import { observer, useLocalStore } from "mobx-react";
 import { toJS } from "mobx";
 import React, { forwardRef, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { ViewColumnType, ViewColumnTypeName, ViewColumnTypeShort } from "../../../../stores/Tabs/tab_column";
 import { Button } from "@humansignal/ui";
 import { Dropdown } from "@humansignal/ui";
@@ -14,7 +15,7 @@ import { cn } from "../../../../utils/bem";
 import { getStyle } from "../utils";
 import "./TableHead.scss";
 import { getRoot } from "mobx-state-tree";
-import { AgreementSelected } from "../../../CellViews/AgreementSelected";
+import { translateDmColumnTitle } from "../../../../utils/columnTitle";
 import { IconChevronDown } from "@humansignal/icons";
 import { isActive, FF_AGREEMENT_FILTERED } from "@humansignal/core/lib/utils/feature-flags";
 
@@ -114,6 +115,7 @@ const ColumnRenderer = observer(
     onResize,
     onReset,
   }) => {
+    const { t } = useTranslation("common");
     const { Header, Cell: _, id, ...column } = columnInput;
 
     if (Header instanceof Function) {
@@ -131,7 +133,7 @@ const ColumnRenderer = observer(
     const canOrder = sortingEnabled && column.original?.canOrder;
     const Decoration = decoration?.get?.(column);
     const extra = !isDE && columnHeaderExtra ? columnHeaderExtra(column, Decoration) : null;
-    const content = Decoration?.content ? Decoration.content(column) : column.title;
+    const content = Decoration?.content ? Decoration.content(column) : translateDmColumnTitle(column.original, t);
     const style = getStyle(cellViews, column, Decoration);
 
     const headContent = (

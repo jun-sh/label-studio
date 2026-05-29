@@ -23,6 +23,7 @@ import { type BaseProps as OrigBaseProps, Side } from "./types";
 import { resizers } from "./utils";
 import "./PanelTabsBase.scss";
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 const distance = (x1: number, x2: number, y1: number, y2: number) => {
   return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
@@ -74,6 +75,7 @@ export const PanelTabsBase: FC<BasePropsWithChildren> = ({
   contentRef,
   ...props
 }) => {
+  const { t } = useTranslation("common");
   const headerRef = useRef<HTMLDivElement>();
   const panelRef = useRef<HTMLDivElement>();
   const resizerRef = useRef<HTMLDivElement>();
@@ -427,7 +429,9 @@ export const PanelTabsBase: FC<BasePropsWithChildren> = ({
                 )}
                 {!visible && !collapsed && (
                   <div className={cn("tabs-panel").elem("title").toClassName()}>
-                    {panelViews.map((view) => view.title).join(" ")}
+                    {panelViews
+                      .map((view) => t(`editor.sidebar_tabs.${view.name}`, { defaultValue: view.title }))
+                      .join(" ")}
                   </div>
                 )}
               </div>

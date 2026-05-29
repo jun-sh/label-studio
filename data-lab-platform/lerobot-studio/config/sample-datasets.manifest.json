@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "baseUrl": "/lerobot/",
+  "datasets": [
+    {
+      "id": "sensexperience_ego",
+      "title": "SenseXperience Ego",
+      "name": "SenseXperience Ego",
+      "description": "LeRobot v3.0 · ego-centric multi-camera dataset",
+      "archiveUrl": "/lerobot/bundled/sensexperience_ego.zip",
+      "coverImageUrl": "/lerobot/bundled/covers/sensexperience_ego.webp",
+      "version": "v3"
+    },
+    {
+      "id": "sensexperience_umi",
+      "title": "SenseXperience UMI",
+      "name": "SenseXperience UMI",
+      "description": "LeRobot v3.0 · UMI manipulation dataset",
+      "archiveUrl": "/lerobot/bundled/sensexperience_umi.zip",
+      "coverImageUrl": "/lerobot/bundled/covers/sensexperience_umi.webp",
+      "version": "v3"
+    },
+    {
+      "id": "dualairbot_fold",
+      "title": "DualAirbot Folding",
+      "name": "DualAirbot Folding",
+      "description": "LeRobot v3.0 · dual-arm folding task",
+      "archiveUrl": "/lerobot/bundled/dualairbot_fold.zip",
+      "coverImageUrl": "/lerobot/bundled/covers/lerobot_dataset_dualairbot_fold.webp",
+      "version": "v3"
+    },
+    {
+      "id": "dualpiper_pulling",
+      "title": "DualPiper Pulling",
+      "name": "DualPiper Pulling",
+      "description": "LeRobot v3.0 · dual Piper pulling task",
+      "archiveUrl": "/lerobot/bundled/dualpiper_pulling.zip",
+      "coverImageUrl": "/lerobot/bundled/covers/lerobot_dataset_dualpiper_pulling.webp",
+      "version": "v3"
+    }
+  ]
+}

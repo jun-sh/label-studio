@@ -8,12 +8,12 @@ import type { JsonViewerProps } from "./types";
 import { ReaderViewButton } from "./reader-view-button";
 import styles from "./json-viewer.module.scss";
 
-// Custom Label Studio theme for json-edit-react
+// Custom Data Lab theme for json-edit-react
 // Note: Colors are applied via SCSS using :global selectors because
 // json-edit-react doesn't support CSS variables in theme configuration
-const labelStudioTheme = {
+const dataLabJsonTheme = {
   ...defaultTheme,
-  displayName: "Label Studio",
+  displayName: "Data Lab",
   styles: {
     ...defaultTheme.styles,
     container: {
@@ -212,7 +212,7 @@ export const JsonViewer: FC<JsonViewerProps> = ({
     ] as any;
   }, [readerViewThreshold]);
 
-  // Custom icons using Label Studio's icon library
+  // Custom icons from the shared icon set
   const customIcons = useMemo(
     () => ({
       copy: <IconCopyOutline width={20} height={20} />,
@@ -303,7 +303,7 @@ export const JsonViewer: FC<JsonViewerProps> = ({
             restrictAdd={viewOnly}
             searchText={searchText}
             searchFilter={searchFilter}
-            theme={labelStudioTheme}
+            theme={dataLabJsonTheme}
             collapse={collapseDepth}
             showCollectionCount={true}
             minWidth="100%"

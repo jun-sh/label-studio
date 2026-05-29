@@ -2,6 +2,7 @@ import { inject } from "mobx-react";
 import { Button, ButtonGroup } from "@humansignal/ui";
 import { Interface } from "../../Common/Interface";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IconChevronDown } from "@humansignal/icons";
 import { Dropdown } from "@humansignal/ui";
 import { Menu } from "../../Common/Menu/Menu";
@@ -21,6 +22,7 @@ const injector = inject(({ store }) => {
 });
 
 export const LabelButton = injector(({ store, canLabel, size, target, selectedCount }) => {
+  const { t } = useTranslation("common");
   const disabled = target === "annotations";
   const triggerRef = useRef();
   const [isOpen, setIsOpen] = useState(false);
@@ -82,6 +84,12 @@ export const LabelButton = injector(({ store, canLabel, size, target, selectedCo
 
   selectedCount;
 
+  const primaryLabel = selectedCount
+    ? selectedCount === 1
+      ? t("dm.label.n_tasks_one", { count: selectedCount })
+      : t("dm.label.n_tasks_other", { count: selectedCount })
+    : t("dm.label.all_tasks");
+
   return canLabel ? (
     <Interface name="labelButton">
       <div>
@@ -94,18 +102,17 @@ export const LabelButton = injector(({ store, canLabel, size, target, selectedCo
             style={primaryStyle}
             onClick={onLabelAll}
           >
-            Label {selectedCount ? selectedCount : "All"} Task
-            {!selectedCount || selectedCount > 1 ? "s" : ""}
+            {primaryLabel}
           </Button>
           <Dropdown.Trigger
             alignment="bottom-right"
             content={
               <Menu size="compact">
-                <Menu.Item onClick={onLabelVisible}>Label Tasks As Displayed</Menu.Item>
+                <Menu.Item onClick={onLabelVisible}>{t("dm.label.as_displayed")}</Menu.Item>
               </Menu>
             }
           >
-            <Button size={size} look="outlined" variant="primary" aria-label={"Toggle open"}>
+            <Button size={size} look="outlined" variant="primary" aria-label={t("dm.toolbar.toggle_open")}>
               <IconChevronDown />
             </Button>
           </Dropdown.Trigger>

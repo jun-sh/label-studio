@@ -5,6 +5,8 @@ export type TabProps = {
   name: string;
   rootRef: MutableRefObject<HTMLDivElement | undefined>;
   tabTitle: string;
+  /** Stable English fragment for DOM ids (e.g. Regions → #Regions-draggable); label text may be translated via tabTitle */
+  draggableSegment: string;
   panelKey: string;
   tabIndex: number;
   active: boolean;

@@ -1,9 +1,10 @@
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@humansignal/ui/lib/card-new/card";
 import { useMemo, isValidElement } from "react";
+import { useTranslation } from "react-i18next";
 import { Redirect, Route, Switch, useParams, useRouteMatch } from "react-router-dom";
 import { useUpdatePageTitle, createTitleFromSegments } from "@humansignal/core";
 import styles from "./AccountSettings.module.scss";
-import { accountSettingsSections } from "./sections";
+import { useAccountSettingsSections } from "./sections";
 import { HotkeysHeaderButtons } from "./sections/Hotkeys";
 import clsx from "clsx";
 import { useAtomValue } from "jotai";
@@ -17,16 +18,16 @@ import { useAuth } from "@humansignal/core/providers/AuthProvider";
 import { SidebarMenu } from "apps/labelstudio/src/components/SidebarMenu/SidebarMenu";
 
 const AccountSettingsSection = () => {
-  const { user, permissions } = useAuth();
+  const { t } = useTranslation("common");
+  const { permissions } = useAuth();
   const { sectionId } = useParams<{ sectionId: string }>();
   const settings = useAtomValue(settingsAtom);
   const contentClassName = clsx(styles.accountSettings__content, {
     [styles.accountSettingsPadding]: window.APP_SETTINGS.billing !== undefined,
   });
 
-  const resolvedSections = useMemo(() => {
-    return settings.data && !("error" in settings.data) ? accountSettingsSections(settings.data, permissions) : [];
-  }, [settings.data, user]);
+  const tokenSettings = settings.data && !("error" in settings.data) ? settings.data : null;
+  const resolvedSections = useAccountSettingsSections(tokenSettings, permissions);
 
   const currentSection = useMemo(
     () => resolvedSections.find((section) => section.id === sectionId),
@@ -35,11 +36,13 @@ const AccountSettingsSection = () => {
 
   // Update page title to reflect the current section
   const pageTitleText = useMemo(() => {
-    if (!currentSection) return "My Account";
+    const accountLabel = t("account.page_title");
+
+    if (!currentSection) return accountLabel;
 
     // If title is a string, use it directly
     if (typeof currentSection.title === "string") {
-      return createTitleFromSegments([currentSection.title, "My Account"]);
+      return createTitleFromSegments([currentSection.title, accountLabel]);
     }
 
     // For non-string titles (like JSX elements), derive from the section ID
@@ -48,8 +51,8 @@ const AccountSettingsSection = () => {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
 
-    return createTitleFromSegments([titleFromId, "My Account"]);
-  }, [currentSection]);
+    return createTitleFromSegments([titleFromId, accountLabel]);
+  }, [currentSection, t]);
 
   useUpdatePageTitle(pageTitleText);
 
@@ -94,9 +97,8 @@ const AccountSettingsPage = () => {
   const match = useRouteMatch();
   const { sectionId } = useParams<{ sectionId: string }>();
   const { user, permissions } = useAuth();
-  const resolvedSections = useMemo(() => {
-    return settings.data && !("error" in settings.data) ? accountSettingsSections(settings.data, permissions) : [];
-  }, [settings.data, user]);
+  const tokenSettings = settings.data && !("error" in settings.data) ? settings.data : null;
+  const resolvedSections = useAccountSettingsSections(tokenSettings, permissions);
 
   const menuItems = useMemo(
     () =>
@@ -124,11 +126,12 @@ const AccountSettingsPage = () => {
 };
 
 AccountSettingsPage.title = "My Account";
+AccountSettingsPage.i18nTitleKey = "account.page_title";
 AccountSettingsPage.path = "/user/account";
 AccountSettingsPage.exact = false;
 AccountSettingsPage.routes = () => [
   {
-    title: () => "My Account",
+    i18nTitleKey: "account.page_title",
     path: "/account",
     component: () => <Redirect to={AccountSettingsPage.path} />,
   },

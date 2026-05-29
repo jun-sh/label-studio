@@ -6,6 +6,7 @@ during development, and SHOULD NOT be used in a production setting.
 import mimetypes
 import posixpath
 from pathlib import Path
+from urllib.parse import urlparse
 
 from core.utils.manifest_assets import get_manifest_asset
 from django.http import (
@@ -51,11 +52,13 @@ def serve(request, path, document_root=None, show_indexes=False, manifest_asset_
         raise Http404(_('Directory indexes are not allowed here.'))
     if manifest_asset_prefix and not fullpath.exists():
         possible_asset = get_manifest_asset(path)
-        manifest_asset_prefix = (
-            f'/{manifest_asset_prefix}' if not manifest_asset_prefix.startswith('/') else manifest_asset_prefix
-        )
-        if possible_asset.startswith(manifest_asset_prefix):
-            possible_asset = possible_asset[len(manifest_asset_prefix) :]
+        if possible_asset.startswith(('http://', 'https://')):
+            possible_asset = urlparse(possible_asset).path or '/'
+        # Normalize to a path relative to document_root (strip leading slashes so safe_join accepts it).
+        possible_asset = posixpath.normpath(possible_asset).lstrip('/')
+        manifest_prefix = manifest_asset_prefix.strip('/')
+        if possible_asset == manifest_prefix or possible_asset.startswith(manifest_prefix + '/'):
+            possible_asset = possible_asset[len(manifest_prefix) :].lstrip('/')
         fullpath = Path(safe_join(document_root, possible_asset))
     if not fullpath.exists():
         raise Http404(_('“%(path)s” does not exist') % {'path': fullpath})

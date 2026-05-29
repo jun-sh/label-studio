@@ -7,6 +7,7 @@
 import { inject, observer } from "mobx-react";
 import type React from "react";
 import { memo, type ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 import { Tooltip, Button } from "@humansignal/ui";
 import { IconInfoOutline } from "@humansignal/icons";
 import type { MSTStore } from "../../stores/types";
@@ -161,11 +162,12 @@ export const SkipButton = memo(
 
 export const UnskipButton = memo(
   observer(({ disabled, store }: { disabled: boolean; store: MSTStore }) => {
+    const { t } = useTranslation("common");
     return (
       <Button
         key="cancel-skip"
-        tooltip="Cancel skip: []"
-        aria-label="cancel-skip"
+        tooltip={t("editor.skip.cancel_skip_tooltip")}
+        aria-label={t("editor.skip.cancel_skip_aria")}
         look="outlined"
         disabled={disabled}
         onClick={async () => {
@@ -177,7 +179,7 @@ export const UnskipButton = memo(
         }}
         data-testid="bottombar-unskip-button"
       >
-        Cancel skip
+        {t("editor.skip.cancel_skip")}
       </Button>
     );
   }),

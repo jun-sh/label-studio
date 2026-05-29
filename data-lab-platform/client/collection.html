@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>采集 | Data Lab</title>
+  <link rel="shortcut icon" href="/static/images/favicon.ico" />
+  <link rel="stylesheet" href="/_datalab/collection-page.css?v=1" />
+  <script>
+    (function () {
+      var theme = window.localStorage.getItem("preferred-color-scheme");
+      if (theme === "Auto") {
+        theme =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "Dark"
+            : "Light";
+      }
+      if (!theme) theme = "Light";
+      document.documentElement.setAttribute("data-color-scheme", theme.toLowerCase());
+    })();
+  </script>
+</head>
+<body class="datalab-collection-page">
+  <header class="datalab-collection-page__header">
+    <h1 class="datalab-collection-page__title">EGO 采集站</h1>
+    <p class="datalab-collection-page__subtitle">采集站列表 · 在线状态</p>
+  </header>
+
+  <main class="datalab-collection-page__main">
+    <section class="datalab-collection-page__list" id="datalab-station-list" aria-live="polite">
+      <p class="datalab-collection-page__loading">正在加载采集站列表…</p>
+    </section>
+
+    <section class="datalab-collection-page__viewer" id="datalab-station-viewer" hidden>
+      <div class="datalab-collection-page__viewer-head">
+        <h2 id="datalab-viewer-title">实时画面</h2>
+        <button type="button" class="datalab-collection-page__back" id="datalab-viewer-close">返回列表</button>
+      </div>
+      <div class="datalab-collection-page__stream" id="datalab-stream-slot">
+        <p class="datalab-collection-page__placeholder">实时流预览占位 — 接入 EGO 采集站 WebRTC / HLS 流后在此播放。</p>
+      </div>
+      <div class="datalab-collection-page__actions">
+        <button type="button" class="datalab-collection-page__btn" id="datalab-upload-btn" disabled>上传数据集（占位）</button>
+        <span class="datalab-collection-page__api" id="datalab-upload-api"></span>
+      </div>
+    </section>
+  </main>
+
+  <script src="/_datalab/collection-page.js?v=1"></script>
+</body>
+</html>

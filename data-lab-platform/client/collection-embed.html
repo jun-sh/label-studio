@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" class="datalab-collection-embed-root">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>采集 | Data Lab</title>
+  <link rel="stylesheet" href="/_datalab/collection-page.css?v=6" />
+  <script>
+    (function () {
+      var theme = window.localStorage.getItem("preferred-color-scheme");
+      if (theme === "Auto") {
+        theme =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "Dark"
+            : "Light";
+      }
+      if (!theme) theme = "Light";
+      document.documentElement.setAttribute("data-color-scheme", theme.toLowerCase());
+    })();
+  </script>
+</head>
+<body class="datalab-collection-page datalab-collection-page--embed">
+  <main class="datalab-collection-page__main">
+    <div class="datalab-collection-page__intro">
+      <h1 class="datalab-collection-page__title">EGO 采集站</h1>
+      <p class="datalab-collection-page__subtitle">采集站列表 · 在线状态</p>
+    </div>
+
+    <section class="datalab-collection-page__list" id="datalab-station-list" aria-live="polite">
+      <p class="datalab-collection-page__loading">正在加载采集站列表…</p>
+    </section>
+  </main>
+
+  <script src="/_datalab/collection-page.js?v=6"></script>
+</body>
+</html>

@@ -3,16 +3,19 @@ export type TipLinkParams = Record<string, string> & {
   treatment?: string;
 };
 
+export type TipLink = {
+  url: string;
+  label: string;
+  params?: TipLinkParams;
+};
+
 export type Tip = {
   title: string;
   content: string;
   description?: string;
   closable?: boolean;
-  link: {
-    url: string;
-    label: string;
-    params?: TipLinkParams;
-  };
+  /** Optional; omit when tips have no outbound link. */
+  link?: TipLink;
 };
 
 export type TipCollectionKey = "projectCreation" | "organizationPage" | "projectSettings";

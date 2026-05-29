@@ -51,7 +51,13 @@ export const MenuItem = ({
   const finalHref = to ?? href;
 
   if (forceReload) {
-    linkAttributes.onClick = () => (location.href = to ?? href);
+    const reloadTarget = to ?? href;
+    linkAttributes.onClick = (event) => {
+      event?.preventDefault();
+      if (reloadTarget) {
+        window.location.replace(reloadTarget);
+      }
+    };
   }
 
   return (

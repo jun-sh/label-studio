@@ -57,6 +57,25 @@ frontend-watch:
 frontend-build: frontend-setup
 	cd web && yarn run build
 
+# Fast Docker path: only builds Dockerfile stage "frontend-builder", then copies web/dist into app + nginx containers (nginx serves /react-app/ directly). Requires app service running or at least created once.
+#   make frontend-sync-docker
+# One-liner (repo root; replace "docker compose" with "docker-compose" if needed):
+#   DOCKER_BUILDKIT=1 DEBIAN_USE_MIRROR=no docker build -f Dockerfile --target frontend-builder -t data-lab-frontend-builder:local . && CID=$(docker create data-lab-frontend-builder:local) && TMP=$(mktemp -d) && docker cp "$CID:/label-studio/web/dist/." "$TMP/" && docker rm "$CID" && APP=$(docker compose ps -q app) && docker cp "$TMP/." "$APP:/label-studio/web/dist/" && NGINX=$(docker compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml ps -q nginx 2>/dev/null) && test -n "$NGINX" && docker cp "$TMP/." "$NGINX:/label-studio/web/dist/" || true && rm -rf "$TMP" && docker exec "$APP" chown -R 1001:0 /label-studio/web/dist
+.PHONY: frontend-sync-docker
+frontend-sync-docker:
+	DOCKER_BUILDKIT=1 DEBIAN_USE_MIRROR=no docker build -f Dockerfile --target frontend-builder -t data-lab-frontend-builder:local .
+	CID=$$(docker create data-lab-frontend-builder:local); \
+	TMP=$$(mktemp -d); \
+	docker cp $$CID:/label-studio/web/dist/. $$TMP/; \
+	docker rm $$CID; \
+	APP=$$(docker compose ps -q app); \
+	test -n "$$APP" || (echo "No app container; start with: docker compose up -d app" >&2; rm -rf $$TMP; exit 1); \
+	docker cp $$TMP/. $$APP:/label-studio/web/dist/; \
+	NGINX=$$(docker compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml ps -q nginx 2>/dev/null); \
+	if [ -n "$$NGINX" ]; then docker cp $$TMP/. $$NGINX:/label-studio/web/dist/; echo "Synced web/dist to nginx ($$NGINX)"; fi; \
+	rm -rf $$TMP; \
+	docker exec $$APP chown -R 1001:0 /label-studio/web/dist
+
 frontend-storybook-serve: frontend-setup
 	cd web && yarn run ui:serve
 

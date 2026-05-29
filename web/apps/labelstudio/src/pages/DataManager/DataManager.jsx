@@ -1,5 +1,6 @@
 import { Button, buttonVariant, ToastContext, ToastType } from "@humansignal/ui";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { generatePath, useHistory } from "react-router";
 import { Link, NavLink } from "react-router-dom";
 import { Spinner } from "../../components";
@@ -20,7 +21,7 @@ import "./DataManager.scss";
 const loadDependencies = () => [import("@humansignal/datamanager"), import("@humansignal/editor")];
 
 const initializeDataManager = async (root, props, params) => {
-  if (!window.LabelStudio) throw Error("Label Studio Frontend doesn't exist on the page");
+  if (!window.LabelStudio) throw Error("The annotation editor is not available on this page");
   if (!root && root.dataset.dmInitialized) return;
 
   root.dataset.dmInitialized = true;
@@ -58,6 +59,9 @@ const buildLink = (path, params) => {
 };
 
 export const DataManagerPage = ({ ...props }) => {
+  const { t } = useTranslation("common");
+  const tRef = useRef(t);
+  tRef.current = t;
   const dependencies = useMemo(loadDependencies, []);
   const toast = useContext(ToastContext);
   const root = useRef();
@@ -100,9 +104,9 @@ export const DataManagerPage = ({ ...props }) => {
       const isMissingProjectError = error?.startsWith("Project ID:");
 
       if (isMissingTaskError || isMissingProjectError) {
-        const message = `The ${
-          isMissingTaskError ? "task" : "project"
-        } you are trying to access does not exist or is no longer available.`;
+        const message = tRef.current("dm.crash.missing_entity", {
+          entity: isMissingTaskError ? tRef.current("dm.crash.entity_task") : tRef.current("dm.crash.entity_project"),
+        });
 
         toast.show({
           message,
@@ -155,7 +159,7 @@ export const DataManagerPage = ({ ...props }) => {
     });
 
     if (interactiveBacked) {
-      dataManager.on("lsf:regionFinishedDrawing", (reg, group) => {
+      dataManager.on("lsf:regionFinishedDrawing", (_reg, group) => {
         const { lsf, task, currentAnnotation: annotation } = dataManager.lsf;
         const ids = group.map((r) => r.cleanId);
         const result = annotation.serializeAnnotation().filter((res) => ids.includes(res.id));
@@ -214,10 +218,10 @@ export const DataManagerPage = ({ ...props }) => {
 
   return crashed ? (
     <div className={cn("crash").toClassName()}>
-      <div className={cn("crash").elem("info").toClassName()}>Project was deleted or not yet created</div>
+      <div className={cn("crash").elem("info").toClassName()}>{t("dm.deleted_project")}</div>
 
-      <Button to="/projects" aria-label="Back to projects">
-        Back to projects
+      <Button to="/projects" aria-label={t("dm.back_to_projects_aria")}>
+        {t("dm.back_to_projects")}
       </Button>
     </div>
   ) : (
@@ -239,44 +243,57 @@ DataManagerPage.pages = {
   ImportModal,
 };
 DataManagerPage.context = ({ dmRef }) => {
+  const { t, i18n } = useTranslation("common");
   const { project } = useProject();
   const [mode, setMode] = useState(dmRef?.mode ?? "explorer");
 
-  const links = {
-    "/settings": "Settings",
-  };
+  const links = useMemo(
+    () => ({
+      "/settings": t("dm.link_settings"),
+    }),
+    [t],
+  );
 
-  const updateCrumbs = (currentMode) => {
-    const isExplorer = currentMode === "explorer";
+  const updateCrumbs = useCallback(
+    (currentMode) => {
+      const isExplorer = currentMode === "explorer";
 
-    if (isExplorer) {
-      deleteCrumb("dm-crumb");
-    } else {
-      addCrumb({
-        key: "dm-crumb",
-        title: "Labeling",
-      });
-    }
-  };
+      if (isExplorer) {
+        deleteCrumb("dm-crumb");
+      } else {
+        addCrumb({
+          key: "dm-crumb",
+          title: t("dm.breadcrumb_labeling"),
+        });
+      }
+    },
+    [t],
+  );
 
-  const showLabelingInstruction = (currentMode) => {
-    const isLabelStream = currentMode === "labelstream";
-    const { expert_instruction, show_instruction } = project;
+  const showLabelingInstruction = useCallback(
+    (currentMode) => {
+      const isLabelStream = currentMode === "labelstream";
+      const { expert_instruction, show_instruction } = project;
 
-    if (isLabelStream && show_instruction && expert_instruction) {
-      modal({
-        title: "Labeling Instructions",
-        body: <div dangerouslySetInnerHTML={{ __html: expert_instruction }} />,
-        style: { width: 680 },
-      });
-    }
-  };
+      if (isLabelStream && show_instruction && expert_instruction) {
+        modal({
+          title: t("dm.modal_labeling_instructions"),
+          body: <div dangerouslySetInnerHTML={{ __html: expert_instruction }} />,
+          style: { width: 680 },
+        });
+      }
+    },
+    [project, t],
+  );
 
-  const onDMModeChanged = (currentMode) => {
-    setMode(currentMode);
-    updateCrumbs(currentMode);
-    showLabelingInstruction(currentMode);
-  };
+  const onDMModeChanged = useCallback(
+    (currentMode) => {
+      setMode(currentMode);
+      updateCrumbs(currentMode);
+      showLabelingInstruction(currentMode);
+    },
+    [showLabelingInstruction, updateCrumbs],
+  );
 
   useEffect(() => {
     if (dmRef) {
@@ -286,7 +303,12 @@ DataManagerPage.context = ({ dmRef }) => {
     return () => {
       dmRef?.off?.("modeChanged", onDMModeChanged);
     };
-  }, [dmRef, project]);
+  }, [dmRef, onDMModeChanged]);
+
+  useEffect(() => {
+    if (!dmRef) return;
+    updateCrumbs(mode);
+  }, [i18n.language, dmRef, mode, updateCrumbs]);
 
   return project && project.id ? (
     <Space size="small">
@@ -296,7 +318,7 @@ DataManagerPage.context = ({ dmRef }) => {
           look="outlined"
           onClick={() => {
             modal({
-              title: "Instructions",
+              title: t("dm.modal_instructions_title"),
               body: () => (
                 <div
                   dangerouslySetInnerHTML={{
@@ -307,7 +329,7 @@ DataManagerPage.context = ({ dmRef }) => {
             });
           }}
         >
-          Instructions
+          {t("dm.instructions_button")}
         </Button>
       )}
 

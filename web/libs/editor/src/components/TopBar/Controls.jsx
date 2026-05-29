@@ -10,6 +10,7 @@ import { isDefined } from "../../utils/utilities";
 
 import "./Controls.scss";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 const TOOLTIP_DELAY = 0.8;
 
@@ -32,6 +33,7 @@ const controlsInjector = inject(({ store }) => {
 
 export const Controls = controlsInjector(
   observer(({ store, history, annotation }) => {
+    const { t } = useTranslation("common");
     const isReview = store.hasInterface("review");
 
     const historySelected = isDefined(store.annotationStore.selectedHistory);
@@ -122,13 +124,13 @@ export const Controls = controlsInjector(
     } else if (annotation.skipped) {
       buttons.push(
         <div className={cn("controls").elem("skipped-info").toClassName()} key="skipped">
-          <IconBan color="#d00" /> Was skipped
+          <IconBan color="#d00" /> {t("editor.skip.was_skipped")}
         </div>,
       );
       buttons.push(
-        <ButtonTooltip key="cancel-skip" title="Cancel skip: []">
+        <ButtonTooltip key="cancel-skip" title={t("editor.skip.cancel_skip_tooltip")}>
           <Button
-            aria-label="Cancel skip and return to annotation"
+            aria-label={t("editor.skip.cancel_skip_aria")}
             disabled={disabled}
             look="outlined"
             onClick={async () => {
@@ -136,7 +138,7 @@ export const Controls = controlsInjector(
               store.unskipTask();
             }}
           >
-            Cancel skip
+            {t("editor.skip.cancel_skip")}
           </Button>
         </ButtonTooltip>,
       );

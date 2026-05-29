@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams as useRouterParams } from "react-router";
 import { Redirect } from "react-router-dom";
 import { Button } from "@humansignal/ui";
@@ -21,6 +22,7 @@ const getCurrentPage = () => {
 };
 
 export const ProjectsPage = () => {
+  const { t } = useTranslation("common");
   const api = React.useContext(ApiContext);
   const abortController = useAbortController();
   const [projectsList, setProjectsList] = React.useState([]);
@@ -29,7 +31,7 @@ export const ProjectsPage = () => {
   const [totalItems, setTotalItems] = useState(1);
   const setContextProps = useContextProps();
 
-  useUpdatePageTitle("Projects");
+  useUpdatePageTitle(t("projects.page_title"));
   const defaultPageSize = Number.parseInt(localStorage.getItem("pages:projects-list") ?? 30);
 
   const [modal, setModal] = React.useState(false);
@@ -142,6 +144,7 @@ export const ProjectsPage = () => {
 };
 
 ProjectsPage.title = "Projects";
+ProjectsPage.i18nTitleKey = "projects.page_title";
 ProjectsPage.path = "/projects";
 ProjectsPage.exact = true;
 ProjectsPage.routes = ({ store }) => [
@@ -161,10 +164,11 @@ ProjectsPage.routes = ({ store }) => [
   },
 ];
 ProjectsPage.context = ({ openModal, showButton }) => {
+  const { t } = useTranslation("common");
   if (!showButton) return null;
   return (
-    <Button onClick={openModal} size="small" aria-label="Create new project">
-      Create
+    <Button onClick={openModal} size="small" aria-label={t("projects.create_aria")}>
+      {t("projects.context_create")}
     </Button>
   );
 };

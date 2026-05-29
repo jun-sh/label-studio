@@ -1,5 +1,5 @@
 #!/bin/sh
-# Pin IO-AI LeRobot Studio static release (fixed manifest — no recursive crawl).
+# Pin visualizer static release (fixed manifest + chunks referenced by index bundle).
 set -eu
 
 BASE_URL="${LEROBOT_STUDIO_UPSTREAM:-https://io-ai.tech}"
@@ -14,7 +14,7 @@ fetch() {
   dest="${OUT}${sub}"
   mkdir -p "$(dirname "$dest")"
   echo "GET ${BASE_URL}${rel}"
-  wget -q --timeout=25 --tries=2 -O "$dest" "${BASE_URL}${rel}"
+  wget -q --timeout=60 --tries=3 -O "$dest" "${BASE_URL}${rel}"
 }
 
 fetch /lerobot/index.html
@@ -30,11 +30,18 @@ for f in \
   assets/dockview-CrgMxqRm.css \
   assets/zip-B2J92Cm-.js \
   assets/parquet-wasm-ByslZQWX.js \
-  assets/parquet_wasm_bg-DcKVfvto.wasm
+  assets/parquet_wasm_bg-DcKVfvto.wasm \
+  assets/LeRobotDataLoader-TxQpt3xk.js \
+  assets/DockviewLayout-B30e0sME.js \
+  assets/DockviewLayout-BWx-G9oJ.css \
+  assets/MediaCache-CwZqT4Ur.js \
+  assets/uplot-B8nCPBqd.js \
+  assets/uplot-BHzERDP4.css
 do
   fetch "/lerobot/${f}"
 done
 
 test -f "${OUT}/index.html"
 test -f "${OUT}/assets/index-BM8rEaYC.js"
-echo "LeRobot Studio static assets ready under ${OUT}"
+test -f "${OUT}/assets/LeRobotDataLoader-TxQpt3xk.js"
+echo "Visualizer static assets ready under ${OUT}"

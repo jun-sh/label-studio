@@ -1,9 +1,12 @@
 import { format } from "date-fns/esm";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Button, CodeBlock, IconFileCopy, Space, Tooltip } from "@humansignal/ui";
 import { DescriptionList } from "../../../components/DescriptionList/DescriptionList";
 import { modal } from "../../../components/Modal/Modal";
 import { Oneof } from "../../../components/Oneof/Oneof";
 import { getLastTraceback } from "../../../utils/helpers";
+import { getDateFnsLocale } from "../../../utils/dateFnsLocale";
 import { useCopyText } from "@humansignal/core";
 
 // Component to handle copy functionality within the modal
@@ -18,6 +21,8 @@ const CopyButton = ({ msg }) => {
 };
 
 export const StorageSummary = ({ target, storage, className, storageTypes = [] }) => {
+  const { t, i18n } = useTranslation("common");
+  const dateLocale = useMemo(() => getDateFnsLocale(i18n.language), [i18n.language]);
   const storageStatus = storage.status.replace(/_/g, " ").replace(/(^\w)/, (match) => match.toUpperCase());
   const last_sync_count = storage.last_sync_count ? storage.last_sync_count : 0;
 
@@ -142,7 +147,9 @@ export const StorageSummary = ({ target, storage, className, storageTypes = [] }
         )}
 
         <DescriptionList.Item term="Last Sync">
-          {storage.last_sync ? format(new Date(storage.last_sync), "MMMM dd, yyyy ∙ HH:mm:ss") : "Not synced yet"}
+          {storage.last_sync
+            ? format(new Date(storage.last_sync), "MMMM dd, yyyy ∙ HH:mm:ss", { locale: dateLocale })
+            : t("storage.not_synced_yet")}
         </DescriptionList.Item>
       </DescriptionList>
     </div>

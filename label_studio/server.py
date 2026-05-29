@@ -172,7 +172,7 @@ def _create_user(input_args, config):
     org = Organization.objects.first()
     if not org:
         org = Organization.create_organization(
-            created_by=user, title='Label Studio', legacy_api_tokens_enabled=input_args.enable_legacy_api_token
+            created_by=user, title='Data Lab', legacy_api_tokens_enabled=input_args.enable_legacy_api_token
         )
     else:
         org.add_user(user)
@@ -337,7 +337,7 @@ def main():
     if input_args.command == 'version' or input_args.version:
         from label_studio import __version__
 
-        print('\nLabel Studio version:', __version__, '\n')
+        print('\nData Lab version:', __version__, '\n')
         print(json.dumps(versions, indent=4))
 
     # init
@@ -350,7 +350,7 @@ def main():
         _init(input_args, config)
 
         print('')
-        print('Label Studio has been successfully initialized.')
+        print('Data Lab has been successfully initialized.')
         if input_args.command != 'start' and input_args.project_name:
             print('Start the server: label-studio start ' + input_args.project_name)
             return
@@ -390,7 +390,7 @@ def main():
                 print(
                     Fore.LIGHTYELLOW_EX
                     + '\n*** WARNING! ***\n'
-                    + f'Project {input_args.project_name} migrated to Label Studio Database\n'
+                    + f'Project {input_args.project_name} migrated to Data Lab Database\n'
                     + "YOU DON'T NEED THIS FOLDER ANYMORE"
                     + '\n****************\n'
                     + Fore.WHITE
@@ -416,7 +416,7 @@ def main():
         key_file = input_args.key_file or config.get('key')
         if cert_file or key_file:
             logger.error(
-                "Label Studio doesn't support SSL web server with cert and key.\n" 'Use nginx or other servers for it.'
+                "Data Lab doesn't support SSL web server with cert and key.\n" 'Use nginx or other servers for it.'
             )
             return
 

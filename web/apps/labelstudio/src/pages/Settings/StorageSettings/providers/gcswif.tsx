@@ -18,18 +18,8 @@ const gcsWifProvider: ProviderConfig = {
       content: (
         <Alert variant="gradient">
           <IconSpark />
-          <AlertTitle>Enterprise Feature</AlertTitle>
-          <AlertDescription>
-            Google Cloud Storage with Workload Identity Federation is available in Label Studio Enterprise.{" "}
-            <a
-              href="https://docs.humansignal.com/guide/storage.html#Google-Cloud-Storage-with-Workload-Identity-Federation-WIF"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:no-underline"
-            >
-              Learn more
-            </a>
-          </AlertDescription>
+          <AlertTitle>Not enabled</AlertTitle>
+          <AlertDescription>This storage option is not enabled in this deployment.</AlertDescription>
         </Alert>
       ),
     },

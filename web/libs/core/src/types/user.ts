@@ -17,5 +17,7 @@ export type APIUser = {
   };
   allow_newsletters: boolean;
   date_joined: string;
+  /** Preferred UI language (en, zh-Hans). Omitted on older API responses until migrated. */
+  ui_locale?: string;
   permissions?: Ability[];
 };

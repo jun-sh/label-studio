@@ -1,5 +1,6 @@
 import { IconChevronDown } from "@humansignal/icons";
 import { isStarterCloudPlan } from "@humansignal/core";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../../utils/bem";
 import { ErrorBox } from "../../Common/ErrorBox";
 import { FieldsButton } from "../../Common/FieldsButton";
@@ -27,31 +28,27 @@ const style = {
  * If expired it renders disabled Import button with a tooltip.
  */
 const ImportButtonWithChecks = ({ size }) => {
-  const simpleButton = <ImportButton size={size}>Import</ImportButton>;
+  const { t } = useTranslation("common");
+  const simpleButton = (
+    <ImportButton size={size}>{t("dm.toolbar.import")}</ImportButton>
+  );
   const isOpenSource = !window.APP_SETTINGS.billing;
-  // Check if user is on Starter Cloud plan
   const isStarterCloud = isStarterCloudPlan();
 
   if (isOpenSource || !isStarterCloud) return simpleButton;
 
-  // Check if user is on trial
   const isTrialExpired = window.APP_SETTINGS.billing.checks?.is_license_expired;
-  // Check the subscription period end date
   const subscriptionPeriodEnd = window.APP_SETTINGS.subscription?.current_period_end;
-  // Check if user is on Starter Cloud and has expired trial
   const isStarterCloudExpiredTrial = isStarterCloud && isTrialExpired && !subscriptionPeriodEnd;
-  // Check if user is on Starter Cloud and has expired subscription
   const isStarterCloudExpiredSubscription =
     isStarterCloud && subscriptionPeriodEnd && new Date(subscriptionPeriodEnd) < new Date();
-  // Check if user is on Starter Cloud and has expired trial or subscription
   const isStarterCloudExpired = isStarterCloudExpiredTrial || isStarterCloudExpiredSubscription;
 
   if (!isStarterCloudExpired) return simpleButton;
 
-  // Disabled buttons ignore hover, so we use wrapper to properly handle a tooltip
   return (
     <Tooltip
-      title="You must upgrade your plan to import data"
+      title={t("dm.toolbar.import_upgrade_tooltip")}
       style={{
         maxWidth: 200,
         textAlign: "center",
@@ -59,10 +56,39 @@ const ImportButtonWithChecks = ({ size }) => {
     >
       <div className={cn("button-wrapper").toClassName()}>
         <ImportButton disabled size={size}>
-          Import
+          {t("dm.toolbar.import")}
         </ImportButton>
       </div>
     </Tooltip>
+  );
+};
+
+const ColumnsInstrument = ({ size }) => {
+  const { t } = useTranslation("common");
+  const iconProps = {
+    style: {
+      marginRight: 4,
+    },
+    icon: IconChevronDown,
+  };
+  return (
+    <FieldsButton
+      wrapper={FieldsButton.Checkbox}
+      trailingIcon={<Icon {...iconProps} />}
+      title={t("dm.toolbar.columns")}
+      size={size}
+      style={style}
+      openUpwardForShortViewport={false}
+    />
+  );
+};
+
+const ExportInstrument = ({ size }) => {
+  const { t } = useTranslation("common");
+  return (
+    <Interface name="export">
+      <ExportButton size={size}>{t("dm.toolbar.export")}</ExportButton>
+    </Interface>
   );
 };
 
@@ -74,22 +100,7 @@ export const instruments = {
     return <DensityToggle size={size} />;
   },
   columns: ({ size }) => {
-    const iconProps = {
-      style: {
-        marginRight: 4,
-      },
-      icon: IconChevronDown,
-    };
-    return (
-      <FieldsButton
-        wrapper={FieldsButton.Checkbox}
-        trailingIcon={<Icon {...iconProps} />}
-        title={"Columns"}
-        size={size}
-        style={style}
-        openUpwardForShortViewport={false}
-      />
-    );
+    return <ColumnsInstrument size={size} />;
   },
   filters: ({ size }) => {
     return <FiltersPane size={size} style={style} />;
@@ -123,10 +134,6 @@ export const instruments = {
     );
   },
   "export-button": ({ size }) => {
-    return (
-      <Interface name="export">
-        <ExportButton size={size}>Export</ExportButton>
-      </Interface>
-    );
+    return <ExportInstrument size={size} />;
   },
 };

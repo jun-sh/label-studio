@@ -1,0 +1,184 @@
+{% extends 'base.html' %}
+
+{% block divider %}{% endblock %}
+
+{% block content %}
+{# LeRobot iframe is mounted on document.body as #datalab-viz-layer (see bottomjs). #}
+{% endblock %}
+
+{% block app-css %}
+{{ block.super }}
+<style nonce="{{ request.csp_nonce }}">
+  #datalab-viz-layer {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #0b1220;
+    box-sizing: border-box;
+  }
+  #datalab-viz-layer iframe {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border: 0;
+    display: block;
+  }
+  body[data-datalab-data-page="1"] .content-wrapper__content .datalab-data-viz-embed,
+  body[data-datalab-data-page="1"] .content-wrapper__content .data-viz-page,
+  body[data-datalab-data-page="1"] .content-wrapper__content iframe:not(#datalab-viz-frame) {
+    display: none !important;
+  }
+</style>
+{% endblock %}
+
+{% block bottomjs %}
+{{ block.super }}
+<script nonce="{{ request.csp_nonce }}">
+  document.body.dataset.datalabDataPage = "1";
+  (function () {
+    var LAYER_ID = "datalab-viz-layer";
+    var FRAME_ID = "datalab-viz-frame";
+    var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
+    var SRC = "/lerobot/?datalab_embed=1&lang=" + LANG;
+    var TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}具身智能数据集可视化{% else %}Robot dataset visualizer{% endif %}";
+
+    function hideDuplicateIframes() {
+      document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
+        if (node.id === FRAME_ID) return;
+        node.style.display = "none";
+      });
+    }
+
+    function readSidebarInset() {
+      var pinned = localStorage.getItem("sidebar-pinned") === "true";
+      var opened = localStorage.getItem("sidebar-opened") === "true";
+      var sidebarWidth =
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--menu-sidebar-width")) || 240;
+      return pinned && opened ? sidebarWidth : 0;
+    }
+
+    function syncBounds() {
+      var layer = document.getElementById(LAYER_ID);
+      if (!layer) return;
+
+      var content = document.querySelector(".content-wrapper__content");
+      var headerHeight =
+        parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
+
+      if (content) {
+        var style = getComputedStyle(content);
+        var marginLeft = parseFloat(style.marginLeft) || 0;
+        var insetFromStorage = readSidebarInset();
+        var rect = content.getBoundingClientRect();
+        var left, width;
+
+        if (marginLeft > 0) {
+          left = rect.left;
+          width = rect.width;
+        } else if (insetFromStorage > 0) {
+          left = insetFromStorage;
+          width = Math.max(0, window.innerWidth - insetFromStorage);
+        } else {
+          left = rect.left;
+          width = rect.width;
+        }
+
+        layer.style.top = rect.top + "px";
+        layer.style.left = left + "px";
+        layer.style.width = width + "px";
+        layer.style.height = (rect.height > 0 ? rect.height : window.innerHeight - rect.top) + "px";
+        layer.style.right = "";
+        layer.style.bottom = "";
+      } else {
+        var insetLeft = readSidebarInset();
+        layer.style.top = headerHeight + "px";
+        layer.style.left = insetLeft + "px";
+        layer.style.width = Math.max(0, window.innerWidth - insetLeft) + "px";
+        layer.style.height = window.innerHeight - headerHeight + "px";
+        layer.style.right = "";
+        layer.style.bottom = "";
+      }
+
+      hideDuplicateIframes();
+    }
+
+    function mountLayer() {
+      if (document.getElementById(LAYER_ID)) {
+        syncBounds();
+        return;
+      }
+      var layer = document.createElement("div");
+      layer.id = LAYER_ID;
+      var iframe = document.createElement("iframe");
+      iframe.id = FRAME_ID;
+      iframe.src = SRC;
+      iframe.title = TITLE;
+      iframe.allow = "fullscreen";
+      layer.appendChild(iframe);
+      document.body.appendChild(layer);
+      syncBounds();
+    }
+
+    function onStorage(e) {
+      if (e.key === "sidebar-pinned" || e.key === "sidebar-opened") {
+        syncBounds();
+      }
+    }
+
+    function onTransitionEnd(e) {
+      if (e.propertyName === "margin-left") {
+        syncBounds();
+      }
+    }
+
+    function onLayoutEvent() {
+      syncBounds();
+    }
+
+    function onPinClick(e) {
+      if (e.target && e.target.closest && e.target.closest(".sidebar__pin")) {
+        requestAnimationFrame(syncBounds);
+        setTimeout(syncBounds, 160);
+      }
+    }
+
+    function attachLayoutListeners() {
+      window.addEventListener("resize", syncBounds);
+      window.addEventListener("storage", onStorage);
+      window.addEventListener("datalab:layout", onLayoutEvent);
+      document.addEventListener("click", onPinClick, true);
+
+      var observer = new MutationObserver(syncBounds);
+      var root = document.querySelector(".content-wrapper__body") || document.body;
+      observer.observe(root, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        attributeFilter: ["class", "style"],
+      });
+
+      var sidebar = document.querySelector(".sidebar");
+      if (sidebar) {
+        observer.observe(sidebar, { attributes: true, attributeFilter: ["class"] });
+      }
+
+      var content = document.querySelector(".content-wrapper__content");
+      if (content) {
+        observer.observe(content, { attributes: true, attributeFilter: ["class", "style"] });
+        content.addEventListener("transitionend", onTransitionEnd);
+      }
+    }
+
+    mountLayer();
+    attachLayoutListeners();
+
+    [0, 50, 160, 300, 500, 800].forEach(function (ms) {
+      setTimeout(syncBounds, ms);
+    });
+    setInterval(syncBounds, 500);
+  })();
+</script>
+{% endblock %}

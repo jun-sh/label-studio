@@ -7,7 +7,7 @@ import { HeidiSpeaking } from "../../assets/images";
 import type { HeidiTipProps, Tip } from "./types";
 import { createURL } from "./utils";
 
-const HeidiLink: FC<{ link: Tip["link"]; onClick: () => void }> = ({ link, onClick }) => {
+const HeidiLink: FC<{ link: NonNullable<Tip["link"]>; onClick: () => void }> = ({ link, onClick }) => {
   const url = useMemo(() => {
     const params = link.params ?? {};
     /* if needed, add server ID here */
@@ -48,7 +48,7 @@ export const HeidiTip: FC<HeidiTipProps> = ({ tip, onDismiss, onLinkClick }) => 
         </div>
         <div className={cn("heidy-tip").elem("text").toClassName()}>
           {tip.content}
-          <HeidiLink link={tip.link} onClick={onLinkClick} />
+          {tip.link ? <HeidiLink link={tip.link} onClick={onLinkClick} /> : null}
         </div>
       </div>
       <div className={cn("heidy-tip").elem("heidi").toClassName()}>

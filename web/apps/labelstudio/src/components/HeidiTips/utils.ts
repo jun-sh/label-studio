@@ -17,6 +17,9 @@ export function getTipCollectionEvent(collection: string, event: string) {
 }
 
 export function getTipEvent(collection: string, tip: Tip, event: string) {
+  if (!tip.link) {
+    return getTipCollectionEvent(collection, event);
+  }
   if (tip.link.params?.experiment && tip.link.params?.treatment) {
     return `${EVENT_NAMESPACE_KEY}.${collection}.${tip.link.params?.experiment}.${tip.link.params?.treatment}.${event}`;
   }
@@ -31,6 +34,14 @@ export function getTipEvent(collection: string, tip: Tip, event: string) {
 }
 
 export function getTipMetadata(tip: Tip) {
+  if (!tip.link) {
+    return {
+      content: tip.description ?? tip.content ?? "",
+      title: tip.title,
+      href: "",
+      label: "",
+    };
+  }
   // Everything except the experiment and treatment params as those are part of the event name
   const { experiment, treatment, ...rest } = tip.link.params ?? {};
   return {
@@ -98,6 +109,10 @@ export function getRandomTip(collection: keyof TipsCollection): Tip | null {
   if (!tipsCollection[collection] || isTipDismissed(collection)) return null;
 
   const tips = tipsCollection[collection];
+
+  if (!tips.length) {
+    return null;
+  }
 
   const index = Math.floor(Math.random() * tips.length);
 

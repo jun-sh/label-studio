@@ -1,8 +1,11 @@
 import { format } from "date-fns";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
 import { IconCross } from "@humansignal/icons";
 import { Userpic, Button } from "@humansignal/ui";
 import { cn } from "../../../utils/bem";
+import { getDateFnsLocale } from "../../../utils/dateFnsLocale";
 import "./SelectedUser.scss";
 
 const UserProjectsLinks = ({ projects }) => {
@@ -23,6 +26,8 @@ const UserProjectsLinks = ({ projects }) => {
 };
 
 export const SelectedUser = ({ user, onClose }) => {
+  const { t, i18n } = useTranslation("common");
+  const dateLocale = useMemo(() => getDateFnsLocale(i18n.language), [i18n.language]);
   const fullName = [user.first_name, user.last_name]
     .filter((n) => !!n)
     .join(" ")
@@ -34,7 +39,7 @@ export const SelectedUser = ({ user, onClose }) => {
         look="string"
         onClick={onClose}
         className="absolute top-[20px] right-[24px]"
-        aria-label="Close user details"
+        aria-label={t("people.close_details_aria")}
       >
         <IconCross />
       </Button>
@@ -55,7 +60,7 @@ export const SelectedUser = ({ user, onClose }) => {
 
       {!!user.created_projects.length && (
         <div className={cn("user-info").elem("section").toClassName()}>
-          <div className={cn("user-info").elem("section-title").toClassName()}>Created Projects</div>
+          <div className={cn("user-info").elem("section-title").toClassName()}>{t("people.created_projects")}</div>
 
           <UserProjectsLinks projects={user.created_projects} />
         </div>
@@ -63,14 +68,15 @@ export const SelectedUser = ({ user, onClose }) => {
 
       {!!user.contributed_to_projects.length && (
         <div className={cn("user-info").elem("section").toClassName()}>
-          <div className={cn("user-info").elem("section-title").toClassName()}>Contributed to</div>
+          <div className={cn("user-info").elem("section-title").toClassName()}>{t("people.contributed_to")}</div>
 
           <UserProjectsLinks projects={user.contributed_to_projects} />
         </div>
       )}
 
       <p className={cn("user-info").elem("last-active").toClassName()}>
-        Last activity on: {format(new Date(user.last_activity), "dd MMM yyyy, KK:mm a")}
+        {t("people.last_activity")}{" "}
+        {format(new Date(user.last_activity), "dd MMM yyyy, KK:mm a", { locale: dateLocale })}
       </p>
     </div>
   );

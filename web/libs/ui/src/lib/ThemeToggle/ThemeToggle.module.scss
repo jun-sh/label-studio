@@ -53,10 +53,12 @@
 
   &.light .animationWrapper {
     transform: rotate(90deg);
+    color: var(--color-primary-icon, #6d87c4);
   }
 
   &.dark .animationWrapper {
     transform: rotate(0deg);
+    color: var(--color-primary-icon, #8fa3d2);
   }
 
 }
@@ -72,6 +74,10 @@
 
   svg {
     position: absolute;
+
+    path {
+      fill: currentColor;
+    }
   }
 }
 

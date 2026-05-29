@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Spinner } from "../../../components";
 import { cn } from "../../../utils/bem";
 import "./Config.scss";
@@ -19,6 +20,7 @@ const loadDependencies = async () => {
 };
 
 export const Preview = ({ config, data, error, loading, project }) => {
+  const { t } = useTranslation("common");
   // @see comment about dependencies above
   loadDependencies();
 
@@ -141,7 +143,7 @@ export const Preview = ({ config, data, error, loading, project }) => {
 
   return (
     <div className={configClass.elem("preview").toClassName()}>
-      <h3>Preview</h3>
+      <h3>{t("labeling_config.preview_heading")}</h3>
       {error && (
         <div className={configClass.elem("preview-error").toClassName()}>
           <h2>

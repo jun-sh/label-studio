@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IconWarning, ToastType, useToast } from "@humansignal/ui";
 
 // Shadcn UI components
@@ -18,6 +19,7 @@ import { HotkeySection } from "./Hotkeys/Section";
 import { ImportDialog } from "./Hotkeys/Import";
 import { KeyboardKey } from "./Hotkeys/Key";
 import type { Hotkey, Section, DirtyState, DuplicateConfirmDialog, ImportData } from "./Hotkeys/utils";
+import { hotkeyElementSlug } from "./Hotkeys/hotkeyI18n";
 // @ts-ignore
 import { HOTKEY_SECTIONS } from "./Hotkeys/defaults";
 import styles from "../AccountSettings.module.scss";
@@ -27,6 +29,7 @@ import { useHotkeys } from "../hooks/useHotkeys";
 const typedHotkeySections = HOTKEY_SECTIONS as Section[];
 
 export const HotkeysHeaderButtons = () => {
+  const { t } = useTranslation("common");
   const [importDialogOpen, setImportDialogOpen] = useState<boolean>(false);
   const { handleResetToDefaults, handleExportHotkeys, handleImportHotkeys } = useHotkeys();
 
@@ -34,13 +37,13 @@ export const HotkeysHeaderButtons = () => {
     <>
       <div className={`${styles.flexRow} justify-end gap-tight`}>
         <Button variant="neutral" look="outlined" onClick={() => setImportDialogOpen(true)}>
-          Import
+          {t("hotkeys.header.import", { defaultValue: "Import" })}
         </Button>
         <Button variant="neutral" look="outlined" onClick={handleExportHotkeys}>
-          Export
+          {t("hotkeys.header.export", { defaultValue: "Export" })}
         </Button>
         <Button variant="negative" look="outlined" onClick={handleResetToDefaults}>
-          Reset to Defaults
+          {t("hotkeys.header.reset_defaults", { defaultValue: "Reset to Defaults" })}
         </Button>
       </div>
 
@@ -51,6 +54,7 @@ export const HotkeysHeaderButtons = () => {
 };
 
 export const HotkeysManager = () => {
+  const { t } = useTranslation("common");
   const toast = useToast();
   const [editingHotkeyId, setEditingHotkeyId] = useState<string | null>(null);
   const [dirtyState, setDirtyState] = useState<DirtyState>({});
@@ -94,7 +98,9 @@ export const HotkeysManager = () => {
   // Helper function to get section title by ID
   const getSectionTitle = (sectionId: string): string => {
     const section = typedHotkeySections.find((s: Section) => s.id === sectionId);
-    return section ? section.title : sectionId;
+    return section
+      ? t(`hotkeys.sections.${section.id}.title`, { defaultValue: section.title })
+      : sectionId;
   };
 
   // Handle saving an edited hotkey
@@ -195,27 +201,35 @@ export const HotkeysManager = () => {
         setDirtyState(newDirtyState);
 
         const sectionName =
-          sectionId === "settings" ? "Settings" : typedHotkeySections.find((s: Section) => s.id === sectionId)?.title;
+          sectionId === "settings"
+            ? t("hotkeys.sections.settings.title", { defaultValue: "Settings" })
+            : getSectionTitle(sectionId);
 
         if (toast) {
           toast.show({
-            message: `${sectionName} hotkeys saved successfully`,
+            message: t("hotkeys.toast.section_saved", {
+              section: sectionName ?? sectionId,
+              defaultValue: "{{section}} hotkeys saved successfully",
+            }),
             type: ToastType.info,
           });
         }
       } else {
         if (toast) {
           toast.show({
-            message: `Failed to save: ${result.error || "Unknown error"}`,
+            message: t("hotkeys.toast.save_failed", {
+              error: result.error || t("hotkeys.errors.unknown", { defaultValue: "Unknown error" }),
+              defaultValue: "Failed to save: {{error}}",
+            }),
             type: ToastType.error,
           });
         }
       }
     } catch (error: unknown) {
       if (toast) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        const errorMessage = error instanceof Error ? error.message : t("hotkeys.errors.unknown", { defaultValue: "Unknown error" });
         toast.show({
-          message: `Error saving: ${errorMessage}`,
+          message: t("hotkeys.toast.save_error", { error: errorMessage, defaultValue: "Error saving: {{error}}" }),
           type: ToastType.error,
         });
       }
@@ -240,19 +254,25 @@ export const HotkeysManager = () => {
       const result = await saveHotkeysToAPI(importedHotkeys, importedSettings);
 
       if (!result.ok) {
-        throw new Error(result.error || "Failed to save imported hotkeys");
+        throw new Error(result.error || t("hotkeys.errors.import_save_failed", { defaultValue: "Failed to save imported hotkeys" }));
       }
 
       // Reset dirty state
       setDirtyState({});
 
       if (toast) {
-        toast.show({ message: "Hotkeys imported successfully", type: ToastType.info });
+        toast.show({
+          message: t("hotkeys.toast.import_ok", { defaultValue: "Hotkeys imported successfully" }),
+          type: ToastType.info,
+        });
       }
     } catch (error: unknown) {
       if (toast) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        toast.show({ message: `Error importing hotkeys: ${errorMessage}`, type: ToastType.error });
+        const errorMessage = error instanceof Error ? error.message : t("hotkeys.errors.unknown", { defaultValue: "Unknown error" });
+        toast.show({
+          message: t("hotkeys.toast.import_error", { error: errorMessage, defaultValue: "Error importing hotkeys: {{error}}" }),
+          type: ToastType.error,
+        });
       }
     } finally {
       setIsLoading(false);
@@ -324,9 +344,12 @@ export const HotkeysManager = () => {
       <Dialog open={duplicateConfirmDialog.open} onOpenChange={handleCancelDuplicate}>
         <DialogContent className="bg-neutral-surface">
           <DialogHeader>
-            <DialogTitle>Warning: Duplicate Hotkey Detected</DialogTitle>
+            <DialogTitle>{t("hotkeys.duplicate.title", { defaultValue: "Warning: Duplicate Hotkey Detected" })}</DialogTitle>
             <DialogDescription>
-              The hotkey combination "<strong>{duplicateConfirmDialog.newKey}</strong>" is already being used by:
+              {t("hotkeys.duplicate.lead", {
+                key: duplicateConfirmDialog.newKey,
+                defaultValue: 'The hotkey combination "{{key}}" is already being used by:',
+              })}
             </DialogDescription>
           </DialogHeader>
 
@@ -339,7 +362,9 @@ export const HotkeysManager = () => {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="font-medium overflow-hidden text-ellipsis whitespace-nowrap">
-                      {conflictHotkey.label}
+                      {t(`hotkeys.items.${hotkeyElementSlug(conflictHotkey.element)}.label`, {
+                        defaultValue: conflictHotkey.label,
+                      })}
                     </div>
                     <div className="text-small text-neutral-content-subtler">
                       {getSectionTitle(conflictHotkey.section)}
@@ -358,15 +383,20 @@ export const HotkeysManager = () => {
               <IconWarning className="text-warning-icon" />
             </div>
             <div>
-              Having duplicate hotkeys may cause conflicts and unexpected behavior. Are you sure you want to proceed?
+              {t("hotkeys.duplicate.warning_body", {
+                defaultValue:
+                  "Having duplicate hotkeys may cause conflicts and unexpected behavior. Are you sure you want to proceed?",
+              })}
             </div>
           </DialogDescription>
 
           <DialogFooter>
             <Button variant="neutral" onClick={handleCancelDuplicate}>
-              Cancel
+              {t("hotkeys.ui.cancel", { defaultValue: "Cancel" })}
             </Button>
-            <Button onClick={handleConfirmDuplicate}>Allow Duplicate</Button>
+            <Button onClick={handleConfirmDuplicate}>
+              {t("hotkeys.duplicate.allow", { defaultValue: "Allow Duplicate" })}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

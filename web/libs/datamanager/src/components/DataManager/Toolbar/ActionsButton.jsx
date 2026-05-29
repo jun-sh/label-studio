@@ -2,6 +2,7 @@ import { IconChevronDown, IconChevronRight, IconTrash } from "@humansignal/icons
 import { Button, Spinner, Badge, EnterpriseBadge } from "@humansignal/ui";
 import { inject, observer } from "mobx-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useActions } from "../../../hooks/useActions";
 import { cn } from "../../../utils/bem";
 import { FF_LOPS_E_3, isFF } from "../../../utils/feature-flags";
@@ -213,6 +214,7 @@ const invokeAction = (action, destructive, store, formRef) => {
 
 export const ActionsButton = injector(
   observer(({ store, size, hasSelected, ...rest }) => {
+    const { t } = useTranslation("common");
     const formRef = useRef();
     const selectedCount = store.currentView.selectedCount;
     const [isOpen, setIsOpen] = useState(false);
@@ -233,7 +235,14 @@ export const ActionsButton = injector(
     const actionButtons = actions.map((action) => (
       <ActionButton key={action.id} action={action} parentRef={formRef} store={store} formRef={formRef} />
     ));
-    const recordTypeLabel = isFFLOPSE3 && store.SDK.type === "DE" ? "Record" : "Task";
+    const recordTypeLabel =
+      selectedCount > 1
+        ? isFFLOPSE3 && store.SDK.type === "DE"
+          ? t("dm.toolbar.records")
+          : t("dm.toolbar.tasks_word")
+        : isFFLOPSE3 && store.SDK.type === "DE"
+          ? t("dm.toolbar.record")
+          : t("dm.toolbar.task");
 
     return (
       <Dropdown.Trigger
@@ -241,7 +250,7 @@ export const ActionsButton = injector(
           <Menu size="compact">
             {isLoading || isFetching ? (
               <Menu.Item data-testid="loading-actions" disabled>
-                Loading actions...
+                {t("dm.toolbar.loading_actions")}
               </Menu.Item>
             ) : (
               actionButtons
@@ -258,10 +267,10 @@ export const ActionsButton = injector(
           look="outlined"
           disabled={!hasSelected}
           trailing={<IconChevronDown />}
-          aria-label="Tasks Actions"
+          aria-label={t("dm.toolbar.actions_aria")}
           {...rest}
         >
-          {selectedCount > 0 ? `${selectedCount} ${recordTypeLabel}${selectedCount > 1 ? "s" : ""}` : "Actions"}
+          {selectedCount > 0 ? `${selectedCount} ${recordTypeLabel}` : t("dm.toolbar.actions")}
         </Button>
       </Dropdown.Trigger>
     );

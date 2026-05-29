@@ -1,0 +1,11 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir pyarrow \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  --default-timeout=120
+
+COPY scripts/sync-stream-parquet.py /scripts/sync-stream-parquet.py
+
+ENV STREAM_SYNC_INTERVAL=5
+
+CMD ["sh", "-c", "while true; do for d in /srv/stream/*/; do [ -f \"$d/data/chunk-000/file-000.jsonl\" ] || continue; python3 /scripts/sync-stream-parquet.py \"$d\" || true; done; sleep ${STREAM_SYNC_INTERVAL}; done"]

@@ -21,6 +21,7 @@ if (ALLOW_ORGANIZATION_WEBHOOKS) {
 
 export const OrganizationPage = {
   title: "Organization",
+  i18nTitleKey: "breadcrumbs.organization",
   path: "/organization",
   exact: true,
   layout: MenuLayout,

@@ -1,5 +1,6 @@
 import { confirm } from "@humansignal/ui/lib/modal";
 import { ToastType, useToast } from "@humansignal/ui/lib/toast/toast";
+import i18n from "i18next";
 // @ts-ignore
 import { useAPI } from "@humansignal/core";
 import { useCallback, useEffect, useState } from "react";
@@ -15,6 +16,9 @@ import {
 
 // Type the imported defaults and convert numeric ids to strings
 const typedDefaultHotkeys: Hotkey[] = getTypedDefaultHotkeys();
+
+const ht = (key: string, options?: Record<string, unknown>) =>
+  i18n.t(key, { ns: "common", ...options });
 
 export const useHotkeys = () => {
   const toast = useToast();
@@ -138,7 +142,9 @@ export const useHotkeys = () => {
       // Show non-blocking error notification
       if (toast) {
         toast.show({
-          message: "Could not load custom hotkeys from server, using cached settings",
+          message: ht("hotkeys.hook.load_failed", {
+            defaultValue: "Could not load custom hotkeys from server, using cached settings",
+          }),
           type: ToastType.error,
         });
       }
@@ -197,20 +203,30 @@ export const useHotkeys = () => {
         console.error(`Error ${operation} hotkeys:`, error);
 
         // Provide more specific error messages
-        let errorMessage = `Failed to ${isReset ? "reset" : "save"} hotkeys`;
+        let errorMessage = ht(isReset ? "hotkeys.hook.save_failed_reset" : "hotkeys.hook.save_failed_save", {
+          defaultValue: isReset ? "Failed to reset hotkeys" : "Failed to save hotkeys",
+        });
         if (error && typeof error === "object" && "response" in error) {
           const err = error as any;
           // Server responded with error status
           if (err.response?.status === 400) {
-            errorMessage = err.response.data?.error || `Invalid ${isReset ? "reset request" : "hotkeys configuration"}`;
+            errorMessage =
+              err.response.data?.error ||
+              ht(isReset ? "hotkeys.hook.invalid_reset" : "hotkeys.hook.invalid_save", {
+                defaultValue: isReset ? "Invalid reset request" : "Invalid hotkeys configuration",
+              });
           } else if (err.response?.status === 401) {
-            errorMessage = "Authentication required";
+            errorMessage = ht("hotkeys.hook.auth_required", { defaultValue: "Authentication required" });
           } else if (err.response?.status >= 500) {
-            errorMessage = "Server error - please try again later";
+            errorMessage = ht("hotkeys.hook.server_error", {
+              defaultValue: "Server error - please try again later",
+            });
           }
         } else if (error && typeof error === "object" && "request" in error) {
           // Network error
-          errorMessage = "Network error - please check your connection";
+          errorMessage = ht("hotkeys.hook.network_error", {
+            defaultValue: "Network error - please check your connection",
+          });
         }
 
         return {
@@ -225,9 +241,12 @@ export const useHotkeys = () => {
   // Handle resetting all hotkeys to defaults
   const handleResetToDefaults = useCallback(() => {
     confirm({
-      title: "Reset Hotkeys to Defaults?",
-      body: "Are you sure you want to reset all hotkeys and settings to their default values? This action cannot be undone.",
-      okText: "Reset to Defaults",
+      title: ht("hotkeys.hook.reset_confirm_title", { defaultValue: "Reset Hotkeys to Defaults?" }),
+      body: ht("hotkeys.hook.reset_confirm_body", {
+        defaultValue:
+          "Are you sure you want to reset all hotkeys and settings to their default values? This action cannot be undone.",
+      }),
+      okText: ht("hotkeys.hook.reset_ok", { defaultValue: "Reset to Defaults" }),
       buttonLook: "negative",
       style: { width: 500 },
       onOk: async () => {
@@ -240,7 +259,9 @@ export const useHotkeys = () => {
           if (result.ok) {
             if (toast) {
               toast.show({
-                message: "All hotkeys and settings have been reset to defaults and saved",
+                message: ht("hotkeys.hook.reset_success", {
+                  defaultValue: "All hotkeys and settings have been reset to defaults and saved",
+                }),
                 type: ToastType.info,
               });
             }
@@ -249,16 +270,23 @@ export const useHotkeys = () => {
           } else {
             if (toast) {
               toast.show({
-                message: `Failed to save reset hotkeys: ${result.error || "Unknown error"}`,
+                message: ht("hotkeys.hook.reset_save_failed", {
+                  error: result.error || ht("hotkeys.errors.unknown", { defaultValue: "Unknown error" }),
+                  defaultValue: "Failed to save reset hotkeys: {{error}}",
+                }),
                 type: ToastType.error,
               });
             }
           }
         } catch (error: unknown) {
           if (toast) {
-            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            const errorMessage =
+              error instanceof Error ? error.message : ht("hotkeys.errors.unknown", { defaultValue: "Unknown error" });
             toast.show({
-              message: `Error resetting hotkeys: ${errorMessage}`,
+              message: ht("hotkeys.hook.reset_exception", {
+                error: errorMessage,
+                defaultValue: "Error resetting hotkeys: {{error}}",
+              }),
               type: ToastType.error,
             });
           }
@@ -299,7 +327,7 @@ export const useHotkeys = () => {
 
     if (toast) {
       toast.show({
-        message: "Hotkeys exported successfully",
+        message: ht("hotkeys.hook.export_success", { defaultValue: "Hotkeys exported successfully" }),
         type: ToastType.info,
       });
     }
@@ -319,7 +347,10 @@ export const useHotkeys = () => {
         const result = await saveHotkeysToAPI(importedHotkeys, importedSettings);
 
         if (!result.ok) {
-          throw new Error(result.error || "Failed to save imported hotkeys");
+          throw new Error(
+            result.error ||
+              ht("hotkeys.errors.import_save_failed", { defaultValue: "Failed to save imported hotkeys" }),
+          );
         }
 
         // Update local state
@@ -327,7 +358,7 @@ export const useHotkeys = () => {
 
         if (toast) {
           toast.show({
-            message: "Hotkeys imported successfully",
+            message: ht("hotkeys.toast.import_ok", { defaultValue: "Hotkeys imported successfully" }),
             type: ToastType.info,
           });
         }
@@ -336,9 +367,13 @@ export const useHotkeys = () => {
         await loadHotkeysFromAPI();
       } catch (error: unknown) {
         if (toast) {
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          const errorMessage =
+            error instanceof Error ? error.message : ht("hotkeys.errors.unknown", { defaultValue: "Unknown error" });
           toast.show({
-            message: `Error importing hotkeys: ${errorMessage}`,
+            message: ht("hotkeys.toast.import_error", {
+              error: errorMessage,
+              defaultValue: "Error importing hotkeys: {{error}}",
+            }),
             type: ToastType.error,
           });
         }

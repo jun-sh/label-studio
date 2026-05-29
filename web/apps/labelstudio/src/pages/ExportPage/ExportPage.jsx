@@ -6,7 +6,6 @@ import {
   IconTerminal,
   IconCode,
   IconBook,
-  IconExternal,
   IconCopyOutline,
 } from "@humansignal/icons";
 import { Form, Input } from "../../components/Form";
@@ -18,14 +17,8 @@ import { cn } from "../../utils/bem";
 import { isDefined, copyText } from "../../utils/helpers";
 import "./ExportPage.scss";
 
-// Community Edition exports run synchronously in a single HTTP request.
-// Large exports can exceed typical proxy timeouts, so we warn early and link to alternatives.
+// Large exports can exceed typical proxy timeouts; we warn early (links removed for internal deployments).
 const LARGE_EXPORT_TASK_THRESHOLD = 1000;
-const EXPORT_TIMEOUT_DOCS_URL = "https://labelstud.io/guide/export.html#Export-timeout-in-Community-Edition";
-const EXPORT_CONSOLE_DOCS_URL = "https://labelstud.io/guide/export.html#Export-using-console-command";
-const EXPORT_SNAPSHOT_SDK_URL = "https://api.labelstud.io/api-reference/api-reference/projects/exports/create";
-const ENTERPRISE_URL = "https://docs.humansignal.com/guide/label_studio_compare";
-
 // const formats = {
 //   json: 'JSON',
 //   csv: 'CSV',
@@ -190,9 +183,9 @@ export const ExportPage = () => {
           )}
           <Space style={{ width: "100%" }} spread>
             <div className={cn("export-page").elem("recent").toClassName()}>
-              <a className="no-go" href={EXPORT_TIMEOUT_DOCS_URL} target="_blank" rel="noreferrer">
-                Having a timeout or trouble exporting large projects?
-              </a>
+              <span className="text-neutral-content-subtle">
+                Having timeout issues? Use the CLI export command or ask your platform team.
+              </span>
             </div>
             <div className={cn("export-page").elem("actions").toClassName()}>
               <Button className="w-[135px]" onClick={proceedExport} waiting={downloading} aria-label="Export data">
@@ -257,21 +250,7 @@ const FormatInfo = ({ availableFormats, selected, onClick }) => {
         ))}
       </div>
       <div className={cn("formats").elem("feedback").toClassName()}>
-        Can't find an export format?
-        <br />
-        Please let us know in{" "}
-        <a className="no-go" href="https://slack.labelstud.io/?source=product-export" target="_blank" rel="noreferrer">
-          Slack
-        </a>{" "}
-        or submit an issue to the{" "}
-        <a
-          className="no-go"
-          href="https://github.com/HumanSignal/label-studio-converter/issues"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Repository
-        </a>
+        Need another export format? Contact your platform team.
       </div>
     </div>
   );
@@ -289,15 +268,7 @@ const ExportLargeProjectWarning = ({ taskCount }) => {
         Large project detected ({taskCount.toLocaleString()} tasks)
       </div>
       <div className={cn("export-page").elem("warning-body").toClassName()}>
-        To avoid potential timeouts during large dataset exports in the Community Edition, use the{" "}
-        <a className="no-go" href={EXPORT_TIMEOUT_DOCS_URL} target="_blank" rel="noreferrer">
-          CLI/SDK export options
-        </a>{" "}
-        or consider{" "}
-        <a className="no-go" href={ENTERPRISE_URL} target="_blank" rel="noreferrer">
-          Enterprise
-        </a>{" "}
-        for background exports at scale.
+        To reduce timeouts on large exports, use CLI or API exports, or ask your platform team about batched exports.
       </div>
     </div>
   );
@@ -332,12 +303,7 @@ const ExportTimeoutGuidance = ({ projectId, exportType }) => {
               <IconTerminal className={cn("export-page").elem("timeout-action-icon").toClassName()} />
               <div className={cn("export-page").elem("timeout-action-content").toClassName()}>
                 <span>
-                  Export using the{" "}
-                  <a className="no-go" href={EXPORT_CONSOLE_DOCS_URL} target="_blank" rel="noreferrer">
-                    console command
-                    <IconExternal className={cn("export-page").elem("timeout-link-icon").toClassName()} />
-                  </a>
-                  :
+                  Export using the <strong>console command</strong>:
                 </span>
                 <div className={cn("export-page").elem("timeout-code-wrapper").toClassName()}>
                   <pre className={cn("export-page").elem("timeout-code").toClassName()}>
@@ -363,12 +329,7 @@ const ExportTimeoutGuidance = ({ projectId, exportType }) => {
             <div className={cn("export-page").elem("timeout-action-item").toClassName()}>
               <IconCode className={cn("export-page").elem("timeout-action-icon").toClassName()} />
               <div className={cn("export-page").elem("timeout-action-content").toClassName()}>
-                Use{" "}
-                <a className="no-go" href={EXPORT_SNAPSHOT_SDK_URL} target="_blank" rel="noreferrer">
-                  export snapshots via the SDK
-                  <IconExternal className={cn("export-page").elem("timeout-link-icon").toClassName()} />
-                </a>{" "}
-                to create and download a snapshot without relying on a single UI request.
+                Use export snapshots via the SDK to create and download a snapshot without relying on a single UI request.
               </div>
             </div>
           </li>
@@ -376,25 +337,15 @@ const ExportTimeoutGuidance = ({ projectId, exportType }) => {
             <div className={cn("export-page").elem("timeout-action-item").toClassName()}>
               <IconWarningCircleFilled className={cn("export-page").elem("timeout-action-icon").toClassName()} />
               <div className={cn("export-page").elem("timeout-action-content").toClassName()}>
-                For large-scale exports in the UI, consider{" "}
-                <a className="no-go" href={ENTERPRISE_URL} target="_blank" rel="noreferrer">
-                  Label Studio Enterprise
-                  <IconExternal className={cn("export-page").elem("timeout-link-icon").toClassName()} />
-                </a>{" "}
-                since it is designed for large-scale projects and asynchronous exports.
+                For very large datasets, use the API or batch exports. Ask your platform team if UI exports keep timing
+                out.
               </div>
             </div>
           </li>
         </ul>
         <div className={cn("export-page").elem("timeout-footer").toClassName()}>
           <IconBook className={cn("export-page").elem("timeout-footer-icon").toClassName()} />
-          <span>
-            More details in the documentation:{" "}
-            <a className="no-go" href={EXPORT_TIMEOUT_DOCS_URL} target="_blank" rel="noreferrer">
-              Export timeout in Community Edition
-              <IconExternal className={cn("export-page").elem("timeout-link-icon").toClassName()} />
-            </a>
-          </span>
+          <span>Ask your platform team for guidance on long-running exports.</span>
         </div>
       </div>
     </div>

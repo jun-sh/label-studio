@@ -39,6 +39,8 @@ export type {
 
 export { ff };
 
+export * from "./lib/i18n/ui-locale";
+
 // Image cache for shared use across editor and datamanager
 export { imageCache } from "./lib/utils/ImageCache";
 

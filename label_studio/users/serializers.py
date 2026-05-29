@@ -7,6 +7,8 @@ from rest_flex_fields import FlexFieldsModelSerializer
 from rest_framework import serializers
 from users.models import User
 
+ALLOWED_UI_LOCALES = frozenset({'en', 'zh-Hans'})
+
 
 class BaseUserSerializer(FlexFieldsModelSerializer):
     # short form for user presentation
@@ -76,6 +78,13 @@ class BaseUserSerializer(FlexFieldsModelSerializer):
 
         return self.context[key][uid]
 
+    def validate_ui_locale(self, value):
+        if value is not None and value not in ALLOWED_UI_LOCALES:
+            raise serializers.ValidationError(
+                'Unsupported locale; allowed: ' + ', '.join(sorted(ALLOWED_UI_LOCALES))
+            )
+        return value
+
     class Meta:
         model = User
         fields = (
@@ -93,6 +102,7 @@ class BaseUserSerializer(FlexFieldsModelSerializer):
             'active_organization_meta',
             'allow_newsletters',
             'date_joined',
+            'ui_locale',
         )
 
 

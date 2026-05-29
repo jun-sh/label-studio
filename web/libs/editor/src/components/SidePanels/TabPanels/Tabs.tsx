@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { IconOutlinerDrag, IconCollapseSmall, IconExpandSmall } from "@humansignal/ui";
 import { useDrag } from "../../../hooks/useDrag";
 import { cn } from "../../../utils/bem";
@@ -7,6 +8,10 @@ import "./Tabs.scss";
 import { type BaseProps, Side, type TabProps } from "./types";
 import { determineDroppableArea, determineLeftOrRight } from "./utils";
 import { Button } from "../../../common/Button/Button";
+
+function capitalizePanelTabIdSegment(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
 
 const classAddedTabs: (Element | undefined)[] = [];
 
@@ -39,6 +44,7 @@ const Tab = ({
   name,
   rootRef,
   tabTitle: tabText,
+  draggableSegment,
   tabIndex,
   panelKey,
   viewLength,
@@ -174,7 +180,7 @@ const Tab = ({
     <div className={cn("panel-tabs").toClassName()}>
       <div
         className={cn("panel-tabs").elem("draggable-tab").toClassName()}
-        id={`${tabText}-draggable`}
+        id={`${draggableSegment}-draggable`}
         ref={tabRef as any}
       >
         <Label />
@@ -205,6 +211,7 @@ export const Tabs = (
     panelHeight?: number;
   },
 ) => {
+  const { t } = useTranslation("common");
   const ActiveComponent = props.locked
     ? props.panelViews[props.breakPointActiveTab].component
     : props.panelViews?.find((view) => view.active)?.component;
@@ -215,20 +222,23 @@ export const Tabs = (
         <div className={cn("tabs").elem("tabs-row").toClassName()}>
           {props.panelViews.map((view, index) => {
             const { component: Component } = view;
+            const draggableSegment = capitalizePanelTabIdSegment(view.name);
+            const tabLabel = t(`editor.sidebar_tabs.${view.name}`, { defaultValue: view.title });
 
             return (
               <div
                 className={cn("tabs").elem("tab-container").mod({ active: view.active }).toClassName()}
-                key={`${view.title}-${index}-tab`}
+                key={`${view.name}-${index}-tab`}
               >
                 <Tab
                   name={view.name}
                   rootRef={props.root}
-                  key={`${view.title}-tab`}
+                  key={`${view.name}-tab`}
                   panelKey={props.name}
                   tabIndex={index}
                   active={view.active}
-                  tabTitle={view.title}
+                  tabTitle={tabLabel}
+                  draggableSegment={draggableSegment}
                   panelWidth={props.width}
                   viewLength={props.panelViews.length}
                   locked={props.locked}
@@ -241,7 +251,7 @@ export const Tabs = (
                 >
                   <div className={cn("tabs").elem("content").toClassName()}>
                     {/* FIT-720: Pass isActive={false} for ghost/preview components to prevent eager loading */}
-                    <Component key={`${view.title}-${index}-ghost`} {...props} name={"outliner"} isActive={false} />
+                    <Component key={`${view.name}-${index}-ghost`} {...props} name={"outliner"} isActive={false} />
                   </div>
                 </Tab>
               </div>

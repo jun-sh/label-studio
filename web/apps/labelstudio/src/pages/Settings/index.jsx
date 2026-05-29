@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { SidebarMenu } from "../../components/SidebarMenu/SidebarMenu";
 import { WebhookPage } from "../WebhookPage/WebhookPage";
 import { DangerZone } from "./DangerZone";
@@ -10,6 +11,7 @@ import { StorageSettings } from "./StorageSettings/StorageSettings";
 import "./settings.scss";
 
 export const MenuLayout = ({ children, ...routeProps }) => {
+  const { t } = useTranslation("common");
   return (
     <SidebarMenu
       menuItems={[
@@ -23,6 +25,7 @@ export const MenuLayout = ({ children, ...routeProps }) => {
         DangerZone,
       ].filter(Boolean)}
       path={routeProps.match.url}
+      t={t}
       children={children}
     />
   );
@@ -40,6 +43,7 @@ const pages = {
 
 export const SettingsPage = {
   title: "Settings",
+  i18nTitleKey: "breadcrumbs.settings",
   path: "/settings",
   exact: true,
   layout: MenuLayout,

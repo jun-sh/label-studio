@@ -1,0 +1,7 @@
+# Add in-container parquet sync on top of the running lerobot image (ffmpeg already present).
+FROM data-lab-lerobot-studio:local
+
+RUN apk add --no-cache python3 py3-pyarrow
+
+COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh

@@ -1,3 +1,52 @@
+# Data Lab（本仓库）
+
+在 Label Studio 之上叠加数据可视化、采集站与内置 LeRobot 样例。平台部署、架构、常用 URL 与运维见 **[data-lab-platform/README.md](data-lab-platform/README.md)**。
+
+## 样例数据目录 `data-storage`
+
+平台统一数据根目录（**不再使用** `~/Downloads`）。与代码同路径，便于整机迁移。
+
+```
+data-storage/
+└── samples/          # 内置 LeRobot v3 样例压缩包（ingest 前源文件）
+```
+
+### 样例文件（`samples/` 下文件名须一致）
+
+| 源文件 | ingest 后 bundled 名 |
+|--------|----------------------|
+| `SenseXperience Ego.zip` | `sensexperience_ego.zip` |
+| `SenseXperience UMI.zip` | `sensexperience_umi.zip` |
+| `DualAirbot Folding.zip` | `dualairbot_fold.zip` |
+| `DualPiper Pulling.zip` | `dualpiper_pulling.zip` |
+
+- 若无 `DualPiper Pulling.zip`，可放置 `DualPiper Pulling.tar`；仍缺时 ingest 会从官方 COS 下载 `.tar`。
+- `*.zip` / `*.tar` 体积较大，已在 `.gitignore` 中忽略；**克隆 git 后需自行拷贝或从官方渠道获取**。
+
+### 部署与 ingest
+
+在仓库根目录执行：
+
+```bash
+bash data-lab-platform/deploy-local-datasets.sh
+```
+
+Docker 将 `./data-storage/samples` **只读**挂载到 `lerobot` 容器内的 `/datalab-samples`，脚本再拷贝到卷 `lerobot-bundled-data` 供 `/lerobot/bundled/` 访问。
+
+### 换机 / 迁移
+
+1. 拷贝**整个** `data-lab` 目录（**必须包含** `data-storage/samples/` 下四个压缩包）。  
+2. 在新机器仓库根目录执行：
+
+```bash
+export LABEL_STUDIO_HOST=http://<新机器地址>:8080   # 按需修改
+
+docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml up -d
+bash data-lab-platform/deploy-local-datasets.sh
+```
+
+---
+
 <img src="https://user-images.githubusercontent.com/12534576/192582340-4c9e4401-1fe6-4dbb-95bb-fdbba5493f61.png"/>
 
 ![GitHub](https://img.shields.io/github/license/heartexlabs/label-studio?logo=heartex) ![label-studio:build](https://github.com/HumanSignal/label-studio/workflows/label-studio:build/badge.svg) ![GitHub release](https://img.shields.io/github/v/release/heartexlabs/label-studio?include_prereleases)

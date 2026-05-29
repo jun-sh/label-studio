@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { generatePath, matchPath, useHistory, useLocation } from "react-router";
 import { Pages } from "../pages";
 import { setBreadcrumbs, useBreadcrumbControls } from "../services/breadrumbs";
@@ -37,7 +38,18 @@ const findMacthingComponents = (path, routesMap, parentPath = "") => {
   return result;
 };
 
+function resolveRouteTitle(route, t) {
+  if (route.i18nTitleKey) {
+    return t(route.i18nTitleKey);
+  }
+  if (route.title instanceof Function) {
+    return route.title();
+  }
+  return route.title;
+}
+
 export const RoutesProvider = ({ children }) => {
+  const { t, i18n } = useTranslation("common");
   const history = useHistory();
   const location = useFixedLocation();
   const config = useConfig();
@@ -87,7 +99,7 @@ export const RoutesProvider = ({ children }) => {
         .map((route) => {
           const params = matchPath(location.pathname, { path: route.path });
           const path = generatePath(route.path, params.params);
-          const title = route.title instanceof Function ? route.title() : route.title;
+          const title = resolveRouteTitle(route, t);
           const key = route.component?.displayName ?? route.key ?? path;
 
           return { path, title, key };
@@ -98,7 +110,7 @@ export const RoutesProvider = ({ children }) => {
     } catch (err) {
       console.log(err);
     }
-  }, [location, routesMap, currentContextProps, routesChain, lastRoute]);
+  }, [location, routesMap, currentContextProps, routesChain, lastRoute, t, i18n.language]);
 
   return <RoutesContext.Provider value={contextValue}>{children}</RoutesContext.Provider>;
 };

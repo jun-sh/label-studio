@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useHistory } from "react-router";
+import { useTranslation } from "react-i18next";
 import { Button, Typography, useToast } from "@humansignal/ui";
 import { useUpdatePageTitle, createTitleFromSegments } from "@humansignal/core";
 import { Label } from "../../components/Form";
@@ -13,13 +14,14 @@ import { useProject } from "../../providers/ProjectProvider";
 import { cn } from "../../utils/bem";
 
 export const DangerZone = () => {
+  const { t } = useTranslation("common");
   const { project } = useProject();
   const api = useAPI();
   const history = useHistory();
   const toast = useToast();
   const [processing, setProcessing] = useState(null);
 
-  useUpdatePageTitle(createTitleFromSegments([project?.title, "Danger Zone"]));
+  useUpdatePageTitle(createTitleFromSegments([project?.title, t("danger_zone.page_title_segment")]));
 
   const showDangerConfirmation = ({ title, message, requiredWord, buttonText, onConfirm }) => {
     const isDev = process.env.NODE_ENV === "development";
@@ -38,7 +40,7 @@ export const DangerZone = () => {
               {message}
             </Typography>
             <Input
-              label={`To proceed, type "${requiredWord}" in the field below:`}
+              label={t("danger_zone.confirm_type_instruction", { word: requiredWord })}
               value={inputValue}
               onChange={(e) => ctrl?.setState({ inputValue: e.target.value })}
               autoFocus
@@ -61,7 +63,7 @@ export const DangerZone = () => {
               onClick={() => ctrl?.hide()}
               data-testid="danger-zone-cancel-button"
             >
-              Cancel
+              {t("danger_zone.cancel")}
             </Button>
             <Button
               variant="negative"
@@ -83,34 +85,22 @@ export const DangerZone = () => {
   const handleOnClick = (type) => () => {
     const actionConfig = {
       reset_cache: {
-        title: "Reset Cache",
-        message: (
-          <>
-            You are about to reset the cache for <strong>{project.title}</strong>. This action cannot be undone.
-          </>
-        ),
-        requiredWord: "cache",
-        buttonText: "Reset Cache",
+        title: t("danger_zone.reset_cache_title"),
+        message: t("danger_zone.reset_cache_confirm", { title: project.title }),
+        requiredWord: t("danger_zone.reset_cache_word"),
+        buttonText: t("danger_zone.reset_cache_title"),
       },
       tabs: {
-        title: "Drop All Tabs",
-        message: (
-          <>
-            You are about to drop all tabs for <strong>{project.title}</strong>. This action cannot be undone.
-          </>
-        ),
-        requiredWord: "tabs",
-        buttonText: "Drop All Tabs",
+        title: t("danger_zone.tabs_title"),
+        message: t("danger_zone.tabs_confirm", { title: project.title }),
+        requiredWord: t("danger_zone.tabs_word"),
+        buttonText: t("danger_zone.tabs_title"),
       },
       project: {
-        title: "Delete Project",
-        message: (
-          <>
-            You are about to delete the project <strong>{project.title}</strong>. This action cannot be undone.
-          </>
-        ),
-        requiredWord: "delete",
-        buttonText: "Delete Project",
+        title: t("danger_zone.delete_project_title"),
+        message: t("danger_zone.delete_project_confirm", { title: project.title }),
+        requiredWord: t("danger_zone.delete_word"),
+        buttonText: t("danger_zone.delete_project_title"),
       },
     };
 
@@ -131,25 +121,25 @@ export const DangerZone = () => {
                 pk: project.id,
               },
             });
-            toast.show({ message: "Cache reset successfully" });
+            toast.show({ message: t("danger_zone.toast_cache_ok") });
           } else if (type === "tabs") {
             await api.callApi("deleteTabs", {
               body: {
                 project: project.id,
               },
             });
-            toast.show({ message: "All tabs dropped successfully" });
+            toast.show({ message: t("danger_zone.toast_tabs_ok") });
           } else if (type === "project") {
             await api.callApi("deleteProject", {
               params: {
                 pk: project.id,
               },
             });
-            toast.show({ message: "Project deleted successfully" });
+            toast.show({ message: t("danger_zone.toast_project_deleted") });
             history.replace("/projects");
           }
         } catch (error) {
-          toast.show({ message: `Error: ${error.message}`, type: "error" });
+          toast.show({ message: `${t("danger_zone.toast_error_prefix")} ${error.message}`, type: "error" });
         } finally {
           setProcessing(null);
         }
@@ -176,34 +166,30 @@ export const DangerZone = () => {
       },
       {
         type: "reset_cache",
-        help:
-          "Reset Cache may help in cases like if you are unable to modify the labeling configuration due " +
-          "to validation errors concerning existing labels, but you are confident that the labels don't exist. You can " +
-          "use this action to reset the cache and try again.",
-        label: "Reset Cache",
+        help: t("danger_zone.help_reset_cache"),
+        label: t("danger_zone.reset_cache_title"),
       },
       {
         type: "tabs",
-        help: "If the Data Manager is not loading, dropping all Data Manager tabs can help.",
-        label: "Drop All Tabs",
+        help: t("danger_zone.help_tabs"),
+        label: t("danger_zone.tabs_title"),
       },
       {
         type: "project",
-        help: "Deleting a project removes all tasks, annotations, and project data from the database.",
-        label: "Delete Project",
+        help: t("danger_zone.help_delete_project"),
+        label: t("danger_zone.delete_project_title"),
       },
     ],
-    [project],
+    [project, t],
   );
 
   return (
     <div className={cn("simple-settings").toClassName()}>
       <Typography variant="headline" size="medium" className="mb-tighter">
-        Danger Zone
+        {t("breadcrumbs.danger_zone")}
       </Typography>
       <Typography variant="body" size="medium" className="text-neutral-content-subtler !mb-base">
-        Perform these actions at your own risk. Actions you take on this page can't be reverted. Make sure your data is
-        backed up.
+        {t("danger_zone.intro")}
       </Typography>
 
       {project.id ? (
@@ -245,4 +231,5 @@ export const DangerZone = () => {
 };
 
 DangerZone.title = "Danger Zone";
+DangerZone.i18nTitleKey = "breadcrumbs.danger_zone";
 DangerZone.path = "/danger-zone";

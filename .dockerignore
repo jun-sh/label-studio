@@ -1,9 +1,12 @@
 # Ignore everything:
 **
+# Local dev volume; may be unreadable to Docker daemon and is not part of the image
+postgres-data
 
 # Except:
 !deploy/docker-entrypoint.d/**
 !deploy/docker-entrypoint.sh
+!deploy/docker-entrypoint-root.sh
 !deploy/heroku_run.sh
 !deploy/uwsgi.ini
 !deploy/default.conf

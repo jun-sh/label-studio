@@ -1,31 +1,38 @@
 [
   {
     "id": "sensexperience_ego",
-    "name": "Sense Experience Ego",
-    "description": "IO-AI sample dataset (ego view)",
-    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    "name": "SenseXperience Ego",
+    "description": "LeRobot v3.0 · ego-centric multi-camera dataset",
+    "url": "sample://sensexperience_ego",
+    "archiveUrl": "/lerobot/bundled/sensexperience_ego.zip",
+    "previewVideoUrl": "",
+    "coverImageUrl": "/lerobot/bundled/covers/sensexperience_ego.webp"
   },
   {
-    "id": "lerobot-v3-sample",
-    "name": "LeRobot v3 Sample",
-    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    "id": "sensexperience_umi",
+    "name": "SenseXperience UMI",
+    "description": "LeRobot v3.0 · UMI manipulation dataset",
+    "url": "sample://sensexperience_umi",
+    "archiveUrl": "/lerobot/bundled/sensexperience_umi.zip",
+    "previewVideoUrl": "",
+    "coverImageUrl": "/lerobot/bundled/covers/sensexperience_umi.webp"
   },
   {
-    "id": "sample-2",
-    "name": "Sample Dataset 2",
-    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
+    "id": "dualairbot_fold",
+    "name": "DualAirbot Folding",
+    "description": "LeRobot v3.0 · dual-arm folding task",
+    "url": "sample://dualairbot_fold",
+    "archiveUrl": "/lerobot/bundled/dualairbot_fold.zip",
+    "previewVideoUrl": "",
+    "coverImageUrl": "/lerobot/bundled/covers/lerobot_dataset_dualairbot_fold.webp"
   },
   {
-    "id": "sample-3",
-    "name": "Sample Dataset 3",
-    "url": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "archiveUrl": "https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip",
-    "previewVideoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+    "id": "dualpiper_pulling",
+    "name": "DualPiper Pulling",
+    "description": "LeRobot v3.0 · dual Piper pulling task",
+    "url": "sample://dualpiper_pulling",
+    "archiveUrl": "/lerobot/bundled/dualpiper_pulling.zip",
+    "previewVideoUrl": "",
+    "coverImageUrl": "/lerobot/bundled/covers/lerobot_dataset_dualpiper_pulling.webp"
   }
 ]

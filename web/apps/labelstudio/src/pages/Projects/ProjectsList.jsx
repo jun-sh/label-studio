@@ -1,17 +1,20 @@
 import chr from "chroma-js";
 import { format } from "date-fns";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { NavLink } from "react-router-dom";
 import { IconCheck, IconEllipsis, IconMinus, IconSparks } from "@humansignal/icons";
 import { Userpic, Button, Dropdown, Tooltip } from "@humansignal/ui";
 import { Menu, Pagination } from "../../components";
 import { cn } from "../../utils/bem";
+import { getDateFnsLocale } from "../../utils/dateFnsLocale";
 import { absoluteURL } from "../../utils/helpers";
 import { ProjectStateChip } from "@humansignal/app-common";
 
 const DEFAULT_CARD_COLORS = ["#FFFFFF", "#FDFDFC"];
 
 export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, pageSize }) => {
+  const { t } = useTranslation("common");
   return (
     <>
       <div className={cn("projects-page").elem("list").toClassName()}>
@@ -22,7 +25,7 @@ export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, 
       <div className={cn("projects-page").elem("pages").toClassName()}>
         <Pagination
           name="projects-list"
-          label="Projects"
+          label={t("projects.pagination_label")}
           page={currentPage}
           totalItems={totalItems}
           urlParamName="page"
@@ -36,27 +39,32 @@ export const ProjectsList = ({ projects, currentPage, totalItems, loadNextPage, 
 };
 
 export const EmptyProjectsList = ({ openModal }) => {
+  const { t } = useTranslation("common");
   return (
     <div className={cn("empty-projects-page").toClassName()}>
       <img
-        alt="Heidi looking for projects"
+        alt={t("projects.empty_alt")}
         className={cn("empty-projects-page").elem("heidi").toClassName()}
         src={absoluteURL("/static/images/opossum_looking.png")}
       />
-      <h1 className={cn("empty-projects-page").elem("header").toClassName()}>Heidi doesn't see any projects here!</h1>
-      <p>Create one and start labeling your data.</p>
-      <Button onClick={openModal} className="my-8" aria-label="Create new project">
-        Create Project
+      <h1 className={cn("empty-projects-page").elem("header").toClassName()}>{t("projects.empty_title")}</h1>
+      <p>{t("projects.empty_description")}</p>
+      <Button onClick={openModal} className="my-8" aria-label={t("projects.create_aria")}>
+        {t("projects.create_project")}
       </Button>
     </div>
   );
 };
 
 const ProjectCard = ({ project }) => {
+  const { t, i18n } = useTranslation("common");
+  const dateLocale = useMemo(() => getDateFnsLocale(i18n.language), [i18n.language]);
   const color = useMemo(() => {
     return DEFAULT_CARD_COLORS.includes(project.color) ? null : project.color;
   }, [project]);
 
+  const cardTitle =
+    project.title === "Demo Project" ? t("projects.demo_card_title") : (project.title ?? t("projects.new_project"));
   const projectColors = useMemo(() => {
     const textColor =
       color && chr(color).luminance() > 0.3
@@ -82,9 +90,9 @@ const ProjectCard = ({ project }) => {
         <div className={cn("project-card").elem("header").toClassName()}>
           <div className={cn("project-card").elem("title").toClassName()}>
             <div className={cn("project-card").elem("title-text-wrapper").toClassName()}>
-              <Tooltip title={project.title ?? "New project"}>
+              <Tooltip title={cardTitle}>
                 <div className={cn("project-card").elem("title-text").toClassName()}>
-                  {project.title ?? "New project"}
+                  {cardTitle}
                 </div>
               </Tooltip>
             </div>
@@ -98,13 +106,13 @@ const ProjectCard = ({ project }) => {
             >
               <Dropdown.Trigger
                 content={
-                  <Menu contextual>
-                    <Menu.Item href={`/projects/${project.id}/settings`}>Settings</Menu.Item>
-                    <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>Label</Menu.Item>
+                    <Menu contextual>
+                    <Menu.Item href={`/projects/${project.id}/settings`}>{t("projects.settings")}</Menu.Item>
+                    <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>{t("projects.label")}</Menu.Item>
                   </Menu>
                 }
               >
-                <Button size="smaller" look="string" aria-label="Project options">
+                <Button size="smaller" look="string" aria-label={t("projects.project_options_aria")}>
                   <IconEllipsis />
                 </Button>
               </Dropdown.Trigger>
@@ -141,7 +149,7 @@ const ProjectCard = ({ project }) => {
         <div className={cn("project-card").elem("description").toClassName()}>{project.description}</div>
         <div className={cn("project-card").elem("info").toClassName()}>
           <div className={cn("project-card").elem("created-date").toClassName()}>
-            {format(new Date(project.created_at), "dd MMM yyyy, HH:mm")}
+            {format(new Date(project.created_at), "dd MMM yyyy, HH:mm", { locale: dateLocale })}
           </div>
           <div className={cn("project-card").elem("created-by").toClassName()}>
             <Userpic src="#" user={project.created_by} showUsernameTooltip />

@@ -1,5 +1,6 @@
 import { formatDistanceToNow, format, parseISO } from "date-fns";
-import { useCallback, useContext } from "react";
+import { useCallback, useContext, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import truncate from "truncate-middle";
 import { Menu } from "../../../components";
@@ -10,6 +11,7 @@ import { IconEllipsis } from "@humansignal/icons";
 import { Tooltip } from "@humansignal/ui";
 import { ApiContext } from "../../../providers/ApiProvider";
 import { cn } from "../../../utils/bem";
+import { getDateFnsLocale } from "../../../utils/dateFnsLocale";
 
 import "./MachineLearningList.scss";
 
@@ -45,18 +47,21 @@ export const MachineLearningList = ({ backends, fetchBackends, onEdit, onTestReq
 };
 
 const BackendCard = ({ backend, onStartTrain, onEdit, onDelete, onTestRequest }) => {
+  const { t, i18n } = useTranslation("common");
+  const dateLocale = useMemo(() => getDateFnsLocale(i18n.language), [i18n.language]);
+
   const confirmDelete = useCallback(
-    (backend) => {
+    (item) => {
       confirm({
-        title: "Delete ML Backend",
-        body: "This action cannot be undone. Are you sure?",
+        title: t("dialogs.delete_ml_backend_title"),
+        body: t("dialogs.cannot_undo_body"),
         buttonLook: "destructive",
         onOk() {
-          onDelete?.(backend);
+          onDelete?.(item);
         },
       });
     },
-    [backend, onDelete],
+    [onDelete, t],
   );
 
   const rootClass = cn("backend-card");
@@ -74,17 +79,17 @@ const BackendCard = ({ backend, onStartTrain, onEdit, onDelete, onTestRequest })
             align="right"
             content={
               <Menu size="medium" contextual>
-                <Menu.Item onClick={() => onEdit(backend)}>Edit</Menu.Item>
-                <Menu.Item onClick={() => onTestRequest(backend)}>Send Test Request</Menu.Item>
-                <Menu.Item onClick={() => onStartTrain(backend)}>Start Training</Menu.Item>
+                <Menu.Item onClick={() => onEdit(backend)}>{t("ml_ui.edit")}</Menu.Item>
+                <Menu.Item onClick={() => onTestRequest(backend)}>{t("ml_ui.send_test_request")}</Menu.Item>
+                <Menu.Item onClick={() => onStartTrain(backend)}>{t("ml_ui.start_training")}</Menu.Item>
                 <Menu.Divider />
                 <Menu.Item onClick={() => confirmDelete(backend)} isDangerous>
-                  Delete
+                  {t("ml_ui.delete")}
                 </Menu.Item>
               </Menu>
             }
           >
-            <Button look="string" size="small" className="!p-0" aria-label="Machine learning model options">
+            <Button look="string" size="small" className="!p-0" aria-label={t("ml_ui.model_options_aria")}>
               <IconEllipsis />
             </Button>
           </Dropdown.Trigger>
@@ -94,11 +99,12 @@ const BackendCard = ({ backend, onStartTrain, onEdit, onDelete, onTestRequest })
       <div className={rootClass.elem("meta").toClassName()}>
         <div className={rootClass.elem("group").toClassName()}>{truncate(backend.url, 20, 10, "...")}</div>
         <div className={rootClass.elem("group").toClassName()}>
-          <Tooltip title={format(parseISO(backend.created_at), "yyyy-MM-dd HH:mm:ss")}>
+          <Tooltip title={format(parseISO(backend.created_at), "yyyy-MM-dd HH:mm:ss", { locale: dateLocale })}>
             <span>
-              Created&nbsp;
+              {t("ml_ui.created_prefix")}&nbsp;
               {formatDistanceToNow(parseISO(backend.created_at), {
                 addSuffix: true,
+                locale: dateLocale,
               })}
             </span>
           </Tooltip>

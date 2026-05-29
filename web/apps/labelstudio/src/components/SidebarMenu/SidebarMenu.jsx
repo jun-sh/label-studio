@@ -2,14 +2,14 @@ import { cn } from "../../utils/bem";
 import { Menu } from "../Menu/Menu";
 import "./SidebarMenu.scss";
 
-export const SidebarMenu = ({ children, menu, path, menuItems }) => {
+export const SidebarMenu = ({ children, menu, path, menuItems, t }) => {
   const rootClass = cn("sidebar-menu");
 
   return (
     <div className={rootClass}>
       {menuItems && menuItems.length > 1 ? (
         <div className={rootClass.elem("navigation").toClassName()}>
-          <Menu>{menuItems ? Menu.Builder(path, menuItems) : menu}</Menu>
+          <Menu>{menuItems ? Menu.Builder(path, menuItems, t) : menu}</Menu>
         </div>
       ) : null}
       <div className={rootClass.elem("content").toClassName()}>{children}</div>

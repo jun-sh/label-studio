@@ -85,3 +85,7 @@ CLAUDE.local.md
 web/libs/editor/tests/coverage
 web/coverage-chunks
 .cache
+
+# Data Lab platform sample archives (large binaries; see README.md § data-storage)
+data-storage/samples/*.zip
+data-storage/samples/*.tar

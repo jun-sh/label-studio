@@ -1,6 +1,7 @@
 import { Button, Checkbox, Dropdown, EnterpriseBadge } from "@humansignal/ui";
 import { inject, observer } from "mobx-react";
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../utils/bem";
 import { Menu } from "./Menu/Menu";
 
@@ -11,6 +12,7 @@ const injector = inject(({ store }) => {
 });
 
 const FieldsMenu = observer(({ columns, WrapperComponent, onClick, onReset, selected, resetTitle }) => {
+  const { t } = useTranslation("common");
   const MenuItem = (col, onClick) => {
     const enterpriseBadge = col.enterprise_badge ?? col.original?.enterprise_badge;
     const shouldDisable = col.disabled || enterpriseBadge;
@@ -39,7 +41,7 @@ const FieldsMenu = observer(({ columns, WrapperComponent, onClick, onReset, sele
         MenuItem(
           {
             key: "none",
-            title: resetTitle ?? "Default",
+            title: resetTitle ?? t("dm.toolbar.order_default"),
             wrap: false,
           },
           onReset,

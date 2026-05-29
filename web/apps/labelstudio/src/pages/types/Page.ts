@@ -11,6 +11,8 @@ export type PageContext = FC<PageProps>;
 export type PageSettings = {
   path: string;
   title?: string | ((options: any) => string);
+  /** When set, breadcrumbs use i18n `t(i18nTitleKey)` instead of `title`. */
+  i18nTitleKey?: string;
   titleRaw?: string;
   exact?: boolean;
   context?: PageContext;

@@ -1,10 +1,15 @@
 import { format } from "date-fns";
-import { createContext, useCallback, useContext, useEffect, useReducer } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useAPI } from "../../providers/ApiProvider";
+import { getDateFnsLocale } from "../../utils/dateFnsLocale";
 import { cn } from "../../utils/bem";
 import "./VersionNotifier.scss";
 import { IconBell } from "@humansignal/icons";
+
+/** Shown in sidebar /version link; upstream Label Studio API still reports its own semver. */
+const DISPLAY_PRODUCT_VERSION = "1.0.0";
 
 const VersionContext = createContext();
 
@@ -29,7 +34,7 @@ export const VersionProvider = ({ children }) => {
           version: data.version,
           latestVersion: data.latest_version_from_pypi,
           newVersion: data.current_version_is_outdated,
-          updateTime: format(new Date(data.latest_version_upload_time), "MMM d"),
+          latestVersionUploadTime: data.latest_version_upload_time,
         },
       });
     }
@@ -43,8 +48,19 @@ export const VersionProvider = ({ children }) => {
 };
 
 export const VersionNotifier = ({ showNewVersion, showCurrentVersion }) => {
-  const { newVersion, updateTime, latestVersion, version } = useContext(VersionContext) ?? {};
+  const { t, i18n } = useTranslation("common");
+  const dateLocale = useMemo(() => getDateFnsLocale(i18n.language), [i18n.language]);
+  const { newVersion, latestVersionUploadTime, latestVersion, version } = useContext(VersionContext) ?? {};
   const url = `https://labelstud.io/redirect/update?version=${version}`;
+
+  const updateTimeFormatted = useMemo(() => {
+    if (!latestVersionUploadTime) return undefined;
+    try {
+      return format(new Date(latestVersionUploadTime), "MMM d", { locale: dateLocale });
+    } catch {
+      return undefined;
+    }
+  }, [latestVersionUploadTime, dateLocale]);
 
   return newVersion && showNewVersion ? (
     <li className={cn("version-notifier").toClassName()}>
@@ -53,16 +69,18 @@ export const VersionNotifier = ({ showNewVersion, showCurrentVersion }) => {
           <IconBell />
         </div>
         <div className={cn("version-notifier").elem("content").toClassName()}>
-          <div className={cn("version-notifier").elem("title").toClassName()} data-date={updateTime}>
-            {latestVersion} Available
+          <div className={cn("version-notifier").elem("title").toClassName()} data-date={updateTimeFormatted}>
+            {t("shell.version.new_available", { version: latestVersion })}
           </div>
-          <div className={cn("version-notifier").elem("description").toClassName()}>Current version: {version}</div>
+          <div className={cn("version-notifier").elem("description").toClassName()}>
+            {t("shell.version.current", { version })}
+          </div>
         </div>
       </a>
     </li>
   ) : version && showCurrentVersion ? (
     <Link className={cn("current-version").toClassName()} to="/version" target="_blank">
-      v{version}
+      v{DISPLAY_PRODUCT_VERSION}
     </Link>
   ) : null;
 };

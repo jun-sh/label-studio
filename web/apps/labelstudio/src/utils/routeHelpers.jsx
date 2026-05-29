@@ -32,6 +32,7 @@ export const pageSetToRoutes = (pages, config) => {
     route.modal = !!page.modal;
 
     if (page.title) route.title = page.title;
+    if (page.i18nTitleKey) route.i18nTitleKey = page.i18nTitleKey;
     if (page.render) route.render = page.render;
 
     if (page instanceof React.Component || page instanceof Function) {

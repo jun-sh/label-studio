@@ -5,11 +5,14 @@ import { ReactComponent as Sun } from "./icons/sun.svg";
 import { ReactComponent as Moon } from "./icons/moon.svg";
 import { atom, useSetAtom } from "jotai";
 
+const THEME_OPTIONS = ["Auto", "Light", "Dark"] as const;
+type ThemeOption = (typeof THEME_OPTIONS)[number];
+
 interface ThemeToggleProps {
   className?: string;
+  /** Display labels for theme modes; internal storage keys remain Auto/Light/Dark. */
+  labels?: Partial<Record<ThemeOption, string>>;
 }
-
-const THEME_OPTIONS = ["Auto", "Light", "Dark"];
 const PREFERRED_COLOR_SCHEME_KEY = "preferred-color-scheme";
 
 export const getCurrentTheme = () => {
@@ -21,7 +24,7 @@ export const getCurrentTheme = () => {
     : themeSelection;
 };
 export const themeAtom = atom<string>(getCurrentTheme());
-export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className }) => {
+export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className, labels }) => {
   const presetTheme = window.localStorage.getItem(PREFERRED_COLOR_SCHEME_KEY) ?? THEME_OPTIONS[1];
   const [theme, setTheme] = useState(presetTheme);
   const systemMode = useMemo(
@@ -48,10 +51,11 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className }) => {
     setThemeAtom(newTheme);
   }, [theme]);
 
-  const themeLabel = useMemo(
-    () => THEME_OPTIONS.find((option) => option.toLowerCase() === theme.toLowerCase()),
-    [theme],
-  );
+  const themeLabel = useMemo(() => {
+    const key = THEME_OPTIONS.find((option) => option.toLowerCase() === theme.toLowerCase());
+    if (!key) return theme;
+    return labels?.[key] ?? key;
+  }, [theme, labels]);
 
   return (
     <button

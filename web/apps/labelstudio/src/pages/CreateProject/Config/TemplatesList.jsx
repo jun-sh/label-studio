@@ -1,21 +1,27 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { Spinner } from "../../../components";
 import { useAPI } from "../../../providers/ApiProvider";
 import { cn } from "../../../utils/bem";
 import "./Config.scss";
 import { IconInfo } from "@humansignal/icons";
 import { Button, EnterpriseBadge } from "@humansignal/ui";
+import { translateTemplateGroup, translateTemplateTitle } from "./templateLabelI18n";
 
 const listClass = cn("templates-list");
 
-const Arrow = () => (
+const Arrow = () => {
+  const { t } = useTranslation("common");
+  return (
   <svg width="8" height="12" viewBox="0 0 8 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <title>Arrow Icon</title>
+    <title>{t("labeling_config.templates_arrow_icon")}</title>
     <path opacity="0.9" d="M2 10L6 6L2 2" stroke="currentColor" strokeWidth="2" strokeLinecap="square" />
   </svg>
-);
+  );
+};
 
 const TemplatesInGroup = ({ templates, group, onSelectRecipe, isEdition }) => {
+  const { t } = useTranslation("common");
   const picked = templates
     .filter((recipe) => recipe.group === group)
     // templates without `order` go to the end of the list
@@ -34,12 +40,16 @@ const TemplatesInGroup = ({ templates, group, onSelectRecipe, isEdition }) => {
             key={recipe.title}
             onClick={() => !isDisabled && onSelectRecipe(recipe)}
             className={listClass.elem("template").mod({ disabled: isDisabled }).toClassName()}
-            title={isDisabled ? "Enterprise feature - Available in Label Studio Enterprise" : ""}
+            title={isDisabled ? t("labeling_config.templates_enterprise_unavailable") : ""}
           >
             <img src={recipe.image} alt={""} />
             <div className="flex flex-col items-center w-full">
-              <h3 className="flex flex-1 justify-center text-center w-full">{recipe.title}</h3>
-              {isEnterpriseTemplate && isCommunityEdition && <EnterpriseBadge className="mb-base" />}
+              <h3 className="flex flex-1 justify-center text-center w-full">
+                {translateTemplateTitle(recipe.title, t)}
+              </h3>
+              {isEnterpriseTemplate && isCommunityEdition && (
+                <EnterpriseBadge className="mb-base">{t("labeling_templates.enterprise_badge")}</EnterpriseBadge>
+              )}
             </div>
           </li>
         );
@@ -49,6 +59,7 @@ const TemplatesInGroup = ({ templates, group, onSelectRecipe, isEdition }) => {
 };
 
 export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate, onSelectGroup, onSelectRecipe }) => {
+  const { t } = useTranslation("common");
   const [groups, setGroups] = React.useState([]);
   const [templates, setTemplates] = React.useState();
   const api = useAPI();
@@ -85,7 +96,7 @@ export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate,
                 })
                 .toClassName()}
             >
-              {group}
+              {translateTemplateGroup(group, t)}
               <Arrow />
             </li>
           ))}
@@ -97,9 +108,9 @@ export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate,
           size="small"
           onClick={onCustomTemplate}
           className="w-full"
-          aria-label="Create custom template"
+          aria-label={t("labeling_config.templates_custom_aria")}
         >
-          Custom template
+          {t("labeling_config.templates_custom")}
         </Button>
       </aside>
       <main>
@@ -114,11 +125,11 @@ export const TemplatesList = ({ selectedGroup, selectedRecipe, onCustomTemplate,
       <footer className="flex items-center justify-center gap-1">
         <IconInfo className={listClass.elem("info-icon").toClassName()} width="20" height="20" />
         <span>
-          See the documentation to{" "}
+          {t("labeling_config.templates_footer_before")}
           <a href="https://labelstud.io/guide" target="_blank" rel="noreferrer">
-            contribute a template
+            {t("labeling_config.templates_footer_link")}
           </a>
-          .
+          {t("labeling_config.templates_footer_after")}
         </span>
       </footer>
     </div>

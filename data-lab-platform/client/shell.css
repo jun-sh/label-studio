@@ -1,34 +1,24 @@
 /**
- * Data Lab shell — iframe host layout only.
- * Menu chrome uses Label Studio native .main-menu__* classes.
+ * Data Lab shell — minimal overrides (menu layout handled via DOM order in shell.js).
  */
 
-.content-wrapper__body {
-  position: relative;
+ul[class*="main-menu"] > li:has(a[href*="/data"]):not([data-datalab-managed="1"]) {
+  display: none !important;
 }
 
-.datalab-lerobot-host {
-  position: absolute;
-  z-index: 200;
-  display: none;
-  flex-direction: column;
-  background: var(--color-neutral-background, #fff);
-  overflow: hidden;
-  box-sizing: border-box;
-  pointer-events: none;
+/* Removed in favor of sidebar home; hide any stale injected copy from cached bundles */
+#datalab-collection-viz-back,
+.datalab-collection-viz-back {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
-.datalab-lerobot-host--visible {
-  display: flex;
-  pointer-events: auto;
+/* Theme toggle (自动/浅色/深色): cool primary tone instead of warm yellow sun */
+[class*="themeToggle"] [class*="animationWrapper"] {
+  color: var(--color-primary-icon, #6d87c4) !important;
 }
 
-.datalab-lerobot-host__frame {
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  border: 0;
-  display: block;
-  background: var(--color-neutral-background, #fff);
+[class*="themeToggle"] [class*="animationWrapper"] svg path {
+  fill: currentColor !important;
 }

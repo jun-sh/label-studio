@@ -18,18 +18,8 @@ const azureSpiProvider: ProviderConfig = {
       content: (
         <Alert variant="gradient">
           <IconSpark />
-          <AlertTitle>Enterprise Feature</AlertTitle>
-          <AlertDescription>
-            Azure Blob Storage with Service Principal is available in Label Studio Enterprise.{" "}
-            <a
-              href="https://docs.humansignal.com/guide/storage.html#Azure-Blob-Storage-with-Service-Principal-authentication"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:no-underline"
-            >
-              Learn more
-            </a>
-          </AlertDescription>
+          <AlertTitle>Not enabled</AlertTitle>
+          <AlertDescription>This storage option is not enabled in this deployment.</AlertDescription>
         </Alert>
       ),
     },

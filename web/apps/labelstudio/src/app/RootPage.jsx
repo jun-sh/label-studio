@@ -12,8 +12,14 @@ export const RootPage = ({ content }) => {
       enabled={true}
       defaultOpened={opened}
       defaultPinned={pinned}
-      onSidebarToggle={(visible) => localStorage.setItem("sidebar-opened", visible)}
-      onSidebarPin={(pinned) => localStorage.setItem("sidebar-pinned", pinned)}
+      onSidebarToggle={(visible) => {
+        localStorage.setItem("sidebar-opened", visible);
+        window.dispatchEvent(new Event("datalab:layout"));
+      }}
+      onSidebarPin={(pinned) => {
+        localStorage.setItem("sidebar-pinned", pinned);
+        window.dispatchEvent(new Event("datalab:layout"));
+      }}
     >
       <ProjectRoutes content={content} />
     </Menubar>

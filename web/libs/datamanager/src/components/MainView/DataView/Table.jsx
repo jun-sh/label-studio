@@ -2,7 +2,8 @@ import { IconQuestionOutline } from "@humansignal/icons";
 import { Tooltip, Badge, EnterpriseBadge } from "@humansignal/ui";
 import { inject } from "mobx-react";
 import { getRoot } from "mobx-state-tree";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useShortcut } from "../../../sdk/hotkeys";
 import { cn } from "../../../utils/bem";
 import { FF_DEV_2536, isFF } from "../../../utils/feature-flags";
@@ -13,8 +14,8 @@ import { Table } from "../../Common/Table/Table";
 import { GridView } from "../GridView/GridView";
 import "./Table.scss";
 import { Button } from "@humansignal/ui";
-import { useEffect, useState } from "react";
 import { EmptyState } from "./empty-state";
+import { translateDmColumnTitle } from "../../../utils/columnTitle";
 import {
   DENSITY_STORAGE_KEY,
   DENSITY_COMFORTABLE,
@@ -83,6 +84,7 @@ export const DataView = injector(
     RowContextMenuComponent,
     ...props
   }) => {
+    const { t } = useTranslation("common");
     const [datasetStatusID, setDatasetStatusID] = useState(store.SDK.dataset?.status?.id);
     const [density, setDensity] = useState(() => {
       return localStorage.getItem(DENSITY_STORAGE_KEY) ?? DENSITY_COMFORTABLE;
@@ -279,15 +281,19 @@ export const DataView = injector(
       [hasData, isLabeling, isLoading, total, datasetStatusID, role, project, hasFilters, canLabel],
     );
 
-    const decorationContent = (col) => {
-      const column = col.original;
+    const decorationContent = useCallback(
+      (col) => {
+        const column = col.original;
+        const displayTitle = translateDmColumnTitle(column, t);
 
-      if (column.icon) {
-        return <Tooltip title={column.help ?? col.title}>{column.icon}</Tooltip>;
-      }
+        if (column.icon) {
+          return <Tooltip title={column.help ?? displayTitle}>{column.icon}</Tooltip>;
+        }
 
-      return column.title;
-    };
+        return displayTitle;
+      },
+      [t],
+    );
 
     const commonDecoration = useCallback(
       (alias, size, align = "flex-start", help = false) => ({
@@ -296,7 +302,7 @@ export const DataView = injector(
         style: (col) => ({ width: col.width ?? size, justifyContent: align }),
         help,
       }),
-      [],
+      [decorationContent],
     );
 
     const decoration = useMemo(

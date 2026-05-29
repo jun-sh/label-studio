@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useUpdatePageTitle, createTitleFromSegments } from "@humansignal/core";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
@@ -7,13 +8,14 @@ import { isEmptyString } from "../../utils/helpers";
 import { ConfigPage } from "../CreateProject/Config/Config";
 
 export const LabelingSettings = () => {
+  const { t } = useTranslation("common");
   const { project, fetchProject, updateProject } = useProject();
   const [config, setConfig] = useState("");
   const [essentialDataChanged, setEssentialDataChanged] = useState(false);
   const hasChanges = isFF(FF_UNSAVED_CHANGES) && config !== project.label_config;
   const api = useAPI();
 
-  useUpdatePageTitle(createTitleFromSegments([project?.title, "Labeling Interface Settings"]));
+  useUpdatePageTitle(createTitleFromSegments([project?.title, t("labeling_config.page_title_settings")]));
 
   const saveConfig = useCallback(
     isFF(FF_UNSAVED_CHANGES)
@@ -92,4 +94,5 @@ export const LabelingSettings = () => {
 };
 
 LabelingSettings.title = "Labeling Interface";
+LabelingSettings.i18nTitleKey = "breadcrumbs.labeling_interface";
 LabelingSettings.path = "/labeling";

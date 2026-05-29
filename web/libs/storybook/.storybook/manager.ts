@@ -3,10 +3,10 @@ import { create } from "storybook/theming/create";
 
 const theme = create({
   base: "dark",
-  brandTitle: "Label Studio",
-  brandUrl: "https://labelstud.io",
+  brandTitle: "Data Lab",
+  brandUrl: "/",
   brandImage: "logo.svg",
-  brandTarget: "_blank",
+  brandTarget: "_self",
 });
 
 addons.setConfig({

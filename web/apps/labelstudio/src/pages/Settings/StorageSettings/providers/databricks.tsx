@@ -17,18 +17,8 @@ const databricksProvider: ProviderConfig = {
       content: (
         <Alert variant="gradient">
           <IconSpark />
-          <AlertTitle>Enterprise Feature</AlertTitle>
-          <AlertDescription>
-            Databricks Files (UC Volumes) is available in Label Studio Enterprise.{" "}
-            <a
-              href="https://docs.humansignal.com/guide/storage.html#Databricks-Files-UC-Volumes"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:no-underline"
-            >
-              Learn more
-            </a>
-          </AlertDescription>
+          <AlertTitle>Not enabled</AlertTitle>
+          <AlertDescription>This storage option is not enabled in this deployment.</AlertDescription>
         </Alert>
       ),
     },

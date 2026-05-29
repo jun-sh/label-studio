@@ -11,5 +11,5 @@ echo "2/3 Starting lerobot + nginx..."
 docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml up -d lerobot nginx
 
 echo "3/3 Tail lerobot logs until assets are ready (Ctrl+C to stop tail)..."
-echo "    Then open: ${LABEL_STUDIO_HOST}/lerobot/?url=sample%3A%2F%2Fsensexperience_ego"
+echo "    Then open: ${LABEL_STUDIO_HOST}/data"
 docker logs -f data-lab-lerobot-1

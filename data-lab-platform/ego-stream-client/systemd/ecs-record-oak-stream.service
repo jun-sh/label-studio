@@ -1,0 +1,30 @@
+[Unit]
+Description=EGO OAK four-camera stream upload to Data Lab (ego-lan-214)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
+  --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload \
+  --checkpoint-path /tmp/ego-stream-checkpoint.json \
+  --task "Perform egocentric manipulation tasks at the laboratory workbench" \
+  --fps 15
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-record-oak-stream
+
+[Install]
+WantedBy=default.target

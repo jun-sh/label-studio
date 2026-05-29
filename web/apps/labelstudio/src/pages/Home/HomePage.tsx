@@ -1,7 +1,9 @@
-import { IconExternal, IconFolderAdd, IconHumanSignal, IconUserAdd, IconFolderOpen } from "@humansignal/icons";
+import { IconExternal, IconFolderAdd, IconUserAdd, IconFolderOpen } from "@humansignal/icons";
+import { DataLabMark } from "../../assets/images";
 import { Button, SimpleCard, Spinner, Tooltip, Typography } from "@humansignal/ui";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, useLocation } from "react-router-dom";
 import { useUpdatePageTitle } from "@humansignal/core";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -19,46 +21,12 @@ import {
   sortedProjectsAtom,
   visitedIdsAtom,
 } from "./atoms";
+import { buildHomeResourceLinks } from "../../config/dataLabLinks";
 
-const resources = [
-  {
-    title: "Documentation",
-    url: "https://labelstud.io/guide/",
-  },
-  {
-    title: "API Documentation",
-    url: "https://api.labelstud.io/api-reference/introduction/getting-started",
-  },
-  {
-    title: "Release Notes",
-    url: "https://labelstud.io/learn/categories/release-notes/",
-  },
-  {
-    title: "LabelStud.io Blog",
-    url: "https://labelstud.io/blog/",
-  },
-  {
-    title: "Slack Community",
-    url: "https://slack.labelstud.io",
-  },
-];
-
-const actions = [
-  {
-    title: "Create Project",
-    icon: IconFolderAdd,
-    type: "createProject",
-  },
-  {
-    title: "Invite Members",
-    icon: IconUserAdd,
-    type: "inviteMembers",
-  },
-] as const;
-
-type Action = (typeof actions)[number]["type"];
+type Action = "createProject" | "inviteMembers";
 
 export const HomePage: Page = () => {
+  const { t } = useTranslation("common");
   const api = useAPI();
   const location = useLocation();
   const [modalIsOpen, setModalIsOpen] = useAtom(creationDialogOpen);
@@ -68,7 +36,18 @@ export const HomePage: Page = () => {
   const sortedProjects = useAtomValue(sortedProjectsAtom);
   const visitedIds = useAtomValue(visitedIdsAtom);
 
-  useUpdatePageTitle("Home");
+  const resourceLinks = useMemo(() => buildHomeResourceLinks(t), [t]);
+
+  const actions = useMemo(
+    () =>
+      [
+        { title: t("home.create_project"), icon: IconFolderAdd, type: "createProject" as const },
+        { title: t("home.invite_members"), icon: IconUserAdd, type: "inviteMembers" as const },
+      ] as const,
+    [t],
+  );
+
+  useUpdatePageTitle(t("home.page_title"));
 
   // Fetch regular projects
   const { data, isFetching, isSuccess, isError } = useQuery({
@@ -136,17 +115,17 @@ export const HomePage: Page = () => {
         <section className="flex flex-col gap-6">
           <div className="flex flex-col gap-1">
             <Typography variant="headline" size="small">
-              Welcome 👋
+              {t("home.welcome")}
             </Typography>
             <Typography size="small" className="text-neutral-content-subtler">
-              Let's get you started.
+              {t("home.subtitle")}
             </Typography>
           </div>
           <div className="flex justify-start gap-4">
             {actions.map((action) => {
               return (
                 <Button
-                  key={action.title}
+                  key={action.type}
                   look="outlined"
                   align="center"
                   className="flex-grow-0 text-16/24 gap-2 text-primary-content text-left min-w-[250px] [&_svg]:w-6 [&_svg]:h-6 pl-2"
@@ -163,9 +142,9 @@ export const HomePage: Page = () => {
             title={
               data && data?.count > 0 ? (
                 <>
-                  Recent Projects{" "}
+                  {t("home.recent_projects")}{" "}
                   <a href="/projects" className="text-lg font-normal hover:underline">
-                    View All
+                    {t("home.view_all")}
                   </a>
                 </>
               ) : null
@@ -176,7 +155,7 @@ export const HomePage: Page = () => {
                 <Spinner />
               </div>
             ) : isError ? (
-              <div className="h-64 flex justify-center items-center">can't load projects</div>
+              <div className="h-64 flex justify-center items-center">{t("home.error_load_projects")}</div>
             ) : isSuccess && data && sortedProjects.length === 0 ? (
               <div className="flex flex-col justify-center items-center border border-primary-border-subtle bg-primary-emphasis-subtle rounded-lg h-64">
                 <div
@@ -187,13 +166,17 @@ export const HomePage: Page = () => {
                   <IconFolderOpen />
                 </div>
                 <Typography variant="headline" size="small">
-                  Create your first project
+                  {t("home.empty_title")}
                 </Typography>
                 <Typography size="small" className="text-neutral-content-subtler">
-                  Import your data and set up the labeling interface to start annotating
+                  {t("home.empty_description")}
                 </Typography>
-                <Button className="mt-4" onClick={() => setModalIsOpen(true)} aria-label="Create new project">
-                  Create Project
+                <Button
+                  className="mt-4"
+                  onClick={() => setModalIsOpen(true)}
+                  aria-label={t("home.create_project_aria")}
+                >
+                  {t("home.create_project")}
                 </Button>
               </div>
             ) : isSuccess && data && sortedProjects.length > 0 ? (
@@ -207,28 +190,34 @@ export const HomePage: Page = () => {
         </section>
         <section className="flex flex-col gap-6">
           <HeidiTips collection="projectSettings" />
-          <SimpleCard title="Resources" description="Learn, explore and get help" data-testid="resources-card">
-            <ul>
-              {resources.map((link) => {
-                return (
-                  <li key={link.title}>
-                    <a
-                      href={link.url}
-                      className="py-2 px-1 flex justify-between items-center text-neutral-content"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {link.title}
-                      <IconExternal className="text-primary-icon" />
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
-          </SimpleCard>
+          {resourceLinks.length > 0 ? (
+            <SimpleCard
+              title={t("home.resources_title")}
+              description={t("home.resources_description")}
+              data-testid="resources-card"
+            >
+              <ul>
+                {resourceLinks.map((link) => {
+                  return (
+                    <li key={link.title}>
+                      <a
+                        href={link.url}
+                        className="py-2 px-1 flex justify-between items-center text-neutral-content"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {link.title}
+                        <IconExternal className="text-primary-icon" />
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </SimpleCard>
+          ) : null}
           <div className="flex gap-2 items-center">
-            <IconHumanSignal />
-            <span className="text-neutral-content-subtle">Label Studio Version: Community</span>
+            <DataLabMark aria-hidden />
+            <span className="text-neutral-content-subtle">{t("home.footer_community")}</span>
           </div>
         </section>
       </div>
@@ -239,10 +228,12 @@ export const HomePage: Page = () => {
 };
 
 HomePage.title = "Home";
+HomePage.i18nTitleKey = "home.page_title";
 HomePage.path = "/";
 HomePage.exact = true;
 
 function ProjectSimpleCard({ project }: { project: APIProject }) {
+  const { t } = useTranslation("common");
   const finished = project.finished_task_number ?? 0;
   const total = project.task_number ?? 0;
   const progress = (total > 0 ? finished / total : 0) * 100;
@@ -264,7 +255,11 @@ function ProjectSimpleCard({ project }: { project: APIProject }) {
             <span className="text-neutral-content truncate">{project.title}</span>
           </Tooltip>
           <div className="text-neutral-content-subtler text-sm">
-            {finished} of {total} Tasks ({total > 0 ? Math.round((finished / total) * 100) : 0}%)
+            {t("home.tasks_progress", {
+              finished,
+              total,
+              percent: total > 0 ? Math.round((finished / total) * 100) : 0,
+            })}
           </div>
         </div>
         <div className="bg-neutral-surface rounded-full overflow-hidden w-full h-2 shadow-neutral-border-subtle shadow-border-1">

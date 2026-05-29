@@ -1,4 +1,5 @@
 import React, { type FC, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   IconUpload,
   IconLsLabeling,
@@ -11,13 +12,16 @@ import {
   IconCloudProviderRedis,
 } from "@humansignal/icons";
 import { Button, IconExternal, Typography, Tooltip } from "@humansignal/ui";
-import { getDocsUrl } from "../../../../../../editor/src/utils/docs";
+import { getDataLabDocumentationEntryUrl } from "../../../../../../editor/src/utils/docs";
 import { ABILITY, useAuth } from "@humansignal/core/providers/AuthProvider";
 
 declare global {
   interface Window {
     APP_SETTINGS?: {
       whitelabel_is_active?: boolean;
+      data_lab_links?: {
+        documentation?: string;
+      };
     };
   }
 }
@@ -135,33 +139,37 @@ const renderEmptyStateLayout = ({
 };
 
 // Storage provider icons component
-const StorageProviderIcons = () => (
-  <div className="flex items-center justify-center gap-base mb-wide" data-testid="dm-storage-provider-icons">
-    <Tooltip title="Amazon S3">
-      <div className="flex items-center justify-center p-2" aria-label="Amazon S3">
-        <IconCloudProviderS3 width={32} height={32} className="text-neutral-content-subtler" />
-      </div>
-    </Tooltip>
-    <Tooltip title="Google Cloud Storage">
-      <div className="flex items-center justify-center p-2" aria-label="Google Cloud Storage">
-        <IconCloudProviderGCS width={32} height={32} className="text-neutral-content-subtler" />
-      </div>
-    </Tooltip>
-    <Tooltip title="Azure Blob Storage">
-      <div className="flex items-center justify-center p-2" aria-label="Azure Blob Storage">
-        <IconCloudProviderAzure width={32} height={32} className="text-neutral-content-subtler" />
-      </div>
-    </Tooltip>
-    <Tooltip title="Redis Storage">
-      <div className="flex items-center justify-center p-2" aria-label="Redis Storage">
-        <IconCloudProviderRedis width={32} height={32} className="text-neutral-content-subtler" />
-      </div>
-    </Tooltip>
-  </div>
-);
+const StorageProviderIcons = () => {
+  const { t } = useTranslation("common");
+  return (
+    <div className="flex items-center justify-center gap-base mb-wide" data-testid="dm-storage-provider-icons">
+      <Tooltip title={t("dm.empty.storage_s3")}>
+        <div className="flex items-center justify-center p-2" aria-label={t("dm.empty.storage_s3")}>
+          <IconCloudProviderS3 width={32} height={32} className="text-neutral-content-subtler" />
+        </div>
+      </Tooltip>
+      <Tooltip title={t("dm.empty.storage_gcs")}>
+        <div className="flex items-center justify-center p-2" aria-label={t("dm.empty.storage_gcs")}>
+          <IconCloudProviderGCS width={32} height={32} className="text-neutral-content-subtler" />
+        </div>
+      </Tooltip>
+      <Tooltip title={t("dm.empty.storage_azure")}>
+        <div className="flex items-center justify-center p-2" aria-label={t("dm.empty.storage_azure")}>
+          <IconCloudProviderAzure width={32} height={32} className="text-neutral-content-subtler" />
+        </div>
+      </Tooltip>
+      <Tooltip title={t("dm.empty.storage_redis")}>
+        <div className="flex items-center justify-center p-2" aria-label={t("dm.empty.storage_redis")}>
+          <IconCloudProviderRedis width={32} height={32} className="text-neutral-content-subtler" />
+        </div>
+      </Tooltip>
+    </div>
+  );
+};
 
 // Documentation link component
 const DocumentationLink = () => {
+  const { t } = useTranslation("common");
   if (window.APP_SETTINGS?.whitelabel_is_active) {
     return null;
   }
@@ -169,14 +177,14 @@ const DocumentationLink = () => {
   return (
     <Typography variant="label" size="small" className="text-primary-link hover:underline">
       <a
-        href={getDocsUrl("guide/tasks")}
+        href={getDataLabDocumentationEntryUrl()}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex items-center gap-1"
         data-testid="dm-docs-data-import-link"
       >
-        See docs on importing data
-        <span className="sr-only"> (opens in a new tab)</span>
+        {t("dm.empty.docs_import_link")}
+        <span className="sr-only"> {t("dm.empty.docs_import_sr")}</span>
         <IconExternal width={20} height={20} />
       </a>
     </Typography>
@@ -213,6 +221,7 @@ export const EmptyState: FC<EmptyStateProps> = ({
   onLabelAllTasks,
   onClearFilters,
 }) => {
+  const { t } = useTranslation("common");
   const isImportEnabled = Boolean(canImport);
   const { permissions } = useAuth();
 
@@ -222,11 +231,11 @@ export const EmptyState: FC<EmptyStateProps> = ({
       icon: <IconSearch />,
       iconBackground: "bg-warning-background",
       iconColor: "text-warning-icon",
-      title: "No tasks found",
-      description: "Try adjusting or clearing the filters to see more results",
+      title: t("dm.empty.filters_title"),
+      description: t("dm.empty.filters_desc"),
       actions: (
         <Button variant="primary" look="outlined" onClick={onClearFilters} data-testid="dm-clear-filters-button">
-          Clear Filters
+          {t("dm.empty.clear_filters")}
         </Button>
       ),
     });
@@ -240,8 +249,8 @@ export const EmptyState: FC<EmptyStateProps> = ({
     if (userRole === "REVIEWER") {
       return renderEmptyStateLayout({
         icon: <IconCheck />,
-        title: "No tasks available for review or labeling",
-        description: "Tasks imported to this project will appear here",
+        title: t("dm.empty.reviewer_title"),
+        description: t("dm.empty.reviewer_desc"),
       });
     }
 
@@ -253,8 +262,8 @@ export const EmptyState: FC<EmptyStateProps> = ({
       if (isAutoDistribution) {
         return renderEmptyStateLayout({
           icon: <IconLsLabeling />,
-          title: "Start labeling tasks",
-          description: "Tasks you've labeled will appear here",
+          title: t("dm.empty.annotator_start_title"),
+          description: t("dm.empty.annotator_start_desc"),
           actions: (
             <Button
               variant="primary"
@@ -263,7 +272,7 @@ export const EmptyState: FC<EmptyStateProps> = ({
               onClick={onLabelAllTasks}
               data-testid="dm-label-all-tasks-button"
             >
-              Label All Tasks
+              {t("dm.empty.label_all_tasks")}
             </Button>
           ),
         });
@@ -272,16 +281,16 @@ export const EmptyState: FC<EmptyStateProps> = ({
       if (isManualDistribution) {
         return renderEmptyStateLayout({
           icon: <IconInbox />,
-          title: "No tasks available",
-          description: "Tasks assigned to you will appear here",
+          title: t("dm.empty.annotator_manual_title"),
+          description: t("dm.empty.annotator_manual_desc"),
         });
       }
 
       // Fallback for annotators with unknown distribution setting
       return renderEmptyStateLayout({
         icon: <IconInbox width={40} height={40} />,
-        title: "No tasks available",
-        description: "Tasks will appear here when they become available",
+        title: t("dm.empty.annotator_fallback_title"),
+        description: t("dm.empty.annotator_fallback_desc"),
       });
     }
   }
@@ -289,8 +298,8 @@ export const EmptyState: FC<EmptyStateProps> = ({
   // Default case: show import functionality (existing behavior for Owners/Admins/Managers)
   return renderEmptyStateLayout({
     icon: <IconUpload />,
-    title: "Import data to get your project started",
-    description: "Connect your cloud storage or upload files from your computer",
+    title: t("dm.empty.import_title"),
+    description: t("dm.empty.import_desc"),
     testId: "empty-state-label",
     ariaLabelledBy: "dm-empty-title",
     ariaDescribedBy: "dm-empty-desc",
@@ -305,7 +314,7 @@ export const EmptyState: FC<EmptyStateProps> = ({
             onClick={onOpenSourceStorageModal}
             data-testid="dm-connect-source-storage-button"
           >
-            Connect Cloud Storage
+            {t("dm.empty.connect_cloud")}
           </Button>
         )}
 
@@ -317,7 +326,7 @@ export const EmptyState: FC<EmptyStateProps> = ({
             onClick={onOpenImportModal}
             data-testid="dm-import-button"
           >
-            Import
+            {t("dm.empty.import_button")}
           </Button>
         )}
       </>

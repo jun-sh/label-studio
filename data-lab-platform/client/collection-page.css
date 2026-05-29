@@ -1,0 +1,241 @@
+/**
+ * /collection — EGO station list (standalone, matches Data Lab palette).
+ */
+
+/* Match Label Studio tokens (web/libs/ui/src/tokens/tokens.scss sand palette) */
+:root {
+  --color-neutral-background: rgb(253 253 252);
+  --color-neutral-content: rgb(38 37 34);
+  --color-primary-content: rgb(76 95 169);
+  --color-neutral-border: rgb(225 222 213);
+  --color-success: #16a34a;
+  --color-muted: rgb(107 104 96);
+}
+
+html[data-color-scheme="dark"] {
+  --color-neutral-background: rgb(38 37 34);
+  --color-neutral-content: rgb(249 248 246);
+  --color-neutral-border: rgb(69 67 62);
+  --color-muted: rgb(107 104 96);
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+.datalab-collection-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--color-neutral-background);
+  color: var(--color-neutral-content);
+  font-family: Figtree, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.datalab-collection-page__header {
+  padding: 24px 32px 8px;
+  border-bottom: 1px solid var(--color-neutral-border);
+}
+
+.datalab-collection-page__title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.datalab-collection-page__subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.datalab-collection-page__main {
+  padding: 24px 32px 48px;
+  max-width: 960px;
+}
+
+.datalab-collection-page__loading,
+.datalab-collection-page__error {
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.datalab-collection-page__error {
+  color: #b45309;
+}
+
+.datalab-collection-page__retry {
+  font-size: 14px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border, #cbd5e1);
+  background: var(--color-neutral-background, #fff);
+  color: inherit;
+  cursor: pointer;
+}
+
+.datalab-collection-page__retry:hover {
+  border-color: #38bdf8;
+}
+
+.datalab-station-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+  border: 1px solid var(--color-neutral-border);
+  border-radius: 8px;
+  background: var(--color-neutral-background);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.datalab-station-card--online {
+  cursor: pointer;
+}
+
+.datalab-station-card--online:hover {
+  border-color: var(--color-primary-content);
+  box-shadow: 0 2px 8px rgba(76, 95, 169, 0.12);
+}
+
+.datalab-station-card--offline {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.datalab-station-card__name {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.datalab-station-card__meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.datalab-station-card__badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.datalab-station-card__badge--online {
+  color: var(--color-success);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.datalab-station-card__badge--offline {
+  color: var(--color-muted);
+  background: rgba(107, 114, 128, 0.15);
+}
+
+.datalab-collection-page__viewer {
+  margin-top: 8px;
+}
+
+.datalab-collection-page__viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.datalab-collection-page__viewer-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.datalab-collection-page__back,
+.datalab-collection-page__btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid var(--color-neutral-border);
+  background: var(--color-neutral-background);
+  color: var(--color-neutral-content);
+  padding: 8px 14px;
+}
+
+.datalab-collection-page__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.datalab-collection-page__stream {
+  min-height: 280px;
+  border: 1px dashed var(--color-neutral-border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #0b1220;
+  color: #94a3b8;
+}
+
+.datalab-collection-page__placeholder {
+  margin: 0;
+  text-align: center;
+  font-size: 14px;
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.datalab-collection-page__actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.datalab-collection-page__api {
+  font-size: 12px;
+  color: var(--color-muted);
+  word-break: break-all;
+}
+
+/* Embed inside Label Studio SPA (#datalab-collection-layer iframe) */
+html.datalab-collection-embed-root,
+html.datalab-collection-embed-root body {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.datalab-collection-page--embed {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.datalab-collection-page--embed .datalab-collection-page__main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.datalab-collection-page--embed .datalab-collection-page__intro {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-neutral-border);
+}
+
+.datalab-collection-page--embed .datalab-collection-page__intro .datalab-collection-page__title {
+  margin: 0 0 8px;
+}
+
+.datalab-collection-page--embed .datalab-collection-page__intro .datalab-collection-page__subtitle {
+  margin: 0;
+}

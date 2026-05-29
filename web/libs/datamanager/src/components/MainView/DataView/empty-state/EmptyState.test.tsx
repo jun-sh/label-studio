@@ -41,6 +41,7 @@ jest.mock("@humansignal/icons", () => ({
 
 jest.mock("../../../../../../editor/src/utils/docs", () => ({
   getDocsUrl: (path: string) => `https://docs.example.com/${path}`,
+  getDataLabDocumentationEntryUrl: () => "https://docs.example.com/guide/tasks",
 }));
 
 // Mock AuthProvider/useAuth

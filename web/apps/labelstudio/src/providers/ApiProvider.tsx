@@ -18,7 +18,7 @@ export const IMPROVE_GLOBAL_ERROR_MESSAGES = isFF(FF_IMPROVE_GLOBAL_ERROR_MESSAG
 // Duration for toast errors
 export const API_ERROR_TOAST_DURATION = 10000;
 
-// Initialize API instance with Label Studio configuration
+// Initialize API instance with Data Lab configuration
 const apiInstance = createApiInstance({
   ...API_CONFIG,
   onRequestFinished(res) {
@@ -67,14 +67,14 @@ const displayErrorModal = (errorDetails: FormattedError) => {
 };
 
 /**
- * Label Studio application-specific ApiProvider.
- * Wraps the core ApiProvider with Label Studio-specific error handling.
+ * Data Lab application ApiProvider.
+ * Wraps the core ApiProvider with application-specific error handling.
  */
 export const ApiProvider = forwardRef<ApiContextType, PropsWithChildren<Record<string, never>>>(({ children }, ref) => {
   const toast = useToast();
 
   /**
-   * Handles errors with Label Studio-specific logic including:
+   * Handles errors with application-specific logic including:
    * - Toast notifications for 4xx errors
    * - Modal errors for validation errors
    * - Sentry logging for server errors

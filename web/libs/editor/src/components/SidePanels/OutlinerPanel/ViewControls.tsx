@@ -12,6 +12,7 @@ import {
 } from "@humansignal/icons";
 import { Button } from "@humansignal/ui";
 import { type FC, useCallback, useContext, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Dropdown } from "@humansignal/ui";
 // eslint-disable-next-line
 // @ts-ignore
@@ -44,6 +45,7 @@ const mediaStartTimeSupportedTags = [
 
 export const ViewControls: FC<ViewControlsProps> = observer(
   ({ ordering, regions, orderingDirection, onOrderingChange, onGroupingChange }) => {
+    const { t } = useTranslation("common");
     const grouping = regions.group;
     const context = useContext(SidePanelsContext);
 
@@ -66,78 +68,78 @@ export const ViewControls: FC<ViewControlsProps> = observer(
       }
     }, [ordering, mediaTimeSupport, onOrderingChange]);
 
-    const getGroupingLabels = useCallback((value: GroupingOptions): LabelInfo => {
+    const getGroupingLabels = (value: GroupingOptions): LabelInfo => {
       switch (value) {
         case "manual":
           return {
             label: (
               <>
-                <IconList /> Group Manually
+                <IconList /> {t("editor.view_controls.group_manual_menu")}
               </>
             ),
-            selectedLabel: "Manual",
+            selectedLabel: t("editor.view_controls.manual"),
             icon: <IconList width={16} height={16} />,
-            tooltip: "Manually Grouped",
+            tooltip: t("editor.view_controls.tooltip_manual"),
           };
         case "label":
           return {
             label: (
               <>
-                <IconBoundingBox /> Group by Label
+                <IconBoundingBox /> {t("editor.view_controls.group_by_label_menu")}
               </>
             ),
-            selectedLabel: "By Label",
+            selectedLabel: t("editor.view_controls.by_label"),
             icon: <IconBoundingBox width={16} height={16} />,
-            tooltip: "Grouped by Label",
+            tooltip: t("editor.view_controls.tooltip_by_label"),
           };
         case "type":
           return {
             label: (
               <>
-                <IconCursor /> Group by Tool
+                <IconCursor /> {t("editor.view_controls.group_by_tool_menu")}
               </>
             ),
-            selectedLabel: "By Tool",
+            selectedLabel: t("editor.view_controls.by_tool"),
             icon: <IconCursor width={16} height={16} />,
-            tooltip: "Grouped by Tool",
+            tooltip: t("editor.view_controls.tooltip_by_tool"),
           };
       }
-    }, []);
+    };
 
-    const getOrderingLabels = useCallback((value: OrderingOptions): LabelInfo => {
+    const getOrderingLabels = (value: OrderingOptions): LabelInfo => {
       switch (value) {
         case "date":
           return {
             label: (
               <>
-                <IconClockTimeFourOutline /> Order by Time
+                <IconClockTimeFourOutline /> {t("editor.view_controls.order_by_time_menu")}
               </>
             ),
-            selectedLabel: "By Time",
+            selectedLabel: t("editor.view_controls.by_time"),
             icon: <IconClockTimeFourOutline width={16} height={16} />,
           };
         case "score":
           return {
             label: (
               <>
-                <IconPredictions /> Order by Score
+                <IconPredictions /> {t("editor.view_controls.order_by_score_menu")}
               </>
             ),
-            selectedLabel: "By Score",
+            selectedLabel: t("editor.view_controls.by_score"),
             icon: <IconPredictions width={16} height={16} />,
           };
         case "mediaStartTime":
           return {
             label: (
               <>
-                <IconTimelineRegion /> Order by Media Start Time
+                <IconTimelineRegion /> {t("editor.view_controls.order_by_media_start_menu")}
               </>
             ),
-            selectedLabel: "By Media Start Time",
+            selectedLabel: t("editor.view_controls.by_media_start"),
             icon: <IconTimelineRegion width={16} height={16} />,
           };
       }
-    }, []);
+    };
 
     const renderOrderingDirectionIcon = orderingDirection === "asc" ? <IconSortUp /> : <IconSortDown />;
 
@@ -287,6 +289,7 @@ interface ToggleRegionsVisibilityButton {
 }
 
 const ToggleRegionsVisibilityButton = observer<FC<ToggleRegionsVisibilityButton>>(({ regions }) => {
+  const { t } = useTranslation("common");
   const toggleRegionsVisibility = useCallback(
     (e) => {
       e.preventDefault();
@@ -306,8 +309,8 @@ const ToggleRegionsVisibilityButton = observer<FC<ToggleRegionsVisibilityButton>
       look="string"
       disabled={isDisabled}
       onClick={toggleRegionsVisibility}
-      aria-label={isAllHidden ? "Show all regions" : "Hide all regions"}
-      tooltip={isAllHidden ? "Show all regions" : "Hide all regions"}
+      aria-label={isAllHidden ? t("editor.view_controls.show_all_regions") : t("editor.view_controls.hide_all_regions")}
+      tooltip={isAllHidden ? t("editor.view_controls.show_all_regions") : t("editor.view_controls.hide_all_regions")}
     >
       {isAllHidden ? (
         <IconOutlinerEyeClosed width={16} height={16} />

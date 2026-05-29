@@ -104,7 +104,7 @@ export const CollectionPage = () => {
       delete document.body.dataset.datalabCollectionViz;
     };
 
-    const listSrc = "/_datalab/collection-embed.html?v=6";
+    const listSrc = "/_datalab/collection-embed.html?v=7";
     const mountList = () => {
       document.body.dataset.datalabCollectionPage = "1";
       delete document.body.dataset.datalabDataPage;

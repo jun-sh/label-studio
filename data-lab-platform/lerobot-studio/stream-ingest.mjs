@@ -262,7 +262,18 @@ function setChunkArtifactStatus(root, relPath, status, frames = null) {
   writeChunksManifest(root, manifest);
 }
 
-function countStagingFrames(root) {
+/** O(1) frame estimate — avoids readdir on 4×N staging jpgs (blocks HTTP for seconds). */
+function countStagingFramesFast(root) {
+  const info = readJson(path.join(root, "meta", "info.json"), {});
+  const total = info?.total_frames;
+  if (typeof total === "number" && total > 0) return total;
+  const live = readJson(path.join(root, "live", "session.json"), {});
+  const last = live?.lastFrameIndex;
+  if (typeof last === "number" && last >= 0) return last + 1;
+  return 0;
+}
+
+function countStagingFramesScan(root) {
   let maxIdx = -1;
   for (const videoKey of VIDEO_KEYS) {
     const dir = stagingDir(root, videoKey);
@@ -273,6 +284,12 @@ function countStagingFrames(root) {
     }
   }
   return Math.max(0, maxIdx + 1);
+}
+
+function countStagingFrames(root) {
+  const fast = countStagingFramesFast(root);
+  if (fast > 0) return fast;
+  return countStagingFramesScan(root);
 }
 
 function isStreamChunkArtifact(rel) {
@@ -965,11 +982,7 @@ function runMux(stationId) {
     const outFile = videoOutPath(root, videoKey);
     const tmpOut = `${outFile}.muxing.tmp`;
     if (!fs.existsSync(inDir)) return Promise.resolve();
-    const frames = fs
-      .readdirSync(inDir)
-      .filter((f) => f.endsWith(".jpg"))
-      .sort();
-    if (!frames.length) return Promise.resolve();
+    if (countStagingFramesFast(root) <= 0) return Promise.resolve();
     ensureDir(path.dirname(outFile));
     try {
       if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);

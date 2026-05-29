@@ -231,6 +231,18 @@ const server = http.createServer((req, res) => {
     return { ...station, online, datasetUrl, httpDatasetUrl };
   }
 
+  if (p === `${BASE}/api/collection/stations/catalog`) {
+    const catalog = collectionStations.map((station) => ({
+      ...station,
+      online: Boolean(station.online),
+      httpDatasetUrl:
+        station.datasetUrl && String(station.datasetUrl).startsWith("stream://")
+          ? streamHttpDatasetUrl(station.id)
+          : null,
+    }));
+    return sendJson(res, 200, { stations: catalog, updatedAt: new Date().toISOString() });
+  }
+
   if (p === `${BASE}/api/collection/stations`) {
     const enriched = collectionStations.map(enrichStation);
     return sendJson(res, 200, { stations: enriched, updatedAt: new Date().toISOString() });

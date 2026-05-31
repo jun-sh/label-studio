@@ -7,6 +7,7 @@ import time
 
 from ego_capture_studio.capture.ego_spec import OAK_CAPTURE_FPS, OAK_CAPTURE_IMU_HZ
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
+from ego_capture_studio.capture.preview_server import start_preview_stack
 from ego_capture_studio.capture.stream_upload import FrameStreamUploader
 
 
@@ -52,6 +53,7 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
+    preview_hub = start_preview_stack()
     frame_index = 0
     stream_frame_count = 0
     stream_t0 = 0.0
@@ -68,6 +70,7 @@ def main() -> None:
         print(f"stream started fps_target={args.fps} session={uploader.session_id}")
 
         for ts_ns, rgb_frames, imu6 in recorder.iter_synced_frames(args.episode_seconds):
+            preview_hub.offer(rgb_frames)
             uploader.enqueue_frame(
                 frame_index=frame_index,
                 timestamp_ns=ts_ns,

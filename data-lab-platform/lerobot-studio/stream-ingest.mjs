@@ -28,8 +28,9 @@ const DEFAULT_QUOTA_GB = Number(process.env.STREAM_QUOTA_GB || 100);
 const RETENTION_DAYS = Number(process.env.STREAM_RETENTION_DAYS || 7);
 const DISK_HIGH_WATER_RATIO = Number(process.env.STREAM_DISK_HIGH_WATER || 0.85);
 const DISK_TARGET_RATIO = Number(process.env.STREAM_DISK_TARGET || 0.7);
-const CLEANUP_DEBOUNCE_MS = 60_000;
+const CLEANUP_DEBOUNCE_MS = Number(process.env.STREAM_CLEANUP_DEBOUNCE_MS || 300_000);
 const CLEANUP_INTERVAL_MS = Number(process.env.STREAM_CLEANUP_INTERVAL_MS || 3_600_000);
+const DISK_USAGE_CACHE_MAX_AGE_MS = Number(process.env.STREAM_DISK_USAGE_CACHE_MS || 120_000);
 const STATION_TOKEN_HEADER = "x-station-token";
 /**
  * Natural-language task description (shown in LeRobot episode list, like sample datasets).
@@ -485,7 +486,7 @@ export function isStationLive(stationId) {
   return isRecentActivity(session?.updatedAt);
 }
 
-const STATION_LIVE_CACHE_MS = 5_000;
+const STATION_LIVE_CACHE_MS = Number(process.env.STATION_LIVE_CACHE_MS || 30_000);
 /** @type {Map<string, { online: boolean, at: number }>} */
 const stationLiveCache = new Map();
 
@@ -632,6 +633,19 @@ function dirSizeBytes(dir) {
   return total;
 }
 
+function readDiskHousekeeping(root) {
+  return readJson(path.join(root, "live", "disk-housekeeping.json"), null);
+}
+
+/** Avoid full-tree scans on hot HTTP paths; refresh via runDiskCleanup. */
+function cachedDiskUsageBytes(root) {
+  const hk = readDiskHousekeeping(root);
+  if (!hk || typeof hk.usageBytes !== "number") return null;
+  const at = hk.at ? Date.parse(hk.at) : NaN;
+  if (!Number.isFinite(at) || Date.now() - at > DISK_USAGE_CACHE_MAX_AGE_MS) return null;
+  return hk.usageBytes;
+}
+
 function rmRfSafe(target) {
   try {
     fs.rmSync(target, { recursive: true, force: true });
@@ -727,9 +741,8 @@ function purgeExpiredArchives(root, activeSessionId) {
   for (const entry of listArchiveDirs(root)) {
     if (activeSessionId && entry.name.startsWith(`${activeSessionId}_`)) continue;
     if (entry.mtimeMs >= cutoff) continue;
-    const size = dirSizeBytes(entry.path);
     rmRfSafe(entry.path);
-    freed += size;
+    freed += 1;
   }
   return freed;
 }
@@ -747,26 +760,26 @@ function purgeExpiredSessionMarkers(root, activeSessionId) {
     const meta = registry.sessions?.[ent.name];
     const endedAt = meta?.endedAt ? Date.parse(meta.endedAt) : fs.statSync(full).mtimeMs;
     if (Number.isFinite(endedAt) && endedAt >= cutoff) continue;
-    freed += dirSizeBytes(full);
     rmRfSafe(full);
+    freed += 1;
   }
   return freed;
 }
 
 function purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes) {
-  const target = quotaBytes * DISK_TARGET_RATIO;
-  let usage = dirSizeBytes(root);
-  let freed = 0;
-  if (usage <= quotaBytes * DISK_HIGH_WATER_RATIO) return freed;
-  for (const entry of listArchiveDirs(root)) {
-    if (usage <= target) break;
+  let usage = cachedDiskUsageBytes(root);
+  if (usage == null) usage = dirSizeBytes(root);
+  if (usage <= quotaBytes * DISK_HIGH_WATER_RATIO) return 0;
+  const archives = listArchiveDirs(root);
+  let removed = 0;
+  const maxPerRun = Number(process.env.STREAM_ARCHIVE_PURGE_MAX || 3);
+  for (const entry of archives) {
+    if (removed >= maxPerRun) break;
     if (activeSessionId && entry.name.startsWith(`${activeSessionId}_`)) continue;
-    const size = dirSizeBytes(entry.path);
     rmRfSafe(entry.path);
-    usage -= size;
-    freed += size;
+    removed += 1;
   }
-  return freed;
+  return removed;
 }
 
 function runDiskCleanup(stationId) {
@@ -1123,7 +1136,8 @@ export function getStreamStatus(stationId) {
   const chunks = readChunksManifest(root);
   const sessionFile = path.join(root, "live", "session.json");
   const live = readJson(sessionFile, {});
-  const usageBytes = fs.existsSync(root) ? dirSizeBytes(root) : 0;
+  const usageBytes =
+    cachedDiskUsageBytes(root) ?? (fs.existsSync(root) ? dirSizeBytes(root) : 0);
   const quotaBytes = stationQuotaBytes(stationId);
   return {
     stationId,
@@ -1281,7 +1295,6 @@ export function handleStreamUpload(stationId, body) {
     scheduleMux(stationId);
     scheduleViewerPublish(stationId);
     scheduleParquetSync(stationId);
-    scheduleDiskCleanup(stationId);
     return { ok: true, action: "frame", frameIndex, totalFrames: info.total_frames, duplicate: false };
   }
 

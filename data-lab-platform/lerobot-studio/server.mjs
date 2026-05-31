@@ -13,6 +13,7 @@ import {
   streamDatasetUrl,
   streamHttpDatasetUrl,
 } from "./stream-ingest.mjs";
+import { proxyStationPreview } from "./preview-proxy.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.LEROBOT_STUDIO_ROOT || "/srv/lerobot";
@@ -171,11 +172,11 @@ function serveFileWithRange(req, res, filePath) {
 
 function injectBranding(html) {
   const inject =
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=24"/>' +
-    '<script src="/lerobot/branding/stream-embed-gate.js?v=24"></script>' +
-    '<script src="/lerobot/branding/stream-http-source.js?v=24"></script>' +
-    '<script defer src="/lerobot/branding/overlay.js?v=24"></script>' +
-    '<script defer src="/lerobot/branding/stream-live-poll.js?v=24"></script>';
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=40"/>' +
+    '<script src="/lerobot/branding/stream-embed-gate.js?v=40"></script>' +
+    '<script src="/lerobot/branding/stream-http-source.js?v=40"></script>' +
+    '<script defer src="/lerobot/branding/overlay.js?v=40"></script>' +
+    '<script defer src="/lerobot/branding/stream-live-poll.js?v=40"></script>';
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");
   if (!html.includes("/lerobot/branding/overlay.js")) {
@@ -255,6 +256,16 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 404, { error: "station_not_found" });
     }
     return sendJson(res, 200, enrichStation(station));
+  }
+
+  const previewMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/preview/([^/]+)/mjpeg$`),
+  );
+  if (previewMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(previewMatch[1]);
+    const cam = decodeURIComponent(previewMatch[2]);
+    const station = collectionStations.find((s) => s.id === stationId);
+    return proxyStationPreview(req, res, station, cam, { send, corsHeaders });
   }
 
   const streamMatch = p.match(new RegExp(`^${BASE}/api/collection/stations/([^/]+)/stream$`));

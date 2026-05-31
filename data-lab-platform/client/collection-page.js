@@ -1,17 +1,19 @@
 /**
- * /collection (layer 1) — EGO station list only. Online stations open layer 2 via parent SPA.
+ * /collection (layer 1) — EGO station list only. Online/stream stations open layer 2.
  */
 (function () {
   "use strict";
 
   var API = "/lerobot/api/collection/stations";
   var CATALOG_API = "/lerobot/api/collection/stations/catalog";
+  var STATIC_CATALOG = "/_datalab/collection-stations.catalog.json";
   var CACHE_KEY = "datalab:collection:stations:v1";
   var listEl = document.getElementById("datalab-station-list");
-  var MAX_RETRIES = 5;
+  var MAX_RETRIES = 3;
   var RETRY_BASE_MS = 800;
   var REFRESH_MS = 20_000;
-  var FETCH_TIMEOUT_MS = 12_000;
+  var FETCH_TIMEOUT_MS = 6_000;
+  var CATALOG_TIMEOUT_MS = 4_000;
 
   var stations = [];
   var hasRendered = false;
@@ -24,7 +26,8 @@
   }
 
   function navigateToStation(station) {
-    if (!station || !station.online) return;
+    if (!station) return;
+    if (!station.online && !station.stream) return;
     var url = "/collection?station=" + encodeURIComponent(station.id);
     var topWin = window.top || window.parent || window;
 
@@ -105,10 +108,11 @@
     stations.forEach(function (station) {
       var card = document.createElement("article");
       var online = Boolean(station.online);
+      var clickable = online || Boolean(station.stream);
       card.className =
         "datalab-station-card " + (online ? "datalab-station-card--online" : "datalab-station-card--offline");
 
-      if (online) {
+      if (clickable) {
         card.setAttribute("role", "button");
         card.setAttribute("tabindex", "0");
         card.setAttribute("aria-disabled", "false");
@@ -131,7 +135,7 @@
       badge.className +=
         online ? " datalab-station-card__badge--online" : " datalab-station-card__badge--offline";
 
-      if (online) {
+      if (clickable) {
         card.addEventListener("click", function () {
           navigateToStation(station);
         });
@@ -188,30 +192,39 @@
     });
   }
 
+  function loadStaticCatalog() {
+    return fetchJson(STATIC_CATALOG, CATALOG_TIMEOUT_MS).then(function (data) {
+      return Array.isArray(data) ? data : (data && data.stations) || [];
+    });
+  }
+
   function paintCatalogFirst() {
     var cached = readCache();
     if (cached) {
       stations = cached;
       renderList();
-      return;
+      return Promise.resolve();
     }
-    return fetchJson(CATALOG_API, 5000)
-      .then(function (data) {
-        stations = (data && data.stations) || [];
-        if (stations.length) {
-          renderList();
-        }
+    return loadStaticCatalog()
+      .then(function (list) {
+        if (!list.length) throw new Error("empty_static_catalog");
+        stations = list;
+        renderList();
       })
       .catch(function () {
-        /* catalog optional */
+        return fetchJson(CATALOG_API, CATALOG_TIMEOUT_MS).then(function (data) {
+          stations = (data && data.stations) || [];
+          if (stations.length) renderList();
+        });
       });
   }
 
   function fetchLiveStations(attempt) {
+    var catalogSnapshot = stations.slice();
     return fetchJson(API, FETCH_TIMEOUT_MS).then(function (data) {
       var liveList = (data && data.stations) || [];
-      if (!hasRendered && stations.length) {
-        stations = mergeLiveStatus(stations, liveList);
+      if (catalogSnapshot.length) {
+        stations = mergeLiveStatus(catalogSnapshot, liveList);
       } else {
         stations = liveList;
       }
@@ -225,12 +238,8 @@
     var attempt = 0;
     var userInitiated = Boolean(options.userInitiated);
 
-    if (!hasRendered || userInitiated) {
-      showLoading(userInitiated ? "正在重新加载…" : "正在更新在线状态…");
-    }
-
-    if (!userInitiated) {
-      paintCatalogFirst();
+    if (!hasRendered) {
+      showLoading(userInitiated ? "正在重新加载…" : "正在加载采集站列表…");
     }
 
     function tryFetch() {
@@ -250,7 +259,7 @@
       });
     }
 
-    return tryFetch();
+    return paintCatalogFirst().then(tryFetch);
   }
 
   function startRefresh() {

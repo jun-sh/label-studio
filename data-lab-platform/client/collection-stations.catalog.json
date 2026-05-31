@@ -1,0 +1,35 @@
+[
+  {
+    "id": "ego-lan-214",
+    "name": "EGO 采集站 · 实验室 A (214)",
+    "scope": "lan",
+    "host": "10.10.10.214",
+    "online": false,
+    "stream": true,
+    "datasetUrl": "stream://ego-lan-214",
+    "streamUrl": "/lerobot/api/collection/stations/ego-lan-214/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-lan-214/upload",
+    "viewerUrl": "/collection?station=ego-lan-214"
+  },
+  {
+    "id": "ego-lan-02",
+    "name": "EGO 采集站 · 实验室 B",
+    "scope": "lan",
+    "host": "10.10.10.102",
+    "online": false,
+    "streamUrl": "/lerobot/api/collection/stations/ego-lan-02/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-lan-02/upload",
+    "viewerUrl": "/collection?station=ego-lan-02"
+  },
+  {
+    "id": "ego-wan-01",
+    "name": "EGO 采集站 · 公网节点",
+    "scope": "wan",
+    "host": "ego.example.com",
+    "online": true,
+    "datasetUrl": "sample://sensexperience_ego",
+    "streamUrl": "/lerobot/api/collection/stations/ego-wan-01/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-wan-01/upload",
+    "viewerUrl": "/collection?station=ego-wan-01"
+  }
+]

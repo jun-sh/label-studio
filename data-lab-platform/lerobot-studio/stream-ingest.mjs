@@ -1164,7 +1164,6 @@ export function handleStreamUpload(stationId, body) {
     const liveHb = readJson(path.join(root, "live", "session.json"), {});
     streamLog(stationId, "heartbeat", { sessionId: liveHb.sessionId, host: body.host || null });
     ensurePeriodicDiskCleanup(stationId);
-    scheduleDiskCleanup(stationId);
     return { ok: true, action: "heartbeat" };
   }
 
@@ -1181,7 +1180,6 @@ export function handleStreamUpload(stationId, body) {
       previousSessionId: prevLive.sessionId || null,
     });
     ensurePeriodicDiskCleanup(stationId);
-    scheduleDiskCleanup(stationId);
     if (!isResume) {
       writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes));
       writeTasksJsonl(root, body.task || DEFAULT_STREAM_TASK);

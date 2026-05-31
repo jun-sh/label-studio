@@ -85,7 +85,7 @@
     var VIZ_LAYER = "datalab-viz-layer";
     var VIZ_FRAME = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
-    var LIST_SRC = "/_datalab/collection-embed.html?v=7";
+    var LIST_SRC = "/_datalab/collection-embed.html?v=8";
     var DEFAULT_DATASET_URL = "stream://ego-lan-214";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
     var VIZ_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站 · 214{% else %}EGO station · 214{% endif %}";
@@ -500,10 +500,20 @@
         return res.ok ? res.json() : null;
       })
       .then(function (station) {
-        openStationPage(station);
+        openStationPage(
+          station || {
+            id: stationId,
+            online: false,
+            datasetUrl: "stream://" + stationId,
+          },
+        );
       })
       .catch(function () {
-        showList();
+        openStationPage({
+          id: stationId,
+          online: false,
+          datasetUrl: "stream://" + stationId,
+        });
       });
   })();
 </script>

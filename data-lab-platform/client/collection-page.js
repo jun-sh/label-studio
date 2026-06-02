@@ -5,6 +5,9 @@
   "use strict";
 
   var API = "/lerobot/api/collection/stations";
+  var stationPingUrl = function (id) {
+    return API + "/" + encodeURIComponent(id) + "/ping";
+  };
   var CATALOG_API = "/lerobot/api/collection/stations/catalog";
   var STATIC_CATALOG = "/_datalab/collection-stations.catalog.json";
   var CACHE_KEY = "datalab:collection:stations:v1";
@@ -219,18 +222,46 @@
       });
   }
 
-  function fetchLiveStations(attempt) {
-    var catalogSnapshot = stations.slice();
-    return fetchJson(API, FETCH_TIMEOUT_MS).then(function (data) {
-      var liveList = (data && data.stations) || [];
-      if (catalogSnapshot.length) {
-        stations = mergeLiveStatus(catalogSnapshot, liveList);
-      } else {
-        stations = liveList;
-      }
+  function probeStreamStationsOnline() {
+    var streamStations = stations.filter(function (s) {
+      return Boolean(s.stream);
+    });
+    if (!streamStations.length) return Promise.resolve();
+    return Promise.all(
+      streamStations.map(function (station) {
+        return fetchJson(stationPingUrl(station.id), 3000)
+          .then(function (data) {
+            station.online = Boolean(data && data.online);
+          })
+          .catch(function () {
+            /* keep previous badge */
+          });
+      }),
+    ).then(function () {
       writeCache(stations);
       renderList();
     });
+  }
+
+  function fetchLiveStations(attempt) {
+    var catalogSnapshot = stations.slice();
+    return fetchJson(API, FETCH_TIMEOUT_MS)
+      .then(function (data) {
+        var liveList = (data && data.stations) || [];
+        if (catalogSnapshot.length) {
+          stations = mergeLiveStatus(catalogSnapshot, liveList);
+        } else {
+          stations = liveList;
+        }
+        writeCache(stations);
+        renderList();
+      })
+      .catch(function () {
+        if (catalogSnapshot.length && hasRendered) {
+          return probeStreamStationsOnline();
+        }
+        throw new Error("live_fetch_failed");
+      });
   }
 
   function loadStations(options) {

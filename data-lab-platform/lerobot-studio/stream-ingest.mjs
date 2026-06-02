@@ -211,7 +211,7 @@ function isPublishedPath(rel) {
   if (norm.includes("/.locks/") || norm.endsWith(".lock")) return false;
   if (norm.includes(".muxing.tmp") || norm.endsWith(".part")) return false;
   if (/\/[^/]+\.tmp$/.test(norm)) return false;
-  if (norm.endsWith(".jsonl")) return false;
+  if (norm.endsWith(".jsonl") && norm !== "meta/tasks.jsonl") return false;
   if (norm === "meta/info.viewer.json" || norm.includes("chunks.json")) return false;
   if (norm.includes("session-registry.json") || norm.includes("disk-housekeeping.json")) return false;
   if (norm.startsWith("archive/")) return false;
@@ -477,13 +477,15 @@ function isRecentActivity(iso) {
   return Number.isFinite(age) && age >= 0 && age < HEARTBEAT_TTL_MS;
 }
 
-/** Online when heartbeat OR frame activity within TTL (offline only if both are stale). */
+/** Online when heartbeat OR frame/session activity within TTL. */
 export function isStationLive(stationId) {
   const root = stationRoot(stationId);
   const hb = readJson(path.join(root, "live", "heartbeat.json"));
   if (isRecentActivity(hb?.at)) return true;
   const session = readJson(path.join(root, "live", "session.json"));
-  return isRecentActivity(session?.updatedAt);
+  if (isRecentActivity(session?.updatedAt)) return true;
+  if (isRecentActivity(session?.resumedAt)) return true;
+  return false;
 }
 
 const STATION_LIVE_CACHE_MS = Number(process.env.STATION_LIVE_CACHE_MS || 30_000);
@@ -1163,7 +1165,6 @@ export function handleStreamUpload(stationId, body) {
     touchHeartbeat(root, stationId, body.host || null);
     const liveHb = readJson(path.join(root, "live", "session.json"), {});
     streamLog(stationId, "heartbeat", { sessionId: liveHb.sessionId, host: body.host || null });
-    ensurePeriodicDiskCleanup(stationId);
     return { ok: true, action: "heartbeat" };
   }
 

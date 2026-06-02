@@ -31,7 +31,12 @@ def main() -> None:
         default="/tmp/ego-stream-checkpoint.json",
         help="Persist sessionId + nextFrameIndex for idempotent resume after disconnect",
     )
-    p.add_argument("--episode-seconds", type=float, default=120.0)
+    p.add_argument(
+        "--episode-seconds",
+        type=float,
+        default=600.0,
+        help="Length of each OAK capture segment before starting the next (continuous stream)",
+    )
     p.add_argument("--fps", type=int, default=OAK_CAPTURE_FPS)
     p.add_argument("--imu-hz", type=int, default=OAK_CAPTURE_IMU_HZ)
     imu = p.add_mutually_exclusive_group()
@@ -42,8 +47,10 @@ def main() -> None:
     enable_imu = not args.no_imu
     force_imu = bool(args.imu)
 
+    # Bring up :8765 before OAK init / upload so the UI keeps a live preview during ingest backlog.
+    preview_hub = start_preview_stack()
+
     uploader = FrameStreamUploader(args.upload_url, checkpoint_path=args.checkpoint_path)
-    uploader.heartbeat(host="10.10.10.214")
     task = uploader.resume_task() or args.task
 
     recorder = Oak4pEgoRecorder(
@@ -53,7 +60,7 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
-    preview_hub = start_preview_stack()
+    uploader.heartbeat(host="10.10.10.214")
     frame_index = 0
     stream_frame_count = 0
     stream_t0 = 0.0
@@ -69,27 +76,36 @@ def main() -> None:
         stream_t0 = time.monotonic()
         print(f"stream started fps_target={args.fps} session={uploader.session_id}")
 
-        for ts_ns, rgb_frames, imu6 in recorder.iter_synced_frames(args.episode_seconds):
-            preview_hub.offer(rgb_frames)
-            uploader.enqueue_frame(
-                frame_index=frame_index,
-                timestamp_ns=ts_ns,
-                camera_frames=rgb_frames,
-                imu6=imu6,
-                task=task,
-            )
-            frame_index += 1
-            stream_frame_count += 1
-            if stream_frame_count % 30 == 0:
-                elapsed = max(time.monotonic() - stream_t0, 1e-6)
-                capture_fps = stream_frame_count / elapsed
-                stats = uploader.upload_stats()
-                print(
-                    f"captured={frame_index} stream_frames={stream_frame_count} capture_fps={capture_fps:.1f} "
-                    f"uploaded={stats['uploaded']} dup={stats['duplicates']} "
-                    f"queued={stats['queued']} dropped={stats['dropped']} "
-                    f"server_total={stats['serverTotalFrames']} session={stats['sessionId']}"
+        while True:
+            segment_t0 = time.monotonic()
+            segment_frames = 0
+            for ts_ns, rgb_frames, imu6 in recorder.iter_synced_frames(args.episode_seconds):
+                preview_hub.offer(rgb_frames)
+                uploader.enqueue_frame(
+                    frame_index=frame_index,
+                    timestamp_ns=ts_ns,
+                    camera_frames=rgb_frames,
+                    imu6=imu6,
+                    task=task,
                 )
+                frame_index += 1
+                stream_frame_count += 1
+                segment_frames += 1
+                if stream_frame_count % 30 == 0:
+                    elapsed = max(time.monotonic() - stream_t0, 1e-6)
+                    capture_fps = stream_frame_count / elapsed
+                    stats = uploader.upload_stats()
+                    print(
+                        f"captured={frame_index} stream_frames={stream_frame_count} capture_fps={capture_fps:.1f} "
+                        f"uploaded={stats['uploaded']} dup={stats['duplicates']} "
+                        f"queued={stats['queued']} dropped={stats['dropped']} "
+                        f"server_total={stats['serverTotalFrames']} session={stats['sessionId']}"
+                    )
+            seg_elapsed = max(time.monotonic() - segment_t0, 1e-6)
+            print(
+                f"segment done frames={segment_frames} elapsed_s={seg_elapsed:.1f} "
+                f"next_frame_index={frame_index} session={uploader.session_id}"
+            )
     finally:
         uploader.stop_upload_worker()
         uploader.stop_periodic_heartbeat()

@@ -156,4 +156,36 @@
   g.__datalabReopenHttpDataset = async function () {
     return;
   };
+
+  function streamBaseFromQuery() {
+    try {
+      var raw = new URLSearchParams(g.location.search).get("url") || "";
+      if (!raw || raw.indexOf("/api/stream/") < 0) return null;
+      return raw.startsWith("http") ? raw : g.location.origin + raw;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Retry open when iframe was display:none (collection preview tab) on first navigation. */
+  function bootstrapStreamFromQuery() {
+    var base = streamBaseFromQuery();
+    if (!base) return false;
+    var ctrl = g.__DATALAB_STREAM_CTRL__;
+    if (!ctrl || typeof g.__datalabOpenHttpDataset !== "function") return false;
+    if (g.__DATALAB_STREAM_STABLE__ && g.__DATALAB_STREAM_BASE__ === base) return true;
+    g.__datalabOpenHttpDataset(ctrl, base, "replace").catch(function () {
+      /* overlay shows fallback */
+    });
+    return true;
+  }
+
+  if (streamBaseFromQuery()) {
+    var bootstrapTicks = 0;
+    var bootstrapTimer = g.setInterval(function () {
+      if (bootstrapStreamFromQuery() || ++bootstrapTicks >= 120) {
+        g.clearInterval(bootstrapTimer);
+      }
+    }, 500);
+  }
 })();

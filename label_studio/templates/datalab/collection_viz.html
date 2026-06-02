@@ -6,14 +6,21 @@
 {# Collection list or LeRobot viz iframe — mounted on document.body (see bottomjs). #}
 {% endblock %}
 
+{% block head %}
+{{ block.super }}
+<script nonce="{{ request.csp_nonce }}">
+  window.__DATALAB_COLLECTION_DJANGO_SHELL__ = true;
+</script>
+{% endblock %}
+
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=2" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=3" />
 <style nonce="{{ request.csp_nonce }}">
   #datalab-collection-layer,
-  #datalab-viz-layer {
+  #datalab-station-layer {
     position: fixed;
-    z-index: 50;
+    z-index: 500;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -22,7 +29,7 @@
   #datalab-collection-layer {
     background: var(--color-neutral-background);
   }
-  #datalab-viz-layer,
+  #datalab-station-layer,
   #datalab-stream-loading-layer {
     background: #0b1220;
   }
@@ -51,7 +58,7 @@
     to { transform: rotate(360deg); }
   }
   #datalab-collection-layer iframe,
-  #datalab-viz-layer iframe {
+  #datalab-station-layer iframe {
     flex: 1 1 auto;
     width: 100%;
     height: 100%;
@@ -64,6 +71,12 @@
   }
   body[data-datalab-collection-viz="1"] .content-wrapper__content iframe:not(#datalab-viz-frame) {
     display: none !important;
+  }
+  /* Legacy React bundle mounts a bare #datalab-viz-layer (no #datalab-station-shell). */
+  #datalab-viz-layer.datalab-react-legacy-viz {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
   }
   #datalab-collection-viz-back,
   .datalab-collection-viz-back {
@@ -82,10 +95,10 @@
     var g = window;
     var COLLECTION_LAYER = "datalab-collection-layer";
     var COLLECTION_FRAME = "datalab-collection-frame";
-    var VIZ_LAYER = "datalab-viz-layer";
+    var VIZ_LAYER = "datalab-station-layer";
     var VIZ_FRAME = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
-    var LIST_SRC = "/_datalab/collection-embed.html?v=8";
+    var LIST_SRC = "/_datalab/collection-embed.html?v=9";
     var DEFAULT_DATASET_URL = "stream://ego-lan-214";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
     var VIZ_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站 · 214{% else %}EGO station · 214{% endif %}";
@@ -103,6 +116,42 @@
       { id: "cam_02", label: ZH ? "相机 02" : "Cam 02" },
     ];
 
+    var STATION_FETCH_TIMEOUT_MS = 5000;
+    var PING_TIMEOUT_MS = 4000;
+    var STREAM_INFO_TIMEOUT_MS = 6000;
+
+    function fetchWithTimeout(url, timeoutMs) {
+      var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      var timer = null;
+      if (ctrl && timeoutMs > 0) {
+        timer = setTimeout(function () {
+          ctrl.abort();
+        }, timeoutMs);
+      }
+      return fetch(url, {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: ctrl ? ctrl.signal : undefined,
+      })
+        .then(function (res) {
+          if (timer) clearTimeout(timer);
+          return res;
+        })
+        .catch(function (err) {
+          if (timer) clearTimeout(timer);
+          throw err;
+        });
+    }
+
+    function stationFallback(stationId) {
+      return {
+        id: stationId,
+        online: false,
+        stream: true,
+        datasetUrl: "stream://" + stationId,
+      };
+    }
+
     function previewMjpegUrl(stationId, cam) {
       return (
         "/lerobot/api/collection/stations/" +
@@ -113,7 +162,7 @@
       );
     }
 
-    function buildLerobotSrc(datasetUrl) {
+    function buildLerobotSrc(datasetUrl, cacheBust) {
       var params = new URLSearchParams({ datalab_embed: "1", datalab_collection: "1", lang: LANG });
       if (datasetUrl) {
         if (String(datasetUrl).indexOf("stream://") === 0) {
@@ -122,6 +171,9 @@
         } else {
           params.set("url", datasetUrl);
         }
+      }
+      if (cacheBust) {
+        params.set("_ts", String(cacheBust));
       }
       return "/lerobot/?" + params.toString();
     }
@@ -214,9 +266,22 @@
         });
     }
 
+    /** Old React CollectionPage mounts a bare #datalab-viz-layer over Django shell. */
+    function purgeReactLegacyVizLayer() {
+      var rogue = document.getElementById("datalab-viz-layer");
+      if (!rogue) return;
+      if (rogue.querySelector("#datalab-station-shell")) return;
+      rogue.classList.add("datalab-react-legacy-viz");
+      rogue.remove();
+    }
+
     purgeLegacyBackButton();
+    purgeReactLegacyVizLayer();
     if (typeof MutationObserver !== "undefined" && document.body) {
-      new MutationObserver(purgeLegacyBackButton).observe(document.body, { childList: true, subtree: true });
+      new MutationObserver(function () {
+        purgeLegacyBackButton();
+        purgeReactLegacyVizLayer();
+      }).observe(document.body, { childList: true, subtree: true });
     }
 
     var activeLayerId = COLLECTION_LAYER;
@@ -351,6 +416,7 @@
 
       var lerobotMounted = false;
       var vizFrame = null;
+      var streamDatasetReady = Boolean(datasetReady);
       var currentMode = "dataset";
       var liveOnline = Boolean(stationOnline);
 
@@ -373,16 +439,42 @@
         });
       }
 
-      function ensureLerobotMounted() {
-        if (lerobotMounted || !datasetReady) return;
-        vizFrame = document.createElement("iframe");
-        vizFrame.id = VIZ_FRAME;
-        vizFrame.title = VIZ_TITLE;
-        vizFrame.allow = "fullscreen";
-        vizFrame.src = buildLerobotSrc(datasetUrl);
-        vizSlot.appendChild(vizFrame);
-        lerobotMounted = true;
+      function ensureLerobotMounted(forceReload) {
+        var src = buildLerobotSrc(datasetUrl, Date.now());
+        if (!lerobotMounted || !vizFrame) {
+          vizFrame = document.createElement("iframe");
+          vizFrame.id = VIZ_FRAME;
+          vizFrame.title = VIZ_TITLE;
+          vizFrame.allow = "fullscreen";
+          vizFrame.loading = "eager";
+          vizFrame.src = src;
+          vizSlot.appendChild(vizFrame);
+          lerobotMounted = true;
+          return;
+        }
+        if (forceReload) {
+          vizFrame.src = src;
+        }
       }
+
+      g.__datalabCollectionSetDatasetReady = function (ready) {
+        streamDatasetReady = Boolean(ready);
+        if (streamDatasetReady && currentMode === "dataset") {
+          ensureLerobotMounted(true);
+        }
+      };
+
+      g.__datalabCollectionApplyStation = function (patch) {
+        if (!patch) return;
+        var wasLive = liveOnline;
+        if (typeof patch.online === "boolean") liveOnline = patch.online;
+        updateOnlineBadge();
+        if (wasLive && !liveOnline && currentMode === "preview") {
+          setMode("dataset");
+        } else if (!wasLive && liveOnline && currentMode === "dataset") {
+          setMode("preview");
+        }
+      };
 
       function setMode(mode) {
         if (mode === "preview" && !liveOnline) mode = "dataset";
@@ -396,8 +488,8 @@
         } else {
           previewLayer.classList.remove("is-visible");
           disconnectPreviewStreams();
-          ensureLerobotMounted();
           vizSlot.classList.add("is-visible");
+          ensureLerobotMounted(true);
         }
       }
 
@@ -415,34 +507,34 @@
       activeFrameId = VIZ_FRAME;
       syncBounds(VIZ_LAYER, VIZ_FRAME);
       notifyMenuReconcile();
+      purgeReactLegacyVizLayer();
 
       var pollTimer = setInterval(function () {
-        fetch("/lerobot/api/collection/stations/" + encodeURIComponent(stationId), {
-          credentials: "same-origin",
-          cache: "no-store",
-        })
+        fetchWithTimeout(
+          "/lerobot/api/collection/stations/" + encodeURIComponent(stationId) + "/ping",
+          PING_TIMEOUT_MS,
+        )
           .then(function (res) {
             return res.ok ? res.json() : null;
           })
           .then(function (st) {
             if (!st) return;
-            var wasLive = liveOnline;
-            liveOnline = Boolean(st.online);
-            updateOnlineBadge();
-            if (wasLive && !liveOnline && currentMode === "preview") {
-              setMode("dataset");
-            }
-            if (!wasLive && liveOnline && currentMode === "dataset") {
-              setMode("preview");
-            }
+            g.__datalabCollectionApplyStation({ online: Boolean(st.online) });
           })
           .catch(function () {
             /* ignore */
           });
       }, 10000);
 
+      var previewRefreshTimer = setInterval(function () {
+        if (currentMode === "preview" && liveOnline) {
+          connectPreviewStreams();
+        }
+      }, 20000);
+
       window.addEventListener("beforeunload", function () {
         clearInterval(pollTimer);
+        clearInterval(previewRefreshTimer);
         disconnectPreviewStreams();
       });
     }
@@ -452,23 +544,36 @@
         showList();
         return;
       }
-      var datasetUrl = station.datasetUrl || DEFAULT_DATASET_URL;
-      var infoUrl = streamInfoUrl(datasetUrl);
-      if (!infoUrl) {
-        mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
-        attachLayoutListeners();
-        return;
-      }
-      showStreamLoading();
+      var datasetUrl = station.datasetUrl || "stream://" + station.id;
+      mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
       attachLayoutListeners();
-      fetch(infoUrl, { credentials: "same-origin", cache: "no-store" })
+
+      fetchWithTimeout(
+        "/lerobot/api/collection/stations/" + encodeURIComponent(station.id) + "/ping",
+        PING_TIMEOUT_MS,
+      )
         .then(function (res) {
-          mountStationShell(station.id, datasetUrl, Boolean(station.online), res.ok);
-          attachLayoutListeners();
+          return res.ok ? res.json() : null;
+        })
+        .then(function (ping) {
+          if (ping && g.__datalabCollectionApplyStation) {
+            g.__datalabCollectionApplyStation({ online: Boolean(ping.online) });
+          }
         })
         .catch(function () {
-          mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
-          attachLayoutListeners();
+          /* keep shell */
+        });
+
+      var infoUrl = streamInfoUrl(datasetUrl);
+      if (!infoUrl) return;
+      fetchWithTimeout(infoUrl, STREAM_INFO_TIMEOUT_MS)
+        .then(function (res) {
+          if (g.__datalabCollectionSetDatasetReady) {
+            g.__datalabCollectionSetDatasetReady(res.ok);
+          }
+        })
+        .catch(function () {
+          /* iframe may still load */
         });
     }
 
@@ -493,27 +598,31 @@
       return;
     }
 
-    fetch("/lerobot/api/collection/stations/" + encodeURIComponent(stationId), {
-      credentials: "same-origin",
-    })
+    function ensureStationShellMounted() {
+      if (document.getElementById(VIZ_LAYER) && document.getElementById("datalab-station-shell")) return;
+      openStationPage(stationFallback(stationId));
+      purgeReactLegacyVizLayer();
+    }
+
+    ensureStationShellMounted();
+    [120, 400, 1200].forEach(function (ms) {
+      setTimeout(ensureStationShellMounted, ms);
+    });
+
+    fetchWithTimeout(
+      "/lerobot/api/collection/stations/" + encodeURIComponent(stationId),
+      STATION_FETCH_TIMEOUT_MS,
+    )
       .then(function (res) {
         return res.ok ? res.json() : null;
       })
       .then(function (station) {
-        openStationPage(
-          station || {
-            id: stationId,
-            online: false,
-            datasetUrl: "stream://" + stationId,
-          },
-        );
+        if (station && g.__datalabCollectionApplyStation) {
+          g.__datalabCollectionApplyStation({ online: Boolean(station.online) });
+        }
       })
       .catch(function () {
-        openStationPage({
-          id: stationId,
-          online: false,
-          datasetUrl: "stream://" + stationId,
-        });
+        /* shell already visible */
       });
   })();
 </script>

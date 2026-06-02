@@ -17,9 +17,12 @@ from typing import Any
 
 HEARTBEAT_INTERVAL_S = 15.0
 DEFAULT_UPLOAD_QUEUE_MAXSIZE = 300
+DEFAULT_CONTROL_PLANE_TIMEOUT_S = 90.0
+DEFAULT_CONTROL_PLANE_RETRY_MAX_S = 600.0
 CHECKPOINT_VERSION = 1
 UPLOAD_RETRY_BASE_S = 0.5
 UPLOAD_RETRY_MAX_S = 5.0
+UPLOAD_HELD_MAX_RETRIES = 8
 STATION_TOKEN_HEADER = "X-Station-Token"
 
 import numpy as np
@@ -89,6 +92,12 @@ class FrameStreamUploader:
         if not self.upload_url.endswith("/upload"):
             raise ValueError("upload_url must end with /upload")
         self.timeout_s = timeout_s
+        self.control_plane_timeout_s = float(
+            os.environ.get("DATALAB_CONTROL_PLANE_TIMEOUT_S", DEFAULT_CONTROL_PLANE_TIMEOUT_S)
+        )
+        self.control_plane_retry_max_s = float(
+            os.environ.get("DATALAB_CONTROL_PLANE_RETRY_MAX_S", DEFAULT_CONTROL_PLANE_RETRY_MAX_S)
+        )
         self.heartbeat_interval_s = heartbeat_interval_s
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path else None
         self.session_id: str | None = None
@@ -111,6 +120,7 @@ class FrameStreamUploader:
         self._network_ok = True
         self._retry_backoff_s = UPLOAD_RETRY_BASE_S
         self._held_job: _FrameJob | None = None
+        self._held_retries = 0
         self._load_checkpoint()
         if self.session_id:
             _log_stream(
@@ -164,7 +174,40 @@ class FrameStreamUploader:
             headers={"Content-Type": "application/json"},
         )
 
-    def _request(self, *, data: bytes, headers: dict[str, str]) -> dict[str, Any]:
+    def _post_control_plane(self, body: dict[str, Any], *, event: str) -> dict[str, Any]:
+        """Retry heartbeat/session_start so ingest backlog does not kill the capture process."""
+        delay_s = 2.0
+        started = time.monotonic()
+        while True:
+            try:
+                return self._request(
+                    data=json.dumps(body).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    timeout_s=self.control_plane_timeout_s,
+                )
+            except Exception as exc:
+                if not self._should_retry_upload(exc):
+                    raise
+                self._note_upload_failure(exc)
+                elapsed = time.monotonic() - started
+                if elapsed >= self.control_plane_retry_max_s:
+                    raise
+                self._log(
+                    f"{event}_retry",
+                    err=str(exc)[:160],
+                    wait_s=round(delay_s, 1),
+                    elapsed_s=round(elapsed, 1),
+                )
+                time.sleep(delay_s)
+                delay_s = min(delay_s * 1.5, 30.0)
+
+    def _request(
+        self,
+        *,
+        data: bytes,
+        headers: dict[str, str],
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
         out_headers = dict(headers)
         if self.station_token:
             out_headers[STATION_TOKEN_HEADER] = self.station_token
@@ -175,7 +218,7 @@ class FrameStreamUploader:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_s if timeout_s is not None else self.timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as e:
@@ -216,7 +259,10 @@ class FrameStreamUploader:
     def heartbeat(self, *, host: str | None = None) -> None:
         if host is not None:
             self._heartbeat_host = host
-        self._post({"action": "heartbeat", "host": self._heartbeat_host})
+        self._post_control_plane(
+            {"action": "heartbeat", "host": self._heartbeat_host},
+            event="heartbeat",
+        )
         self._note_upload_success()
         self._log("heartbeat_ok", host=self._heartbeat_host or "-")
         self._start_periodic_heartbeat()
@@ -298,13 +344,14 @@ class FrameStreamUploader:
     ) -> str:
         self.session_id = session_id or self.session_id or new_session_id()
         shapes_out = {k: [int(h), int(w)] for k, (h, w) in video_shapes.items()}
-        out = self._post(
+        out = self._post_control_plane(
             {
                 "action": "session_start",
                 "sessionId": self.session_id,
                 "task": task,
                 "videoShapes": shapes_out,
-            }
+            },
+            event="session_start",
         )
         self.session_id = out.get("sessionId") or self.session_id
         server_total = out.get("totalFrames")
@@ -465,6 +512,7 @@ class FrameStreamUploader:
                         self.next_frame_index = next_idx
                 self._persist_checkpoint(next_frame_index=next_idx, task=job.task)
                 self._held_job = None
+                self._held_retries = 0
                 if from_queue:
                     self._upload_queue.task_done()
                 if job.frame_index % 30 == 0 or out.get("duplicate"):
@@ -478,17 +526,31 @@ class FrameStreamUploader:
             except Exception as exc:
                 self._note_upload_failure(exc)
                 if self._should_retry_upload(exc):
-                    self._held_job = job
-                    delay = self._retry_backoff_s
-                    self._log(
-                        "upload_retry",
-                        frame_index=job.frame_index,
-                        backoff_s=round(delay, 2),
-                        err=str(exc)[:160],
-                    )
-                    self._retry_sleep()
+                    self._held_retries += 1
+                    if self._held_retries >= UPLOAD_HELD_MAX_RETRIES:
+                        self._log(
+                            "upload_skip",
+                            frame_index=job.frame_index,
+                            retries=self._held_retries,
+                            err=str(exc)[:160],
+                        )
+                        self._held_job = None
+                        self._held_retries = 0
+                        if from_queue:
+                            self._upload_queue.task_done()
+                    else:
+                        self._held_job = job
+                        delay = self._retry_backoff_s
+                        self._log(
+                            "upload_retry",
+                            frame_index=job.frame_index,
+                            backoff_s=round(delay, 2),
+                            err=str(exc)[:160],
+                        )
+                        self._retry_sleep()
                 else:
                     self._held_job = None
+                    self._held_retries = 0
                     if from_queue:
                         self._upload_queue.task_done()
 

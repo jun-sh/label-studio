@@ -21,11 +21,37 @@ services:
         condition: service_healthy
       lerobot:
         condition: service_healthy
+      stream-ingest:
+        condition: service_healthy
 
   app:
     environment:
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}
       - DATA_LAB_PUBLIC_BASE_URL=${DATA_LAB_PUBLIC_BASE_URL:-http://10.10.10.34:8080}
+
+  stream-ingest:
+    build:
+      context: ./data-lab-platform/lerobot-studio
+    image: ${LEROBOT_IMAGE:-data-lab-lerobot-studio:local}
+    restart: unless-stopped
+    entrypoint: ["node", "/app/ingest-server.mjs"]
+    expose:
+      - "7862"
+    volumes:
+      - lerobot-stream-data:/srv/stream
+    environment:
+      - INGEST_PORT=7862
+      - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:7862/healthz >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   stream-parquet-sync:
     build:

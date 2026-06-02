@@ -7,7 +7,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   getStreamStatus,
-  handleStreamUploadRequest,
   isStationLiveCached,
   resolveStreamFile,
   streamDatasetUrl,
@@ -174,7 +173,7 @@ function injectBranding(html) {
   const inject =
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=40"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=40"></script>' +
-    '<script src="/lerobot/branding/stream-http-source.js?v=40"></script>' +
+    '<script src="/lerobot/branding/stream-http-source.js?v=41"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=40"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=40"></script>';
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
@@ -249,6 +248,19 @@ const server = http.createServer((req, res) => {
     return sendJson(res, 200, { stations: enriched, updatedAt: new Date().toISOString() });
   }
 
+  const stationPingMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/ping$`),
+  );
+  if (stationPingMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(stationPingMatch[1]);
+    const station = collectionStations.find((s) => s.id === stationId);
+    if (!station) {
+      return sendJson(res, 404, { error: "station_not_found" });
+    }
+    const online = station.stream ? isStationLiveCached(stationId) : Boolean(station.online);
+    return sendJson(res, 200, { stationId, online, updatedAt: new Date().toISOString() });
+  }
+
   const stationMatch = p.match(new RegExp(`^${BASE}/api/collection/stations/([^/]+)$`));
   if (stationMatch) {
     const station = collectionStations.find((s) => s.id === decodeURIComponent(stationMatch[1]));
@@ -300,39 +312,6 @@ const server = http.createServer((req, res) => {
       return serveFileWithRange(req, res, disk);
     }
     return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
-  }
-
-  const uploadMatch = p.match(new RegExp(`^${BASE}/api/collection/stations/([^/]+)/upload$`));
-  if (uploadMatch) {
-    const stationId = decodeURIComponent(uploadMatch[1]);
-    const station = collectionStations.find((s) => s.id === stationId);
-    if (!station) {
-      return sendJson(res, 404, { error: "station_not_found" });
-    }
-    if (req.method === "GET") {
-      return sendJson(res, 200, {
-        status: "ready",
-        stationId,
-        datasetUrl: enrichStation(station).datasetUrl,
-        message: "POST JSON (heartbeat|session_start) or multipart (frame)",
-      });
-    }
-    if (req.method === "POST") {
-      return handleStreamUploadRequest(stationId, req)
-        .then((out) => {
-          sendJson(res, 202, out);
-        })
-        .catch((err) => {
-          const status = err.statusCode === 401 ? 401 : 400;
-          const error = status === 401 ? "unauthorized" : "bad_request";
-          sendJson(res, status, {
-            error,
-            reason: err.reason || null,
-            message: String(err.message || err),
-          });
-        });
-    }
-    return send(res, 405, "Method Not Allowed\n", { "Content-Type": "text/plain" });
   }
 
   if (p.startsWith(`${BASE}/branding/`)) {

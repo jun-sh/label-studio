@@ -106,10 +106,13 @@ def write_episodes_parquet(root: Path, total_frames: int, fps: float, task: str)
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: sync-stream-parquet.py <station_root>", file=sys.stderr)
+    argv = [a for a in sys.argv[1:] if a]
+    meta_only = "--meta-only" in argv
+    positional = [a for a in argv if a != "--meta-only"]
+    if len(positional) < 1:
+        print("usage: sync-stream-parquet.py [--meta-only] <station_root>", file=sys.stderr)
         return 1
-    root = Path(sys.argv[1])
+    root = Path(positional[0])
     info = read_json(root / "meta" / "info.json", {})
     live = read_json(root / "live" / "session.json", {})
     fps = float(info.get("fps") or 15)
@@ -119,22 +122,51 @@ def main() -> int:
     )
     total_frames = int(info.get("total_frames") or 0)
     jsonl_path = root / "data" / "chunk-000" / "file-000.jsonl"
-    jsonl_mtime = int(jsonl_path.stat().st_mtime) if jsonl_path.is_file() else 0
+    try:
+        jsonl_mtime = int(jsonl_path.stat().st_mtime) if jsonl_path.is_file() else 0
+    except OSError:
+        jsonl_mtime = 0
     marker_path = root / "live" / "parquet_sync.json"
     marker = read_json(marker_path, {})
+
+    write_tasks_jsonl(root, task)
+    write_episodes_parquet(root, total_frames, fps, task)
+    if meta_only:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(
+            json.dumps(
+                {
+                    "total_frames": total_frames,
+                    "jsonl_mtime": jsonl_mtime,
+                    "episodes_tasks_list": True,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
     if (
         marker.get("total_frames") == total_frames
         and marker.get("jsonl_mtime") == jsonl_mtime
+        and marker.get("episodes_tasks_list") is True
         and (root / "meta" / "episodes" / "chunk-000" / "file-000.parquet").is_file()
     ):
         return 0
     rows = read_jsonl(jsonl_path)
-    write_tasks_jsonl(root, task)
     write_data_parquet(root, rows, fps)
-    write_episodes_parquet(root, total_frames, fps, task)
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(
-        json.dumps({"total_frames": total_frames, "jsonl_mtime": jsonl_mtime}, indent=2) + "\n",
+        json.dumps(
+            {
+                "total_frames": total_frames,
+                "jsonl_mtime": jsonl_mtime,
+                "episodes_tasks_list": True,
+            },
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return 0

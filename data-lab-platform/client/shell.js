@@ -248,6 +248,18 @@
     }
   }
 
+  /** Remove bare #datalab-viz-layer from legacy React CollectionPage (Django uses #datalab-station-layer). */
+  function purgeLegacyReactCollectionViz() {
+    if (!isCollectionVizMode()) return;
+    var rogue = document.getElementById("datalab-viz-layer");
+    if (!rogue || rogue.querySelector("#datalab-station-shell")) return;
+    try {
+      rogue.remove();
+    } catch (_err) {
+      /* ignore */
+    }
+  }
+
   function getLinkTextLabel(link) {
     if (!link) return "";
     var nodes = link.childNodes;
@@ -452,6 +464,7 @@
     patchHomeMenuItem(menu);
     patchCollectionMenuItem(menu);
     syncMenuActiveState(menu);
+    purgeLegacyReactCollectionViz();
 
     document.documentElement.setAttribute("data-datalab-shell", SHELL_VERSION);
 
@@ -549,6 +562,15 @@
     watchForMenu();
     bindCollectionVizWatcher();
     bindHistory();
+
+    if (isCollectionVizMode()) {
+      var ticks = 0;
+      var legacyPurgeTimer = global.setInterval(function () {
+        purgeLegacyReactCollectionViz();
+        ticks += 1;
+        if (ticks >= 48) global.clearInterval(legacyPurgeTimer);
+      }, 250);
+    }
 
     var pushState = global.history.pushState;
     var replaceState = global.history.replaceState;

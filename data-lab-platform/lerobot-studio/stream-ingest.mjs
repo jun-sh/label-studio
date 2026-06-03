@@ -28,9 +28,15 @@ const DEFAULT_QUOTA_GB = Number(process.env.STREAM_QUOTA_GB || 100);
 const RETENTION_DAYS = Number(process.env.STREAM_RETENTION_DAYS || 7);
 const DISK_HIGH_WATER_RATIO = Number(process.env.STREAM_DISK_HIGH_WATER || 0.85);
 const DISK_TARGET_RATIO = Number(process.env.STREAM_DISK_TARGET || 0.7);
-const CLEANUP_DEBOUNCE_MS = Number(process.env.STREAM_CLEANUP_DEBOUNCE_MS || 300_000);
-const CLEANUP_INTERVAL_MS = Number(process.env.STREAM_CLEANUP_INTERVAL_MS || 3_600_000);
+const CLEANUP_DEBOUNCE_MS = Number(process.env.STREAM_CLEANUP_DEBOUNCE_MS || 60_000);
+const CLEANUP_INTERVAL_MS = Number(process.env.STREAM_CLEANUP_INTERVAL_MS || 300_000);
 const DISK_USAGE_CACHE_MAX_AGE_MS = Number(process.env.STREAM_DISK_USAGE_CACHE_MS || 120_000);
+/** P1: rolling replay window / segment length (minutes). */
+export const STREAM_WINDOW_MINUTES = Number(process.env.STREAM_WINDOW_MINUTES || 30);
+export const STREAM_SEGMENT_MINUTES = Number(process.env.STREAM_SEGMENT_MINUTES || 5);
+const STAGING_EMERGENCY_PURGE_BYTES = Number(
+  process.env.STREAM_STAGING_EMERGENCY_BYTES || 512 * 1024 * 1024,
+);
 const STATION_TOKEN_HEADER = "x-station-token";
 /**
  * Natural-language task description (shown in LeRobot episode list, like sample datasets).
@@ -784,15 +790,134 @@ function purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes) {
   return removed;
 }
 
+function muxStatePath(root) {
+  return path.join(root, "live", "mux-state.json");
+}
+
+function readMuxState(root) {
+  return readJson(muxStatePath(root), { cameras: {} });
+}
+
+function writeMuxState(root, state) {
+  writeJsonAtomic(muxStatePath(root), state);
+}
+
+/** List frame_*.jpg range in a camera staging dir. */
+function stagingFrameRange(inDir) {
+  if (!fs.existsSync(inDir)) return null;
+  let min = Infinity;
+  let max = -1;
+  let count = 0;
+  for (const f of fs.readdirSync(inDir)) {
+    const m = /^frame_(\d+)\.jpg$/.exec(f);
+    if (!m) continue;
+    const n = Number.parseInt(m[1], 10);
+    if (!Number.isFinite(n)) continue;
+    min = Math.min(min, n);
+    max = Math.max(max, n);
+    count += 1;
+  }
+  if (count === 0) return null;
+  return { min, max, count };
+}
+
+/** Remove frame_*.jpg up to throughFrame (inclusive). */
+function purgeStagingJpgsInDir(inDir, throughFrame = null) {
+  if (!fs.existsSync(inDir)) return 0;
+  let removed = 0;
+  for (const f of fs.readdirSync(inDir)) {
+    const m = /^frame_(\d+)\.jpg$/.exec(f);
+    if (!m) continue;
+    const idx = Number.parseInt(m[1], 10);
+    if (throughFrame != null && idx > throughFrame) continue;
+    try {
+      fs.unlinkSync(path.join(inDir, f));
+      removed += 1;
+    } catch {
+      /* ignore */
+    }
+  }
+  return removed;
+}
+
+function purgeAllStagingJpgs(root) {
+  let removed = 0;
+  for (const videoKey of VIDEO_KEYS) {
+    removed += purgeStagingJpgsInDir(stagingDir(root, videoKey));
+  }
+  return removed;
+}
+
+function stagingDirSizeBytes(root) {
+  let total = 0;
+  for (const videoKey of VIDEO_KEYS) {
+    const inDir = stagingDir(root, videoKey);
+    if (!fs.existsSync(inDir)) continue;
+    for (const f of fs.readdirSync(inDir)) {
+      if (!/^frame_\d+\.jpg$/.test(f)) continue;
+      try {
+        total += fs.statSync(path.join(inDir, f)).size;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return total;
+}
+
+function purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes) {
+  const targetBytes = Math.floor(quotaBytes * DISK_TARGET_RATIO);
+  let passes = 0;
+  let totalActions = 0;
+  while (passes < 8) {
+    passes += 1;
+    let usage = cachedDiskUsageBytes(root);
+    if (usage == null) {
+      const hk = readDiskHousekeeping(root);
+      usage =
+        hk && typeof hk.usageBytes === "number"
+          ? hk.usageBytes
+          : stagingDirSizeBytes(root);
+    }
+    if (usage <= targetBytes) break;
+
+    const stagingBytes = stagingDirSizeBytes(root);
+    if (stagingBytes > 0) {
+      const n = purgeAllStagingJpgs(root);
+      totalActions += n;
+      streamLog(stationId, "staging_purge", { removedJpgs: n, stagingBytes });
+      continue;
+    }
+
+    const archivesRemoved = purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes);
+    totalActions += archivesRemoved;
+    if (archivesRemoved > 0) continue;
+
+    purgeExpiredArchives(root, activeSessionId);
+    purgeExpiredSessionMarkers(root, activeSessionId);
+    break;
+  }
+  return totalActions;
+}
+
 function runDiskCleanup(stationId) {
   const root = stationRoot(stationId);
   if (!fs.existsSync(root)) return;
   withCleanupLock(root, () => {
     const activeSessionId = getActiveSessionId(root);
     const quotaBytes = stationQuotaBytes(stationId);
+    const stagingBytes = stagingDirSizeBytes(root);
+    if (stagingBytes >= STAGING_EMERGENCY_PURGE_BYTES) {
+      const removed = purgeAllStagingJpgs(root);
+      streamLog(stationId, "staging_emergency_purge", {
+        removedJpgs: removed,
+        stagingBytes,
+        thresholdBytes: STAGING_EMERGENCY_PURGE_BYTES,
+      });
+    }
     purgeExpiredArchives(root, activeSessionId);
     purgeExpiredSessionMarkers(root, activeSessionId);
-    purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes);
+    purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes);
     const usageBytes = dirSizeBytes(root);
     writeJsonAtomic(path.join(root, "live", "disk-housekeeping.json"), {
       stationId,
@@ -801,14 +926,37 @@ function runDiskCleanup(stationId) {
       usageBytes,
       quotaBytes,
       retentionDays: RETENTION_DAYS,
+      windowMinutes: STREAM_WINDOW_MINUTES,
+      segmentMinutes: STREAM_SEGMENT_MINUTES,
     });
     streamLog(stationId, "disk_cleanup", {
       sessionId: activeSessionId,
       usageBytes,
       quotaBytes,
       retentionDays: RETENTION_DAYS,
+      windowMinutes: STREAM_WINDOW_MINUTES,
     });
   });
+}
+
+/** Startup / ops: purge legacy staging and enforce quota for every station dir. */
+export function runDiskCleanupForAllStations() {
+  if (!fs.existsSync(STREAM_ROOT)) return;
+  for (const ent of fs.readdirSync(STREAM_ROOT, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    try {
+      runDiskCleanup(ent.name);
+    } catch (err) {
+      console.warn(`[stream-ingest] cleanup failed station=${ent.name}:`, err?.message || err);
+    }
+  }
+}
+
+export function ensurePeriodicDiskCleanupForAllStations() {
+  if (!fs.existsSync(STREAM_ROOT)) return;
+  for (const ent of fs.readdirSync(STREAM_ROOT, { withFileTypes: true })) {
+    if (ent.isDirectory()) ensurePeriodicDiskCleanup(ent.name);
+  }
 }
 
 function scheduleDiskCleanup(stationId) {
@@ -966,6 +1114,160 @@ function scheduleMux(stationId) {
   muxQueue.set(stationId, state);
 }
 
+function encodeStagingToMp4(inDir, range, destPath) {
+  const inputPattern = path.join(inDir, "frame_%06d.jpg");
+  return new Promise((resolve) => {
+    const ff = spawn(
+      "ffmpeg",
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-framerate",
+        String(DEFAULT_FPS),
+        "-start_number",
+        String(range.min),
+        "-i",
+        inputPattern,
+        "-vf",
+        "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        destPath,
+      ],
+      { stdio: "ignore" },
+    );
+    ff.on("close", (code) => resolve(code === 0 && fs.existsSync(destPath)));
+    ff.on("error", () => resolve(false));
+  });
+}
+
+function concatMp4Files(firstPath, secondPath, destPath) {
+  const listPath = `${destPath}.concat.txt`;
+  const esc = (p) => p.replace(/'/g, "'\\''");
+  writeFileAtomic(
+    listPath,
+    `file '${esc(firstPath)}'\nfile '${esc(secondPath)}'\n`,
+  );
+  return new Promise((resolve) => {
+    const ff = spawn(
+      "ffmpeg",
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        listPath,
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        destPath,
+      ],
+      { stdio: "ignore" },
+    );
+    ff.on("close", (code) => {
+      try {
+        fs.unlinkSync(listPath);
+      } catch {
+        /* ignore */
+      }
+      resolve(code === 0 && fs.existsSync(destPath));
+    });
+    ff.on("error", () => resolve(false));
+  });
+}
+
+function muxOneCamera(stationId, root, videoKey, muxSessionId) {
+  const inDir = stagingDir(root, videoKey);
+  const outFile = videoOutPath(root, videoKey);
+  const range = stagingFrameRange(inDir);
+  if (!range) return Promise.resolve({ ok: true, skipped: true });
+
+  const muxState = readMuxState(root);
+  const camState = muxState.cameras[videoKey] || {};
+  const lastMuxed = typeof camState.lastMuxedFrame === "number" ? camState.lastMuxedFrame : -1;
+  if (range.max <= lastMuxed) return Promise.resolve({ ok: true, skipped: true });
+
+  ensureDir(path.dirname(outFile));
+  const segmentPath = `${outFile}.segment.tmp.mp4`;
+  const tmpOut = `${outFile}.muxing.tmp`;
+  for (const p of [segmentPath, tmpOut]) {
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return encodeStagingToMp4(inDir, range, segmentPath).then(async (segmentOk) => {
+    if (!segmentOk) {
+      streamLog(stationId, "mux_fail", { sessionId: muxSessionId, videoKey, stage: "segment" });
+      try {
+        if (fs.existsSync(segmentPath)) fs.unlinkSync(segmentPath);
+      } catch {
+        /* ignore */
+      }
+      return { ok: false };
+    }
+
+    let finalOk = false;
+    if (fs.existsSync(outFile) && lastMuxed >= 0 && range.min > lastMuxed) {
+      finalOk = await concatMp4Files(outFile, segmentPath, tmpOut);
+      if (finalOk) {
+        fs.renameSync(tmpOut, outFile);
+      }
+    } else {
+      try {
+        fs.renameSync(segmentPath, outFile);
+        finalOk = true;
+      } catch {
+        finalOk = false;
+      }
+    }
+
+    try {
+      if (fs.existsSync(segmentPath)) fs.unlinkSync(segmentPath);
+      if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+    } catch {
+      /* ignore */
+    }
+
+    if (!finalOk) {
+      streamLog(stationId, "mux_fail", { sessionId: muxSessionId, videoKey, stage: "finalize" });
+      return { ok: false };
+    }
+
+    const removed = purgeStagingJpgsInDir(inDir, range.max);
+    muxState.cameras[videoKey] = {
+      lastMuxedFrame: range.max,
+      lastMuxedAt: new Date().toISOString(),
+    };
+    writeMuxState(root, muxState);
+    setChunkArtifactStatus(root, videoArtifactRel(videoKey), "finished", countStagingFrames(root));
+    streamLog(stationId, "mux_camera_done", {
+      sessionId: muxSessionId,
+      videoKey,
+      frameMin: range.min,
+      frameMax: range.max,
+      removedJpgs: removed,
+    });
+    return { ok: true, removed };
+  });
+}
+
 function runMux(stationId) {
   const state = muxQueue.get(stationId) || { timer: null, running: false };
   if (state.running) {
@@ -992,69 +1294,7 @@ function runMux(stationId) {
   const muxSessionId = getActiveSessionId(root);
   streamLog(stationId, "mux_start", { sessionId: muxSessionId, frames: countStagingFrames(root) });
 
-  const jobs = VIDEO_KEYS.map((videoKey) => {
-    const inDir = stagingDir(root, videoKey);
-    const outFile = videoOutPath(root, videoKey);
-    const tmpOut = `${outFile}.muxing.tmp`;
-    if (!fs.existsSync(inDir)) return Promise.resolve();
-    if (countStagingFramesFast(root) <= 0) return Promise.resolve();
-    ensureDir(path.dirname(outFile));
-    try {
-      if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
-    } catch {
-      /* ignore */
-    }
-    const inputPattern = path.join(inDir, "frame_%06d.jpg");
-    return new Promise((resolve) => {
-      const ff = spawn(
-        "ffmpeg",
-        [
-          "-y",
-          "-hide_banner",
-          "-loglevel",
-          "error",
-          "-framerate",
-          String(DEFAULT_FPS),
-          "-i",
-          inputPattern,
-          "-vf",
-          "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'",
-          "-c:v",
-          "libx264",
-          "-pix_fmt",
-          "yuv420p",
-          "-movflags",
-          "+faststart",
-          "-f",
-          "mp4",
-          tmpOut,
-        ],
-        { stdio: "ignore" },
-      );
-      ff.on("close", (code) => {
-        try {
-          if (code !== 0) {
-            streamLog(stationId, "mux_fail", { sessionId: muxSessionId, videoKey, exitCode: code });
-          }
-          if (code === 0 && fs.existsSync(tmpOut)) {
-            fs.renameSync(tmpOut, outFile);
-            setChunkArtifactStatus(
-              root,
-              videoArtifactRel(videoKey),
-              "finished",
-              countStagingFrames(root),
-            );
-          } else if (fs.existsSync(tmpOut)) {
-            fs.unlinkSync(tmpOut);
-          }
-        } catch {
-          /* ignore */
-        }
-        resolve();
-      });
-      ff.on("error", () => resolve());
-    });
-  });
+  const jobs = VIDEO_KEYS.map((videoKey) => muxOneCamera(stationId, root, videoKey, muxSessionId));
 
   Promise.all(jobs).finally(() => {
     releaseFileLock(lockPath, lockFd);
@@ -1065,6 +1305,7 @@ function runMux(stationId) {
     muxQueue.set(stationId, s);
     scheduleViewerPublish(stationId);
     scheduleParquetSync(stationId);
+    scheduleDiskCleanup(stationId);
   });
 }
 
@@ -1138,8 +1379,14 @@ export function getStreamStatus(stationId) {
   const chunks = readChunksManifest(root);
   const sessionFile = path.join(root, "live", "session.json");
   const live = readJson(sessionFile, {});
-  const usageBytes =
-    cachedDiskUsageBytes(root) ?? (fs.existsSync(root) ? dirSizeBytes(root) : 0);
+  // Never walk the full stream tree on HTTP hot paths (128GB+ can block server.mjs for minutes).
+  const usageBytes = (() => {
+    const fresh = cachedDiskUsageBytes(root);
+    if (fresh != null) return fresh;
+    const hk = readDiskHousekeeping(root);
+    if (hk && typeof hk.usageBytes === "number") return hk.usageBytes;
+    return 0;
+  })();
   const quotaBytes = stationQuotaBytes(stationId);
   return {
     stationId,

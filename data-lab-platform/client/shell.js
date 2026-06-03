@@ -9,7 +9,23 @@
     typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : null;
   if (!global) return;
 
-  var SHELL_VERSION = "15";
+  var PREFERRED_COLOR_SCHEME_KEY = "preferred-color-scheme";
+  var LIGHT_THEME = "Light";
+
+  function lockLightTheme() {
+    try {
+      global.localStorage.setItem(PREFERRED_COLOR_SCHEME_KEY, LIGHT_THEME);
+    } catch (_err) {
+      /* ignore */
+    }
+    if (document.documentElement) {
+      document.documentElement.setAttribute("data-color-scheme", "light");
+    }
+  }
+
+  lockLightTheme();
+
+  var SHELL_VERSION = "19";
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -117,8 +133,7 @@
     if (!link) return false;
     if (link.getAttribute("data-datalab-home-link") === "1") return true;
     if (linkPathname(link.getAttribute("href") || "") === "/") return true;
-    var label = getLinkTextLabel(link);
-    return /返回采集站列表|Back to station list/i.test(label);
+    return linkPathname(link.getAttribute("href") || "") === "/";
   }
 
   function isCollectionMenuLink(link) {
@@ -158,7 +173,7 @@
         var link = e.target && e.target.closest ? e.target.closest(SEL.item) : null;
         if (!link) link = e.target && e.target.closest ? e.target.closest("a[href]") : null;
         if (!link || !menuContainsLink(link)) return;
-        if (!isHomeMenuLink(link) && !isCollectionMenuLink(link)) return;
+        if (!isCollectionMenuLink(link)) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         goToCollectionList();
@@ -293,16 +308,7 @@
       link.dataset.datalabHomeOrigLabel = getLinkTextLabel(link) || "";
     }
 
-    if (isCollectionVizMode()) {
-      var backLabel = pageLang() === "zh" ? "返回采集站列表" : "Back to station list";
-      link.setAttribute("href", collectionListPath());
-      link.setAttribute("title", backLabel);
-      link.setAttribute("aria-label", backLabel);
-      setLinkLabel(link, backLabel);
-      return;
-    }
-
-    link.setAttribute("href", link.dataset.datalabHomeOrigHref);
+    link.setAttribute("href", link.dataset.datalabHomeOrigHref || "/");
     if (link.dataset.datalabHomeOrigTitle) {
       link.setAttribute("title", link.dataset.datalabHomeOrigTitle);
     } else {
@@ -509,6 +515,31 @@
     state.menuObserver.observe(menu, { childList: true, subtree: false });
   }
 
+  function isCollectionChromePage() {
+    if (!document.body) return false;
+    return (
+      document.body.dataset.datalabCollectionPage === "1" ||
+      document.body.dataset.datalabCollectionViz === "1"
+    );
+  }
+
+  /** Django collection layers sit on body above .app-wrapper; ensure trigger receives clicks. */
+  function bindMenubarTriggerPassthrough() {
+    document.addEventListener(
+      "click",
+      function (e) {
+        if (!isCollectionChromePage()) return;
+        var trigger = e.target && e.target.closest ? e.target.closest(SEL.trigger) : null;
+        if (!trigger) return;
+        var layer = document.getElementById("datalab-station-layer") || document.getElementById("datalab-collection-layer");
+        if (layer && layer.style.pointerEvents !== "none") {
+          layer.style.pointerEvents = "none";
+        }
+      },
+      true,
+    );
+  }
+
   function bindMenuOpen() {
     document.addEventListener(
       "click",
@@ -554,11 +585,35 @@
     }
   }
 
+  function hideThemeToggle() {
+    document.querySelectorAll('button[class*="themeToggle"]').forEach(function (btn) {
+      btn.style.display = "none";
+      btn.setAttribute("data-datalab-chrome", "theme-toggle");
+    });
+  }
+
+  function applyThemeChrome() {
+    lockLightTheme();
+    hideThemeToggle();
+  }
+
+  function bindThemeChrome() {
+    applyThemeChrome();
+    if (!document.body || typeof MutationObserver === "undefined") return;
+    var observer = new MutationObserver(function () {
+      lockLightTheme();
+      hideThemeToggle();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   function init() {
     patchDocumentTitle();
+    bindThemeChrome();
     bindCollectionNavGuard();
     bindLegacyBackButtonGuard();
     bindMenuOpen();
+    bindMenubarTriggerPassthrough();
     watchForMenu();
     bindCollectionVizWatcher();
     bindHistory();

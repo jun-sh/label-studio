@@ -63,10 +63,6 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
 
   const config = useConfig();
   const dataLabLinks = useMemo(() => getDataLabLinks(), []);
-  const isCollectionViz =
-    location.pathname.replace(/\/$/, "") === "/collection" &&
-    Boolean(new URLSearchParams(location.search).get("station"));
-
   const [sidebarOpened, setSidebarOpened] = useState(defaultOpened ?? false);
   const [sidebarPinned, setSidebarPinned] = useState(defaultPinned ?? false);
   const [PageContext, setPageContext] = useState({
@@ -243,18 +239,12 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
               <Menu>
                 {isFF(FF_HOMEPAGE) && (
                   <Menu.Item
-                    label={
-                      isCollectionViz ? t("shell.menubar.back_to_collection_list") : t("shell.menubar.home")
-                    }
-                    to={isCollectionViz ? undefined : "/"}
-                    href={isCollectionViz ? "/collection" : undefined}
-                    title={
-                      isCollectionViz ? t("shell.menubar.back_to_collection_list") : t("shell.menubar.home")
-                    }
+                    label={t("shell.menubar.home")}
+                    to="/"
+                    title={t("shell.menubar.home")}
                     icon={<IconHome />}
                     data-external
-                    exact={!isCollectionViz}
-                    forceReload={isCollectionViz}
+                    exact
                   />
                 )}
                 <Menu.Item

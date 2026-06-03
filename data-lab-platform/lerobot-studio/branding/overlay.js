@@ -2,6 +2,17 @@
   "use strict";
 
   var g = typeof globalThis !== "undefined" ? globalThis : window;
+
+  /** Lock light theme before React reads localStorage on collection embed URLs. */
+  (function lockCollectionThemeEarly() {
+    try {
+      var params = new URLSearchParams(g.location.search);
+      if (params.get("datalab_collection") !== "1") return;
+      localStorage.setItem("theme", "light");
+    } catch (e) {
+      /* ignore */
+    }
+  })();
   var SUBTITLE_EN = "Preview robot datasets in browser";
   var chromeApplied = false;
 
@@ -276,15 +287,67 @@
     });
   }
 
-  /** Collection station embed: hide LeRobot light/dark/auto theme control only. */
+  function isThemeMenuItemLabel(text) {
+    return /^(自动|跟随系统|浅色|深色|Auto|System|Light|Dark)$/i.test(text);
+  }
+
+  function isThemeTriggerButton(btn) {
+    if (!btn || btn.tagName !== "BUTTON") return false;
+    var aria = btn.getAttribute("aria-label") || "";
+    var sr = btn.querySelector(".sr-only");
+    var srText = sr ? sr.textContent || "" : "";
+    return /theme|主题/i.test(aria + " " + srText);
+  }
+
+  function hideThemeDropdownRoot(btn) {
+    var span = btn.closest("span.inline-flex");
+    var root = span && span.parentElement && span.parentElement.parentElement;
+    if (root && root !== document.body) {
+      root.style.display = "none";
+      root.setAttribute("data-datalab-chrome", "theme-toggle");
+      return;
+    }
+    btn.style.display = "none";
+    btn.setAttribute("data-datalab-chrome", "theme-toggle");
+  }
+
+  /** Collection station embed: hide theme picker and keep resolved theme light. */
+  function forceCollectionLightTheme() {
+    if (!isCollectionStationEmbed()) return;
+    try {
+      localStorage.setItem("theme", "light");
+    } catch (e) {
+      /* ignore */
+    }
+    var appRoot = document.getElementById("lerobot-root");
+    if (appRoot) appRoot.classList.remove("dark");
+    document.querySelectorAll(".dockview-react").forEach(function (dv) {
+      dv.classList.remove("dockview-theme-dark");
+      dv.classList.add("dockview-theme-light");
+    });
+  }
+
   function hideThemeStyleControl() {
     if (!isCollectionStationEmbed()) return;
+    forceCollectionLightTheme();
+
     document.querySelectorAll("button").forEach(function (btn) {
       if (btn.closest("[data-datalab-collection-mode-root]")) return;
+      if (isThemeTriggerButton(btn)) {
+        hideThemeDropdownRoot(btn);
+        return;
+      }
       var text = (btn.textContent || "").replace(/\s+/g, " ").trim();
-      if (!/^(自动|跟随系统|浅色|深色|Auto|System|Light|Dark)$/i.test(text)) return;
+      if (!isThemeMenuItemLabel(text)) return;
       btn.style.display = "none";
       btn.setAttribute("data-datalab-chrome", "theme-style");
+    });
+
+    document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]').forEach(function (item) {
+      var text = (item.textContent || "").replace(/\s+/g, " ").trim();
+      if (!isThemeMenuItemLabel(text)) return;
+      item.style.display = "none";
+      item.setAttribute("data-datalab-chrome", "theme-style");
     });
   }
 
@@ -372,7 +435,12 @@
         patchCollectionGoHome();
         hideThemeStyleControl();
       });
-      g.__DATALAB_GO_HOME_OBSERVER__.observe(document.body, { childList: true, subtree: true });
+      g.__DATALAB_GO_HOME_OBSERVER__.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class"],
+      });
     }
   }
 

@@ -4,7 +4,11 @@
  */
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { handleStreamUploadRequest } from "./stream-ingest.mjs";
+import {
+  ensurePeriodicDiskCleanupForAllStations,
+  handleStreamUploadRequest,
+  runDiskCleanupForAllStations,
+} from "./stream-ingest.mjs";
 
 const PORT = Number(process.env.INGEST_PORT || process.env.PORT || 7862);
 const BASE = "/lerobot";
@@ -72,4 +76,9 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Stream ingest on :${PORT} (upload ${BASE}/api/collection/stations/*/upload)`);
+  setImmediate(() => {
+    console.log("[stream-ingest] running startup disk cleanup for all stations…");
+    runDiskCleanupForAllStations();
+    ensurePeriodicDiskCleanupForAllStations();
+  });
 });

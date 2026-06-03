@@ -182,6 +182,12 @@
       }
       video.style.visibility = "hidden";
       video.style.pointerEvents = "none";
+      video.style.position = "absolute";
+      video.style.width = "0";
+      video.style.height = "0";
+      video.style.margin = "0";
+      video.style.padding = "0";
+      video.style.overflow = "hidden";
     }
   }
 
@@ -193,6 +199,12 @@
       video._datalabPreviewSuspended = false;
       video.style.visibility = "";
       video.style.pointerEvents = "";
+      video.style.position = "";
+      video.style.width = "";
+      video.style.height = "";
+      video.style.margin = "";
+      video.style.padding = "";
+      video.style.overflow = "";
       if (video._datalabPrevSrc) video.setAttribute("src", video._datalabPrevSrc);
       if (video._datalabPrevSrcObject) video.srcObject = video._datalabPrevSrcObject;
       if (!video._datalabWasPaused) {
@@ -247,6 +259,18 @@
     return null;
   }
 
+  /** Dockview panel body (.dv-content-container), not the tight <video> wrapper. */
+  function findPreviewPanelWrap(video) {
+    var node = video.parentElement;
+    while (node && node !== document.body) {
+      if (node.classList && node.classList.contains("dv-content-container")) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return video.parentElement;
+  }
+
   function ensurePreviewSlot(featureKey, cam, slotIndex) {
     var hit = collectionPreviewSlots.get(featureKey);
     if (hit && hit.overlay && hit.overlay.isConnected) return hit;
@@ -259,7 +283,8 @@
         ? findFeatureVideoSlotByIndex(slotIndex, skipVideos) || findFeatureVideoSlot(featureKey, skipVideos)
         : findFeatureVideoSlot(featureKey, skipVideos);
     if (!found || !found.wrap) return null;
-    var wrap = found.wrap;
+    var wrap = findPreviewPanelWrap(found.video) || found.wrap;
+    wrap.setAttribute("data-datalab-preview-panel", "1");
     var style = g.getComputedStyle(wrap);
     if (style.position === "static") wrap.style.position = "relative";
     var overlay = wrap.querySelector('[data-datalab-preview-overlay="' + cam + '"]');
@@ -268,6 +293,8 @@
       overlay.setAttribute("data-datalab-preview-overlay", cam);
       overlay.className = "datalab-collection-preview-overlay";
       overlay.alt = cam;
+      wrap.appendChild(overlay);
+    } else if (overlay.parentElement !== wrap) {
       wrap.appendChild(overlay);
     }
     hit = { video: found.video, wrap: wrap, overlay: overlay };

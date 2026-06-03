@@ -14,11 +14,10 @@ ul[class*="main-menu"] > li:has(a[href*="/data"]):not([data-datalab-managed="1"]
   pointer-events: none !important;
 }
 
-/* Theme toggle (自动/浅色/深色): cool primary tone instead of warm yellow sun */
-[class*="themeToggle"] [class*="animationWrapper"] {
-  color: var(--color-primary-icon, #6d87c4) !important;
-}
-
-[class*="themeToggle"] [class*="animationWrapper"] svg path {
-  fill: currentColor !important;
+/* Data Lab: hide LS menubar theme toggle; shell.js forces light mode */
+button[class*="themeToggle"],
+[data-datalab-chrome="theme-toggle"] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }

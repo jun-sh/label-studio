@@ -15,16 +15,49 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=7" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=9" />
 <style nonce="{{ request.csp_nonce }}">
+  /*
+   * Layers are direct children of body (z-index 50). The React shell (.app-wrapper) has
+   * implicit z-index 0, so the layer paints above the entire app including the menubar.
+   * pointer-events:none on the shell + auto on iframe lets header clicks reach the hamburger.
+   */
   #datalab-collection-layer,
-  #datalab-station-layer {
+  #datalab-station-layer,
+  #datalab-stream-loading-layer {
     position: fixed;
-    z-index: 500;
+    z-index: 50;
     display: flex;
     flex-direction: column;
     overflow: hidden;
     box-sizing: border-box;
+    pointer-events: none;
+  }
+  #datalab-station-layer #datalab-station-shell,
+  #datalab-collection-layer iframe,
+  #datalab-station-layer iframe,
+  #datalab-stream-loading-layer > * {
+    pointer-events: auto;
+  }
+  body[data-datalab-collection-page="1"] .content-wrapper,
+  body[data-datalab-collection-viz="1"] .content-wrapper {
+    position: relative;
+    z-index: 100;
+  }
+  body[data-datalab-collection-page="1"] .sidebar,
+  body[data-datalab-collection-viz="1"] .sidebar {
+    z-index: 200 !important;
+  }
+  body[data-datalab-collection-page="1"] .menu-header,
+  body[data-datalab-collection-viz="1"] .menu-header {
+    z-index: 1100 !important;
+    pointer-events: auto !important;
+  }
+  body[data-datalab-collection-page="1"] .main-menu-trigger,
+  body[data-datalab-collection-viz="1"] .main-menu-trigger {
+    pointer-events: auto !important;
+    position: relative;
+    z-index: 1101 !important;
   }
   #datalab-collection-layer {
     background: var(--color-neutral-background);
@@ -34,8 +67,6 @@
     background: #0b1220;
   }
   #datalab-stream-loading-layer {
-    position: fixed;
-    z-index: 50;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -204,10 +235,11 @@
           width = rect.width;
         }
 
-        layer.style.top = rect.top + "px";
+        var top = Math.max(rect.top, headerHeight);
+        layer.style.top = top + "px";
         layer.style.left = left + "px";
         layer.style.width = width + "px";
-        layer.style.height = (rect.height > 0 ? rect.height : window.innerHeight - rect.top) + "px";
+        layer.style.height = Math.max(0, window.innerHeight - top) + "px";
       } else {
         var insetLeft = readSidebarInset();
         layer.style.top = headerHeight + "px";
@@ -294,6 +326,10 @@
         });
       }
 
+      function onTransitionEnd(e) {
+        if (e.propertyName === "margin-left") tick();
+      }
+
       window.addEventListener("resize", tick);
       window.addEventListener("storage", function (e) {
         if (e.key === "sidebar-pinned" || e.key === "sidebar-opened") tick();
@@ -303,8 +339,34 @@
         if (e.target && e.target.closest && e.target.closest(".sidebar__pin")) {
           setTimeout(tick, 160);
         }
+        if (e.target && e.target.closest && e.target.closest(".main-menu-trigger")) {
+          setTimeout(tick, 0);
+          setTimeout(tick, 160);
+          setTimeout(tick, 320);
+        }
       }, true);
-      [0, 80, 240].forEach(function (ms) {
+
+      if (typeof MutationObserver !== "undefined") {
+        var layoutObserver = new MutationObserver(tick);
+        var root = document.querySelector(".content-wrapper__body") || document.body;
+        layoutObserver.observe(root, {
+          attributes: true,
+          childList: true,
+          subtree: true,
+          attributeFilter: ["class", "style"],
+        });
+        var sidebar = document.querySelector(".sidebar");
+        if (sidebar) {
+          layoutObserver.observe(sidebar, { attributes: true, attributeFilter: ["class"] });
+        }
+        var content = document.querySelector(".content-wrapper__content");
+        if (content) {
+          layoutObserver.observe(content, { attributes: true, attributeFilter: ["class", "style"] });
+          content.addEventListener("transitionend", onTransitionEnd);
+        }
+      }
+
+      [0, 80, 240, 500].forEach(function (ms) {
         setTimeout(tick, ms);
       });
     }

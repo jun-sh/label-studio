@@ -1,4 +1,4 @@
-# Storage policy overlay (no application code changes).
+# Storage policy overlay (P0: 2GB quota, frequent cleanup, mux staging purge).
 # Usage from repo root:
 #   docker compose -f docker-compose.yml \
 #     -f data-lab-platform/docker-compose.platform.yml \
@@ -11,17 +11,22 @@ services:
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=500
-      - STREAM_RETENTION_DAYS=7
+      - STREAM_QUOTA_GB_EGO_LAN_214=2
+      - STREAM_RETENTION_DAYS=1
+      - STREAM_WINDOW_MINUTES=30
+      - STREAM_SEGMENT_MINUTES=5
       - STREAM_DISK_HIGH_WATER=0.85
       - STREAM_DISK_TARGET=0.7
-      - STREAM_CLEANUP_INTERVAL_MS=3600000
-      - STREAM_ARCHIVE_PURGE_MAX=5
+      - STREAM_CLEANUP_INTERVAL_MS=300000
+      - STREAM_CLEANUP_DEBOUNCE_MS=60000
+      - STREAM_STAGING_EMERGENCY_BYTES=268435456
+      - STREAM_ARCHIVE_PURGE_MAX=10
 
   stream-parquet-sync:
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=500
-      - STREAM_RETENTION_DAYS=7
+      - STREAM_QUOTA_GB_EGO_LAN_214=2
+      - STREAM_RETENTION_DAYS=1
+      - STREAM_WINDOW_MINUTES=30
 
   lerobot:
     volumes:
@@ -30,5 +35,7 @@ services:
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=500
-      - STREAM_RETENTION_DAYS=7
+      - STREAM_QUOTA_GB_EGO_LAN_214=2
+      - STREAM_RETENTION_DAYS=1
+      - STREAM_WINDOW_MINUTES=30
+      - STREAM_SEGMENT_MINUTES=5

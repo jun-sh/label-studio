@@ -73,6 +73,8 @@ services:
     #      - LOG_LEVEL=DEBUG
     volumes:
       - ./mydata:/label-studio/data:rw
+      # Dev: pick up Django template changes without rebuilding the image.
+      - ./label_studio/templates:/label-studio/label_studio/templates:ro
     command: label-studio-uwsgi
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/ >/dev/null || exit 1"]

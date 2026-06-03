@@ -15,7 +15,7 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=3" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=6" />
 <style nonce="{{ request.csp_nonce }}">
   #datalab-collection-layer,
   #datalab-station-layer {
@@ -109,16 +109,12 @@
     var LABEL_DATASET = ZH ? "数据集回放" : "Dataset playback";
     var LABEL_OFFLINE = ZH ? "采集离线" : "Station offline";
     var LABEL_LIVE = ZH ? "采集中" : "Live";
-    var PREVIEW_CAMS = [
-      { id: "head_left", label: ZH ? "头左" : "Head L" },
-      { id: "head_right", label: ZH ? "头右" : "Head R" },
-      { id: "depth", label: ZH ? "深度" : "Depth" },
-      { id: "cam_02", label: ZH ? "相机 02" : "Cam 02" },
-    ];
+    var COLLECTION_MODE_MSG = "datalab-collection-mode";
+    var LABEL_DATASET_LOADING = ZH ? "正在加载流式数据集…" : "Loading live stream dataset…";
 
     var STATION_FETCH_TIMEOUT_MS = 5000;
     var PING_TIMEOUT_MS = 4000;
-    var STREAM_INFO_TIMEOUT_MS = 6000;
+    var STREAM_INFO_TIMEOUT_MS = 15000;
 
     function fetchWithTimeout(url, timeoutMs) {
       var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -150,16 +146,6 @@
         stream: true,
         datasetUrl: "stream://" + stationId,
       };
-    }
-
-    function previewMjpegUrl(stationId, cam) {
-      return (
-        "/lerobot/api/collection/stations/" +
-        encodeURIComponent(stationId) +
-        "/preview/" +
-        encodeURIComponent(cam) +
-        "/mjpeg"
-      );
     }
 
     function buildLerobotSrc(datasetUrl, cacheBust) {
@@ -386,33 +372,19 @@
         '<span id="datalab-station-online"></span>' +
         "</div>" +
         '<div id="datalab-station-body">' +
-        '<div id="datalab-preview-layer"></div>' +
+        '<div id="datalab-dataset-loading">' +
+        LABEL_DATASET_LOADING +
+        "</div>" +
         '<div id="datalab-viz-slot"></div>' +
         "</div>" +
         "</div>";
       document.body.appendChild(layer);
 
-      var previewLayer = layer.querySelector("#datalab-preview-layer");
+      var datasetLoadingEl = layer.querySelector("#datalab-dataset-loading");
       var vizSlot = layer.querySelector("#datalab-viz-slot");
       var btnPreview = layer.querySelector('[data-mode="preview"]');
       var btnDataset = layer.querySelector('[data-mode="dataset"]');
       var onlineEl = layer.querySelector("#datalab-station-online");
-      var previewImgs = [];
-
-      PREVIEW_CAMS.forEach(function (cam) {
-        var cell = document.createElement("div");
-        cell.className = "datalab-preview-cell";
-        var label = document.createElement("span");
-        label.className = "datalab-preview-label";
-        label.textContent = cam.label;
-        var img = document.createElement("img");
-        img.alt = cam.label;
-        img.dataset.cam = cam.id;
-        cell.appendChild(label);
-        cell.appendChild(img);
-        previewLayer.appendChild(cell);
-        previewImgs.push(img);
-      });
 
       var lerobotMounted = false;
       var vizFrame = null;
@@ -427,16 +399,38 @@
         btnPreview.title = liveOnline ? "" : LABEL_OFFLINE;
       }
 
-      function connectPreviewStreams() {
-        previewImgs.forEach(function (img) {
-          img.src = previewMjpegUrl(stationId, img.dataset.cam) + "?t=" + Date.now();
-        });
+      function postModeToIframe(mode) {
+        if (!vizFrame || !vizFrame.contentWindow) return;
+        try {
+          vizFrame.contentWindow.postMessage(
+            {
+              type: COLLECTION_MODE_MSG,
+              mode: mode,
+              parentChrome: true,
+              online: liveOnline,
+            },
+            window.location.origin,
+          );
+        } catch (e) {
+          /* ignore */
+        }
       }
 
-      function disconnectPreviewStreams() {
-        previewImgs.forEach(function (img) {
-          img.removeAttribute("src");
-        });
+      function iframeModeToSend() {
+        if (currentMode === "preview" && liveOnline) return "preview";
+        return "dataset";
+      }
+
+      function syncIframeMode() {
+        postModeToIframe(iframeModeToSend());
+      }
+
+      function updateBodyLayout() {
+        datasetLoadingEl.classList.toggle(
+          "is-visible",
+          currentMode === "dataset" && !streamDatasetReady,
+        );
+        vizSlot.classList.add("is-visible");
       }
 
       function ensureLerobotMounted(forceReload) {
@@ -448,6 +442,9 @@
           vizFrame.allow = "fullscreen";
           vizFrame.loading = "eager";
           vizFrame.src = src;
+          vizFrame.addEventListener("load", function () {
+            syncIframeMode();
+          });
           vizSlot.appendChild(vizFrame);
           lerobotMounted = true;
           return;
@@ -459,9 +456,10 @@
 
       g.__datalabCollectionSetDatasetReady = function (ready) {
         streamDatasetReady = Boolean(ready);
-        if (streamDatasetReady && currentMode === "dataset") {
-          ensureLerobotMounted(true);
-        }
+        updateBodyLayout();
+        if (!streamDatasetReady) return;
+        ensureLerobotMounted(true);
+        syncIframeMode();
       };
 
       g.__datalabCollectionApplyStation = function (patch) {
@@ -481,16 +479,10 @@
         currentMode = mode;
         btnPreview.classList.toggle("is-active", mode === "preview");
         btnDataset.classList.toggle("is-active", mode === "dataset");
-        if (mode === "preview") {
-          previewLayer.classList.add("is-visible");
-          vizSlot.classList.remove("is-visible");
-          connectPreviewStreams();
-        } else {
-          previewLayer.classList.remove("is-visible");
-          disconnectPreviewStreams();
-          vizSlot.classList.add("is-visible");
-          ensureLerobotMounted(true);
-        }
+        ensureLerobotMounted(false);
+        updateBodyLayout();
+        syncIframeMode();
+        syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
 
       btnPreview.addEventListener("click", function () {
@@ -501,6 +493,8 @@
       });
 
       updateOnlineBadge();
+      ensureLerobotMounted(false);
+      vizSlot.classList.add("is-visible");
       setMode(liveOnline ? "preview" : "dataset");
 
       activeLayerId = VIZ_LAYER;
@@ -526,16 +520,8 @@
           });
       }, 10000);
 
-      var previewRefreshTimer = setInterval(function () {
-        if (currentMode === "preview" && liveOnline) {
-          connectPreviewStreams();
-        }
-      }, 20000);
-
       window.addEventListener("beforeunload", function () {
         clearInterval(pollTimer);
-        clearInterval(previewRefreshTimer);
-        disconnectPreviewStreams();
       });
     }
 

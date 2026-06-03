@@ -1318,9 +1318,28 @@ export function resolveStreamFile(stationId, urlPath) {
   }
 
   if (norm === "meta/info.json") {
+    const canonicalPath = path.join(root, "meta", "info.json");
     const viewer = viewerInfoPath(root);
+    if (fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile()) {
+      const canonical = readJson(canonicalPath, {});
+      const viewerFrames =
+        fs.existsSync(viewer) && fs.statSync(viewer).isFile()
+          ? readJson(viewer, {}).total_frames || 0
+          : 0;
+      if ((canonical.total_frames || 0) > 0 && viewerFrames < 1) {
+        if (!canServeChunkArtifact(root, "meta/info.json")) {
+          return canonicalPath;
+        }
+        writeViewerInfoSnapshot(root, canonical.total_frames);
+      }
+    }
     if (!canServeChunkArtifact(root, "meta/info.json")) return null;
-    if (!fs.existsSync(viewer) || !fs.statSync(viewer).isFile()) return null;
+    if (!fs.existsSync(viewer) || !fs.statSync(viewer).isFile()) {
+      if (fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile()) {
+        return canonicalPath;
+      }
+      return null;
+    }
     return viewer;
   }
 

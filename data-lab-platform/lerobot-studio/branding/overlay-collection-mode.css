@@ -1,5 +1,10 @@
 /* Collection replay/live mode dropdown + MJPEG preview (separate from v0.0.1 overlay.css) */
 
+html[data-datalab-parent-chrome="1"][data-datalab-collection-embed="1"]
+  [data-datalab-collection-mode-root] {
+  display: none !important;
+}
+
 html[data-datalab-collection-embed="1"] img.datalab-collection-preview-overlay {
   position: absolute;
   inset: 0;

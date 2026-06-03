@@ -180,10 +180,33 @@
     return true;
   }
 
+  function nudgeStreamUrlOpen() {
+    var base = streamBaseFromQuery();
+    if (!base) return false;
+    try {
+      var params = new URLSearchParams(g.location.search || "");
+      if (params.get("url")) return false;
+      var rel = base.indexOf(g.location.origin) === 0 ? base.slice(g.location.origin.length) : base;
+      params.set("url", rel);
+      var next = g.location.pathname + "?" + params.toString();
+      g.history.replaceState({}, "", next);
+      g.dispatchEvent(new PopStateEvent("popstate"));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  g.__datalabBootstrapStreamOpen = function () {
+    if (bootstrapStreamFromQuery()) return true;
+    if (nudgeStreamUrlOpen()) return true;
+    return false;
+  };
+
   if (streamBaseFromQuery()) {
     var bootstrapTicks = 0;
     var bootstrapTimer = g.setInterval(function () {
-      if (bootstrapStreamFromQuery() || ++bootstrapTicks >= 120) {
+      if (g.__datalabBootstrapStreamOpen() || ++bootstrapTicks >= 120) {
         g.clearInterval(bootstrapTimer);
       }
     }, 500);

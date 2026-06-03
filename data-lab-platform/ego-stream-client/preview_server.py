@@ -73,13 +73,34 @@ def _make_handler(hub: PreviewHub):
                 return
 
             prefix = "/preview/"
-            suffix = "/mjpeg"
-            if not path.startswith(prefix) or not path.endswith(suffix):
+            if not path.startswith(prefix):
                 self.send_error(404)
                 return
-            cam = path[len(prefix) : -len(suffix)]
+            rest = path[len(prefix) :]
+            if rest.endswith("/mjpeg"):
+                cam = rest[: -len("/mjpeg")]
+                stream_mode = True
+            elif rest.endswith("/jpg"):
+                cam = rest[: -len("/jpg")]
+                stream_mode = False
+            else:
+                self.send_error(404)
+                return
             if cam not in VALID_PREVIEW_CAMS:
                 self.send_error(404)
+                return
+
+            if not stream_mode:
+                jpeg = hub.get_jpeg(cam)
+                if not jpeg:
+                    self.send_error(503, "no frame yet")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Cache-Control", "no-cache, no-store")
+                self.send_header("Content-Length", str(len(jpeg)))
+                self.end_headers()
+                self.wfile.write(jpeg)
                 return
 
             self.send_response(200)

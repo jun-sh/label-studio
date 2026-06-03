@@ -67,6 +67,12 @@
   ];
 
   var collectionPreviewSlots = new Map();
+  var previewSnapshotTimer = null;
+  var PREVIEW_SNAPSHOT_MS = 125;
+
+  function isParentChromeMode() {
+    return document.documentElement.getAttribute("data-datalab-parent-chrome") === "1";
+  }
 
   function stationIdFromContext() {
     try {
@@ -120,28 +126,100 @@
       });
   }
 
-  function collectionPreviewMjpegUrl(stationId, cam) {
+  function collectionPreviewSnapshotUrl(stationId, cam) {
     return (
       "/lerobot/api/collection/stations/" +
       encodeURIComponent(stationId) +
       "/preview/" +
       encodeURIComponent(cam) +
-      "/mjpeg?t=" +
+      "/jpg?t=" +
       Date.now()
     );
+  }
+
+  var PREVIEW_JPG_MAX_RETRIES = 6;
+  var PREVIEW_JPG_RETRY_MS = 400;
+
+  function bindPreviewOverlaySource(slot, stationId, cam) {
+    var overlay = slot.overlay;
+    var retries = 0;
+    function loadJpg() {
+      overlay.src = collectionPreviewSnapshotUrl(stationId, cam);
+    }
+    overlay.onerror = function () {
+      retries += 1;
+      if (retries > PREVIEW_JPG_MAX_RETRIES) {
+        overlay.onerror = null;
+        return;
+      }
+      g.setTimeout(loadJpg, PREVIEW_JPG_RETRY_MS);
+    };
+    loadJpg();
+  }
+
+  function suspendReplayVideosForPreview() {
+    if (!isParentChromeMode()) return;
+    var videos = document.querySelectorAll("video");
+    for (var i = 0; i < videos.length; i++) {
+      var video = videos[i];
+      if (video._datalabPreviewSuspended) continue;
+      video._datalabPreviewSuspended = true;
+      video._datalabWasPaused = video.paused;
+      try {
+        video.pause();
+      } catch (e1) {
+        /* ignore */
+      }
+      video._datalabPrevSrcObject = video.srcObject;
+      video._datalabPrevSrc = video.getAttribute("src") || "";
+      try {
+        video.removeAttribute("src");
+        video.srcObject = null;
+        video.load();
+      } catch (e2) {
+        /* ignore */
+      }
+      video.style.visibility = "hidden";
+      video.style.pointerEvents = "none";
+    }
+  }
+
+  function resumeReplayVideosAfterPreview() {
+    var videos = document.querySelectorAll("video");
+    for (var i = 0; i < videos.length; i++) {
+      var video = videos[i];
+      if (!video._datalabPreviewSuspended) continue;
+      video._datalabPreviewSuspended = false;
+      video.style.visibility = "";
+      video.style.pointerEvents = "";
+      if (video._datalabPrevSrc) video.setAttribute("src", video._datalabPrevSrc);
+      if (video._datalabPrevSrcObject) video.srcObject = video._datalabPrevSrcObject;
+      if (!video._datalabWasPaused) {
+        try {
+          video.play();
+        } catch (e3) {
+          /* ignore */
+        }
+      }
+      video._datalabPrevSrc = "";
+      video._datalabPrevSrcObject = null;
+    }
   }
 
   function featureMatchesText(text, featureKey) {
     if (!text) return false;
     if (text.indexOf(featureKey) >= 0) return true;
     var short = featureKey.split(".").pop();
-    return short && text.indexOf(short) >= 0;
+    if (!short) return false;
+    if (text.indexOf(short) >= 0) return true;
+    return false;
   }
 
-  function findFeatureVideoSlot(featureKey) {
+  function findFeatureVideoSlot(featureKey, skipVideos) {
     var videos = document.querySelectorAll("video");
     for (var i = 0; i < videos.length; i++) {
       var video = videos[i];
+      if (skipVideos && skipVideos.has(video)) continue;
       var node = video.parentElement;
       for (var depth = 0; depth < 18 && node; depth += 1) {
         var blob = (node.getAttribute("title") || "") + (node.textContent || "");
@@ -154,10 +232,31 @@
     return null;
   }
 
-  function ensurePreviewSlot(featureKey, cam) {
+  function findFeatureVideoSlotByIndex(index, skipVideos) {
+    var videos = document.querySelectorAll("video");
+    var n = 0;
+    for (var i = 0; i < videos.length; i++) {
+      var video = videos[i];
+      if (skipVideos && skipVideos.has(video)) continue;
+      if (n === index) {
+        return { video: video, wrap: video.parentElement };
+      }
+      n += 1;
+    }
+    return null;
+  }
+
+  function ensurePreviewSlot(featureKey, cam, slotIndex) {
     var hit = collectionPreviewSlots.get(featureKey);
     if (hit && hit.overlay && hit.overlay.isConnected) return hit;
-    var found = findFeatureVideoSlot(featureKey);
+    var skipVideos = new Set();
+    collectionPreviewSlots.forEach(function (s) {
+      if (s && s.video) skipVideos.add(s.video);
+    });
+    var found =
+      typeof slotIndex === "number"
+        ? findFeatureVideoSlotByIndex(slotIndex, skipVideos) || findFeatureVideoSlot(featureKey, skipVideos)
+        : findFeatureVideoSlot(featureKey, skipVideos);
     if (!found || !found.wrap) return null;
     var wrap = found.wrap;
     var style = g.getComputedStyle(wrap);
@@ -175,26 +274,36 @@
     return hit;
   }
 
-  function connectCollectionPreviewStreams() {
+  function refreshCollectionPreviewSnapshots() {
     var stationId = collectionModeUi.stationId || stationIdFromContext();
     if (!stationId) return;
-    COLLECTION_PREVIEW_FEATURES.forEach(function (entry) {
-      var slot = ensurePreviewSlot(entry.feature, entry.cam);
+    var usedVideos = new Set();
+    COLLECTION_PREVIEW_FEATURES.forEach(function (entry, index) {
+      var slot = ensurePreviewSlot(entry.feature, entry.cam, index);
       if (!slot) return;
-      slot.overlay.src = collectionPreviewMjpegUrl(stationId, entry.cam);
-      slot.video.style.visibility = "hidden";
-      slot.video.style.pointerEvents = "none";
+      if (usedVideos.has(slot.video)) return;
+      usedVideos.add(slot.video);
+      bindPreviewOverlaySource(slot, stationId, entry.cam);
     });
   }
 
+  function connectCollectionPreviewStreams() {
+    suspendReplayVideosForPreview();
+    refreshCollectionPreviewSnapshots();
+    if (previewSnapshotTimer) return;
+    previewSnapshotTimer = g.setInterval(refreshCollectionPreviewSnapshots, PREVIEW_SNAPSHOT_MS);
+  }
+
   function disconnectCollectionPreviewStreams() {
+    if (previewSnapshotTimer) {
+      g.clearInterval(previewSnapshotTimer);
+      previewSnapshotTimer = null;
+    }
     collectionPreviewSlots.forEach(function (slot) {
       if (slot.overlay) slot.overlay.removeAttribute("src");
-      if (slot.video) {
-        slot.video.style.visibility = "";
-        slot.video.style.pointerEvents = "";
-      }
     });
+    collectionPreviewSlots.clear();
+    resumeReplayVideosAfterPreview();
   }
 
   function syncCollectionPreviewOverlay() {
@@ -246,6 +355,32 @@
     collectionModeUi.mode = mode;
     applyCollectionModeDropdownVisual();
     syncCollectionPreviewOverlay();
+  }
+
+  function applyParentCollectionChrome() {
+    document.documentElement.setAttribute("data-datalab-parent-chrome", "1");
+  }
+
+  function handleParentCollectionModeMessage(event) {
+    if (event.source !== g.parent) return;
+    if (event.origin !== g.location.origin) return;
+    var data = event.data;
+    if (!data || typeof data !== "object" || data.type !== "datalab-collection-mode") return;
+    if (data.parentChrome) applyParentCollectionChrome();
+    if (typeof data.online === "boolean") {
+      collectionModeUi.online = data.online;
+    }
+    if (data.mode === "preview" || data.mode === "dataset") {
+      selectCollectionMode(data.mode);
+      if (typeof g.__datalabBootstrapStreamOpen === "function") {
+        g.__datalabBootstrapStreamOpen();
+      }
+    }
+  }
+
+  if (!g.__DATALAB_COLLECTION_PARENT_MSG_BOUND__) {
+    g.__DATALAB_COLLECTION_PARENT_MSG_BOUND__ = true;
+    g.addEventListener("message", handleParentCollectionModeMessage);
   }
 
   function closeCollectionModeMenu() {

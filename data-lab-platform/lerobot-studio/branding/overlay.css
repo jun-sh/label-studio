@@ -148,6 +148,39 @@ html[data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])::afte
   pointer-events: none;
 }
 
+/* Parent collection toolbar owns preview/loading; do not blanket-hide iframe with blue gate. */
+html[data-datalab-parent-chrome="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])::after {
+  display: none !important;
+  content: none !important;
+}
+
+html[data-datalab-parent-chrome="1"][data-datalab-collection-embed="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  #lerobot-root
+  > *:not(header),
+html[data-datalab-parent-chrome="1"][data-datalab-collection-embed="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > #root
+  > *:not(header),
+html[data-datalab-parent-chrome="1"][data-datalab-collection-embed="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > div#root
+  > *:not(header),
+html[data-datalab-parent-chrome="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  #lerobot-root
+  > *:not(header),
+html[data-datalab-parent-chrome="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > #root
+  > *:not(header),
+html[data-datalab-parent-chrome="1"][data-datalab-stream-pending="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > div#root
+  > *:not(header) {
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
 /* After first successful load, keep main UI stable (no welcome flash) */
 html[data-datalab-stream-ready="1"] #lerobot-root > *:not(header),
 html[data-datalab-stream-ready="1"] body > #root > *:not(header),

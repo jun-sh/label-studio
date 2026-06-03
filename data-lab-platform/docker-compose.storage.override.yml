@@ -1,0 +1,34 @@
+# Storage policy overlay (no application code changes).
+# Usage from repo root:
+#   docker compose -f docker-compose.yml \
+#     -f data-lab-platform/docker-compose.platform.yml \
+#     -f data-lab-platform/docker-compose.storage.override.yml \
+#     up -d stream-ingest lerobot stream-parquet-sync
+
+services:
+  stream-ingest:
+    volumes:
+      - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+    environment:
+      - STREAM_QUOTA_GB_EGO_LAN_214=500
+      - STREAM_RETENTION_DAYS=7
+      - STREAM_DISK_HIGH_WATER=0.85
+      - STREAM_DISK_TARGET=0.7
+      - STREAM_CLEANUP_INTERVAL_MS=3600000
+      - STREAM_ARCHIVE_PURGE_MAX=5
+
+  stream-parquet-sync:
+    environment:
+      - STREAM_QUOTA_GB_EGO_LAN_214=500
+      - STREAM_RETENTION_DAYS=7
+
+  lerobot:
+    volumes:
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
+      - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
+    environment:
+      - STREAM_QUOTA_GB_EGO_LAN_214=500
+      - STREAM_RETENTION_DAYS=7

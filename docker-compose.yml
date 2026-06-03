@@ -73,7 +73,9 @@ services:
     #      - LOG_LEVEL=DEBUG
     volumes:
       - ./mydata:/label-studio/data:rw
-      # Dev: pick up Django template changes without rebuilding the image.
+      # Dev: pick up Data Lab routes/views/templates without rebuilding the image.
+      - ./label_studio/core/urls.py:/label-studio/label_studio/core/urls.py:ro
+      - ./label_studio/core/views.py:/label-studio/label_studio/core/views.py:ro
       - ./label_studio/templates:/label-studio/label_studio/templates:ro
     command: label-studio-uwsgi
     healthcheck:

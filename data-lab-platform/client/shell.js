@@ -25,7 +25,7 @@
 
   lockLightTheme();
 
-  var SHELL_VERSION = "19";
+  var SHELL_VERSION = "21";
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -169,10 +169,22 @@
     document.addEventListener(
       "click",
       function (e) {
-        if (!isCollectionVizMode()) return;
         var link = e.target && e.target.closest ? e.target.closest(SEL.item) : null;
         if (!link) link = e.target && e.target.closest ? e.target.closest("a[href]") : null;
         if (!link || !menuContainsLink(link)) return;
+
+        var destPath = linkPathname(link.getAttribute("href") || "");
+        var onCollection =
+          isOnCollectionRoute() || isCollectionChromePage() || collectionLayersPresent();
+
+        if (onCollection && destPath.indexOf("/collection") !== 0) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          leaveCollectionNavigate(link.getAttribute("href"));
+          return;
+        }
+
+        if (!isCollectionVizMode()) return;
         if (!isCollectionMenuLink(link)) return;
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -196,12 +208,28 @@
     return p === "/data" || p.endsWith("/data");
   }
 
+  function isGlobalNavHref(href) {
+    var p = linkPathname(href);
+    return p === "/projects" || p === "/organization";
+  }
+
+  /** Project card "..." menus also use main-menu but are not the sidebar. */
+  function isContextualMenu(menu) {
+    if (!menu) return false;
+    var cls = String(menu.className || "");
+    if (cls.indexOf("main-menu_contextual") >= 0 || cls.indexOf("main-menu--contextual") >= 0) {
+      return true;
+    }
+    if (menu.closest && menu.closest(".project-card")) return true;
+    return false;
+  }
+
   function menuHasNavItems(menu) {
+    if (isContextualMenu(menu)) return false;
     var links = menu.querySelectorAll("a[href]");
     var j;
     for (j = 0; j < links.length; j++) {
-      var p = linkPathname(links[j].getAttribute("href"));
-      if (p.indexOf("/projects") === 0 || p.indexOf("/organization") === 0) return true;
+      if (isGlobalNavHref(links[j].getAttribute("href"))) return true;
     }
     return false;
   }
@@ -215,18 +243,35 @@
     return null;
   }
 
+  function purgeMisplacedInjectedMenus() {
+    document.querySelectorAll(SEL.menu).forEach(function (menu) {
+      if (!isContextualMenu(menu) && menuHasNavItems(menu)) return;
+      menu.querySelectorAll('[data-datalab-managed="1"]').forEach(function (node) {
+        var li = node.tagName === "LI" ? node : node.closest("li");
+        if (li && menu.contains(li) && li.parentNode) li.parentNode.removeChild(li);
+      });
+    });
+  }
+
   function findNativeLi(menu, spec) {
     var items = menu.querySelectorAll(SEL.item);
     var j;
     for (j = 0; j < items.length; j++) {
       var a = items[j];
       var href = a.getAttribute("href") || "";
+      var path = linkPathname(href);
       if (spec.isHome) {
         if (a.getAttribute("data-datalab-home-link") === "1") return a.closest("li");
-        if (linkPathname(href) === "/") return a.closest("li");
+        if (path === "/") return a.closest("li");
         continue;
       }
-      if (spec.href && linkPathname(href).indexOf(spec.href) >= 0) return a.closest("li");
+      if (spec.href) {
+        if (spec.href === "/projects" || spec.href === "/organization") {
+          if (path === spec.href) return a.closest("li");
+          continue;
+        }
+        if (path.indexOf(spec.href) >= 0) return a.closest("li");
+      }
     }
     return null;
   }
@@ -252,15 +297,76 @@
     return String(lang).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
   }
 
+  function isOnCollectionRoute() {
+    return currentPath().indexOf("/collection") === 0;
+  }
+
   function isCollectionVizMode() {
     if (document.body && document.body.dataset.datalabCollectionViz === "1") return true;
-    var path = currentPath();
-    if (path.indexOf("/collection") !== 0) return false;
+    if (!isOnCollectionRoute()) return false;
     try {
       return Boolean(new URLSearchParams(global.location.search).get("station"));
     } catch (_err2) {
       return false;
     }
+  }
+
+  var COLLECTION_LAYER_IDS = [
+    "datalab-collection-layer",
+    "datalab-station-layer",
+    "datalab-stream-loading-layer",
+  ];
+
+  function collectionLayersPresent() {
+    var i;
+    for (i = 0; i < COLLECTION_LAYER_IDS.length; i++) {
+      if (document.getElementById(COLLECTION_LAYER_IDS[i])) return true;
+    }
+    return false;
+  }
+
+  /** Django collection overlays survive React Router navigations; remove when route changes. */
+  function teardownCollectionChrome() {
+    var i;
+    for (i = 0; i < COLLECTION_LAYER_IDS.length; i++) {
+      var layer = document.getElementById(COLLECTION_LAYER_IDS[i]);
+      if (layer) layer.remove();
+    }
+    var legacy = document.getElementById("datalab-viz-layer");
+    if (legacy && !legacy.querySelector("#datalab-station-shell")) {
+      legacy.remove();
+    }
+    if (document.body) {
+      delete document.body.dataset.datalabCollectionPage;
+      delete document.body.dataset.datalabCollectionViz;
+    }
+    document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
+      node.style.display = "";
+    });
+    try {
+      delete global.__datalabCollectionSetDatasetReady;
+      delete global.__datalabCollectionApplyStation;
+    } catch (_err) {
+      /* ignore */
+    }
+    purgeLegacyBackButton();
+  }
+
+  function maybeTeardownCollectionChrome() {
+    if (isOnCollectionRoute()) return;
+    if (!isCollectionChromePage() && !collectionLayersPresent()) return;
+    teardownCollectionChrome();
+  }
+
+  function leaveCollectionNavigate(href) {
+    teardownCollectionChrome();
+    var target = href || "/";
+    try {
+      target = new URL(target, global.location.origin).href;
+    } catch (_err) {
+      /* keep target */
+    }
+    global.location.assign(target);
   }
 
   /** Remove bare #datalab-viz-layer from legacy React CollectionPage (Django uses #datalab-station-layer). */
@@ -457,6 +563,7 @@
   }
 
   function reconcileMenu() {
+    purgeMisplacedInjectedMenus();
     var menu = findSidebarMenu();
     if (!menu) return false;
 
@@ -486,6 +593,7 @@
     state.menuPending = true;
     global.requestAnimationFrame(function () {
       state.menuPending = false;
+      maybeTeardownCollectionChrome();
       reconcileMenu();
     });
   }
@@ -632,12 +740,14 @@
     global.history.pushState = function () {
       var r = pushState.apply(this, arguments);
       patchDocumentTitle();
+      maybeTeardownCollectionChrome();
       scheduleMenuReconcile();
       return r;
     };
     global.history.replaceState = function () {
       var r = replaceState.apply(this, arguments);
       patchDocumentTitle();
+      maybeTeardownCollectionChrome();
       scheduleMenuReconcile();
       return r;
     };

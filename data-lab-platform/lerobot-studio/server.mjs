@@ -171,13 +171,13 @@ function serveFileWithRange(req, res, filePath) {
 
 function injectBranding(html) {
   const inject =
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=48"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=48"/>' +
-    '<script src="/lerobot/branding/stream-embed-gate.js?v=48"></script>' +
-    '<script src="/lerobot/branding/stream-http-source.js?v=48"></script>' +
-    '<script defer src="/lerobot/branding/overlay.js?v=48"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=48"></script>' +
-    '<script defer src="/lerobot/branding/stream-live-poll.js?v=48"></script>';
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=51"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=51"/>' +
+    '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
+    '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
+    '<script defer src="/lerobot/branding/overlay.js?v=51"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=51"></script>' +
+    '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");
   if (!html.includes("/lerobot/branding/overlay.js")) {

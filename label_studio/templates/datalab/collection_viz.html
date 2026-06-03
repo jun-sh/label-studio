@@ -84,6 +84,12 @@
     visibility: hidden !important;
     pointer-events: none !important;
   }
+  /* Collection route only: hide LS theme toggle (no theme forcing). */
+  [class*="themeToggle"] {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
 </style>
 {% endblock %}
 

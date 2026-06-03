@@ -324,7 +324,6 @@
     return {
       preview: zh ? "实时" : "Live",
       dataset: zh ? "回放" : "Replay",
-      live: zh ? "采集中" : "Live",
       offline: zh ? "采集离线" : "Offline",
     };
   }
@@ -362,8 +361,14 @@
     segDataset.disabled = false;
     segDataset.title = "";
     if (statusEl) {
-      statusEl.textContent = collectionModeUi.online ? labels.live : labels.offline;
-      statusEl.classList.toggle("is-live", collectionModeUi.online);
+      if (collectionModeUi.online) {
+        statusEl.hidden = true;
+        statusEl.classList.remove("is-offline");
+      } else {
+        statusEl.hidden = false;
+        statusEl.textContent = labels.offline;
+        statusEl.classList.add("is-offline");
+      }
     }
   }
 
@@ -431,7 +436,54 @@
     if (browse && browse.parentNode) return browse.parentNode;
     var inspect = findCollectionToolbarButton(/^(检查|Inspect)$/i);
     if (inspect && inspect.parentNode) return inspect.parentNode;
+    var exportBtn = findCollectionToolbarButton(/^(导出|Export)$/i);
+    if (exportBtn && exportBtn.parentNode) return exportBtn.parentNode;
     return null;
+  }
+
+  /** Insert mode chrome after Export, else after Inspect, else row tail. */
+  function insertCollectionModeChrome(toolbarRow, root) {
+    var exportBtn = findCollectionToolbarButton(/^(导出|Export)$/i);
+    if (exportBtn && exportBtn.parentNode === toolbarRow) {
+      if (exportBtn.nextSibling) {
+        toolbarRow.insertBefore(root, exportBtn.nextSibling);
+      } else {
+        toolbarRow.appendChild(root);
+      }
+      return;
+    }
+    var inspectBtn = findCollectionToolbarButton(/^(检查|Inspect)$/i);
+    if (inspectBtn && inspectBtn.parentNode === toolbarRow) {
+      if (inspectBtn.nextSibling) {
+        toolbarRow.insertBefore(root, inspectBtn.nextSibling);
+      } else {
+        toolbarRow.appendChild(root);
+      }
+      return;
+    }
+    toolbarRow.appendChild(root);
+  }
+
+  function isChromeAfterExportAnchor(toolbarRow, root) {
+    var exportBtn = findCollectionToolbarButton(/^(导出|Export)$/i);
+    if (exportBtn && exportBtn.parentNode === toolbarRow) {
+      return root.previousSibling === exportBtn;
+    }
+    var inspectBtn = findCollectionToolbarButton(/^(检查|Inspect)$/i);
+    if (inspectBtn && inspectBtn.parentNode === toolbarRow) {
+      return root.previousSibling === inspectBtn;
+    }
+    return toolbarRow.lastElementChild === root;
+  }
+
+  function relocateCollectionModeChromeIfNeeded() {
+    var root = collectionModeUi.chromeRoot;
+    if (!root || !root.isConnected) return;
+    var toolbarRow = findCollectionToolbarRow();
+    if (!toolbarRow) return;
+    if (root.parentNode === toolbarRow && isChromeAfterExportAnchor(toolbarRow, root)) return;
+    if (root.parentNode) root.remove();
+    insertCollectionModeChrome(toolbarRow, root);
   }
 
   function removeLegacyCollectionModeButtons() {
@@ -444,6 +496,7 @@
     if (!isCollectionStationEmbed()) return;
     removeLegacyCollectionModeButtons();
     if (collectionModeUi.chromeRoot && collectionModeUi.chromeRoot.isConnected) {
+      relocateCollectionModeChromeIfNeeded();
       applyCollectionModeChromeVisual();
       return;
     }
@@ -484,7 +537,7 @@
     statusEl.setAttribute("aria-live", "polite");
     root.appendChild(pill);
     root.appendChild(statusEl);
-    toolbarRow.insertBefore(root, toolbarRow.firstChild);
+    insertCollectionModeChrome(toolbarRow, root);
     collectionModeUi.chromeRoot = root;
     collectionModeUi.pillRoot = pill;
     collectionModeUi.statusEl = statusEl;

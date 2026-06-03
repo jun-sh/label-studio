@@ -276,6 +276,18 @@
     });
   }
 
+  /** Collection station embed: hide LeRobot light/dark/auto theme control only. */
+  function hideThemeStyleControl() {
+    if (!isCollectionStationEmbed()) return;
+    document.querySelectorAll("button").forEach(function (btn) {
+      if (btn.closest("[data-datalab-collection-mode-root]")) return;
+      var text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/^(自动|跟随系统|浅色|深色|Auto|System|Light|Dark)$/i.test(text)) return;
+      btn.style.display = "none";
+      btn.setAttribute("data-datalab-chrome", "theme-style");
+    });
+  }
+
   /** Embed mode: hide only the language toggle button, not ancestor layout rows. */
   function hideLanguageSwitcher() {
     if (!isDataLabEmbed()) return;
@@ -295,6 +307,7 @@
     hideCopyrightNotice();
     hideJapaneseLanguageOption();
     hideBrowseLeRobotItem();
+    hideThemeStyleControl();
     hideLanguageSwitcher();
   }
 
@@ -357,6 +370,7 @@
       g.__DATALAB_GO_HOME_OBSERVER__ = new MutationObserver(function () {
         initEmbedFlag();
         patchCollectionGoHome();
+        hideThemeStyleControl();
       });
       g.__DATALAB_GO_HOME_OBSERVER__.observe(document.body, { childList: true, subtree: true });
     }

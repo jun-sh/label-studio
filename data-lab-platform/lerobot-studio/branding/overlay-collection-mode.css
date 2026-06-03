@@ -1,9 +1,4 @@
-/* Collection replay/live mode dropdown + MJPEG preview (separate from v0.0.1 overlay.css) */
-
-html[data-datalab-parent-chrome="1"][data-datalab-collection-embed="1"]
-  [data-datalab-collection-mode-root] {
-  display: none !important;
-}
+/* Collection replay/live mode pill + JPG preview overlays */
 
 html[data-datalab-collection-embed="1"] img.datalab-collection-preview-overlay {
   position: absolute;
@@ -16,99 +11,91 @@ html[data-datalab-collection-embed="1"] img.datalab-collection-preview-overlay {
   pointer-events: none;
 }
 
-html[data-datalab-collection-embed="1"] .datalab-collection-mode-dropdown {
-  position: relative;
+html[data-datalab-collection-embed="1"] [data-datalab-collection-mode-root] {
   display: inline-flex;
-  align-self: center;
+  align-items: center;
   flex-shrink: 0;
+  margin-right: 12px;
+  gap: 8px;
+  align-self: center;
 }
 
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-trigger {
+html[data-datalab-collection-embed="1"] .datalab-collection-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 9999px;
+  border: 1px solid var(--color-neutral-border, #e1ded5);
+  background: var(--color-neutral-surface, #f5f4ed);
+  gap: 2px;
+}
+
+html[data-datalab-collection-embed="1"] button.datalab-collection-mode-seg {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-width: 72px;
-  height: 32px !important;
-  padding: 4px 12px !important;
-  border-radius: 24px !important;
-  border: 1px solid var(--color-neutral-border, #e1ded5) !important;
-  background: var(--color-neutral-background, #fdfdf8) !important;
-  color: var(--color-neutral-content, #262522) !important;
-  font-size: 14px !important;
+  min-width: 52px;
+  height: 28px !important;
+  padding: 0 14px !important;
+  border: 0 !important;
+  border-radius: 9999px !important;
+  background: transparent !important;
+  color: var(--color-neutral-content-subtle, #6b6860) !important;
+  font-size: 13px !important;
   font-weight: 500;
   line-height: 1;
   cursor: pointer;
   box-shadow: none !important;
   width: auto !important;
   max-width: none !important;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-trigger:hover {
-  background: var(--color-neutral-surface, #f5f4ed) !important;
-  border-color: var(--color-neutral-border-bold, #d4d1c9) !important;
-}
-
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-trigger:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-trigger::after {
-  content: "";
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid currentColor;
-  opacity: 0.65;
-  margin-left: 2px;
-}
-
-html[data-datalab-collection-embed="1"] .datalab-collection-mode-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 2147483647;
-  min-width: 100%;
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid var(--color-neutral-border, #e1ded5);
-  background: var(--color-neutral-background, #fdfdf8);
-  box-shadow: 0 8px 24px rgba(38, 37, 34, 0.12);
-}
-
-html[data-datalab-collection-embed="1"] .datalab-collection-mode-menu[hidden] {
-  display: none !important;
-}
-
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-option {
-  display: flex !important;
-  width: 100%;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 8px 12px !important;
-  border: 0 !important;
-  border-radius: 6px !important;
-  background: transparent !important;
+html[data-datalab-collection-embed="1"] button.datalab-collection-mode-seg:hover:not(:disabled):not(.is-active) {
   color: var(--color-neutral-content, #262522) !important;
-  font-size: 14px !important;
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: none !important;
+  background: var(--color-neutral-background, #fdfdf8) !important;
 }
 
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-option:hover:not(:disabled) {
-  background: var(--color-neutral-surface, #f5f4ed) !important;
-}
-
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-option.is-selected,
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-option[aria-selected="true"] {
-  background: var(--color-primary-surface, #eef1fa) !important;
+html[data-datalab-collection-embed="1"] button.datalab-collection-mode-seg.is-active,
+html[data-datalab-collection-embed="1"] button.datalab-collection-mode-seg[aria-selected="true"] {
+  background: var(--color-neutral-background, #fdfdf8) !important;
   color: var(--color-primary-content, #4c5fa9) !important;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(38, 37, 34, 0.08) !important;
 }
 
-html[data-datalab-collection-embed="1"] button.datalab-collection-mode-option:disabled {
-  opacity: 0.45;
+html[data-datalab-collection-embed="1"] button.datalab-collection-mode-seg:disabled {
+  opacity: 0.4;
   cursor: not-allowed;
+}
+
+html[data-datalab-collection-embed="1"] .datalab-collection-mode-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--color-neutral-content-subtle, #6b6860);
+  white-space: nowrap;
+  user-select: none;
+}
+
+html[data-datalab-collection-embed="1"] .datalab-collection-mode-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+html[data-datalab-collection-embed="1"] .datalab-collection-mode-status.is-live {
+  color: #16a34a;
+}
+
+html[data-datalab-collection-embed="1"] .datalab-collection-mode-status.is-live::before {
+  background: #22c55e;
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
 }

@@ -15,7 +15,7 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=6" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=7" />
 <style nonce="{{ request.csp_nonce }}">
   #datalab-collection-layer,
   #datalab-station-layer {
@@ -362,15 +362,6 @@
       layer.id = VIZ_LAYER;
       layer.innerHTML =
         '<div id="datalab-station-shell">' +
-        '<div id="datalab-station-toolbar">' +
-        '<button type="button" class="datalab-mode-btn" data-mode="preview">' +
-        LABEL_PREVIEW +
-        "</button>" +
-        '<button type="button" class="datalab-mode-btn" data-mode="dataset">' +
-        LABEL_DATASET +
-        "</button>" +
-        '<span id="datalab-station-online"></span>' +
-        "</div>" +
         '<div id="datalab-station-body">' +
         '<div id="datalab-dataset-loading">' +
         LABEL_DATASET_LOADING +
@@ -382,21 +373,16 @@
 
       var datasetLoadingEl = layer.querySelector("#datalab-dataset-loading");
       var vizSlot = layer.querySelector("#datalab-viz-slot");
-      var btnPreview = layer.querySelector('[data-mode="preview"]');
-      var btnDataset = layer.querySelector('[data-mode="dataset"]');
-      var onlineEl = layer.querySelector("#datalab-station-online");
 
       var lerobotMounted = false;
       var vizFrame = null;
       var streamDatasetReady = Boolean(datasetReady);
       var currentMode = "dataset";
       var liveOnline = Boolean(stationOnline);
+      var iframeModeListenerBound = false;
 
-      function updateOnlineBadge() {
-        onlineEl.textContent = liveOnline ? LABEL_LIVE : LABEL_OFFLINE;
-        onlineEl.classList.toggle("is-live", liveOnline);
-        btnPreview.disabled = !liveOnline;
-        btnPreview.title = liveOnline ? "" : LABEL_OFFLINE;
+      function syncOnlineToIframe() {
+        postModeToIframe(iframeModeToSend());
       }
 
       function postModeToIframe(mode) {
@@ -466,33 +452,49 @@
         if (!patch) return;
         var wasLive = liveOnline;
         if (typeof patch.online === "boolean") liveOnline = patch.online;
-        updateOnlineBadge();
         if (wasLive && !liveOnline && currentMode === "preview") {
           setMode("dataset");
         } else if (!wasLive && liveOnline && currentMode === "dataset") {
           setMode("preview");
+        } else {
+          syncOnlineToIframe();
         }
       };
+
+      function setModeFromIframe(mode) {
+        if (mode === "preview" && !liveOnline) mode = "dataset";
+        currentMode = mode;
+        ensureLerobotMounted(false);
+        updateBodyLayout();
+        syncBounds(VIZ_LAYER, VIZ_FRAME);
+      }
+
+      function handleIframeModeMessage(event) {
+        if (!vizFrame || event.source !== vizFrame.contentWindow) return;
+        if (event.origin !== window.location.origin) return;
+        var data = event.data;
+        if (!data || typeof data !== "object" || data.type !== COLLECTION_MODE_MSG) return;
+        if (data.source !== "iframe-ui") return;
+        if (data.mode !== "preview" && data.mode !== "dataset") return;
+        setModeFromIframe(data.mode);
+      }
+
+      function bindIframeModeListener() {
+        if (iframeModeListenerBound) return;
+        iframeModeListenerBound = true;
+        window.addEventListener("message", handleIframeModeMessage);
+      }
 
       function setMode(mode) {
         if (mode === "preview" && !liveOnline) mode = "dataset";
         currentMode = mode;
-        btnPreview.classList.toggle("is-active", mode === "preview");
-        btnDataset.classList.toggle("is-active", mode === "dataset");
         ensureLerobotMounted(false);
         updateBodyLayout();
         syncIframeMode();
         syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
 
-      btnPreview.addEventListener("click", function () {
-        setMode("preview");
-      });
-      btnDataset.addEventListener("click", function () {
-        setMode("dataset");
-      });
-
-      updateOnlineBadge();
+      bindIframeModeListener();
       ensureLerobotMounted(false);
       vizSlot.classList.add("is-visible");
       setMode(liveOnline ? "preview" : "dataset");

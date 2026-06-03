@@ -7,54 +7,6 @@
   background: #0b1220;
 }
 
-#datalab-station-toolbar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-  background: #111827;
-}
-
-.datalab-mode-btn {
-  appearance: none;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: transparent;
-  color: #cbd5e1;
-  font-size: 13px;
-  padding: 6px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.datalab-mode-btn:hover:not(:disabled) {
-  border-color: #38bdf8;
-  color: #f8fafc;
-}
-
-.datalab-mode-btn.is-active {
-  background: #0ea5e9;
-  border-color: #0ea5e9;
-  color: #0b1220;
-  font-weight: 600;
-}
-
-.datalab-mode-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-#datalab-station-online {
-  margin-left: auto;
-  font-size: 12px;
-  color: #94a3b8;
-}
-
-#datalab-station-online.is-live {
-  color: #4ade80;
-}
-
 #datalab-station-body {
   flex: 1 1 auto;
   min-height: 0;

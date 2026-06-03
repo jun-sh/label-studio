@@ -1,5 +1,5 @@
 /**
- * Collection station embed: replay/live mode dropdown + MJPEG preview (v0.0.1 overlay unchanged).
+ * Collection station embed: replay/live mode pill + JPG preview overlays.
  */
 (function () {
   "use strict";
@@ -45,10 +45,11 @@
     mode: "dataset",
     online: true,
     stationId: null,
-    dropdownRoot: null,
-    trigger: null,
-    menu: null,
-    menuOpen: false,
+    chromeRoot: null,
+    pillRoot: null,
+    statusEl: null,
+    segPreview: null,
+    segDataset: null,
   };
 
   var collectionOnlineSyncInFlight = false;
@@ -57,7 +58,7 @@
   var tickScheduled = false;
   var tickDebounceTimer = null;
   var TICK_DEBOUNCE_MS = 250;
-  var dropdownInstalled = false;
+  var pillInstalled = false;
 
   var COLLECTION_PREVIEW_FEATURES = [
     { feature: "observation.images.camera_head_left", cam: "head_left" },
@@ -94,13 +95,13 @@
     if (!isCollectionStationEmbed()) return;
     var now = Date.now();
     if (!force && now - collectionOnlineLastSyncAt < ONLINE_SYNC_MIN_MS) {
-      applyCollectionModeDropdownVisual();
+      applyCollectionModeChromeVisual();
       return;
     }
     var stationId = collectionModeUi.stationId || stationIdFromContext();
     if (!stationId) {
       collectionModeUi.online = true;
-      applyCollectionModeDropdownVisual();
+      applyCollectionModeChromeVisual();
       return;
     }
     if (collectionOnlineSyncInFlight) return;
@@ -121,7 +122,7 @@
       })
       .finally(function () {
         collectionOnlineSyncInFlight = false;
-        applyCollectionModeDropdownVisual();
+        applyCollectionModeChromeVisual();
         syncCollectionPreviewOverlay();
       });
   }
@@ -323,38 +324,56 @@
     return {
       preview: zh ? "实时" : "Live",
       dataset: zh ? "回放" : "Replay",
-      offline: zh ? "采集离线" : "Station offline",
+      live: zh ? "采集中" : "Live",
+      offline: zh ? "采集离线" : "Offline",
     };
   }
 
-  function applyCollectionModeDropdownVisual() {
-    var labels = collectionModeLabels();
-    var trigger = collectionModeUi.trigger;
-    var menu = collectionModeUi.menu;
-    if (!trigger || !menu) return;
-    trigger.textContent = collectionModeUi.mode === "preview" ? labels.preview : labels.dataset;
-    trigger.disabled = false;
-    var options = menu.querySelectorAll("[data-datalab-collection-mode-option]");
-    options.forEach(function (opt) {
-      var mode = opt.getAttribute("data-datalab-collection-mode-option");
-      var selected = mode === collectionModeUi.mode;
-      opt.setAttribute("aria-selected", selected ? "true" : "false");
-      opt.classList.toggle("is-selected", selected);
-      if (mode === "preview") {
-        opt.disabled = !collectionModeUi.online;
-        opt.title = collectionModeUi.online ? "" : labels.offline;
-      } else {
-        opt.disabled = false;
-        opt.title = "";
-      }
-    });
+  function notifyParentCollectionMode(mode) {
+    if (g.parent === g) return;
+    try {
+      g.parent.postMessage(
+        {
+          type: "datalab-collection-mode",
+          mode: mode,
+          source: "iframe-ui",
+          online: collectionModeUi.online,
+        },
+        g.location.origin,
+      );
+    } catch (e) {
+      /* ignore */
+    }
   }
 
-  function selectCollectionMode(mode) {
+  function applyCollectionModeChromeVisual() {
+    var labels = collectionModeLabels();
+    var segPreview = collectionModeUi.segPreview;
+    var segDataset = collectionModeUi.segDataset;
+    var statusEl = collectionModeUi.statusEl;
+    if (!segPreview || !segDataset) return;
+    var isPreview = collectionModeUi.mode === "preview";
+    segPreview.classList.toggle("is-active", isPreview);
+    segDataset.classList.toggle("is-active", !isPreview);
+    segPreview.setAttribute("aria-selected", isPreview ? "true" : "false");
+    segDataset.setAttribute("aria-selected", !isPreview ? "true" : "false");
+    segPreview.disabled = !collectionModeUi.online;
+    segPreview.title = collectionModeUi.online ? "" : labels.offline;
+    segDataset.disabled = false;
+    segDataset.title = "";
+    if (statusEl) {
+      statusEl.textContent = collectionModeUi.online ? labels.live : labels.offline;
+      statusEl.classList.toggle("is-live", collectionModeUi.online);
+    }
+  }
+
+  function selectCollectionMode(mode, options) {
+    options = options || {};
     if (mode === "preview" && !collectionModeUi.online) mode = "dataset";
     collectionModeUi.mode = mode;
-    applyCollectionModeDropdownVisual();
+    applyCollectionModeChromeVisual();
     syncCollectionPreviewOverlay();
+    if (!options.fromParent) notifyParentCollectionMode(mode);
   }
 
   function applyParentCollectionChrome() {
@@ -371,34 +390,18 @@
       collectionModeUi.online = data.online;
     }
     if (data.mode === "preview" || data.mode === "dataset") {
-      selectCollectionMode(data.mode);
+      selectCollectionMode(data.mode, { fromParent: true });
       if (typeof g.__datalabBootstrapStreamOpen === "function") {
         g.__datalabBootstrapStreamOpen();
       }
+    } else {
+      applyCollectionModeChromeVisual();
     }
   }
 
   if (!g.__DATALAB_COLLECTION_PARENT_MSG_BOUND__) {
     g.__DATALAB_COLLECTION_PARENT_MSG_BOUND__ = true;
     g.addEventListener("message", handleParentCollectionModeMessage);
-  }
-
-  function closeCollectionModeMenu() {
-    collectionModeUi.menuOpen = false;
-    if (collectionModeUi.menu) collectionModeUi.menu.hidden = true;
-    if (collectionModeUi.trigger) collectionModeUi.trigger.setAttribute("aria-expanded", "false");
-  }
-
-  function openCollectionModeMenu() {
-    if (!collectionModeUi.menu || !collectionModeUi.trigger) return;
-    collectionModeUi.menuOpen = true;
-    collectionModeUi.menu.hidden = false;
-    collectionModeUi.trigger.setAttribute("aria-expanded", "true");
-  }
-
-  function toggleCollectionModeMenu() {
-    if (collectionModeUi.menuOpen) closeCollectionModeMenu();
-    else openCollectionModeMenu();
   }
 
   function findThemeStyleControl() {
@@ -412,13 +415,6 @@
     return null;
   }
 
-  function findMenuItemTemplate() {
-    return (
-      document.querySelector('[role="menuitem"]') ||
-      document.querySelector('[role="menuitemradio"]')
-    );
-  }
-
   function findCollectionToolbarButton(labelRe) {
     var buttons = document.querySelectorAll("button");
     for (var i = 0; i < buttons.length; i++) {
@@ -430,21 +426,12 @@
     return null;
   }
 
-  function bindCollectionModeMenuDismiss() {
-    if (g.__DATALAB_COLLECTION_MODE_MENU_BOUND__) return;
-    g.__DATALAB_COLLECTION_MODE_MENU_BOUND__ = true;
-    document.addEventListener(
-      "click",
-      function (event) {
-        if (!collectionModeUi.menuOpen || !collectionModeUi.dropdownRoot) return;
-        if (collectionModeUi.dropdownRoot.contains(event.target)) return;
-        closeCollectionModeMenu();
-      },
-      true,
-    );
-    document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape") closeCollectionModeMenu();
-    });
+  function findCollectionToolbarRow() {
+    var browse = findCollectionToolbarButton(/^(浏览|Browse)$/i);
+    if (browse && browse.parentNode) return browse.parentNode;
+    var inspect = findCollectionToolbarButton(/^(检查|Inspect)$/i);
+    if (inspect && inspect.parentNode) return inspect.parentNode;
+    return null;
   }
 
   function removeLegacyCollectionModeButtons() {
@@ -453,73 +440,69 @@
     });
   }
 
-  function installCollectionModeDropdown() {
+  function installCollectionModePill() {
     if (!isCollectionStationEmbed()) return;
     removeLegacyCollectionModeButtons();
-    if (collectionModeUi.dropdownRoot && collectionModeUi.dropdownRoot.isConnected) {
-      applyCollectionModeDropdownVisual();
+    if (collectionModeUi.chromeRoot && collectionModeUi.chromeRoot.isConnected) {
+      applyCollectionModeChromeVisual();
       return;
     }
-    var inspectBtn = findCollectionToolbarButton(/^(检查|Inspect)$/i);
-    if (!inspectBtn || !inspectBtn.parentNode) return;
-    var menuItemTemplate = findMenuItemTemplate();
+    var toolbarRow = findCollectionToolbarRow();
+    if (!toolbarRow) return;
     var labels = collectionModeLabels();
     var root = document.createElement("div");
     root.setAttribute("data-datalab-collection-mode-root", "1");
-    root.className = "datalab-collection-mode-dropdown";
-    var trigger = document.createElement("button");
-    trigger.type = "button";
-    trigger.className = "datalab-collection-mode-trigger";
-    trigger.setAttribute("aria-haspopup", "listbox");
-    trigger.setAttribute("aria-expanded", "false");
-    var menu = document.createElement("div");
-    menu.className = "datalab-collection-mode-menu";
-    menu.setAttribute("role", "listbox");
-    menu.hidden = true;
-    ["dataset", "preview"].forEach(function (mode) {
-      var opt = document.createElement("button");
-      opt.type = "button";
-      opt.className = "datalab-collection-mode-option";
-      opt.setAttribute("role", "option");
-      opt.setAttribute("data-datalab-collection-mode-option", mode);
-      opt.textContent = mode === "preview" ? labels.preview : labels.dataset;
-      if (menuItemTemplate) {
-        opt.className = menuItemTemplate.className + " datalab-collection-mode-option";
-      }
-      opt.addEventListener("click", function () {
-        selectCollectionMode(mode);
-        closeCollectionModeMenu();
-      });
-      menu.appendChild(opt);
-    });
-    trigger.addEventListener("click", function (event) {
+    root.className = "datalab-collection-mode-chrome";
+    var pill = document.createElement("div");
+    pill.className = "datalab-collection-mode-pill";
+    pill.setAttribute("role", "tablist");
+    pill.setAttribute("aria-label", labels.preview + " / " + labels.dataset);
+    var segPreview = document.createElement("button");
+    segPreview.type = "button";
+    segPreview.className = "datalab-collection-mode-seg";
+    segPreview.setAttribute("role", "tab");
+    segPreview.setAttribute("data-datalab-collection-mode-seg", "preview");
+    segPreview.textContent = labels.preview;
+    var segDataset = document.createElement("button");
+    segDataset.type = "button";
+    segDataset.className = "datalab-collection-mode-seg";
+    segDataset.setAttribute("role", "tab");
+    segDataset.setAttribute("data-datalab-collection-mode-seg", "dataset");
+    segDataset.textContent = labels.dataset;
+    segPreview.addEventListener("click", function (event) {
       event.stopPropagation();
-      toggleCollectionModeMenu();
+      selectCollectionMode("preview");
     });
-    root.appendChild(trigger);
-    root.appendChild(menu);
-    if (inspectBtn.nextSibling) {
-      inspectBtn.parentNode.insertBefore(root, inspectBtn.nextSibling);
-    } else {
-      inspectBtn.parentNode.appendChild(root);
-    }
-    collectionModeUi.dropdownRoot = root;
-    collectionModeUi.trigger = trigger;
-    collectionModeUi.menu = menu;
-    dropdownInstalled = true;
-    bindCollectionModeMenuDismiss();
-    applyCollectionModeDropdownVisual();
+    segDataset.addEventListener("click", function (event) {
+      event.stopPropagation();
+      selectCollectionMode("dataset");
+    });
+    pill.appendChild(segPreview);
+    pill.appendChild(segDataset);
+    var statusEl = document.createElement("span");
+    statusEl.className = "datalab-collection-mode-status";
+    statusEl.setAttribute("aria-live", "polite");
+    root.appendChild(pill);
+    root.appendChild(statusEl);
+    toolbarRow.insertBefore(root, toolbarRow.firstChild);
+    collectionModeUi.chromeRoot = root;
+    collectionModeUi.pillRoot = pill;
+    collectionModeUi.statusEl = statusEl;
+    collectionModeUi.segPreview = segPreview;
+    collectionModeUi.segDataset = segDataset;
+    pillInstalled = true;
+    applyCollectionModeChromeVisual();
   }
 
   function installCollectionModeSwitcher() {
-    installCollectionModeDropdown();
+    installCollectionModePill();
   }
 
   function tick() {
     if (!collectionModeUi.stationId) {
       collectionModeUi.stationId = stationIdFromContext();
     }
-    if (!dropdownInstalled) {
+    if (!pillInstalled) {
       installCollectionModeSwitcher();
     }
     if (collectionModeUi.mode === "preview") {
@@ -551,7 +534,7 @@
     }
     if (!g.__DATALAB_COLLECTION_MODE_OBSERVER__ && document.body) {
       g.__DATALAB_COLLECTION_MODE_OBSERVER__ = new MutationObserver(function () {
-        if (!dropdownInstalled) scheduleTick();
+        if (!pillInstalled) scheduleTick();
         else if (collectionModeUi.mode === "preview") scheduleTick();
       });
       g.__DATALAB_COLLECTION_MODE_OBSERVER__.observe(document.body, {

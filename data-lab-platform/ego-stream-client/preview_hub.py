@@ -22,10 +22,11 @@ class PreviewHub:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: Optional[Dict[str, np.ndarray]] = None
+        self._pending_jpegs: Optional[Dict[str, bytes]] = None
         self._jpeg: Dict[str, bytes] = {}
 
     def offer(self, camera_frames: dict[str, np.ndarray]) -> None:
-        """Non-blocking: keep only the latest synced quad-frame."""
+        """Non-blocking: keep only the latest synced quad-frame (legacy RGB path)."""
         snap: Dict[str, np.ndarray] = {}
         for short, key in PREVIEW_CAMERAS:
             rgb = camera_frames.get(key)
@@ -36,10 +37,28 @@ class PreviewHub:
         with self._lock:
             self._pending = snap
 
+    def offer_jpegs(self, camera_jpegs: dict[str, bytes]) -> None:
+        """Non-blocking: latest per-camera JPEG bytes (shared with upload/ring)."""
+        snap: Dict[str, bytes] = {}
+        for short, key in PREVIEW_CAMERAS:
+            data = camera_jpegs.get(key)
+            if data:
+                snap[short] = data
+        if not snap:
+            return
+        with self._lock:
+            self._pending_jpegs = snap
+
     def take_pending(self) -> Optional[Dict[str, np.ndarray]]:
         with self._lock:
             pending = self._pending
             self._pending = None
+            return pending
+
+    def take_pending_jpegs(self) -> Optional[Dict[str, bytes]]:
+        with self._lock:
+            pending = self._pending_jpegs
+            self._pending_jpegs = None
             return pending
 
     def set_jpeg(self, cam: str, data: bytes) -> None:

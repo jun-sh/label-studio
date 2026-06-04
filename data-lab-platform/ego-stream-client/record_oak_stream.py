@@ -6,6 +6,11 @@ import argparse
 import time
 
 from ego_capture_studio.capture.ego_spec import OAK_CAPTURE_FPS, OAK_CAPTURE_IMU_HZ
+from ego_capture_studio.capture.frame_jpeg_codec import (
+    configure_opencv_threads,
+    encode_camera_jpegs,
+    log_jpeg_encoder_info,
+)
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
 from ego_capture_studio.capture.preview_server import start_preview_stack
 from ego_capture_studio.capture.stream_upload import FrameStreamUploader
@@ -44,13 +49,17 @@ def main() -> None:
     imu.add_argument("--no-imu", action="store_true")
     args = p.parse_args()
 
+    configure_opencv_threads()
+    if log_jpeg_encoder_info() != "turbojpeg":
+        print("WARNING: PyTurboJPEG unavailable; using OpenCV imencode (higher CPU)", flush=True)
+
     enable_imu = not args.no_imu
     force_imu = bool(args.imu)
 
-    # Bring up :8765 before OAK init / upload so the UI keeps a live preview during ingest backlog.
     preview_hub = start_preview_stack()
 
     uploader = FrameStreamUploader(args.upload_url, checkpoint_path=args.checkpoint_path)
+    uploader.set_capture_target_fps(args.fps)
     task = uploader.resume_task() or args.task
 
     recorder = Oak4pEgoRecorder(
@@ -74,17 +83,18 @@ def main() -> None:
             print(f"resume session={uploader.session_id} next_frame_index={frame_index}")
         uploader.start_upload_worker()
         stream_t0 = time.monotonic()
-        print(f"stream started fps_target={args.fps} session={uploader.session_id}")
+        print(f"stream started fps_target={args.fps} imu_hz={args.imu_hz} session={uploader.session_id}")
 
         while True:
             segment_t0 = time.monotonic()
             segment_frames = 0
             for ts_ns, rgb_frames, imu6 in recorder.iter_synced_frames(args.episode_seconds):
-                preview_hub.offer(rgb_frames)
+                camera_jpegs = encode_camera_jpegs(rgb_frames)
+                preview_hub.offer_jpegs(camera_jpegs)
                 uploader.enqueue_frame(
                     frame_index=frame_index,
                     timestamp_ns=ts_ns,
-                    camera_frames=rgb_frames,
+                    camera_jpegs=camera_jpegs,
                     imu6=imu6,
                     task=task,
                 )
@@ -94,6 +104,7 @@ def main() -> None:
                 if stream_frame_count % 30 == 0:
                     elapsed = max(time.monotonic() - stream_t0, 1e-6)
                     capture_fps = stream_frame_count / elapsed
+                    uploader.report_capture_fps(capture_fps)
                     stats = uploader.upload_stats()
                     print(
                         f"captured={frame_index} stream_frames={stream_frame_count} capture_fps={capture_fps:.1f} "

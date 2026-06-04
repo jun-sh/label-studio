@@ -18,7 +18,7 @@ const VIDEO_KEYS = [
   "observation.images.camera_02",
 ];
 
-const DEFAULT_FPS = 15;
+const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 20);
 const MUX_DEBOUNCE_MS = 400;
 const PARQUET_DEBOUNCE_MS = 600;
 const VIEWER_PUBLISH_DEBOUNCE_MS = 800;

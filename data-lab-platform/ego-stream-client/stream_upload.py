@@ -24,8 +24,18 @@ UPLOAD_RETRY_BASE_S = 0.5
 UPLOAD_RETRY_MAX_S = 5.0
 UPLOAD_HELD_MAX_RETRIES = 8
 STATION_TOKEN_HEADER = "X-Station-Token"
+RING_BACKFILL_BATCH = int(os.environ.get("RING_BACKFILL_BATCH", "8"))
+RING_BACKFILL_INTERVAL_S = float(os.environ.get("RING_BACKFILL_INTERVAL_S", "2.0"))
+RING_BACKFILL_FRAME_DELAY_S = float(os.environ.get("RING_BACKFILL_FRAME_DELAY_S", "0.12"))
+RING_BACKFILL_QUEUE_HEADROOM = int(os.environ.get("RING_BACKFILL_QUEUE_HEADROOM", "100"))
+BACKFILL_CAPTURE_FPS_RATIO = float(os.environ.get("BACKFILL_CAPTURE_FPS_RATIO", "0.9"))
 
 import numpy as np
+
+try:
+    import requests
+except ImportError:
+    requests = None  # type: ignore[assignment]
 
 try:
     import cv2
@@ -36,12 +46,16 @@ from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
 from ego_capture_studio.capture.ego_spec import OBS_HANDS_DIM, OBS_POSE_DIM, OBS_STATE_DIM
 from ego_capture_studio.capture.lerobot_episode import identity_pose_xyzw
 
+try:
+    from ego_capture_studio.capture.edge_ring_store import EdgeRingStore
+except ImportError:
+    from edge_ring_store import EdgeRingStore  # type: ignore[no-redef]
 
 @dataclass(frozen=True)
 class _FrameJob:
     frame_index: int
     timestamp_ns: int
-    camera_frames: dict[str, np.ndarray]
+    camera_jpegs: dict[str, bytes]
     imu6: np.ndarray
     task: str
 
@@ -121,6 +135,14 @@ class FrameStreamUploader:
         self._retry_backoff_s = UPLOAD_RETRY_BASE_S
         self._held_job: _FrameJob | None = None
         self._held_retries = 0
+        self._ring = EdgeRingStore.from_env()
+        self._ring_backfill_stop = threading.Event()
+        self._ring_backfill_thread: threading.Thread | None = None
+        self._capture_target_fps = float(os.environ.get("DATALAB_CAPTURE_TARGET_FPS", "20"))
+        self._capture_fps_ema = 0.0
+        self._http_session = requests.Session() if requests is not None else None
+        if self._http_session and self.station_token:
+            self._http_session.headers[STATION_TOKEN_HEADER] = self.station_token
         self._load_checkpoint()
         if self.session_id:
             _log_stream(
@@ -128,6 +150,22 @@ class FrameStreamUploader:
                 session_id=self.session_id,
                 next_frame_index=self.next_frame_index,
             )
+
+    def set_capture_target_fps(self, fps: float) -> None:
+        self._capture_target_fps = max(1.0, float(fps))
+
+    def report_capture_fps(self, fps: float) -> None:
+        with self._stats_lock:
+            if self._capture_fps_ema <= 0.0:
+                self._capture_fps_ema = float(fps)
+            else:
+                self._capture_fps_ema = 0.25 * float(fps) + 0.75 * self._capture_fps_ema
+
+    def _capture_fps_healthy(self) -> bool:
+        with self._stats_lock:
+            if self._capture_fps_ema <= 0.0:
+                return True
+            return self._capture_fps_ema >= BACKFILL_CAPTURE_FPS_RATIO * self._capture_target_fps
 
     def _log(
         self,
@@ -141,6 +179,8 @@ class FrameStreamUploader:
     @staticmethod
     def _should_retry_upload(exc: BaseException) -> bool:
         if isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+            return True
+        if requests is not None and isinstance(exc, requests.RequestException):
             return True
         if isinstance(exc, RuntimeError):
             msg = str(exc)
@@ -168,10 +208,100 @@ class FrameStreamUploader:
         self._retry_backoff_s = min(self._retry_backoff_s * 2.0, UPLOAD_RETRY_MAX_S)
         time.sleep(delay)
 
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        out: dict[str, str] = dict(extra or {})
+        if self.station_token:
+            out.setdefault(STATION_TOKEN_HEADER, self.station_token)
+        return out
+
+    def _parse_response(self, raw: str) -> dict[str, Any]:
+        return json.loads(raw) if raw else {}
+
+    def _request(
+        self,
+        *,
+        data: bytes,
+        headers: dict[str, str],
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        timeout = timeout_s if timeout_s is not None else self.timeout_s
+        if self._http_session is not None:
+            try:
+                resp = self._http_session.post(
+                    self.upload_url,
+                    data=data,
+                    headers=self._headers(headers),
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+                return self._parse_response(resp.text)
+            except requests.HTTPError as e:
+                detail = e.response.text if e.response is not None else str(e)
+                code = e.response.status_code if e.response is not None else 0
+                raise RuntimeError(f"upload failed HTTP {code}: {detail}") from e
+            except requests.RequestException as e:
+                raise RuntimeError(str(e)) from e
+
+        req = urllib.request.Request(
+            self.upload_url,
+            data=data,
+            headers=self._headers(headers),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8")
+                return self._parse_response(raw)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"upload failed HTTP {e.code}: {detail}") from e
+
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
         return self._request(
             data=json.dumps(body).encode("utf-8"),
             headers={"Content-Type": "application/json"},
+        )
+
+    def _post_multipart(
+        self,
+        *,
+        payload: dict[str, Any],
+        files: list[tuple[str, tuple[str, bytes, str]]],
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        timeout = timeout_s if timeout_s is not None else self.timeout_s
+        if self._http_session is not None:
+            multipart: list[tuple[str, tuple[str | None, bytes | str, str]]] = [
+                ("payload", (None, json.dumps(payload, separators=(",", ":")), "application/json")),
+            ]
+            multipart.extend(files)
+            try:
+                resp = self._http_session.post(
+                    self.upload_url,
+                    files=multipart,
+                    headers=self._headers({}),
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+                return self._parse_response(resp.text)
+            except requests.HTTPError as e:
+                detail = e.response.text if e.response is not None else str(e)
+                code = e.response.status_code if e.response is not None else 0
+                raise RuntimeError(f"upload failed HTTP {code}: {detail}") from e
+            except requests.RequestException as e:
+                raise RuntimeError(str(e)) from e
+
+        boundary = f"----datalab{uuid.uuid4().hex}"
+        file_map = {name: (filename, data, ctype) for name, (filename, data, ctype) in files}
+        body = self._encode_multipart(
+            fields={"payload": json.dumps(payload, separators=(",", ":"))},
+            files=file_map,
+            boundary=boundary,
+        )
+        return self._request(
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            timeout_s=timeout_s,
         )
 
     def _post_control_plane(self, body: dict[str, Any], *, event: str) -> dict[str, Any]:
@@ -200,30 +330,6 @@ class FrameStreamUploader:
                 )
                 time.sleep(delay_s)
                 delay_s = min(delay_s * 1.5, 30.0)
-
-    def _request(
-        self,
-        *,
-        data: bytes,
-        headers: dict[str, str],
-        timeout_s: float | None = None,
-    ) -> dict[str, Any]:
-        out_headers = dict(headers)
-        if self.station_token:
-            out_headers[STATION_TOKEN_HEADER] = self.station_token
-        req = urllib.request.Request(
-            self.upload_url,
-            data=data,
-            headers=out_headers,
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_s if timeout_s is not None else self.timeout_s) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"upload failed HTTP {e.code}: {detail}") from e
 
     @staticmethod
     def _encode_multipart(
@@ -354,6 +460,8 @@ class FrameStreamUploader:
             event="session_start",
         )
         self.session_id = out.get("sessionId") or self.session_id
+        if self._ring and self.session_id:
+            self._ring.touch_session(self.session_id)
         server_total = out.get("totalFrames")
         if isinstance(server_total, int) and server_total > self.next_frame_index:
             self.next_frame_index = server_total
@@ -366,29 +474,18 @@ class FrameStreamUploader:
         return self.session_id
 
     @staticmethod
-    def _encode_rgb_jpeg(rgb: np.ndarray) -> bytes:
-        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-        if not ok:
-            raise RuntimeError("jpeg encode failed")
-        return buf.tobytes()
-
-    @staticmethod
     def _snapshot_frame_job(
         *,
         frame_index: int,
         timestamp_ns: int,
-        camera_frames: dict[str, np.ndarray],
+        camera_jpegs: dict[str, bytes],
         imu6: np.ndarray,
         task: str,
     ) -> _FrameJob:
-        # iter_synced_frames yields fresh RGB arrays each step; upload worker
-        # finishes before the next yield overwrites OAK queues.
-        frames_ref = {k: v for k, v in camera_frames.items() if v is not None}
         return _FrameJob(
             frame_index=int(frame_index),
             timestamp_ns=int(timestamp_ns),
-            camera_frames=frames_ref,
+            camera_jpegs=camera_jpegs,
             imu6=imu6,
             task=task,
         )
@@ -411,23 +508,14 @@ class FrameStreamUploader:
 
     def _send_frame_job(self, job: _FrameJob) -> dict[str, Any]:
         payload = self._build_frame_payload(job)
-        files: dict[str, tuple[str, bytes, str]] = {}
+        multipart_files: list[tuple[str, tuple[str, bytes, str]]] = []
         for key in ALL_LEROBOT_VIDEO_KEYS:
-            rgb = job.camera_frames.get(key)
-            if rgb is None:
+            jpeg = job.camera_jpegs.get(key)
+            if jpeg is None:
                 continue
             safe_name = key.replace(".", "_") + ".jpg"
-            files[key] = (safe_name, self._encode_rgb_jpeg(rgb), "image/jpeg")
-        boundary = f"----datalab{uuid.uuid4().hex}"
-        body = self._encode_multipart(
-            fields={"payload": json.dumps(payload, separators=(",", ":"))},
-            files=files,
-            boundary=boundary,
-        )
-        return self._request(
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        )
+            multipart_files.append((key, (safe_name, jpeg, "image/jpeg")))
+        return self._post_multipart(payload=payload, files=multipart_files)
 
     def start_upload_worker(self) -> None:
         if self._upload_thread is not None and self._upload_thread.is_alive():
@@ -438,27 +526,103 @@ class FrameStreamUploader:
             daemon=True,
         )
         self._upload_thread.start()
+        self._start_ring_backfill_worker()
+
+    def _start_ring_backfill_worker(self) -> None:
+        if self._ring is None:
+            return
+        if self._ring_backfill_thread is not None and self._ring_backfill_thread.is_alive():
+            return
+        self._ring_backfill_stop.clear()
+        self._ring_backfill_thread = threading.Thread(
+            target=self._ring_backfill_loop,
+            name="datalab-ring-backfill",
+            daemon=True,
+        )
+        self._ring_backfill_thread.start()
+
+    def _backfill_may_run(self) -> bool:
+        if not self._capture_fps_healthy():
+            return False
+        if self._upload_queue.qsize() > RING_BACKFILL_QUEUE_HEADROOM:
+            return False
+        if self._held_job is not None:
+            return False
+        return True
+
+    def _ring_backfill_loop(self) -> None:
+        while not self._ring_backfill_stop.wait(RING_BACKFILL_INTERVAL_S):
+            if not self._ring or not self.session_id:
+                continue
+            if self._upload_thread is None or not self._upload_thread.is_alive():
+                continue
+            with self._stats_lock:
+                if not self._network_ok:
+                    continue
+            if not self._backfill_may_run():
+                continue
+            pending = self._ring.list_pending_indices(
+                self.session_id, from_index=self.next_frame_index
+            )
+            if not pending:
+                continue
+            for frame_index in pending[:RING_BACKFILL_BATCH]:
+                if self._ring_backfill_stop.is_set():
+                    break
+                if not self._backfill_may_run():
+                    break
+                loaded = self._ring.load_frame_jpegs(self.session_id, frame_index)
+                if loaded is None:
+                    continue
+                camera_jpegs, timestamp_ns, imu6, task = loaded
+                if not camera_jpegs:
+                    continue
+                try:
+                    self.enqueue_frame(
+                        frame_index=frame_index,
+                        timestamp_ns=timestamp_ns,
+                        camera_jpegs=camera_jpegs,
+                        imu6=imu6,
+                        task=task or (self._resume_task or ""),
+                        persist_ring=False,
+                    )
+                except RuntimeError:
+                    break
+                if RING_BACKFILL_FRAME_DELAY_S > 0:
+                    time.sleep(RING_BACKFILL_FRAME_DELAY_S)
 
     def enqueue_frame(
         self,
         *,
         frame_index: int,
         timestamp_ns: int,
-        camera_frames: dict[str, np.ndarray],
+        camera_jpegs: dict[str, bytes],
         imu6: np.ndarray,
         task: str,
+        persist_ring: bool = True,
     ) -> None:
         if not self.session_id:
             raise RuntimeError("call start_session() first")
         if self._upload_thread is None or not self._upload_thread.is_alive():
             raise RuntimeError("call start_upload_worker() before enqueue_frame()")
+        if not camera_jpegs:
+            raise RuntimeError("enqueue_frame requires camera_jpegs")
         job = self._snapshot_frame_job(
             frame_index=frame_index,
             timestamp_ns=timestamp_ns,
-            camera_frames=camera_frames,
+            camera_jpegs=camera_jpegs,
             imu6=imu6,
             task=task,
         )
+        if persist_ring and self._ring and self.session_id:
+            self._ring.persist_frame_jpegs(
+                self.session_id,
+                frame_index=job.frame_index,
+                timestamp_ns=job.timestamp_ns,
+                camera_jpegs=job.camera_jpegs,
+                imu6=job.imu6,
+                task=job.task,
+            )
         try:
             self._upload_queue.put_nowait(job)
         except queue.Full:
@@ -511,10 +675,14 @@ class FrameStreamUploader:
                     if next_idx > self.next_frame_index:
                         self.next_frame_index = next_idx
                 self._persist_checkpoint(next_frame_index=next_idx, task=job.task)
+                if self._ring and self.session_id:
+                    self._ring.mark_synced(self.session_id, job.frame_index)
                 self._held_job = None
                 self._held_retries = 0
                 if from_queue:
                     self._upload_queue.task_done()
+                if out.get("duplicate") and self._ring and self.session_id:
+                    self._ring.mark_synced(self.session_id, job.frame_index)
                 if job.frame_index % 30 == 0 or out.get("duplicate"):
                     self._log(
                         "upload_ok",
@@ -555,6 +723,11 @@ class FrameStreamUploader:
                         self._upload_queue.task_done()
 
     def stop_upload_worker(self, *, drain: bool = True, timeout_s: float = 120.0) -> None:
+        self._ring_backfill_stop.set()
+        backfill = self._ring_backfill_thread
+        if backfill is not None and backfill.is_alive():
+            backfill.join(timeout=2.0)
+        self._ring_backfill_thread = None
         if drain:
             deadline = time.monotonic() + timeout_s
             while self._upload_queue.unfinished_tasks > 0 or self._held_job is not None:
@@ -583,6 +756,10 @@ class FrameStreamUploader:
         if thread is not None and thread.is_alive():
             thread.join(timeout=5.0)
         self._upload_thread = None
+        if self._ring is not None:
+            self._ring.close()
+        if self._http_session is not None:
+            self._http_session.close()
 
     def upload_queue_size(self) -> int:
         return self._upload_queue.qsize()
@@ -600,6 +777,7 @@ class FrameStreamUploader:
                 "nextFrameIndex": self.next_frame_index,
                 "lastError": self._last_upload_error,
                 "networkOk": self._network_ok,
+                "captureFpsEma": round(self._capture_fps_ema, 2),
             }
 
     def push_frame(
@@ -607,15 +785,15 @@ class FrameStreamUploader:
         *,
         frame_index: int,
         timestamp_ns: int,
-        camera_frames: dict[str, np.ndarray],
+        camera_jpegs: dict[str, bytes],
         imu6: np.ndarray,
         task: str,
     ) -> dict[str, Any]:
-        """Synchronous upload (encode + POST). Prefer enqueue_frame() for capture loops."""
+        """Synchronous upload. Prefer enqueue_frame() for capture loops."""
         job = self._snapshot_frame_job(
             frame_index=frame_index,
             timestamp_ns=timestamp_ns,
-            camera_frames=camera_frames,
+            camera_jpegs=camera_jpegs,
             imu6=imu6,
             task=task,
         )

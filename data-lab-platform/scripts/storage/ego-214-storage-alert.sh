@@ -3,6 +3,8 @@
 set -euo pipefail
 
 CACHE_ROOT="${EGO_LOCAL_CACHE_ROOT:-/home/server/cache/ego-lan-214}"
+RING_ROOT="${EGO_RING_ROOT:-${CACHE_ROOT}/ring}"
+RING_QUOTA_GB="${EGO_RING_QUOTA_GB:-32}"
 LOG="${STORAGE_ALERT_LOG:-${CACHE_ROOT}/logs/storage-alert.log}"
 DISK_WARN="${DISK_WARN_PERCENT:-85}"
 DISK_CRIT="${DISK_CRIT_PERCENT:-92}"
@@ -31,6 +33,17 @@ if [ -n "$cb" ] && [ "$cb" -gt "$max_b" ]; then
   log "[WARN] cache ${cb} bytes > cap ${max_b}"
 else
   log "OK cache bytes=${cb:-0}"
+fi
+
+rb=0
+if [ -d "$RING_ROOT" ]; then
+  rb=$(du -sb "$RING_ROOT" 2>/dev/null | awk '{print $1}')
+fi
+ring_max=$((RING_QUOTA_GB * 1024 * 1024 * 1024))
+if [ -n "$rb" ] && [ "$rb" -gt "$ring_max" ]; then
+  log "[WARN] ring ${rb} bytes > cap ${ring_max} (${RING_ROOT})"
+else
+  log "OK ring bytes=${rb:-0} root=${RING_ROOT}"
 fi
 
 if systemctl --user is-active --quiet ecs-record-oak-stream 2>/dev/null; then

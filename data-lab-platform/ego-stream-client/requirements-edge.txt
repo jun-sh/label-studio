@@ -1,0 +1,2 @@
+PyTurboJPEG==1.7.5
+requests>=2.28.0

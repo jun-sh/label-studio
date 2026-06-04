@@ -12,12 +12,22 @@ WorkingDirectory=/home/server/workspace/ego-studio
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
 Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1
+Environment=EGO_EDGE_RING_ENABLED=1
+Environment=EGO_RING_ROOT=/home/server/cache/ego-lan-214/ring
+Environment=EGO_RING_QUOTA_GB=32
+Environment=DATALAB_JPEG_QUALITY=70
+Environment=DATALAB_CAPTURE_TARGET_FPS=20
+Environment=OPENCV_NUM_THREADS=2
+Environment=CAPTURE_JPEG_MAX_EDGE=0
+Environment=PREVIEW_FPS=8
+Environment=PREVIEW_MAX_EDGE=640
+Environment=PREVIEW_JPEG_QUALITY=75
 
 ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
   --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload \
   --checkpoint-path /tmp/ego-stream-checkpoint.json \
   --task "Perform egocentric manipulation tasks at the laboratory workbench" \
-  --fps 15
+  --fps 20 --imu-hz 100
 
 Restart=always
 RestartSec=5

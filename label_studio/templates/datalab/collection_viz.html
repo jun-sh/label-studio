@@ -15,7 +15,7 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=9" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=10" />
 <style nonce="{{ request.csp_nonce }}">
   /*
    * Layers are direct children of body (z-index 50). The React shell (.app-wrapper) has
@@ -135,7 +135,7 @@
     var VIZ_LAYER = "datalab-station-layer";
     var VIZ_FRAME = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
-    var LIST_SRC = "/_datalab/collection-embed.html?v=9";
+    var LIST_SRC = "/_datalab/collection-embed.html?v=10";
     var DEFAULT_DATASET_URL = "stream://ego-lan-214";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
     var VIZ_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站 · 214{% else %}EGO station · 214{% endif %}";
@@ -447,6 +447,8 @@
       var streamDatasetReady = Boolean(datasetReady);
       var currentMode = "dataset";
       var liveOnline = Boolean(stationOnline);
+      var offlinePingStreak = 0;
+      var OFFLINE_PING_STRIKES = 3;
       var iframeModeListenerBound = false;
 
       function syncOnlineToIframe() {
@@ -471,7 +473,7 @@
       }
 
       function iframeModeToSend() {
-        if (currentMode === "preview" && liveOnline) return "preview";
+        if (currentMode === "preview") return "preview";
         return "dataset";
       }
 
@@ -519,7 +521,17 @@
       g.__datalabCollectionApplyStation = function (patch) {
         if (!patch) return;
         var wasLive = liveOnline;
-        if (typeof patch.online === "boolean") liveOnline = patch.online;
+        if (typeof patch.online === "boolean") {
+          if (patch.online) {
+            offlinePingStreak = 0;
+            liveOnline = true;
+          } else {
+            offlinePingStreak += 1;
+            if (offlinePingStreak >= OFFLINE_PING_STRIKES) {
+              liveOnline = false;
+            }
+          }
+        }
         if (wasLive && !liveOnline && currentMode === "preview") {
           setMode("dataset");
         } else if (!wasLive && liveOnline && currentMode === "dataset") {
@@ -530,7 +542,9 @@
       };
 
       function setModeFromIframe(mode) {
-        if (mode === "preview" && !liveOnline) mode = "dataset";
+        if (mode === "preview" && !liveOnline && offlinePingStreak >= OFFLINE_PING_STRIKES) {
+          mode = "dataset";
+        }
         currentMode = mode;
         ensureLerobotMounted(false);
         updateBodyLayout();
@@ -554,7 +568,9 @@
       }
 
       function setMode(mode) {
-        if (mode === "preview" && !liveOnline) mode = "dataset";
+        if (mode === "preview" && !liveOnline && offlinePingStreak >= OFFLINE_PING_STRIKES) {
+          mode = "dataset";
+        }
         currentMode = mode;
         ensureLerobotMounted(false);
         updateBodyLayout();

@@ -61,15 +61,15 @@
   var pillInstalled = false;
 
   var COLLECTION_PREVIEW_FEATURES = [
-    { feature: "observation.images.camera_head_left", cam: "head_left" },
-    { feature: "observation.images.camera_head_right", cam: "head_right" },
-    { feature: "observation.images.camera_depth_head", cam: "depth" },
-    { feature: "observation.images.camera_02", cam: "cam_02" },
+    { feature: "observation.images.camera_front_left", cam: "front_left" },
+    { feature: "observation.images.camera_front_right", cam: "front_right" },
+    { feature: "observation.images.camera_rear_left", cam: "rear_left" },
+    { feature: "observation.images.camera_rear_right", cam: "rear_right" },
   ];
 
   var collectionPreviewSlots = new Map();
   var previewSnapshotTimer = null;
-  var PREVIEW_SNAPSHOT_MS = 125;
+  var PREVIEW_SNAPSHOT_MS = 250;
 
   function isParentChromeMode() {
     return document.documentElement.getAttribute("data-datalab-parent-chrome") === "1";
@@ -143,14 +143,23 @@
 
   function bindPreviewOverlaySource(slot, stationId, cam) {
     var overlay = slot.overlay;
-    var retries = 0;
+    if (!overlay._datalabPreviewBind) {
+      overlay._datalabPreviewBind = { retries: 0, loading: false };
+    }
+    var state = overlay._datalabPreviewBind;
     function loadJpg() {
+      if (state.loading) return;
+      state.loading = true;
       overlay.src = collectionPreviewSnapshotUrl(stationId, cam);
     }
+    overlay.onload = function () {
+      state.loading = false;
+      state.retries = 0;
+    };
     overlay.onerror = function () {
-      retries += 1;
-      if (retries > PREVIEW_JPG_MAX_RETRIES) {
-        overlay.onerror = null;
+      state.loading = false;
+      state.retries += 1;
+      if (state.retries > PREVIEW_JPG_MAX_RETRIES) {
         return;
       }
       g.setTimeout(loadJpg, PREVIEW_JPG_RETRY_MS);
@@ -339,7 +348,8 @@
       "data-datalab-collection-preview",
       collectionModeUi.mode === "preview" ? "1" : "0",
     );
-    if (collectionModeUi.mode === "preview" && collectionModeUi.online) {
+    // Keep live preview while capture runs even if ingest heartbeat is stale (Scheme A).
+    if (collectionModeUi.mode === "preview") {
       connectCollectionPreviewStreams();
     } else {
       disconnectCollectionPreviewStreams();
@@ -383,7 +393,8 @@
     segDataset.classList.toggle("is-active", !isPreview);
     segPreview.setAttribute("aria-selected", isPreview ? "true" : "false");
     segDataset.setAttribute("aria-selected", !isPreview ? "true" : "false");
-    segPreview.disabled = !collectionModeUi.online;
+  // Scheme A: preview uses 214 MJPEG proxy; do not block Live tab on ingest heartbeat alone.
+    segPreview.disabled = false;
     segPreview.title = collectionModeUi.online ? "" : labels.offline;
     segDataset.disabled = false;
     segDataset.title = "";
@@ -401,7 +412,7 @@
 
   function selectCollectionMode(mode, options) {
     options = options || {};
-    if (mode === "preview" && !collectionModeUi.online) mode = "dataset";
+    if (mode === "preview" && !collectionModeUi.online && options.forceOffline) mode = "dataset";
     collectionModeUi.mode = mode;
     applyCollectionModeChromeVisual();
     syncCollectionPreviewOverlay();

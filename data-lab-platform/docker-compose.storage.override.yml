@@ -12,12 +12,17 @@ services:
     volumes:
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
-      - /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-archive:/cold-archive:rw
+      - ./data-storage/ego-archive:/cold-archive:rw
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=20
+      - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB_EGO_LAN_214=400
+      - DATALAB_STORAGE_QUOTA_GB=512
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
       - STREAM_SEGMENT_MINUTES=5
+      - STREAM_BACKGROUND_BATCH_MS=2000
+      - STREAM_SEGMENT_INGEST_BATCH_SIZE=2
       - STREAM_DISK_HIGH_WATER=0.9
       - STREAM_DISK_TARGET=0.75
       - STREAM_CLEANUP_INTERVAL_MS=300000
@@ -27,7 +32,9 @@ services:
 
   stream-parquet-sync:
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=20
+      - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB_EGO_LAN_214=400
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
 
@@ -38,7 +45,9 @@ services:
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
     environment:
-      - STREAM_QUOTA_GB_EGO_LAN_214=20
+      - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB_EGO_LAN_214=400
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
       - STREAM_SEGMENT_MINUTES=5

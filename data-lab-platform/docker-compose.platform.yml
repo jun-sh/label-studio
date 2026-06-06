@@ -38,9 +38,11 @@ services:
     expose:
       - "7862"
     volumes:
-      - lerobot-stream-data:/srv/stream
+      - ./data-storage/stream:/srv/stream
+    user: "1000:1000"
     environment:
       - INGEST_PORT=7862
+      - STREAM_DATA_ROOT=/srv/stream
       - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
     healthcheck:
       test:
@@ -60,9 +62,11 @@ services:
     image: ${LEROBOT_STREAM_SYNC_IMAGE:-data-lab-stream-parquet-sync:local}
     restart: unless-stopped
     volumes:
-      - lerobot-stream-data:/srv/stream
+      - ./data-storage/stream:/srv/stream
+    user: "1000:1000"
     environment:
       - STREAM_SYNC_INTERVAL=5
+      - STREAM_DATA_ROOT=/srv/stream
 
   lerobot:
     build:
@@ -74,7 +78,8 @@ services:
     volumes:
       - lerobot-studio-data:/srv/lerobot
       - lerobot-bundled-data:/srv/bundled
-      - lerobot-stream-data:/srv/stream
+      - ./data-storage/stream:/srv/stream
+      - ./data-storage/ego-archive:/cold-archive:ro
       - ./data-storage/samples:/datalab-samples:ro
     environment:
       - PORT=7860
@@ -97,4 +102,3 @@ services:
 volumes:
   lerobot-studio-data:
   lerobot-bundled-data:
-  lerobot-stream-data:

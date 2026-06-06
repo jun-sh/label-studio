@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 HEARTBEAT_INTERVAL_S = 15.0
+HEARTBEAT_POST_TIMEOUT_S = float(os.environ.get("DATALAB_HEARTBEAT_TIMEOUT_S", "8.0"))
 DEFAULT_UPLOAD_QUEUE_MAXSIZE = 300
 DEFAULT_CONTROL_PLANE_TIMEOUT_S = 90.0
 DEFAULT_CONTROL_PLANE_RETRY_MAX_S = 600.0
@@ -257,9 +258,16 @@ class FrameStreamUploader:
             raise RuntimeError(f"upload failed HTTP {e.code}: {detail}") from e
 
     def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        action = body.get("action")
+        timeout_s = (
+            HEARTBEAT_POST_TIMEOUT_S
+            if action in ("heartbeat", "session_start")
+            else None
+        )
         return self._request(
             data=json.dumps(body).encode("utf-8"),
             headers={"Content-Type": "application/json"},
+            timeout_s=timeout_s,
         )
 
     def _post_multipart(

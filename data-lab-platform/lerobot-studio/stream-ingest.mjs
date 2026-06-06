@@ -12,17 +12,53 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const STREAM_ROOT = process.env.STREAM_DATA_ROOT || "/srv/stream";
 
 const VIDEO_KEYS = [
+  "observation.images.camera_front_left",
+  "observation.images.camera_front_right",
+  "observation.images.camera_rear_left",
+  "observation.images.camera_rear_right",
+];
+
+const LEGACY_VIDEO_KEYS = [
   "observation.images.camera_head_left",
   "observation.images.camera_head_right",
   "observation.images.camera_depth_head",
   "observation.images.camera_02",
 ];
 
+/** Canonical (new) -> legacy multipart / on-disk names for transitional uploads. */
+const LEGACY_VIDEO_KEY_ALIASES = {
+  "observation.images.camera_front_left": ["observation.images.camera_head_left"],
+  "observation.images.camera_front_right": ["observation.images.camera_head_right"],
+  "observation.images.camera_rear_left": ["observation.images.camera_depth_head"],
+  "observation.images.camera_rear_right": ["observation.images.camera_02"],
+};
+
+const LEGACY_TO_CANONICAL = Object.fromEntries(
+  Object.entries(LEGACY_VIDEO_KEY_ALIASES).map(([canonical, legacyList]) => [
+    legacyList[0],
+    canonical,
+  ]),
+);
+
+/** New sessions use VIDEO_KEYS; resumed sessions keep keys from existing meta/info.json. */
+function ingestVideoKeys(root) {
+  const info = readJson(path.join(root, "meta", "info.json"), {});
+  const feats = info?.features || {};
+  if (feats["observation.images.camera_head_left"]) {
+    return LEGACY_VIDEO_KEYS;
+  }
+  return VIDEO_KEYS;
+}
+
 const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 20);
-const MUX_DEBOUNCE_MS = 400;
-const PARQUET_DEBOUNCE_MS = 600;
-const VIEWER_PUBLISH_DEBOUNCE_MS = 800;
-const HEARTBEAT_TTL_MS = 45_000;
+/** Scheme A: background mux/parquet/viewer — never on ingest hot path. */
+const STREAM_BACKGROUND_BATCH_MS = Number(process.env.STREAM_BACKGROUND_BATCH_MS || 2000);
+const MUX_DEBOUNCE_MS = STREAM_BACKGROUND_BATCH_MS;
+const PARQUET_DEBOUNCE_MS = STREAM_BACKGROUND_BATCH_MS;
+const VIEWER_PUBLISH_DEBOUNCE_MS = STREAM_BACKGROUND_BATCH_MS;
+const SEGMENT_INGEST_BATCH_SIZE = Number(process.env.STREAM_SEGMENT_INGEST_BATCH_SIZE || 2);
+/** Heartbeat interval on edge is ~15s; TTL must survive slow ingest (segment upload). */
+const HEARTBEAT_TTL_MS = Number(process.env.STREAM_HEARTBEAT_TTL_MS || 120_000);
 const SYNC_SCRIPT = path.join(__dirname, "scripts", "sync-stream-parquet.py");
 const DEFAULT_QUOTA_GB = Number(process.env.STREAM_QUOTA_GB || 100);
 const RETENTION_DAYS = Number(process.env.STREAM_RETENTION_DAYS || 7);
@@ -64,6 +100,10 @@ const parquetQueue = new Map();
 const viewerPublishQueue = new Map();
 /** @type {Map<string, NodeJS.Timeout | null>} */
 const cleanupQueue = new Map();
+/** @type {Map<string, { queue: object[], workerRunning: boolean }>} */
+const segmentIngestQueues = new Map();
+/** @type {Map<string, { timer: NodeJS.Timeout | null, pending: boolean }>} */
+const backgroundBatchState = new Map();
 
 function stationTokenEnvKey(stationId) {
   return `STREAM_STATION_TOKEN_${stationId.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase()}`;
@@ -236,12 +276,13 @@ function videoArtifactRel(videoKey) {
   return `videos/${videoKey}/chunk-000/file-000.mp4`;
 }
 
-function allChunkArtifactRels() {
+function allChunkArtifactRels(root) {
+  const keys = root ? ingestVideoKeys(root) : VIDEO_KEYS;
   return [
     "meta/info.json",
     "data/chunk-000/file-000.parquet",
     "meta/episodes/chunk-000/file-000.parquet",
-    ...VIDEO_KEYS.map(videoArtifactRel),
+    ...keys.map(videoArtifactRel),
   ];
 }
 
@@ -282,7 +323,7 @@ function countStagingFramesFast(root) {
 
 function countStagingFramesScan(root) {
   let maxIdx = -1;
-  for (const videoKey of VIDEO_KEYS) {
+  for (const videoKey of ingestVideoKeys(root)) {
     const dir = stagingDir(root, videoKey);
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
@@ -335,7 +376,7 @@ function canServeChunkArtifact(root, rel) {
 
 function initChunksManifest(root, { resetViewer = false } = {}) {
   const publish = {};
-  for (const rel of allChunkArtifactRels()) {
+  for (const rel of allChunkArtifactRels(root)) {
     publish[rel] = { status: "writing", frames: 0, updatedAt: new Date().toISOString() };
   }
   writeChunksManifest(root, { revision: 0, viewerTotalFrames: 0, publish });
@@ -404,7 +445,7 @@ function finalizePublishCycle(root, stationId) {
   manifest.viewerTotalFrames = viewerFrames;
   manifest.publish = manifest.publish || {};
   const now = new Date().toISOString();
-  for (const rel of allChunkArtifactRels()) {
+  for (const rel of allChunkArtifactRels(root)) {
     if (rel === "meta/info.json") {
       if (viewerFrames > 0 && fs.existsSync(viewerInfoPath(root))) {
         manifest.publish[rel] = { status: "finished", frames: viewerFrames, updatedAt: now };
@@ -425,7 +466,7 @@ function finalizePublishCycle(root, stationId) {
 }
 
 function markMuxArtifactsWriting(root) {
-  for (const videoKey of VIDEO_KEYS) {
+  for (const videoKey of ingestVideoKeys(root)) {
     setChunkArtifactStatus(root, videoArtifactRel(videoKey), "writing");
   }
 }
@@ -471,6 +512,174 @@ function commitFrameAtomically(root, frameIndex, images, row) {
   fs.rmSync(inflight, { recursive: true, force: true });
 }
 
+function segmentCommittedMarker(root, sessionId, segmentId) {
+  return path.join(root, "live", "sessions", sessionId, "segments", `${segmentId}.done`);
+}
+
+function isSegmentCommitted(root, sessionId, segmentId) {
+  return fs.existsSync(segmentCommittedMarker(root, sessionId, segmentId));
+}
+
+function markSegmentCommitted(root, sessionId, segmentId) {
+  const marker = segmentCommittedMarker(root, sessionId, segmentId);
+  ensureDir(path.dirname(marker));
+  fs.writeFileSync(marker, "");
+}
+
+function segmentImageKey(frameIndex, videoKey) {
+  return `${frameIndex}__${videoKey.replace(/\./g, "_")}`;
+}
+
+function scheduleBackgroundTasks(stationId) {
+  let st = backgroundBatchState.get(stationId);
+  if (!st) {
+    st = { timer: null, pending: false };
+    backgroundBatchState.set(stationId, st);
+  }
+  st.pending = true;
+  if (st.timer) return;
+  st.timer = setTimeout(() => {
+    st.timer = null;
+    if (!st.pending) return;
+    st.pending = false;
+    const depth = (segmentIngestQueues.get(stationId)?.queue.length) || 0;
+    streamLog(stationId, "background_batch", { ingestDepth: depth });
+    scheduleMux(stationId);
+    scheduleViewerPublish(stationId);
+    scheduleParquetSync(stationId);
+    if (depth > 0) {
+      st.pending = true;
+      scheduleBackgroundTasks(stationId);
+    }
+  }, STREAM_BACKGROUND_BATCH_MS);
+}
+
+function getSegmentIngestState(stationId) {
+  if (!segmentIngestQueues.has(stationId)) {
+    segmentIngestQueues.set(stationId, { queue: [], workerRunning: false });
+  }
+  return segmentIngestQueues.get(stationId);
+}
+
+function processSegmentIngestJob(stationId, job) {
+  const root = stationRoot(stationId);
+  const { sessionId, segmentId, frames, images, shapes, host } = job;
+  const livePath = path.join(root, "live", "session.json");
+  const live = readJson(livePath, {});
+
+  if (isSegmentCommitted(root, sessionId, segmentId)) {
+    touchHeartbeat(root, stationId, host || live.host || null);
+    return { framesCommitted: 0, duplicate: true };
+  }
+
+  let info = readJson(path.join(root, "meta", "info.json"));
+  if (!info) {
+    info = defaultInfo(stationId, shapes || {});
+  }
+  for (const [key, shape] of Object.entries(shapes || {})) {
+    if (info.features?.[key] && Array.isArray(shape) && shape.length >= 2) {
+      info.features[key].shape = [shape[0], shape[1], 3];
+      info.features[key].info["video.height"] = shape[0];
+      info.features[key].info["video.width"] = shape[1];
+    }
+  }
+
+  let committed = 0;
+  let maxFrame = info.total_frames || 0;
+  for (const f of frames) {
+    const frameIndex = Number(f.frameIndex ?? f.frame_index ?? -1);
+    if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
+    if (isFrameCommitted(root, sessionId, frameIndex)) continue;
+
+    const frameImages = {};
+    const keys = ingestVideoKeys(root);
+    for (const videoKey of keys) {
+      const buf = resolveFrameImage(images, frameIndex, videoKey);
+      if (buf) frameImages[videoKey] = buf;
+    }
+    const row = {
+      frame_index: frameIndex,
+      timestamp_ns: f.timestampNs ?? f.timestamp_ns ?? 0,
+      task: f.task || DEFAULT_STREAM_TASK,
+      "observation.state": f.observationState || f["observation.state"] || [0, 0, 0, 0, 0, 0],
+      "observation.pose": f.observationPose || f["observation.pose"] || [0, 0, 0, 0, 0, 0, 1],
+      "observation.hands": f.observationHands || f["observation.hands"] || new Array(63).fill(0),
+      action: f.actionVector || f.action || [0],
+    };
+    commitFrameAtomically(root, frameIndex, frameImages, row);
+    markFrameCommitted(root, sessionId, frameIndex);
+    committed += 1;
+    maxFrame = Math.max(maxFrame, frameIndex + 1);
+  }
+
+  info.total_frames = maxFrame;
+  info.total_episodes = 1;
+  writeJsonAtomic(path.join(root, "meta", "info.json"), info);
+
+  live.sessionId = sessionId;
+  live.updatedAt = new Date().toISOString();
+  live.lastFrameIndex = Math.max(live.lastFrameIndex ?? -1, maxFrame - 1);
+  writeJson(livePath, live);
+
+  markSegmentCommitted(root, sessionId, segmentId);
+  touchHeartbeat(root, stationId, host || live.host || null);
+
+  streamLog(stationId, "segment_committed", {
+    sessionId,
+    segmentId,
+    framesCommitted: committed,
+    totalFrames: maxFrame,
+  });
+  return { framesCommitted: committed, duplicate: false, totalFrames: maxFrame };
+}
+
+function pumpSegmentIngestQueue(stationId) {
+  const state = getSegmentIngestState(stationId);
+  if (state.workerRunning || state.queue.length === 0) return;
+  state.workerRunning = true;
+  setImmediate(() => {
+    let n = 0;
+    while (state.queue.length > 0 && n < SEGMENT_INGEST_BATCH_SIZE) {
+      const job = state.queue.shift();
+      const t0 = Date.now();
+      try {
+        processSegmentIngestJob(stationId, job);
+        const ms = Date.now() - t0;
+        streamLog(stationId, "segment_commit_ms", {
+          sessionId: job.sessionId,
+          segmentId: job.segmentId,
+          commitMs: ms,
+          ingestDepth: state.queue.length,
+        });
+      } catch (err) {
+        streamLog(stationId, "segment_commit_error", {
+          segmentId: job.segmentId,
+          message: String(err?.message || err),
+        });
+      }
+      n += 1;
+    }
+    state.workerRunning = false;
+    if (state.queue.length > 0) {
+      pumpSegmentIngestQueue(stationId);
+    } else {
+      scheduleBackgroundTasks(stationId);
+    }
+  });
+}
+
+function enqueueSegmentIngest(stationId, job) {
+  const state = getSegmentIngestState(stationId);
+  state.queue.push(job);
+  streamLog(stationId, "segment_accepted", {
+    sessionId: job.sessionId,
+    segmentId: job.segmentId,
+    frameCount: job.frames?.length ?? 0,
+    ingestDepth: state.queue.length,
+  });
+  pumpSegmentIngestQueue(stationId);
+}
+
 function writeTasksJsonl(root, task) {
   ensureDir(path.join(root, "meta"));
   const line = JSON.stringify({ task_index: 0, task: task || DEFAULT_STREAM_TASK });
@@ -494,9 +703,21 @@ export function isStationLive(stationId) {
   return false;
 }
 
-const STATION_LIVE_CACHE_MS = Number(process.env.STATION_LIVE_CACHE_MS || 30_000);
-/** @type {Map<string, { online: boolean, at: number }>} */
+const STATION_LIVE_CACHE_MS = Number(process.env.STATION_LIVE_CACHE_MS || 5_000);
+/** Keep UI "online" briefly after heartbeat gap (upload backlog on ingest). */
+const STATION_LIVE_OFFLINE_GRACE_MS = Number(process.env.STATION_LIVE_OFFLINE_GRACE_MS || 90_000);
+/** @type {Map<string, { online: boolean, at: number; lastOnlineAt?: number }>} */
 const stationLiveCache = new Map();
+
+function markStationLiveCache(stationId, online) {
+  const now = Date.now();
+  const prev = stationLiveCache.get(stationId);
+  stationLiveCache.set(stationId, {
+    online,
+    at: now,
+    lastOnlineAt: online ? now : prev?.lastOnlineAt ?? 0,
+  });
+}
 
 /** Cached isStationLive for list API — avoids disk churn under ingest load. */
 export function isStationLiveCached(stationId) {
@@ -505,8 +726,17 @@ export function isStationLiveCached(stationId) {
   if (hit && now - hit.at < STATION_LIVE_CACHE_MS) {
     return hit.online;
   }
-  const online = isStationLive(stationId);
-  stationLiveCache.set(stationId, { online, at: now });
+  const fresh = isStationLive(stationId);
+  let online = fresh;
+  if (fresh) {
+    markStationLiveCache(stationId, true);
+    return true;
+  }
+  const lastOnlineAt = hit?.lastOnlineAt ?? 0;
+  if (lastOnlineAt > 0 && now - lastOnlineAt < STATION_LIVE_OFFLINE_GRACE_MS) {
+    online = true;
+  }
+  markStationLiveCache(stationId, online);
   return online;
 }
 
@@ -519,6 +749,7 @@ function touchHeartbeat(root, stationId, host) {
     at: new Date().toISOString(),
     host: host ?? prev.host ?? null,
   });
+  markStationLiveCache(stationId, true);
 }
 
 function defaultInfo(stationId, shapes) {
@@ -574,7 +805,7 @@ function defaultInfo(stationId, shapes) {
     features,
     ego_capture: {
       capture_device: "OAK-4P-New (DepthAI)",
-      camera_layout: "sensexperience_ego_four_cam",
+      camera_layout: "ego_four_cam_front_rear",
       stream_station: stationId,
       stream_mode: "frame_push",
     },
@@ -842,7 +1073,8 @@ function purgeStagingJpgsInDir(inDir, throughFrame = null) {
 
 function purgeAllStagingJpgs(root) {
   let removed = 0;
-  for (const videoKey of VIDEO_KEYS) {
+  const keys = new Set([...ingestVideoKeys(root), ...VIDEO_KEYS, ...LEGACY_VIDEO_KEYS]);
+  for (const videoKey of keys) {
     removed += purgeStagingJpgsInDir(stagingDir(root, videoKey));
   }
   return removed;
@@ -850,7 +1082,7 @@ function purgeAllStagingJpgs(root) {
 
 function stagingDirSizeBytes(root) {
   let total = 0;
-  for (const videoKey of VIDEO_KEYS) {
+  for (const videoKey of ingestVideoKeys(root)) {
     const inDir = stagingDir(root, videoKey);
     if (!fs.existsSync(inDir)) continue;
     for (const f of fs.readdirSync(inDir)) {
@@ -1020,6 +1252,22 @@ function imageBuffer(images, videoKey) {
   if (Buffer.isBuffer(value)) return value;
   if (value instanceof Uint8Array) return Buffer.from(value);
   if (typeof value === "string") return decodeImage(value);
+  return null;
+}
+
+function resolveFrameImage(images, frameIndex, videoKey) {
+  const canonical = LEGACY_TO_CANONICAL[videoKey] || videoKey;
+  const candidates = new Set([
+    videoKey,
+    canonical,
+    ...(LEGACY_VIDEO_KEY_ALIASES[canonical] || []),
+    ...(LEGACY_VIDEO_KEY_ALIASES[videoKey] || []),
+  ]);
+  for (const key of candidates) {
+    const fk = segmentImageKey(frameIndex, key);
+    const buf = imageBuffer(images, fk) || imageBuffer(images, key);
+    if (buf) return buf;
+  }
   return null;
 }
 
@@ -1294,7 +1542,9 @@ function runMux(stationId) {
   const muxSessionId = getActiveSessionId(root);
   streamLog(stationId, "mux_start", { sessionId: muxSessionId, frames: countStagingFrames(root) });
 
-  const jobs = VIDEO_KEYS.map((videoKey) => muxOneCamera(stationId, root, videoKey, muxSessionId));
+  const jobs = ingestVideoKeys(root).map((videoKey) =>
+    muxOneCamera(stationId, root, videoKey, muxSessionId),
+  );
 
   Promise.all(jobs).finally(() => {
     releaseFileLock(lockPath, lockFd);
@@ -1451,7 +1701,8 @@ export function handleStreamUpload(stationId, body) {
     ensureDir(stagingTmpRoot(root));
     ensureDir(path.join(stagingTmpRoot(root), "inflight"));
     ensureDir(locksDir(root));
-    for (const key of VIDEO_KEYS) {
+    const stagingKeys = isResume ? ingestVideoKeys(root) : VIDEO_KEYS;
+    for (const key of stagingKeys) {
       ensureDir(stagingDir(root, key));
     }
     ensureDir(path.dirname(dataJsonlPath(root)));
@@ -1463,6 +1714,63 @@ export function handleStreamUpload(stationId, body) {
       resumed: isResume,
       totalFrames: info.total_frames || 0,
       datasetUrl: streamDatasetUrl(stationId),
+    };
+  }
+
+  if (action === "segment") {
+    const sessionId = body.sessionId;
+    const segmentId = body.segmentId;
+    if (!sessionId || !segmentId) {
+      throw new Error("sessionId and segmentId required for segment upload");
+    }
+    const frames = Array.isArray(body.frames) ? body.frames : [];
+    const images = body.images || {};
+    const shapes = body.videoShapes || {};
+    const root = stationRoot(stationId);
+    const live = readJson(path.join(root, "live", "session.json"), {});
+
+    if (isSegmentCommitted(root, sessionId, segmentId)) {
+      touchHeartbeat(root, stationId, live.host || null);
+      const info = readJson(path.join(root, "meta", "info.json"), {});
+      return {
+        ok: true,
+        action: "segment",
+        sessionId,
+        segmentId,
+        framesCommitted: 0,
+        duplicate: true,
+        totalFrames: info?.total_frames ?? 0,
+      };
+    }
+
+    const livePath = path.join(root, "live", "session.json");
+    live.sessionId = sessionId;
+    live.updatedAt = new Date().toISOString();
+    writeJson(livePath, live);
+    touchHeartbeat(root, stationId, body.host || live.host || null);
+
+    enqueueSegmentIngest(stationId, {
+      sessionId,
+      segmentId,
+      frames,
+      images,
+      shapes,
+      host: live.host || null,
+    });
+
+    const optimisticTotal = Math.max(
+      Number(body.endFrameIndex ?? 0) + 1,
+      live.lastFrameIndex ?? -1,
+    );
+    return {
+      ok: true,
+      action: "segment",
+      sessionId,
+      segmentId,
+      accepted: true,
+      framesCommitted: frames.length,
+      totalFrames: optimisticTotal,
+      duplicate: false,
     };
   }
 
@@ -1513,35 +1821,40 @@ export function handleStreamUpload(stationId, body) {
       "observation.hands": body.observationHands || new Array(63).fill(0),
       action: body.actionVector || [0],
     };
-    commitFrameAtomically(root, frameIndex, images, row);
-    if (frameIndex % 30 === 0) {
-      streamLog(stationId, "frame_committed", {
-        sessionId,
-        frameIndex,
-        totalFrames: Math.max(info?.total_frames || 0, frameIndex + 1),
-      });
-    }
-
-    info.total_frames = Math.max(info.total_frames || 0, frameIndex + 1);
-    info.total_episodes = 1;
-    writeJsonAtomic(path.join(root, "meta", "info.json"), info);
-
+    const optimisticTotal = Math.max(info?.total_frames || 0, frameIndex + 1, live.lastFrameIndex ?? -1);
     live.sessionId = sessionId;
     live.updatedAt = new Date().toISOString();
     live.lastFrameIndex = Math.max(live.lastFrameIndex ?? -1, frameIndex);
     writeJson(livePath, live);
-
-    markFrameCommitted(root, sessionId, frameIndex);
     touchHeartbeat(root, stationId, live.host || null);
 
-    if (frameIndex % 30 === 0) {
-      streamLog(stationId, "frame_received", { sessionId, frameIndex });
-    }
+    enqueueSegmentIngest(stationId, {
+      sessionId,
+      segmentId: `frame_${String(frameIndex).padStart(8, "0")}`,
+      frames: [
+        {
+          frameIndex,
+          timestampNs: body.timestampNs ?? 0,
+          task: body.task || DEFAULT_STREAM_TASK,
+          observationState: body.observationState || [0, 0, 0, 0, 0, 0],
+          observationPose: body.observationPose || [0, 0, 0, 0, 0, 0, 1],
+          observationHands: body.observationHands || new Array(63).fill(0),
+          actionVector: body.actionVector || [0],
+        },
+      ],
+      images,
+      shapes,
+      host: live.host || null,
+    });
 
-    scheduleMux(stationId);
-    scheduleViewerPublish(stationId);
-    scheduleParquetSync(stationId);
-    return { ok: true, action: "frame", frameIndex, totalFrames: info.total_frames, duplicate: false };
+    return {
+      ok: true,
+      action: "frame",
+      frameIndex,
+      totalFrames: optimisticTotal,
+      duplicate: false,
+      accepted: true,
+    };
   }
 
   throw new Error(`unknown action: ${action}`);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -18,8 +19,22 @@ CAPTURE_JPEG_MAX_EDGE = int(os.environ.get("CAPTURE_JPEG_MAX_EDGE", "0"))
 _CONFIGURED = False
 _TURBOJPEG = None
 _TURBOJPEG_TRIED = False
+_JPEG_POOL: ThreadPoolExecutor | None = None
+_JPEG_POOL_WORKERS = max(1, int(os.environ.get("EGO_JPEG_ENCODE_WORKERS", "4")))
 
 _logger = logging.getLogger("datalab.jpeg")
+
+
+def _jpeg_pool() -> ThreadPoolExecutor | None:
+    global _JPEG_POOL
+    if _JPEG_POOL_WORKERS <= 1:
+        return None
+    if _JPEG_POOL is None:
+        _JPEG_POOL = ThreadPoolExecutor(
+            max_workers=_JPEG_POOL_WORKERS,
+            thread_name_prefix="ego-jpeg",
+        )
+    return _JPEG_POOL
 
 
 def jpeg_encoder_name() -> str:
@@ -74,33 +89,57 @@ def _resize_rgb_max_edge(rgb: np.ndarray, max_edge: int) -> np.ndarray:
     return cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def encode_rgb_to_jpeg(rgb: np.ndarray) -> bytes:
-    """Encode one RGB frame to JPEG (TurboJPEG preferred, OpenCV fallback)."""
+def encode_bgr_to_jpeg(bgr: np.ndarray) -> bytes:
+    """Encode BGR frame to JPEG (TurboJPEG preferred; no host resize when max_edge=0)."""
     configure_opencv_threads()
-    if CAPTURE_JPEG_MAX_EDGE > 0:
-        rgb = _resize_rgb_max_edge(rgb, CAPTURE_JPEG_MAX_EDGE)
     turbo = _get_turbojpeg()
     if turbo is not None:
         jpeg_enc, tjpf_bgr, subsample = turbo
-        bgr = np.ascontiguousarray(rgb[:, :, ::-1], dtype=np.uint8)
+        if not bgr.flags["C_CONTIGUOUS"]:
+            bgr = np.ascontiguousarray(bgr, dtype=np.uint8)
         return jpeg_enc.encode(
             bgr,
             quality=JPEG_QUALITY,
             pixel_format=tjpf_bgr,
             jpeg_subsample=subsample,
         )
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    if CAPTURE_JPEG_MAX_EDGE > 0:
+        rgb = bgr[:, :, ::-1]
+        rgb = _resize_rgb_max_edge(rgb, CAPTURE_JPEG_MAX_EDGE)
+        bgr = np.ascontiguousarray(rgb[:, :, ::-1], dtype=np.uint8)
     ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
     if not ok:
         raise RuntimeError("jpeg encode failed")
     return buf.tobytes()
 
 
+def encode_rgb_to_jpeg(rgb: np.ndarray) -> bytes:
+    """Encode one RGB frame to JPEG (legacy; prefer encode_bgr_to_jpeg from OAK BGR)."""
+    configure_opencv_threads()
+    if CAPTURE_JPEG_MAX_EDGE > 0:
+        rgb = _resize_rgb_max_edge(rgb, CAPTURE_JPEG_MAX_EDGE)
+    bgr = np.ascontiguousarray(rgb[:, :, ::-1], dtype=np.uint8)
+    return encode_bgr_to_jpeg(bgr)
+
+
+def _encode_camera_jpegs_impl(camera_frames: dict[str, np.ndarray], *, bgr: bool) -> dict[str, bytes]:
+    encode_fn = encode_bgr_to_jpeg if bgr else encode_rgb_to_jpeg
+    items = [(key, frame) for key, frame in camera_frames.items() if frame is not None]
+    if not items:
+        return {}
+    pool = _jpeg_pool()
+    if pool is None or len(items) == 1:
+        return {key: encode_fn(frame) for key, frame in items}
+    keys, frames = zip(*items)
+    jpegs = list(pool.map(encode_fn, frames))
+    return dict(zip(keys, jpegs))
+
+
+def encode_camera_bgr_jpegs(camera_frames: dict[str, np.ndarray]) -> dict[str, bytes]:
+    """One JPEG per camera from BGR frames (OAK / ImageManip output)."""
+    return _encode_camera_jpegs_impl(camera_frames, bgr=True)
+
+
 def encode_camera_jpegs(camera_frames: dict[str, np.ndarray]) -> dict[str, bytes]:
     """One JPEG per LeRobot camera key; skip missing/None frames."""
-    out: dict[str, bytes] = {}
-    for key, rgb in camera_frames.items():
-        if rgb is None:
-            continue
-        out[key] = encode_rgb_to_jpeg(rgb)
-    return out
+    return _encode_camera_jpegs_impl(camera_frames, bgr=False)

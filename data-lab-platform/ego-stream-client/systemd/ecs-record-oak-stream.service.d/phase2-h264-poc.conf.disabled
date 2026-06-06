@@ -1,0 +1,11 @@
+# Phase-2 POC (disabled by filename). Enable: rename to phase2-h264-poc.conf
+# Segment-close MP4 mux (in-memory NAL buffer + ffmpeg); NOT per-frame .h264 append.
+# 34 ingest upload still expects JPEG segments — local POC only.
+[Service]
+Environment=OAK_H264=1
+Environment=OAK_HW_JPEG=0
+Environment=SEGMENT_H264=1
+Environment=SEGMENT_H264_LEGACY_APPEND=0
+Environment=SEGMENT_FRAME_BIN=0
+Environment=OAK_HW_PREVIEW_H264=1
+Environment=OAK_DEPTH_FRAME_DIVISOR=2

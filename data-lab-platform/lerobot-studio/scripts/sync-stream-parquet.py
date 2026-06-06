@@ -11,10 +11,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 VIDEO_KEYS = [
-    "observation.images.camera_head_left",
-    "observation.images.camera_head_right",
-    "observation.images.camera_depth_head",
-    "observation.images.camera_02",
+    "observation.images.camera_front_left",
+    "observation.images.camera_front_right",
+    "observation.images.camera_rear_left",
+    "observation.images.camera_rear_right",
 ]
 
 

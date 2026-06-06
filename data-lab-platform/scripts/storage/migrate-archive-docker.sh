@@ -18,7 +18,7 @@ MAX_MOVE="${COLD_MIGRATE_MAX_PER_RUN:-3}"
 MIN_AGE_HOURS="${HOT_ARCHIVE_MIN_AGE_HOURS:-168}"
 LOG="${MIGRATE_DOCKER_LOG:-/opt/datalab/log/migrate-archive-docker.log}"
 
-mkdir -p "$(dirname "$LOG")" "${COLD_ROOT:-/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-archive}"
+mkdir -p "$(dirname "$LOG")" "${COLD_ROOT:-/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-archive}"
 exec >>"$LOG" 2>&1
 
 echo "=== $(date -Is) migrate-archive-docker mode=${MODE} station=${STATION_ID} ==="

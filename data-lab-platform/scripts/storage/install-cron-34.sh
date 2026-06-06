@@ -19,5 +19,6 @@ sudo tee "$CRON_FILE" >/dev/null <<EOF
 # Data Lab stream hot/cold tier (session-level migration only)
 */5 * * * * root STREAM_STORAGE_ENV=$ENV_DST $REPO_ROOT/data-lab-platform/scripts/storage/hot-tier-enforce.sh
 15 */6 * * * root STREAM_STORAGE_ENV=$ENV_DST $REPO_ROOT/data-lab-platform/scripts/storage/archive-to-cold.sh
+30 * * * * root STREAM_STORAGE_ENV=$ENV_DST $REPO_ROOT/data-lab-platform/scripts/storage/enforce-storage-quota.sh
 EOF
 echo "Installed $CRON_FILE"

@@ -9,13 +9,28 @@ import numpy as np
 
 # Short URL segment -> LeRobot video feature key
 PREVIEW_CAMERAS: tuple[tuple[str, str], ...] = (
-    ("head_left", "observation.images.camera_head_left"),
-    ("head_right", "observation.images.camera_head_right"),
-    ("depth", "observation.images.camera_depth_head"),
-    ("cam_02", "observation.images.camera_02"),
+    ("front_left", "observation.images.camera_front_left"),
+    ("front_right", "observation.images.camera_front_right"),
+    ("rear_left", "observation.images.camera_rear_left"),
+    ("rear_right", "observation.images.camera_rear_right"),
 )
 
-VALID_PREVIEW_CAMS = frozenset(short for short, _ in PREVIEW_CAMERAS)
+# Historical preview URLs (read-only compat; map to canonical short names).
+LEGACY_PREVIEW_CAM_ALIASES: dict[str, str] = {
+    "head_left": "front_left",
+    "head_right": "front_right",
+    "depth": "rear_left",
+    "cam_02": "rear_right",
+}
+
+
+def resolve_preview_cam(cam: str) -> str:
+    return LEGACY_PREVIEW_CAM_ALIASES.get(cam, cam)
+
+
+VALID_PREVIEW_CAMS = frozenset(short for short, _ in PREVIEW_CAMERAS) | frozenset(
+    LEGACY_PREVIEW_CAM_ALIASES.keys()
+)
 
 
 class PreviewHub:
@@ -61,10 +76,12 @@ class PreviewHub:
             self._pending_jpegs = None
             return pending
 
-    def set_jpeg(self, cam: str, data: bytes) -> None:
+    def set_jpeg(self, short: str, jpeg: bytes) -> None:
+        canonical = resolve_preview_cam(short)
         with self._lock:
-            self._jpeg[cam] = data
+            self._jpeg[canonical] = jpeg
 
-    def get_jpeg(self, cam: str) -> Optional[bytes]:
+    def get_jpeg(self, short: str) -> Optional[bytes]:
+        canonical = resolve_preview_cam(short)
         with self._lock:
-            return self._jpeg.get(cam)
+            return self._jpeg.get(canonical)

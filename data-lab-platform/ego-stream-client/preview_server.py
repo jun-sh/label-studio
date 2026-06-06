@@ -9,9 +9,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 try:
-    from ego_capture_studio.capture.preview_hub import VALID_PREVIEW_CAMS, PreviewHub
+    from ego_capture_studio.capture.preview_hub import (
+        VALID_PREVIEW_CAMS,
+        PreviewHub,
+        resolve_preview_cam,
+    )
 except ImportError:
-    from preview_hub import VALID_PREVIEW_CAMS, PreviewHub
+    from preview_hub import VALID_PREVIEW_CAMS, PreviewHub, resolve_preview_cam  # type: ignore[no-redef]
 
 PREVIEW_FPS = float(os.environ.get("PREVIEW_FPS", "8"))
 PREVIEW_HTTP_HOST = os.environ.get("PREVIEW_HTTP_HOST", "0.0.0.0")
@@ -20,14 +24,24 @@ MJPEG_BOUNDARY = b"--datalabframe"
 
 
 def _jpeg_relay_loop(hub: PreviewHub) -> None:
-    """Relay capture-encoded 800P JPEGs at PREVIEW_FPS (browser scales for display)."""
+    """Encode latest RGB quad at PREVIEW_FPS (capture thread only offers RGB)."""
+    from ego_capture_studio.capture.frame_jpeg_codec import encode_rgb_to_jpeg
+
     interval = 1.0 / max(PREVIEW_FPS, 0.5)
     while True:
         t0 = time.monotonic()
-        pending = hub.take_pending_jpegs()
+        pending = hub.take_pending()
         if pending:
-            for short, jpeg in pending.items():
-                hub.set_jpeg(short, jpeg)
+            for short, rgb in pending.items():
+                try:
+                    hub.set_jpeg(short, encode_rgb_to_jpeg(rgb))
+                except Exception:
+                    pass
+        else:
+            pending_jpegs = hub.take_pending_jpegs()
+            if pending_jpegs:
+                for short, jpeg in pending_jpegs.items():
+                    hub.set_jpeg(short, jpeg)
         elapsed = time.monotonic() - t0
         time.sleep(max(0.0, interval - elapsed))
 
@@ -65,6 +79,7 @@ def _make_handler(hub: PreviewHub):
             if cam not in VALID_PREVIEW_CAMS:
                 self.send_error(404)
                 return
+            cam = resolve_preview_cam(cam)
 
             if not stream_mode:
                 jpeg = hub.get_jpeg(cam)

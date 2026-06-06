@@ -89,3 +89,11 @@ web/coverage-chunks
 # Data Lab platform sample archives (large binaries; see README.md § data-storage)
 data-storage/samples/*.zip
 data-storage/samples/*.tar
+
+# EGO stream hot tier + cold archive (bind-mounted; do not commit)
+data-storage/stream/
+!data-storage/stream/.gitkeep
+data-storage/ego-archive/
+!data-storage/ego-archive/.gitkeep
+data-storage/stream_export/
+data-storage/*_export/

@@ -15,7 +15,9 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
 )
 
-KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "30")))
+KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "22")))
+TRIM_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_TRIM_BATCH", "1")))
+PURGE_INTERVAL_S = float(os.environ.get("EGO_UPLOAD_PURGE_INTERVAL_S", "86400"))
 POLL_INTERVAL_S = max(5.0, float(os.environ.get("EGO_UPLOAD_POLL_INTERVAL_S", "8")))
 BURST_LIMIT = max(1, int(os.environ.get("EGO_UPLOAD_BURST_LIMIT", "40")))
 UPLOAD_TIMEOUT_S = max(30.0, float(os.environ.get("EGO_UPLOAD_SUBPROC_TIMEOUT_S", "90")))
@@ -114,12 +116,6 @@ def _purge_uploaded_segments(session_id: str) -> int:
         except (OSError, json.JSONDecodeError):
             continue
         if m.get("uploaded"):
-            archive_root = os.environ.get("EGO_SOAK_ARCHIVE_DIR", "").strip()
-            if archive_root:
-                dest = Path(archive_root) / session_id / "segments" / seg.name
-                if not dest.is_dir():
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(seg, dest)
             shutil.rmtree(seg, ignore_errors=True)
             removed += 1
     return removed
@@ -166,7 +162,7 @@ def main() -> None:
         n = int(cached_pending.get(session_id, 0))
         target_low = max(1, KEEP_PENDING_BELOW - 5)
         if n > target_low:
-            trim = min(n - target_low, 25)
+            trim = min(n - target_low, TRIM_BATCH)
             print(
                 f"upload_loop session={session_id} pending={n} local_trim={trim} target={target_low}",
                 flush=True,
@@ -185,13 +181,13 @@ def main() -> None:
                 )
             cached_pending[session_id] = max(0, n - trim)
             n = cached_pending[session_id]
-        if now - last_purge >= 300.0:
+        if PURGE_INTERVAL_S > 0 and now - last_purge >= PURGE_INTERVAL_S:
             purged = _purge_uploaded_segments(session_id)
             if purged:
                 print(f"upload_loop purged_uploaded={purged}", flush=True)
             last_purge = now
-        upload_cap = max(5, target_low // 2)
-        if 0 < n <= upload_cap:
+        upload_cap = max(0, target_low // 2)
+        if upload_cap > 0 and 0 < n <= upload_cap:
             print(f"upload_loop session={session_id} pending={n} drain_limit=1", flush=True)
             uploaded = _upload_once(session_id, limit=1)
             if uploaded > 0:

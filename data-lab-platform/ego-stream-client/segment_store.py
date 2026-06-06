@@ -23,6 +23,12 @@ SEGMENT_STORE_VERSION = 1
 SEGMENT_MAX_FRAMES = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
 SEGMENT_MAX_SECONDS = float(os.environ.get("EGO_SEGMENT_MAX_SECONDS", "45"))
 SEGMENT_MAX_PENDING = int(os.environ.get("EGO_SEGMENT_MAX_PENDING", "10"))
+PENDING_FAST_RESCAN_S = max(5.0, float(os.environ.get("EGO_PENDING_FAST_RESCAN_S", "30")))
+SEGMENT_ASYNC_DELETE = os.environ.get("EGO_SEGMENT_ASYNC_DELETE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 SEGMENT_AUTO_PURGE_PENDING = os.environ.get("SEGMENT_AUTO_PURGE_PENDING", "1").strip().lower() in (
     "1",
     "true",
@@ -268,6 +274,7 @@ class SegmentCaptureWriter:
             t.start()
             self._persist_threads.append(t)
         self._pending_count = -1
+        self._pending_last_scan_mono = 0.0
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
         self._finalize_thread: threading.Thread | None = None
         if SEGMENT_FINALIZE_ASYNC:
@@ -393,10 +400,16 @@ class SegmentCaptureWriter:
         return count
 
     def pending_segment_count(self, *, fast: bool = False) -> int:
-        scanned = self._scan_pending_segment_count()
-        if fast and self._pending_count >= 0 and scanned >= self._pending_count:
+        now = time.monotonic()
+        if (
+            fast
+            and self._pending_count >= 0
+            and (now - self._pending_last_scan_mono) < PENDING_FAST_RESCAN_S
+        ):
             return self._pending_count
+        scanned = self._scan_pending_segment_count()
         self._pending_count = scanned
+        self._pending_last_scan_mono = now
         return scanned
 
     def _note_segment_finalized(self) -> None:
@@ -734,6 +747,10 @@ def list_closed_pending_segments(root: Path, session_id: str) -> list[Path]:
     return out
 
 
+def _delete_segment_dir(segment_dir: Path) -> None:
+    shutil.rmtree(segment_dir, ignore_errors=True)
+
+
 def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
     manifest_path = segment_dir / "manifest.json"
     m = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -741,4 +758,12 @@ def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
     m["uploadedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     manifest_path.write_text(json.dumps(m, separators=(",", ":")) + "\n", encoding="utf-8")
     if delete:
-        shutil.rmtree(segment_dir, ignore_errors=True)
+        if SEGMENT_ASYNC_DELETE:
+            threading.Thread(
+                target=_delete_segment_dir,
+                args=(segment_dir,),
+                name=f"ego-seg-delete-{segment_dir.name}",
+                daemon=True,
+            ).start()
+        else:
+            _delete_segment_dir(segment_dir)

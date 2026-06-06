@@ -100,6 +100,7 @@ STRICT_REANCHOR_WARMUP_TICKS = max(0, int(os.environ.get("STRICT_REANCHOR_WARMUP
 STRICT_RGB_YIELD_MAX_MS = float(os.environ.get("STRICT_RGB_YIELD_MAX_MS", "16.0"))
 STRICT_DEPTH_YIELD_MAX_MS = float(os.environ.get("STRICT_DEPTH_YIELD_MAX_MS", "18.0"))
 STRICT_SYNC_MISS_MAX = max(1, int(os.environ.get("STRICT_SYNC_MISS_MAX", "4")))
+STRICT_IMU_BUFFER_MAX = max(256, int(os.environ.get("STRICT_IMU_BUFFER_MAX", "2000")))
 _STRICT_PRIMARY_KEY_SUBSTRS = ("front_left", "head_left")
 _STRICT_RGB_KEY_SUBSTRS = ("front_right", "rear_right", "head_right", "camera_02")
 _STRICT_DEPTH_KEY_SUBSTRS = ("rear_left", "depth_head")
@@ -340,6 +341,7 @@ class Oak4pEgoRecorder:
         self._primary_tick = 0
         self._last_capture: dict[str, bytes] | dict[str, np.ndarray] = {}
         self._strict_grid_epoch_ns: int | None = None
+        self._strict_last_emit_ts_ns: int | None = None
 
     @property
     def strict_grid_epoch_ns(self) -> int | None:
@@ -765,6 +767,18 @@ class Oak4pEgoRecorder:
         except RuntimeError:
             pass
 
+    @staticmethod
+    def _trim_imu_buffer(buf: EpisodeBuffers, max_len: int = STRICT_IMU_BUFFER_MAX) -> None:
+        """Keep a sliding IMU window so strict capture stays O(1) per frame."""
+        n = len(buf.gyro_ts_ns)
+        if n <= max_len:
+            return
+        drop = n - max_len
+        del buf.gyro_ts_ns[:drop]
+        del buf.gyro_xyz[:drop]
+        del buf.accel_ts_ns[:drop]
+        del buf.accel_xyz[:drop]
+
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
         if self._hw_jpeg:
             last_preview: dict[str, bytes] = {}
@@ -964,7 +978,7 @@ class Oak4pEgoRecorder:
         start_mono: float | None = None
         epoch_ns: int | None = None
         last_primary_ts_ns: int | None = None
-        last_emit_ts_ns: int | None = None
+        last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
         last_yield_global_idx: int | None = None
         pending_reanchor = False
         reanchor_warmup_ticks = 0
@@ -980,6 +994,7 @@ class Oak4pEgoRecorder:
 
         while time.monotonic() < t_end:
             self._drain_imu(buf)
+            self._trim_imu_buffer(buf)
             for cam_name, queue in self._cam_queues.items():
                 pkt = queue.tryGet()
                 while pkt is not None:
@@ -1099,15 +1114,17 @@ class Oak4pEgoRecorder:
                 for oak in self._cam_list
                 if oak in last_preview_oak
             }
-            t_emit_ns = int(t_grid_ns)
             if last_emit_ts_ns is not None:
-                t_emit_ns = max(t_emit_ns, int(last_emit_ts_ns) + interval_ns)
+                t_emit_ns = int(last_emit_ts_ns) + interval_ns
+            else:
+                t_emit_ns = int(t_grid_ns)
             g_ts, g, a_ts, a = _buffers_to_numpy(buf)
             imu6 = imu6_at_timestamp(
                 g_ts, g, a_ts, a, t_emit_ns, interpolate=use_imu_interp
             )
             last_primary_ts_ns = int(primary_ts_ns)
             last_emit_ts_ns = int(t_emit_ns)
+            self._strict_last_emit_ts_ns = last_emit_ts_ns
             last_yield_global_idx = int(global_idx)
             sync_miss_streak = 0
             if reanchor_warmup_ticks > 0:

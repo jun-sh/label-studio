@@ -1,0 +1,28 @@
+[Unit]
+Description=EGO station heartbeat (low priority, decoupled from capture)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/home/server/workspace/ego-studio
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATALAB_HEARTBEAT_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload
+Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1
+Environment=DATALAB_CAPTURE_HOST=10.10.10.214
+Environment=EGO_CAPTURE_CHECKPOINT=/home/server/cache/ego-lan-214/segments/checkpoint.json
+Environment=DATALAB_HEARTBEAT_INTERVAL_S=15
+Environment=DATALAB_HEARTBEAT_TIMEOUT_S=3
+Environment=DATALAB_HEARTBEAT_NICE=10
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python3 /home/server/workspace/ego-studio/src/ego_capture_studio/tools/station_heartbeat_loop.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-station-heartbeat
+
+[Install]
+WantedBy=default.target

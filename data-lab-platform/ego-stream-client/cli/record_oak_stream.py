@@ -42,6 +42,34 @@ def _load_checkpoint_session(checkpoint_path: Path) -> tuple[str | None, str | N
     return (sid_out, task if isinstance(task, str) else None)
 
 
+def _strict_emit_path(checkpoint_path: Path) -> Path:
+    return checkpoint_path.parent / "strict_emit_ts.json"
+
+
+def _load_strict_emit_ts_ns(checkpoint_path: Path) -> int | None:
+    path = _strict_emit_path(checkpoint_path)
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return int(raw["strictLastEmitTsNs"])
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def _persist_strict_emit_ts_ns(checkpoint_path: Path, ts_ns: int) -> None:
+    if ts_ns <= 0:
+        return
+    path = _strict_emit_path(checkpoint_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps({"strictLastEmitTsNs": int(ts_ns)}, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
 def _append_visual_frame(
     writer: SegmentCaptureWriter,
     preview_hub,
@@ -146,8 +174,13 @@ def main() -> None:
 
     writer = SegmentCaptureWriter.from_env(task=task, checkpoint_path=checkpoint_path)
 
+    capture_no_heartbeat = args.no_heartbeat or _env_flag("EGO_CAPTURE_NO_HEARTBEAT")
     heartbeat: FrameStreamUploader | None = None
-    if not args.no_heartbeat and args.heartbeat_url and FrameStreamUploader is not None:
+    if (
+        not capture_no_heartbeat
+        and args.heartbeat_url
+        and FrameStreamUploader is not None
+    ):
         heartbeat = FrameStreamUploader(args.heartbeat_url, checkpoint_path=checkpoint_path)
         heartbeat.session_id = session_id
 
@@ -161,6 +194,12 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
+
+    if strict_20hz:
+        resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
+        if resumed_emit is not None:
+            recorder._strict_last_emit_ts_ns = int(resumed_emit)
+            print(f"strict_emit_resume ts_ns={resumed_emit}", flush=True)
 
     if heartbeat is not None:
         try:
@@ -184,46 +223,54 @@ def main() -> None:
             flush=True,
         )
 
-        while True:
-            segment_frames = 0
-            if strict_20hz:
-                frame_iter = recorder.iter_strict_20hz_frames(
-                    args.episode_seconds,
-                    interval_ms=interval_ms,
-                    imu_interpolate=imu_interpolate,
+        if strict_20hz:
+            # Do not restart iter_strict_20hz_frames on a short episode window: each restart
+            # resets grid state and (without persisted emit) causes multi-second timestamp gaps.
+            strict_duration_s = float(
+                os.environ.get("EGO_STRICT_EPISODE_SECONDS", "86400")
+            )
+            frame_iter = recorder.iter_strict_20hz_frames(
+                strict_duration_s,
+                interval_ms=interval_ms,
+                imu_interpolate=imu_interpolate,
+            )
+            for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
+                emit_mono = time.monotonic()
+                _append_visual_frame(
+                    writer,
+                    preview_hub,
+                    recorder,
+                    timestamp_ns=ts_ns,
+                    capture_out=capture_out,
+                    preview_out=preview_out,
+                    imu6=imu6,
+                    camera_ts_offset_ns=cam_offsets,
                 )
-                for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
-                    emit_mono = time.monotonic()
-                    _append_visual_frame(
-                        writer,
-                        preview_hub,
-                        recorder,
-                        timestamp_ns=ts_ns,
-                        capture_out=capture_out,
-                        preview_out=preview_out,
-                        imu6=imu6,
-                        camera_ts_offset_ns=cam_offsets,
+                frame_count += 1
+                wall_emit_times.append(emit_mono)
+                if frame_count % 100 == 0 and recorder._strict_last_emit_ts_ns is not None:
+                    _persist_strict_emit_ts_ns(
+                        checkpoint_path, int(recorder._strict_last_emit_ts_ns)
                     )
-                    frame_count += 1
-                    segment_frames += 1
-                    wall_emit_times.append(emit_mono)
-                    if frame_count % 20 == 0:
-                        if len(wall_emit_times) >= 2:
-                            wall_span = wall_emit_times[-1] - wall_emit_times[0]
-                            capture_fps = (len(wall_emit_times) - 1) / max(wall_span, 1e-6)
-                        else:
-                            capture_fps = frame_count / max(time.monotonic() - t0, 1e-6)
-                        pending = writer.pending_segment_count(fast=True)
-                        pq = writer.persist_queue_depth()
-                        dropped = writer.dropped_frame_count()
-                        seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
-                        print(
-                            f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
-                            f"pending_segments={pending} persist_q={pq} dropped={dropped} "
-                            f"strict_20hz=1 seg_max_frames={seg_frames} session={session_id}",
-                            flush=True,
-                        )
-            else:
+                if frame_count % 20 == 0:
+                    if len(wall_emit_times) >= 2:
+                        wall_span = wall_emit_times[-1] - wall_emit_times[0]
+                        capture_fps = (len(wall_emit_times) - 1) / max(wall_span, 1e-6)
+                    else:
+                        capture_fps = frame_count / max(time.monotonic() - t0, 1e-6)
+                    pending = writer.pending_segment_count(fast=True)
+                    pq = writer.persist_queue_depth()
+                    dropped = writer.dropped_frame_count()
+                    seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
+                    print(
+                        f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
+                        f"pending_segments={pending} persist_q={pq} dropped={dropped} "
+                        f"strict_20hz=1 seg_max_frames={seg_frames} session={session_id}",
+                        flush=True,
+                    )
+        else:
+            while True:
+                segment_frames = 0
                 for ts_ns, capture_out, preview_out, imu6 in recorder.iter_synced_frames(
                     args.episode_seconds
                 ):
@@ -251,10 +298,10 @@ def main() -> None:
                             f"seg_max_frames={seg_frames} session={session_id}",
                             flush=True,
                         )
-            print(
-                f"segment done local_frames={segment_frames} session={session_id}",
-                flush=True,
-            )
+                print(
+                    f"segment done local_frames={segment_frames} session={session_id}",
+                    flush=True,
+                )
     finally:
         writer.close()
         if heartbeat is not None:

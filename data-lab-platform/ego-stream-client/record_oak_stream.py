@@ -184,46 +184,48 @@ def main() -> None:
             flush=True,
         )
 
-        while True:
-            segment_frames = 0
-            if strict_20hz:
-                frame_iter = recorder.iter_strict_20hz_frames(
-                    args.episode_seconds,
-                    interval_ms=interval_ms,
-                    imu_interpolate=imu_interpolate,
+        if strict_20hz:
+            strict_duration_s = float(
+                os.environ.get("EGO_STRICT_EPISODE_SECONDS", "86400")
+            )
+            frame_iter = recorder.iter_strict_20hz_frames(
+                strict_duration_s,
+                interval_ms=interval_ms,
+                imu_interpolate=imu_interpolate,
+            )
+            for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
+                emit_mono = time.monotonic()
+                _append_visual_frame(
+                    writer,
+                    preview_hub,
+                    recorder,
+                    timestamp_ns=ts_ns,
+                    capture_out=capture_out,
+                    preview_out=preview_out,
+                    imu6=imu6,
+                    camera_ts_offset_ns=cam_offsets,
                 )
-                for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
-                    emit_mono = time.monotonic()
-                    _append_visual_frame(
-                        writer,
-                        preview_hub,
-                        recorder,
-                        timestamp_ns=ts_ns,
-                        capture_out=capture_out,
-                        preview_out=preview_out,
-                        imu6=imu6,
-                        camera_ts_offset_ns=cam_offsets,
+                frame_count += 1
+                wall_emit_times.append(emit_mono)
+                if frame_count % 20 == 0:
+                    if len(wall_emit_times) >= 2:
+                        wall_span = wall_emit_times[-1] - wall_emit_times[0]
+                        capture_fps = (len(wall_emit_times) - 1) / max(wall_span, 1e-6)
+                    else:
+                        capture_fps = frame_count / max(time.monotonic() - t0, 1e-6)
+                    pending = writer.pending_segment_count(fast=True)
+                    pq = writer.persist_queue_depth()
+                    dropped = writer.dropped_frame_count()
+                    seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
+                    print(
+                        f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
+                        f"pending_segments={pending} persist_q={pq} dropped={dropped} "
+                        f"strict_20hz=1 seg_max_frames={seg_frames} session={session_id}",
+                        flush=True,
                     )
-                    frame_count += 1
-                    segment_frames += 1
-                    wall_emit_times.append(emit_mono)
-                    if frame_count % 20 == 0:
-                        if len(wall_emit_times) >= 2:
-                            wall_span = wall_emit_times[-1] - wall_emit_times[0]
-                            capture_fps = (len(wall_emit_times) - 1) / max(wall_span, 1e-6)
-                        else:
-                            capture_fps = frame_count / max(time.monotonic() - t0, 1e-6)
-                        pending = writer.pending_segment_count(fast=True)
-                        pq = writer.persist_queue_depth()
-                        dropped = writer.dropped_frame_count()
-                        seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
-                        print(
-                            f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
-                            f"pending_segments={pending} persist_q={pq} dropped={dropped} "
-                            f"strict_20hz=1 seg_max_frames={seg_frames} session={session_id}",
-                            flush=True,
-                        )
-            else:
+        else:
+            while True:
+                segment_frames = 0
                 for ts_ns, capture_out, preview_out, imu6 in recorder.iter_synced_frames(
                     args.episode_seconds
                 ):
@@ -251,10 +253,10 @@ def main() -> None:
                             f"seg_max_frames={seg_frames} session={session_id}",
                             flush=True,
                         )
-            print(
-                f"segment done local_frames={segment_frames} session={session_id}",
-                flush=True,
-            )
+                print(
+                    f"segment done local_frames={segment_frames} session={session_id}",
+                    flush=True,
+                )
     finally:
         writer.close()
         if heartbeat is not None:

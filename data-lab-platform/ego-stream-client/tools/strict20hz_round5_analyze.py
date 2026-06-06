@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
+SOAK_WARMUP_S = max(0, int(os.environ.get("EGO_SOAK_WARMUP_S", "180")))
 
 
 def parse_soak_ts(line: str, marker: str) -> datetime | None:
@@ -37,6 +40,23 @@ for line in text.splitlines():
         if m:
             fps_out_of_band = int(m.group(1))
 
+def _journal_line_ts(line: str) -> datetime | None:
+    m = re.match(r"(\w{3}) (\d{1,2}) (\d{2}:\d{2}:\d{2})", line)
+    if not m or soak_start is None:
+        return None
+    try:
+        return datetime.strptime(
+            f"{soak_start.year} {m.group(1)} {m.group(2)} {m.group(3)}",
+            "%Y %b %d %H:%M:%S",
+        ).replace(tzinfo=soak_start.tzinfo)
+    except ValueError:
+        return None
+
+
+warmup_end = (
+    soak_start.timestamp() + SOAK_WARMUP_S if soak_start is not None else None
+)
+
 fps_vals: list[float] = []
 dropped: list[int] = []
 pq: list[int] = []
@@ -48,11 +68,23 @@ for line in text.splitlines():
         line,
     )
     if m:
+        line_ts = _journal_line_ts(line)
+        if warmup_end is not None and line_ts is not None:
+            if line_ts.timestamp() < warmup_end:
+                continue
         fps_vals.append(float(m.group(1)))
         pending.append(int(m.group(2)))
         pq.append(int(m.group(3)))
         dropped.append(int(m.group(4)))
     if line.startswith("PENDING_HIGH"):
+        if warmup_end is not None:
+            m2 = re.search(r"ts=([0-9T:+-]+)", line)
+            if m2:
+                try:
+                    if datetime.fromisoformat(m2.group(1)).timestamp() < warmup_end:
+                        continue
+                except ValueError:
+                    pass
         pending_high += 1
 
 sessions_root = Path("/home/server/cache/ego-lan-214/segments/sessions")
@@ -79,8 +111,26 @@ def _manifest_created_ts(seg_dir: Path) -> float | None:
         return seg_dir.stat().st_mtime
 
 
-if base and soak_start and soak_end:
-    t0 = soak_start.timestamp()
+val_log = Path("/tmp/strict20hz_segment_validation.jsonl")
+if val_log.is_file() and soak_start and soak_end:
+    t0 = soak_start.timestamp() + SOAK_WARMUP_S
+    t1 = soak_end.timestamp()
+    by_seg: dict[str, dict] = {}
+    for line in val_log.read_text(errors="ignore").splitlines():
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        validated_at = r.get("validated_at", "")
+        try:
+            vt = datetime.fromisoformat(validated_at).timestamp()
+        except (ValueError, TypeError):
+            continue
+        if t0 <= vt <= t1 + 120:
+            by_seg[str(r.get("seg") or "")] = r
+    window.extend(by_seg.values())
+elif base and soak_start and soak_end:
+    t0 = soak_start.timestamp() + SOAK_WARMUP_S
     t1 = soak_end.timestamp()
     py_bin = "/home/server/workspace/ego-studio/.venv/bin/python3"
     val = "/home/server/workspace/ego-studio/src/ego_capture_studio/tools/validate_strict_20hz.py"
@@ -116,7 +166,12 @@ pending_ok = (max(pending) if pending else 0) < 30
 
 journal_fps: list[float] = []
 if soak_start and soak_end:
-    since = soak_start.strftime("%Y-%m-%d %H:%M:%S")
+    since_dt = soak_start
+    if SOAK_WARMUP_S > 0:
+        from datetime import timedelta
+
+        since_dt = soak_start + timedelta(seconds=SOAK_WARMUP_S)
+    since = since_dt.strftime("%Y-%m-%d %H:%M:%S")
     until = soak_end.strftime("%Y-%m-%d %H:%M:%S")
     proc = subprocess.run(
         [
@@ -143,6 +198,7 @@ report = {
     "session": session_id,
     "soak_start": soak_start.isoformat() if soak_start else None,
     "soak_end": soak_end.isoformat() if soak_end else None,
+    "soak_warmup_s": SOAK_WARMUP_S,
     "segments_total": len(window),
     "segments_pass": len(good),
     "pass_rate_pct": round(100.0 * len(good) / len(window), 2) if window else 0.0,

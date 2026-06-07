@@ -60,7 +60,7 @@
   };
 
   var INJECT_SPECS = [
-    { key: "data", href: "/data", match: /^\/data$/, label: "数据" },
+    { key: "data", href: "/data", match: /^\/data(?:\/[^/]+)?$/, label: "数据" },
     { key: "collection", href: "/collection", match: /^\/collection/, label: "采集" },
   ];
 
@@ -205,7 +205,7 @@
 
   function isDataHref(href) {
     var p = linkPathname(href);
-    return p === "/data" || p.endsWith("/data");
+    return p === "/data" || /^\/data\/[^/]+$/.test(p);
   }
 
   function isGlobalNavHref(href) {

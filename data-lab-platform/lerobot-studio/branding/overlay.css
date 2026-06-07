@@ -13,7 +13,7 @@ a[href*="feishu" i] {
   display: none !important;
 }
 
-html[data-datalab-embed="1"] [data-datalab-chrome="language-switch"] {
+html[data-datalab-embed="1"]:not([data-datalab-data-viz-embed="1"]) [data-datalab-chrome="language-switch"] {
   display: none !important;
 }
 
@@ -47,16 +47,12 @@ header [class*="Company" i],
 nav img[alt*="Logo" i],
 nav img[src*="logo.svg" i],
 nav a.flex.min-w-0.max-w-full.items-center.gap-1\.5.text-xs.text-muted-foreground,
-nav .pointer-events-none img[alt*="Logo" i] {
+nav .pointer-events-none img[alt*="Logo" i],
+nav .pointer-events-none img[src*="logo.svg" i] {
   display: none !important;
 }
 
-nav .pointer-events-none:has(img[alt*="Logo"]),
-nav .pointer-events-none:has(img[src*="logo.svg"]) {
-  display: none !important;
-}
-
-/* --- Embed mode (/data iframe): fill viewport; collapse top toolbar without breaking flex --- */
+/* --- Embed mode: fill iframe viewport --- */
 html[data-datalab-embed="1"],
 html[data-datalab-embed="1"] body {
   width: 100% !important;
@@ -65,9 +61,57 @@ html[data-datalab-embed="1"] body {
   overflow: hidden !important;
 }
 
-html[data-datalab-embed="1"] #lerobot-root,
-html[data-datalab-embed="1"] body > #root,
-html[data-datalab-embed="1"] body > div#root {
+/* /data embed: full LeRobot toolbar (browse, export, health, title) like io-ai.tech */
+html[data-datalab-data-viz-embed="1"] #lerobot-root,
+html[data-datalab-data-viz-embed="1"] body > #root,
+html[data-datalab-data-viz-embed="1"] body > div#root {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  overflow: hidden !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root > div {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root nav[data-datalab-embed-navbar="1"],
+html[data-datalab-data-viz-embed="1"] #lerobot-root nav {
+  flex: 0 0 3rem !important;
+  height: 3rem !important;
+  min-height: 3rem !important;
+  max-height: 3rem !important;
+  visibility: visible !important;
+  overflow: visible !important;
+  pointer-events: auto !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root nav [class*="left-1/2"][class*="top-1/2"] {
+  display: flex !important;
+  visibility: visible !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root nav [class*="left-1/2"][class*="top-1/2"] span {
+  display: inline !important;
+  visibility: visible !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root > div > div.flex-1 {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Collection embed: collapse top toolbar; parent shell owns chrome */
+html[data-datalab-collection-embed="1"] #lerobot-root,
+html[data-datalab-collection-embed="1"] body > #root,
+html[data-datalab-collection-embed="1"] body > div#root {
   display: grid !important;
   grid-template-rows: 0 minmax(0, 1fr) !important;
   width: 100% !important;
@@ -76,10 +120,11 @@ html[data-datalab-embed="1"] body > div#root {
   overflow: hidden !important;
 }
 
-html[data-datalab-embed="1"] #lerobot-root > header,
-html[data-datalab-embed="1"] body > #root > header,
-html[data-datalab-embed="1"] body > div#root > header {
-  grid-row: 1 !important;
+html[data-datalab-collection-embed="1"] #lerobot-root > header,
+html[data-datalab-collection-embed="1"] body > #root > header,
+html[data-datalab-collection-embed="1"] body > div#root > header,
+html[data-datalab-collection-embed="1"] #lerobot-root nav {
+  display: none !important;
   overflow: hidden !important;
   height: 0 !important;
   min-height: 0 !important;
@@ -91,9 +136,9 @@ html[data-datalab-embed="1"] body > div#root > header {
   pointer-events: none !important;
 }
 
-html[data-datalab-embed="1"] #lerobot-root > *:not(header),
-html[data-datalab-embed="1"] body > #root > *:not(header),
-html[data-datalab-embed="1"] body > div#root > *:not(header) {
+html[data-datalab-collection-embed="1"] #lerobot-root > *:not(header),
+html[data-datalab-collection-embed="1"] body > #root > *:not(header),
+html[data-datalab-collection-embed="1"] body > div#root > *:not(header) {
   grid-row: 2 !important;
   min-height: 0 !important;
   min-width: 0 !important;

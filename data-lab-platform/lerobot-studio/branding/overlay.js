@@ -70,14 +70,25 @@
     return false;
   }
 
+  function isDataVizEmbed() {
+    return isDataLabEmbed() && !isCollectionStationEmbed();
+  }
+
   function initEmbedFlag() {
     if (isDataLabEmbed()) {
       document.documentElement.setAttribute("data-datalab-embed", "1");
+    } else {
+      document.documentElement.removeAttribute("data-datalab-embed");
     }
     if (isCollectionStationEmbed()) {
       document.documentElement.setAttribute("data-datalab-collection-embed", "1");
+      document.documentElement.removeAttribute("data-datalab-data-viz-embed");
+    } else if (isDataVizEmbed()) {
+      document.documentElement.setAttribute("data-datalab-data-viz-embed", "1");
+      document.documentElement.removeAttribute("data-datalab-collection-embed");
     } else {
       document.documentElement.removeAttribute("data-datalab-collection-embed");
+      document.documentElement.removeAttribute("data-datalab-data-viz-embed");
     }
   }
 
@@ -113,6 +124,12 @@
     if (next !== t) node.textContent = next;
   }
 
+  function isNavbarTitleCluster(el) {
+    if (!el || !el.classList) return false;
+    var cls = el.className || "";
+    return cls.indexOf("left-1/2") >= 0 && cls.indexOf("top-1/2") >= 0;
+  }
+
   function hideBrandingChrome() {
     if (!document.body) return;
 
@@ -121,8 +138,13 @@
         'nav img[alt*="Logo"], nav img[src*="logo.svg"], header img[alt*="Logo"], header img[src*="logo.svg"]',
       )
       .forEach(function (img) {
-        var box = img.closest(".pointer-events-none") || img.closest("a") || img.parentElement;
-        if (box) box.style.display = "none";
+        if (isNavbarTitleCluster(img.parentElement)) {
+          img.style.display = "none";
+          img.setAttribute("data-datalab-chrome", "navbar-logo");
+          return;
+        }
+        var box = img.closest("a") || img.parentElement;
+        if (box && box.tagName === "A") box.style.display = "none";
         else img.style.display = "none";
       });
 
@@ -351,9 +373,9 @@
     });
   }
 
-  /** Embed mode: hide only the language toggle button, not ancestor layout rows. */
+  /** Embed mode: hide language toggle on collection embed only (/data keeps it). */
   function hideLanguageSwitcher() {
-    if (!isDataLabEmbed()) return;
+    if (!isDataLabEmbed() || isDataVizEmbed()) return;
 
     document.querySelectorAll("button[aria-label]").forEach(function (btn) {
       var aria = btn.getAttribute("aria-label") || "";
@@ -365,6 +387,108 @@
     });
   }
 
+  var DATA_VIZ_DATASET_MSG = "datalab:data-viz:dataset";
+  var DATA_VIZ_NAVIGATE_MSG = "datalab:data-viz:navigate";
+  var lastNotifiedDatasetId;
+
+  function parseDatasetFromLocation() {
+    try {
+      var params = new URLSearchParams(g.location.search);
+      var raw = params.get("url") || "";
+      if (!raw) return null;
+      var sample = raw.match(/^sample:\/\/([^/?#]+)/i);
+      if (sample) return decodeURIComponent(sample[1]);
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function notifyParentDatasetChange(replace) {
+    if (!isDataVizEmbed()) return;
+    var datasetId = parseDatasetFromLocation();
+    if (datasetId === lastNotifiedDatasetId) return;
+    lastNotifiedDatasetId = datasetId;
+    try {
+      g.parent.postMessage(
+        {
+          type: DATA_VIZ_DATASET_MSG,
+          datasetId: datasetId,
+          replace: !!replace,
+        },
+        g.parent.location.origin,
+      );
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function buildDataVizIframeSearch(datasetId) {
+    var params = new URLSearchParams(g.location.search);
+    params.set("datalab_embed", "1");
+    if (!params.get("lang")) {
+      params.set("lang", pageLang().indexOf("zh") === 0 ? "zh" : "en");
+    }
+    if (datasetId) {
+      params.set("url", "sample://" + datasetId);
+    } else {
+      params.delete("url");
+    }
+    return params;
+  }
+
+  function navigateDataVizDataset(datasetId) {
+    var params = buildDataVizIframeSearch(datasetId);
+    var next = g.location.pathname + "?" + params.toString();
+    if (next === g.location.pathname + g.location.search) return;
+    g.history.replaceState({}, "", next);
+    try {
+      g.dispatchEvent(new PopStateEvent("popstate"));
+    } catch (e2) {
+      /* ignore */
+    }
+    lastNotifiedDatasetId = datasetId || null;
+  }
+
+  function installDataVizUrlSync() {
+    if (!isDataVizEmbed() || g.__DATALAB_DATA_VIZ_URL_SYNC__) return;
+    g.__DATALAB_DATA_VIZ_URL_SYNC__ = true;
+
+    var pushState = g.history.pushState;
+    var replaceState = g.history.replaceState;
+    g.history.pushState = function () {
+      var result = pushState.apply(this, arguments);
+      notifyParentDatasetChange(false);
+      return result;
+    };
+    g.history.replaceState = function () {
+      var result = replaceState.apply(this, arguments);
+      notifyParentDatasetChange(true);
+      return result;
+    };
+
+    g.addEventListener("popstate", function () {
+      notifyParentDatasetChange(true);
+    });
+
+    g.addEventListener("message", function (event) {
+      if (event.source !== g.parent) return;
+      if (!event.data || event.data.type !== DATA_VIZ_NAVIGATE_MSG) return;
+      navigateDataVizDataset(event.data.datasetId || null);
+    });
+
+    notifyParentDatasetChange(true);
+
+    if (!g.__DATALAB_DATA_VIZ_URL_POLL__) {
+      g.__DATALAB_DATA_VIZ_URL_POLL__ = setInterval(function () {
+        if (!isDataVizEmbed()) return;
+        var datasetId = parseDatasetFromLocation();
+        if (datasetId === lastNotifiedDatasetId) return;
+        notifyParentDatasetChange(true);
+      }, 400);
+    }
+  }
+
   function applyChrome() {
     initEmbedFlag();
     hideCopyrightNotice();
@@ -374,7 +498,69 @@
     hideLanguageSwitcher();
   }
 
-  /** After hiding the top toolbar, expand the main shell to fill the iframe viewport. */
+  /** /data embed: keep full toolbar (browse, export, health, home, theme, language). */
+  function applyDataVizNavbarChrome() {
+    if (!isDataVizEmbed()) return;
+
+    var root = document.getElementById("lerobot-root") || document.getElementById("root");
+    if (!root) return;
+
+    var shell = root.querySelector(":scope > div");
+    if (shell) {
+      shell.style.height = "100%";
+      shell.style.minHeight = "0";
+      shell.style.maxHeight = "100%";
+    }
+
+    root.querySelectorAll("nav").forEach(function (nav) {
+      nav.setAttribute("data-datalab-embed-navbar", "1");
+      nav.style.flexShrink = "0";
+      nav.style.visibility = "visible";
+      nav.style.height = "3rem";
+      nav.style.minHeight = "3rem";
+      nav.style.maxHeight = "3rem";
+      nav.style.overflow = "visible";
+      nav.style.pointerEvents = "auto";
+
+      nav.querySelectorAll('[data-datalab-chrome="navbar-side"], [data-datalab-chrome="navbar-logo"]').forEach(
+        function (node) {
+          node.style.display = "";
+          node.style.visibility = "";
+          node.style.pointerEvents = "";
+          node.style.left = "";
+          node.style.right = "";
+          node.style.width = "";
+          node.style.transform = "";
+          node.style.justifyContent = "";
+          node.removeAttribute("data-datalab-chrome");
+        },
+      );
+
+      nav.querySelectorAll(".mr-auto, .ml-auto").forEach(function (side) {
+        side.style.display = "";
+        side.style.visibility = "";
+        side.style.pointerEvents = "";
+      });
+
+      nav.querySelectorAll('[data-datalab-chrome="language-switch"]').forEach(function (btn) {
+        btn.style.display = "";
+        btn.removeAttribute("data-datalab-chrome");
+      });
+
+      nav.querySelectorAll("div").forEach(function (node) {
+        if (!isNavbarTitleCluster(node)) return;
+        node.style.display = "flex";
+        node.style.visibility = "visible";
+        node.style.pointerEvents = "none";
+        node.querySelectorAll("span").forEach(function (span) {
+          span.style.display = "";
+          span.style.visibility = "visible";
+        });
+      });
+    });
+  }
+
+  /** Collection embed: collapse top toolbar; data viz keeps compact title bar. */
   function applyEmbedLayout() {
     if (!isDataLabEmbed()) return;
 
@@ -387,22 +573,26 @@
     body.style.margin = "0";
     body.style.overflow = "hidden";
 
-    /* Layout is handled by overlay.css grid; only collapse header inline styles here. */
+    if (isDataVizEmbed()) {
+      applyDataVizNavbarChrome();
+      return;
+    }
+
     var root = document.getElementById("lerobot-root") || document.getElementById("root");
     if (!root) return;
 
-    var headers = root.querySelectorAll(":scope > header");
-    headers.forEach(function (header) {
-      header.style.flex = "0 0 0px";
-      header.style.height = "0";
-      header.style.minHeight = "0";
-      header.style.maxHeight = "0";
-      header.style.overflow = "hidden";
-      header.style.visibility = "hidden";
-      header.style.padding = "0";
-      header.style.margin = "0";
-      header.style.border = "0";
-      header.style.pointerEvents = "none";
+    root.querySelectorAll(":scope > header, nav").forEach(function (bar) {
+      bar.style.flex = "0 0 0px";
+      bar.style.height = "0";
+      bar.style.minHeight = "0";
+      bar.style.maxHeight = "0";
+      bar.style.overflow = "hidden";
+      bar.style.visibility = "hidden";
+      bar.style.padding = "0";
+      bar.style.margin = "0";
+      bar.style.border = "0";
+      bar.style.pointerEvents = "none";
+      bar.style.display = "none";
     });
   }
 
@@ -434,11 +624,13 @@
         initEmbedFlag();
         patchCollectionGoHome();
         hideThemeStyleControl();
+        applyDataVizNavbarChrome();
       });
       g.__DATALAB_GO_HOME_OBSERVER__.observe(document.body, {
         childList: true,
         subtree: true,
         attributes: true,
+        characterData: true,
         attributeFilter: ["class"],
       });
     }
@@ -446,6 +638,7 @@
 
   initEmbedFlag();
   bindCollectionGoHomeGuard();
+  installDataVizUrlSync();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", scheduleRun);

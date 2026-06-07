@@ -4,6 +4,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   getStreamStatus,
@@ -169,14 +170,52 @@ function serveFileWithRange(req, res, filePath) {
   fs.createReadStream(filePath).pipe(res);
 }
 
+function handKp2dOverlayPath(datasetId) {
+  return path.join(BUNDLED, "overlays", `${datasetId}_hand_kp2d.json`);
+}
+
+function readHandKp2dFromZip(zipPath, innerPath) {
+  try {
+    const raw = execFileSync("unzip", ["-p", zipPath, innerPath], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function resolveHandKp2dPayload(datasetId) {
+  const overlayPath = handKp2dOverlayPath(datasetId);
+  if (fs.existsSync(overlayPath)) {
+    return JSON.parse(fs.readFileSync(overlayPath, "utf8"));
+  }
+
+  const sample = findDataset(datasetId);
+  const archiveUrl = sample?.archiveUrl || "";
+  const zipName = path.basename(archiveUrl);
+  if (!zipName) return null;
+
+  const zipPath = path.join(BUNDLED, zipName);
+  if (!fs.existsSync(zipPath)) return null;
+
+  return (
+    readHandKp2dFromZip(zipPath, "offline/episode_000000/mano_kp2d_uv.json") ||
+    readHandKp2dFromZip(zipPath, "offline/episode_000000/hand_kp2d.json")
+  );
+}
+
 function injectBranding(html) {
   const inject =
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=54"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=60"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=54"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=1"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
-    '<script defer src="/lerobot/branding/overlay.js?v=54"></script>' +
+    '<script defer src="/lerobot/branding/overlay.js?v=60"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=54"></script>' +
+    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=1"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");
@@ -217,6 +256,23 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 404, { error: "sample_not_found" });
     }
     return sendJson(res, 200, sample);
+  }
+
+  const handKp2dMatch = p.match(new RegExp(`^${BASE}/api/sample/([^/]+)/hand-kp2d\\.json$`));
+  if (handKp2dMatch && req.method === "GET") {
+    const datasetId = decodeURIComponent(handKp2dMatch[1]);
+    try {
+      const payload = resolveHandKp2dPayload(datasetId);
+      if (!payload) {
+        return sendJson(res, 404, { error: "hand_kp2d_not_found", datasetId });
+      }
+      return sendJson(res, 200, payload);
+    } catch (e) {
+      return sendJson(res, 500, {
+        error: "hand_kp2d_read_failed",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   function enrichStation(station) {

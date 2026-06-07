@@ -298,7 +298,7 @@ class SegmentCaptureWriter:
         checkpoint_path: str | Path | None = None,
     ) -> SegmentCaptureWriter:
         root = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
-        gb = float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "64"))
+        gb = float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "4"))
         session_id = os.environ.get("EGO_CAPTURE_SESSION_ID") or new_session_id()
         return cls(
             root,
@@ -415,6 +415,19 @@ class SegmentCaptureWriter:
     def _note_segment_finalized(self) -> None:
         if self._pending_count >= 0:
             self._pending_count += 1
+        self._enforce_disk_quota()
+
+    def _enforce_disk_quota(self) -> None:
+        """Drop oldest pending segments when local store exceeds quota (queue, not archive)."""
+        while segment_store_bytes(self.root) > self.quota_bytes:
+            pending = sorted(
+                list_closed_pending_segments(self.root, self.session_id),
+                key=lambda p: p.name,
+            )
+            if len(pending) <= 1:
+                break
+            mark_segment_uploaded(pending[0], delete=True)
+            self._pending_count = -1
 
     def _enqueue_finalize(self, segment_id: str, active_dir: Path) -> None:
         if self._finalize_queue is not None:
@@ -712,6 +725,21 @@ class SegmentCaptureWriter:
 
     def dropped_frame_count(self) -> int:
         return self._dropped_frames
+
+
+def segment_store_bytes(root: Path) -> int:
+    """Total bytes under segment root (all sessions)."""
+    total = 0
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return 0
+    for dirpath, _dirnames, filenames in os.walk(sessions, onerror=lambda _e: None):
+        for name in filenames:
+            try:
+                total += (Path(dirpath) / name).stat().st_size
+            except OSError:
+                pass
+    return total
 
 
 def _list_closed_pending_under(seg_root: Path, *, session_id: str | None = None) -> list[Path]:

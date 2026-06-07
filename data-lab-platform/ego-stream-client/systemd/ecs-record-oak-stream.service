@@ -16,6 +16,7 @@ Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1
 Environment=DATALAB_CAPTURE_HOST=10.10.10.214
 Environment=EGO_SEGMENT_ROOT=/home/server/cache/ego-lan-214/segments
 Environment=EGO_SEGMENT_QUOTA_GB=64
+Environment=EGO_SEGMENT_QUOTA_GB=4
 Environment=EGO_SEGMENT_MAX_FRAMES=300
 Environment=EGO_SEGMENT_MAX_SECONDS=45
 Environment=EGO_SEGMENT_MAX_PENDING=10

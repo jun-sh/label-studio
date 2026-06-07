@@ -1,6 +1,6 @@
 /**
  * /data page — login hint + visualizer iframe synced to Label Studio ui_locale.
- * Does not auto-open a dataset; user picks samples on the welcome screen.
+ * Supports /data/:datasetId deep links and ?dataset= query aliases.
  */
 (function () {
   "use strict";
@@ -30,19 +30,36 @@
     return normalized;
   }
 
-  function buildVisualizerSrc(lang) {
+  function readDatasetFromPath() {
+    var match = window.location.pathname.match(/^\/data\/([^/]+)\/?$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function buildVisualizerSrc(lang, datasetId) {
     var params = new URLSearchParams();
     params.set("datalab_embed", "1");
     params.set("lang", lang || "en");
+    if (datasetId) {
+      params.set("url", "sample://" + datasetId);
+    }
     return "/lerobot/?" + params.toString();
+  }
+
+  function normalizeDataVizUrl() {
+    var params = new URLSearchParams(window.location.search);
+    var queryDataset = params.get("dataset");
+    if (queryDataset && !readDatasetFromPath()) {
+      window.history.replaceState(null, "", "/data/" + encodeURIComponent(queryDataset));
+    }
   }
 
   function setIframeSrc(lang) {
     if (!frame) return;
-    frame.setAttribute("src", buildVisualizerSrc(lang));
+    frame.setAttribute("src", buildVisualizerSrc(lang, readDatasetFromPath()));
   }
 
   function bootstrapLocale(uiLocale) {
+    normalizeDataVizUrl();
     var lang = applyPageLocale(uiLocale || readStoredUiLocale() || "en");
     setIframeSrc(lang);
   }

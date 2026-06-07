@@ -29,11 +29,15 @@ _PARAGRAPH_SAMPLE = None
 
 
 @login_required
-def data_viz_page(request):
-    """SPA shell for Data Lab /data (LeRobot visualizer iframe)."""
+def data_viz_page(request, dataset=None):
+    """SPA shell for Data Lab /data (LeRobot visualizer iframe). Dataset slug is optional."""
     from core.version import get_short_version
 
-    return render(request, 'datalab/data_viz.html', {'version': get_short_version()})
+    return render(
+        request,
+        'datalab/data_viz.html',
+        {'version': get_short_version(), 'dataset_slug': dataset},
+    )
 
 
 @login_required

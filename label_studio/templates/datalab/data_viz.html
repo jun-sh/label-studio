@@ -42,8 +42,101 @@
     var LAYER_ID = "datalab-viz-layer";
     var FRAME_ID = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
-    var SRC = "/lerobot/?datalab_embed=1&lang=" + LANG;
     var TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}具身智能数据集可视化{% else %}Robot dataset visualizer{% endif %}";
+    function readDatasetFromPath() {
+      var match = window.location.pathname.match(/^\/data\/([^/]+)\/?$/);
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    function buildVisualizerSrc(lang, datasetId) {
+      var params = new URLSearchParams();
+      params.set("datalab_embed", "1");
+      params.set("lang", lang || "en");
+      if (datasetId) {
+        params.set("url", "sample://" + datasetId);
+      }
+      return "/lerobot/?" + params.toString();
+    }
+
+    var DATA_VIZ_DATASET_MSG = "datalab:data-viz:dataset";
+    var DATA_VIZ_NAVIGATE_MSG = "datalab:data-viz:navigate";
+
+    function buildDataVizPath(datasetId) {
+      return datasetId ? "/data/" + encodeURIComponent(datasetId) : "/data";
+    }
+
+    function normalizePath(path) {
+      if (!path) return "/";
+      var p = String(path);
+      if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+      return p || "/";
+    }
+
+    function normalizeDataVizUrl() {
+      var params = new URLSearchParams(window.location.search);
+      var queryDataset = params.get("dataset");
+      if (queryDataset && !readDatasetFromPath()) {
+        window.history.replaceState({ datalabDataViz: 1 }, "", buildDataVizPath(queryDataset));
+      }
+    }
+
+    function syncIframeToPath() {
+      var frame = document.getElementById(FRAME_ID);
+      if (!frame) return;
+      var nextSrc = buildVisualizerSrc(LANG, readDatasetFromPath());
+      try {
+        var current = new URL(frame.src, window.location.origin);
+        var expected = new URL(nextSrc, window.location.origin);
+        if (current.pathname + current.search === expected.pathname + expected.search) return;
+      } catch (e) {
+        /* fall through */
+      }
+      frame.src = nextSrc;
+    }
+
+    function syncParentDataVizUrl(datasetId, replace) {
+      var nextPath = buildDataVizPath(datasetId);
+      if (normalizePath(window.location.pathname) === normalizePath(nextPath)) return;
+      if (replace) {
+        window.history.replaceState({ datalabDataViz: 1 }, "", nextPath);
+      } else {
+        window.history.pushState({ datalabDataViz: 1 }, "", nextPath);
+      }
+      try {
+        window.dispatchEvent(new PopStateEvent("popstate"));
+      } catch (e2) {
+        /* ignore */
+      }
+    }
+
+    function attachDataVizParentUrlSync() {
+      if (window.__DATALAB_DATA_VIZ_PARENT_SYNC__) return;
+      window.__DATALAB_DATA_VIZ_PARENT_SYNC__ = true;
+
+      window.addEventListener("message", function (event) {
+        if (event.origin !== window.location.origin) return;
+        if (!event.data || event.data.type !== DATA_VIZ_DATASET_MSG) return;
+        syncParentDataVizUrl(event.data.datasetId || null, !!event.data.replace);
+      });
+
+      window.addEventListener("popstate", function () {
+        syncIframeToPath();
+        var frame = document.getElementById(FRAME_ID);
+        if (!frame || !frame.contentWindow) return;
+        try {
+          frame.contentWindow.postMessage(
+            { type: DATA_VIZ_NAVIGATE_MSG, datasetId: readDatasetFromPath() },
+            window.location.origin,
+          );
+        } catch (e) {
+          /* ignore */
+        }
+      });
+    }
+
+    normalizeDataVizUrl();
+    attachDataVizParentUrlSync();
+    var SRC = buildVisualizerSrc(LANG, readDatasetFromPath());
 
     function hideDuplicateIframes() {
       document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
@@ -108,6 +201,7 @@
     function mountLayer() {
       if (document.getElementById(LAYER_ID)) {
         syncBounds();
+        syncIframeToPath();
         return;
       }
       var layer = document.createElement("div");

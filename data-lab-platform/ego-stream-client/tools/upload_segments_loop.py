@@ -13,14 +13,16 @@ from pathlib import Path
 from ego_capture_studio.capture.segment_store import (
     list_closed_pending_segments,
     mark_segment_uploaded,
+    segment_store_bytes,
 )
 
-KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "22")))
-TRIM_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_TRIM_BATCH", "1")))
-PURGE_INTERVAL_S = float(os.environ.get("EGO_UPLOAD_PURGE_INTERVAL_S", "86400"))
-POLL_INTERVAL_S = max(5.0, float(os.environ.get("EGO_UPLOAD_POLL_INTERVAL_S", "8")))
-BURST_LIMIT = max(1, int(os.environ.get("EGO_UPLOAD_BURST_LIMIT", "40")))
-UPLOAD_TIMEOUT_S = max(30.0, float(os.environ.get("EGO_UPLOAD_SUBPROC_TIMEOUT_S", "90")))
+# Hard cap on closed-unuploaded segments (local queue depth, not archive).
+KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "12")))
+TRIM_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_TRIM_BATCH", "3")))
+PURGE_INTERVAL_S = float(os.environ.get("EGO_UPLOAD_PURGE_INTERVAL_S", "3600"))
+POLL_INTERVAL_S = max(2.0, float(os.environ.get("EGO_UPLOAD_POLL_INTERVAL_S", "4")))
+UPLOAD_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_BATCH", "1")))
+UPLOAD_TIMEOUT_S = max(30.0, float(os.environ.get("EGO_UPLOAD_SUBPROC_TIMEOUT_S", "300")))
 FAIL_DEQUEUE = os.environ.get("EGO_UPLOAD_FAIL_DEQUEUE", "0").strip().lower() in (
     "1",
     "true",
@@ -31,6 +33,10 @@ UPLOAD_URL = os.environ.get(
     "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
 )
 SEGMENT_ROOT = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
+QUOTA_BYTES = max(
+    256 * 1024**2,
+    int(float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "4")) * 1024**3),
+)
 
 
 def _resolve_session_id(root: Path) -> str:
@@ -81,7 +87,7 @@ def _upload_once(session_id: str, *, limit: int) -> int:
             flush=True,
         )
         if FAIL_DEQUEUE:
-            _fail_dequeue_one(session_id)
+            _drop_oldest_pending(session_id, reason="upload_timeout")
         return 0
     if proc.stdout:
         print(proc.stdout.strip(), flush=True)
@@ -95,7 +101,7 @@ def _upload_once(session_id: str, *, limit: int) -> int:
             except ValueError:
                 pass
     if uploaded <= 0 and proc.returncode != 0 and FAIL_DEQUEUE:
-        _fail_dequeue_one(session_id)
+        _drop_oldest_pending(session_id, reason="upload_fail")
     return uploaded
 
 
@@ -121,10 +127,10 @@ def _purge_uploaded_segments(session_id: str) -> int:
     return removed
 
 
-def _fail_dequeue_one(session_id: str) -> None:
+def _drop_oldest_pending(session_id: str, *, reason: str) -> bool:
     pending = list_closed_pending_segments(SEGMENT_ROOT, session_id)
     if not pending:
-        return
+        return False
     seg = pending[0]
     delete_after = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
         "1",
@@ -133,15 +139,44 @@ def _fail_dequeue_one(session_id: str) -> None:
     )
     mark_segment_uploaded(seg, delete=delete_after)
     print(
-        f"upload_fail_dequeue session={session_id} segment={seg.name}",
+        f"local_trim_drop session={session_id} segment={seg.name} reason={reason}",
         flush=True,
     )
+    return True
+
+
+def _trim_over_cap(session_id: str, pending: int) -> int:
+    """Drop oldest segments when pending exceeds the hard cap."""
+    if pending <= KEEP_PENDING_BELOW:
+        return pending
+    trim = min(pending - KEEP_PENDING_BELOW, TRIM_BATCH)
+    for _ in range(trim):
+        if not _drop_oldest_pending(session_id, reason="pending_cap"):
+            break
+    return max(0, pending - trim)
+
+
+def _trim_for_disk_quota(session_id: str, pending: int) -> int:
+    """Drop oldest segments when on-disk store exceeds quota."""
+    trimmed = 0
+    while pending > 1 and segment_store_bytes(SEGMENT_ROOT) > QUOTA_BYTES:
+        if not _drop_oldest_pending(session_id, reason="disk_quota"):
+            break
+        pending -= 1
+        trimmed += 1
+    if trimmed:
+        print(
+            f"upload_loop disk_quota_trim session={session_id} dropped={trimmed} "
+            f"bytes={segment_store_bytes(SEGMENT_ROOT)} quota={QUOTA_BYTES}",
+            flush=True,
+        )
+    return pending
 
 
 def main() -> None:
     print(
         f"upload_loop start keep_pending_below={KEEP_PENDING_BELOW} "
-        f"poll_s={POLL_INTERVAL_S} root={SEGMENT_ROOT}",
+        f"poll_s={POLL_INTERVAL_S} quota_gb={QUOTA_BYTES / 1024**3:.1f} root={SEGMENT_ROOT}",
         flush=True,
     )
     cached_pending: dict[str, int] = {}
@@ -154,47 +189,26 @@ def main() -> None:
             time.sleep(POLL_INTERVAL_S)
             continue
         now = time.monotonic()
-        if session_id not in cached_pending or now - last_rescan >= 60.0:
+        if session_id not in cached_pending or now - last_rescan >= 30.0:
             cached_pending[session_id] = len(
                 list_closed_pending_segments(SEGMENT_ROOT, session_id)
             )
             last_rescan = now
         n = int(cached_pending.get(session_id, 0))
-        target_low = max(1, KEEP_PENDING_BELOW - 5)
-        if n > target_low:
-            trim = min(n - target_low, TRIM_BATCH)
-            print(
-                f"upload_loop session={session_id} pending={n} local_trim={trim} target={target_low}",
-                flush=True,
-            )
-            pending_list = list_closed_pending_segments(SEGMENT_ROOT, session_id)
-            delete_after = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-            )
-            for seg in pending_list[:trim]:
-                mark_segment_uploaded(seg, delete=delete_after)
-                print(
-                    f"upload_fail_dequeue session={session_id} segment={seg.name}",
-                    flush=True,
-                )
-            cached_pending[session_id] = max(0, n - trim)
-            n = cached_pending[session_id]
+        n = _trim_over_cap(session_id, n)
+        n = _trim_for_disk_quota(session_id, n)
+        cached_pending[session_id] = n
         if PURGE_INTERVAL_S > 0 and now - last_purge >= PURGE_INTERVAL_S:
             purged = _purge_uploaded_segments(session_id)
             if purged:
                 print(f"upload_loop purged_uploaded={purged}", flush=True)
             last_purge = now
-        upload_cap = max(0, target_low // 2)
-        if upload_cap > 0 and 0 < n <= upload_cap:
-            print(f"upload_loop session={session_id} pending={n} drain_limit=1", flush=True)
-            uploaded = _upload_once(session_id, limit=1)
+        if n > 0:
+            print(f"upload_loop session={session_id} pending={n} upload_batch={UPLOAD_BATCH}", flush=True)
+            uploaded = _upload_once(session_id, limit=UPLOAD_BATCH)
             if uploaded > 0:
                 cached_pending[session_id] = max(0, n - uploaded)
-        elif n > 0:
-            print(f"upload_loop session={session_id} pending={n} skip_upload", flush=True)
-        elif n == 0:
+        else:
             print(f"upload_loop session={session_id} pending=0 idle", flush=True)
         time.sleep(POLL_INTERVAL_S)
 

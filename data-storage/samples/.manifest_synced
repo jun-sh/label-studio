@@ -39,12 +39,12 @@
       "version": "v3"
     },
     {
-      "id": "ego_lan_214_hand_pose_v1",
-      "title": "Ego-LAN-214-Hand-Pose-v1",
-      "name": "Ego-LAN-214-Hand-Pose-v1",
+      "id": "ego_214_hand_pose",
+      "title": "Ego-214-Hand-Pose",
+      "name": "Ego-214-Hand-Pose",
       "description": "LeRobot v3.0 · ego-lan-214 archive with offline HaMeR MANO (observation.mano_pose)",
-      "archiveUrl": "/lerobot/bundled/ego_lan_214_hand_pose_v1.zip",
-      "coverImageUrl": "/lerobot/bundled/covers/ego_lan_214_hand_pose_v1.webp",
+      "archiveUrl": "/lerobot/bundled/ego_214_hand_pose.zip",
+      "coverImageUrl": "/lerobot/bundled/covers/ego_214_hand_pose.webp",
       "version": "v3"
     }
   ]

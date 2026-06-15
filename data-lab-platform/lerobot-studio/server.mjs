@@ -186,6 +186,46 @@ function readHandKp2dFromZip(zipPath, innerPath) {
   }
 }
 
+function listZipEntries(zipPath, prefix) {
+  try {
+    const raw = execFileSync("unzip", ["-Z1", zipPath], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith(prefix));
+  } catch {
+    return [];
+  }
+}
+
+function buildHandKp2dV3FromZip(zipPath) {
+  const entries = listZipEntries(zipPath, "offline/episode_");
+  const kp2dPaths = entries.filter((p) => p.endsWith("/mano_kp2d_uv.json"));
+  if (kp2dPaths.length === 0) return null;
+
+  const episodes = {};
+  for (const innerPath of kp2dPaths.sort()) {
+    const payload = readHandKp2dFromZip(zipPath, innerPath);
+    if (!payload) continue;
+    const m = innerPath.match(/offline\/episode_(\d+)\/mano_kp2d_uv\.json$/);
+    if (!m) continue;
+    episodes[String(parseInt(m[1], 10))] = payload;
+  }
+  if (Object.keys(episodes).length === 0) return null;
+
+  const first = episodes[Object.keys(episodes).sort((a, b) => Number(a) - Number(b))[0]];
+  if (Object.keys(episodes).length === 1) return first;
+  return {
+    version: 3,
+    fps: first?.fps || 20,
+    video_key: first?.video_key || "observation.images.camera_head_left",
+    episodes,
+  };
+}
+
 function resolveHandKp2dPayload(datasetId) {
   const overlayPath = handKp2dOverlayPath(datasetId);
   if (fs.existsSync(overlayPath)) {
@@ -201,6 +241,7 @@ function resolveHandKp2dPayload(datasetId) {
   if (!fs.existsSync(zipPath)) return null;
 
   return (
+    buildHandKp2dV3FromZip(zipPath) ||
     readHandKp2dFromZip(zipPath, "offline/episode_000000/mano_kp2d_uv.json") ||
     readHandKp2dFromZip(zipPath, "offline/episode_000000/hand_kp2d.json")
   );
@@ -210,12 +251,12 @@ function injectBranding(html) {
   const inject =
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=60"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=54"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=1"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=2"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=60"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=54"></script>' +
-    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=1"></script>' +
+    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=2"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");

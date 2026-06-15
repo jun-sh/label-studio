@@ -9,6 +9,10 @@ import time
 from collections import deque
 from pathlib import Path
 
+from ego_capture_studio.capture.camera_intrinsics import (
+    INTRINSICS_STATUS_INVALID,
+    is_intrinsics_valid,
+)
 from ego_capture_studio.capture.ego_spec import OAK_CAPTURE_FPS, OAK_CAPTURE_IMU_HZ
 from ego_capture_studio.capture.frame_jpeg_codec import (
     configure_opencv_threads,
@@ -161,6 +165,27 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
+
+    try:
+        intrinsics_doc = recorder.build_session_camera_intrinsics_document()
+        intrinsics_path = writer.write_session_camera_intrinsics(intrinsics_doc)
+        calib_src = intrinsics_doc.get("calibration_source") or "unknown"
+        if is_intrinsics_valid(intrinsics_doc):
+            print(
+                f"camera_intrinsics OK written={intrinsics_path} "
+                f"calibration_source={calib_src} device_mxid={intrinsics_doc.get('device_mxid')}",
+                flush=True,
+            )
+        else:
+            reasons = intrinsics_doc.get("invalid_reasons") or []
+            print(
+                f"camera_intrinsics {INTRINSICS_STATUS_INVALID} written={intrinsics_path} "
+                f"calibration_source={calib_src} reasons={reasons} "
+                f"device_mxid={intrinsics_doc.get('device_mxid')}",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"camera_intrinsics warning: {exc}", flush=True)
 
     if heartbeat is not None:
         try:

@@ -1452,9 +1452,25 @@ const _Annotation = types
         fromSuggestion: true,
       });
       const area = self.areas.get(itemId);
+      const labeledControls = new Set();
+
+      for (const result of area.results) {
+        if (!result.type?.endsWith?.("labels") || !result.hasValue) continue;
+
+        labeledControls.add(result.from_name);
+        const control = result.from_name;
+        const values = [].concat(result.mainValue ?? []).filter(isDefined);
+
+        control.unselectAll?.();
+        for (const value of values) {
+          control.findLabel(value)?.setSelected(true);
+        }
+      }
+
       const activeStates = area.object.activeStates();
 
       for (const state of activeStates) {
+        if (labeledControls.has(state)) continue;
         area.setValue(state);
       }
       self.suggestions.delete(id);

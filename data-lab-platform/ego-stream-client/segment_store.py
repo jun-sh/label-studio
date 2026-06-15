@@ -15,6 +15,10 @@ from typing import Any, TextIO
 
 import numpy as np
 
+from ego_capture_studio.capture.camera_intrinsics import (
+    INTRINSICS_REL_PATH,
+    write_camera_intrinsics_json,
+)
 from ego_capture_studio.capture.ego_spec import OBS_HANDS_DIM, OBS_POSE_DIM, OBS_STATE_DIM
 from ego_capture_studio.capture.lerobot_episode import identity_pose_xyzw
 
@@ -310,6 +314,15 @@ class SegmentCaptureWriter:
 
     def _session_dir(self) -> Path:
         return self.root / "sessions" / self.session_id
+
+    def session_camera_intrinsics_path(self) -> Path:
+        return self._session_dir() / INTRINSICS_REL_PATH
+
+    def write_session_camera_intrinsics(self, document: dict[str, Any]) -> Path:
+        """Persist EEPROM intrinsics once per session (uploaded via session_start)."""
+        path = self.session_camera_intrinsics_path()
+        write_camera_intrinsics_json(path, document)
+        return path
 
     def _segments_dir(self) -> Path:
         return self._session_dir() / "segments"

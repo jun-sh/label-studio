@@ -1,0 +1,15 @@
+# Optional SAM 2.1 ML backend overlay (GPU host process recommended instead).
+#
+# Primary deployment: run on GPU host (not inside Label Studio stack):
+#   bash ml-services/start-sam-backend.sh
+#
+# This file documents the expected service endpoint for ops reference.
+# Docker image build requires GitHub access inside the build context; prefer host start.
+
+services:
+  app:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+# SAM backend runs on host :9090 — connect from Label Studio project settings:
+#   http://10.10.10.34:9090  (use your host IP, not localhost)

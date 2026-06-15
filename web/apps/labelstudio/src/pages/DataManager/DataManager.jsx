@@ -1,4 +1,5 @@
 import { Button, buttonVariant, ToastContext, ToastType } from "@humansignal/ui";
+import { reaction } from "mobx";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { generatePath, useHistory } from "react-router";
@@ -19,6 +20,39 @@ import { APIConfig } from "./api-config";
 import "./DataManager.scss";
 
 const loadDependencies = () => [import("@humansignal/datamanager"), import("@humansignal/editor")];
+
+let disposeSamLabelSync = null;
+
+/** Mirror Brush row (tag) selection to hidden SAM smart controls (tag2, tag3). */
+function syncSamSmartLabels(annotation) {
+  if (!annotation) return;
+  const brush = annotation.names.get("tag");
+  if (!brush) return;
+  const values = brush.selectedValues?.() ?? [];
+  if (!values.length) return;
+
+  for (const name of ["tag2", "tag3"]) {
+    const control = annotation.names.get(name);
+    if (!control?.unselectAll) continue;
+    control.unselectAll();
+    values.forEach((value) => control.findLabel(value)?.setSelected(true));
+  }
+}
+
+function installSamLabelSync(annotation) {
+  disposeSamLabelSync?.();
+  disposeSamLabelSync = null;
+  if (!annotation) return;
+  const brush = annotation.names.get("tag");
+  const keypoint = annotation.names.get("tag2");
+  if (!brush || !keypoint) return;
+
+  disposeSamLabelSync = reaction(
+    () => (brush.selectedValues?.() ?? []).join("\0"),
+    () => syncSamSmartLabels(annotation),
+    { fireImmediately: true },
+  );
+}
 
 const initializeDataManager = async (root, props, params) => {
   if (!window.LabelStudio) throw Error("The annotation editor is not available on this page");
@@ -46,6 +80,7 @@ const initializeDataManager = async (root, props, params) => {
     },
     labelStudio: {
       keymap: window.APP_SETTINGS.editor_keymap,
+      isInteractivePreannotations: params.autoAnnotation,
     },
     ...props,
     ...settings,
@@ -159,10 +194,20 @@ export const DataManagerPage = ({ ...props }) => {
     });
 
     if (interactiveBacked) {
+      dataManager.on("lsf:labelStudioLoad", (store) => {
+        installSamLabelSync(store.annotationStore?.selected);
+      });
+
+      dataManager.on("lsf:selectAnnotation", (annotation) => {
+        installSamLabelSync(annotation);
+      });
+
       dataManager.on("lsf:regionFinishedDrawing", (_reg, group) => {
         const { lsf, task, currentAnnotation: annotation } = dataManager.lsf;
-        const ids = group.map((r) => r.cleanId);
-        const result = annotation.serializeAnnotation().filter((res) => ids.includes(res.id));
+        syncSamSmartLabels(annotation);
+        const result = group.flatMap((region) => region.results.map((r) => r.serialize()).filter(Boolean));
+
+        if (!result.length) return;
 
         const suggestionsRequest = api.callApi("mlInteractive", {
           params: { pk: interactiveBacked.id },

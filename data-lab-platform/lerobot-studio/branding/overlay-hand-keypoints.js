@@ -21,6 +21,8 @@
     datasetId: null,
     payload: null,
     lookup: null,
+    activeVideoKey: null,
+    activeEpisode: "0",
     slot: null,
     rafId: 0,
     observer: null,
@@ -100,6 +102,53 @@
     return lookup;
   }
 
+  function detectActiveEpisodeIndex() {
+    try {
+      var q = new URLSearchParams(g.location.search).get("episode");
+      if (q !== null && q !== "") return String(parseInt(q, 10) || 0);
+    } catch (e) {
+      /* ignore */
+    }
+    var selected = document.querySelector(
+      '[aria-selected="true"], .selected, [data-selected="true"]',
+    );
+    if (selected) {
+      var text = (selected.textContent || "").trim();
+      var m = text.match(/#\s*(\d+)/) || text.match(/^(\d+)\b/);
+      if (m) return String(parseInt(m[1], 10));
+    }
+    return "0";
+  }
+
+  function resolveEpisodePayload(rootPayload) {
+    if (!rootPayload) return null;
+    if (rootPayload.version === 3 && rootPayload.episodes) {
+      var ep = detectActiveEpisodeIndex();
+      var sub = rootPayload.episodes[ep] || rootPayload.episodes["0"];
+      if (!sub) {
+        var keys = Object.keys(rootPayload.episodes);
+        sub = keys.length ? rootPayload.episodes[keys[0]] : null;
+      }
+      if (!sub) return null;
+      return {
+        fps: sub.fps || rootPayload.fps || 20,
+        video_key: sub.video_key || rootPayload.video_key,
+        frame_index: sub.frame_index || [],
+        kp2d: sub.kp2d || [],
+      };
+    }
+    return rootPayload;
+  }
+
+  function refreshActiveEpisodeLookup() {
+    if (!state.payload) return;
+    var epPayload = resolveEpisodePayload(state.payload);
+    if (!epPayload) return;
+    state.lookup = buildLookup(epPayload);
+    state.activeVideoKey = epPayload.video_key || "observation.images.camera_head_left";
+    state.activeEpisode = detectActiveEpisodeIndex();
+  }
+
   function fetchHandKp2d(datasetId) {
     if (state.loading) return Promise.resolve(null);
     if (state.payload && state.datasetId === datasetId) {
@@ -116,7 +165,7 @@
       .then(function (payload) {
         state.datasetId = datasetId;
         state.payload = payload;
-        state.lookup = buildLookup(payload);
+        refreshActiveEpisodeLookup();
         state.loading = false;
         return payload;
       })
@@ -261,7 +310,8 @@
   function paintLoop() {
     state.rafId = 0;
     if (!state.payload || !state.slot) return;
-    drawSkeleton(state.slot.canvas, state.slot.video, state.slot.wrap, state.payload, state.lookup);
+    var epPayload = resolveEpisodePayload(state.payload) || state.payload;
+    drawSkeleton(state.slot.canvas, state.slot.video, state.slot.wrap, epPayload, state.lookup);
     if (state.enabled) {
       state.rafId = g.requestAnimationFrame(paintLoop);
     }
@@ -339,7 +389,9 @@
       }
       document.documentElement.setAttribute("data-datalab-hand-kp2d", "1");
       ensurePill();
-      state.slot = ensureCanvasSlot(payload.video_key || "observation.images.camera_head_left");
+      refreshActiveEpisodeLookup();
+      var vk = state.activeVideoKey || (payload.video_key || "observation.images.camera_head_left");
+      state.slot = ensureCanvasSlot(vk);
       if (!state.slot) return;
       startPaintLoop();
     });
@@ -358,7 +410,16 @@
     }
     activateForDataset(datasetId);
     if (state.payload) {
-      state.slot = ensureCanvasSlot(state.payload.video_key || "observation.images.camera_head_left");
+      var prevEp = state.activeEpisode;
+      refreshActiveEpisodeLookup();
+      var epChanged = prevEp !== state.activeEpisode;
+      var vk =
+        state.activeVideoKey ||
+        (resolveEpisodePayload(state.payload) || {}).video_key ||
+        "observation.images.camera_head_left";
+      if (epChanged || !state.slot) {
+        state.slot = ensureCanvasSlot(vk);
+      }
       if (state.slot && state.enabled) startPaintLoop();
     }
   }

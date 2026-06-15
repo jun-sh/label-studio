@@ -929,6 +929,26 @@ function archiveLiveDataForSession(root, sessionId) {
       /* ignore */
     }
   }
+  const readyDir = path.join(dest, "meta");
+  ensureDir(readyDir);
+  const readyPath = path.join(readyDir, ".ready");
+  try {
+    fs.writeFileSync(
+      readyPath,
+      JSON.stringify(
+        {
+          sessionId,
+          archivedAt: new Date().toISOString(),
+          schema: "ego_archive_ready_v1",
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+  } catch {
+    /* ignore */
+  }
   return dest;
 }
 
@@ -1684,7 +1704,22 @@ export function handleStreamUpload(stationId, body) {
       initChunksManifest(root, { resetViewer: true });
       writeViewerInfoSnapshot(root, 0);
       setChunkArtifactStatus(root, "meta/info.json", "finished", 0);
-    } else if (!fs.existsSync(chunksManifestPath(root))) {
+    }
+    const intrinsics = body.cameraIntrinsics;
+    if (intrinsics && typeof intrinsics === "object") {
+      writeJson(path.join(root, "meta", "camera_intrinsics.json"), intrinsics);
+      setChunkArtifactStatus(root, "meta/camera_intrinsics.json", "finished", 0);
+    } else if (!isResume) {
+      const intrinsicsPath = path.join(root, "meta", "camera_intrinsics.json");
+      if (fs.existsSync(intrinsicsPath)) {
+        try {
+          fs.unlinkSync(intrinsicsPath);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (isResume && !fs.existsSync(chunksManifestPath(root))) {
       initChunksManifest(root, { resetViewer: false });
     }
     const info = readJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes));

@@ -82,14 +82,17 @@ class SegmentUploader:
         session_id: str,
         task: str,
         video_shapes: dict[str, tuple[int, int]],
+        camera_intrinsics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         shapes_out = {k: [int(h), int(w)] for k, (h, w) in video_shapes.items()}
-        body = {
+        body: dict[str, Any] = {
             "action": "session_start",
             "sessionId": session_id,
             "task": task,
             "videoShapes": shapes_out,
         }
+        if camera_intrinsics:
+            body["cameraIntrinsics"] = camera_intrinsics
         return self._post_json(body)
 
     def upload_segment_dir(self, segment_dir: Path) -> dict[str, Any]:

@@ -7,6 +7,11 @@ import json
 import os
 from pathlib import Path
 
+from ego_capture_studio.capture.camera_intrinsics import (
+    INTRINSICS_STATUS_INVALID,
+    is_intrinsics_valid,
+    load_camera_intrinsics_json,
+)
 from ego_capture_studio.capture.segment_store import list_closed_pending_segments
 from ego_capture_studio.capture.segment_upload import SegmentUploader, upload_pending_segments
 
@@ -73,10 +78,22 @@ def main() -> None:
             shapes: dict[str, tuple[int, int]] = {}
             for key in ALL_LEROBOT_VIDEO_KEYS:
                 shapes[key] = (800, 1280)
+            intrinsics_path = root / "sessions" / session_id / "meta" / "camera_intrinsics.json"
+            camera_intrinsics = None
+            if intrinsics_path.is_file():
+                camera_intrinsics = load_camera_intrinsics_json(intrinsics_path)
+                if not is_intrinsics_valid(camera_intrinsics):
+                    reasons = camera_intrinsics.get("invalid_reasons") or []
+                    print(
+                        f"WARNING: {INTRINSICS_STATUS_INVALID} session={session_id} "
+                        f"reasons={reasons}; downstream hand pipeline must mark failed",
+                        flush=True,
+                    )
             uploader.start_session(
                 session_id=session_id,
                 task=task or "Perform egocentric manipulation tasks at the laboratory workbench",
                 video_shapes=shapes,
+                camera_intrinsics=camera_intrinsics,
             )
         limit = args.limit if args.limit > 0 else None
         n = upload_pending_segments(

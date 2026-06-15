@@ -22,6 +22,10 @@ venv/
 .autoenv
 .env
 .envrc
+ml-services/.env.sam
+ml-services/sam2/checkpoints/*.pt
+ml-services/sam-backend.pid
+ml-services/sam-backend.log
 # web/static
 
 deploy/license.txt

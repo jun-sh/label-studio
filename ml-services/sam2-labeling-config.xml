@@ -1,0 +1,41 @@
+<!--
+  SAM 2.1 interactive labeling (based on HumanSignal segment_anything_2_image README).
+  One visible label row (BrushLabels). KeyPoint / Rectangle smart controls are hidden
+  but stay in config so Auto-Detect can read the same labels (synced in DataManager).
+-->
+<View>
+  <Style>
+    .sam-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+  </Style>
+  <View>
+    <Header value="Choose label"/>
+    <BrushLabels name="tag" toName="image">
+      <Label value="Bowl" background="#FFA39E"/>
+      <Label value="Cup" background="#40A9FF"/>
+      <Label value="Knife" background="#FFC069"/>
+    </BrushLabels>
+    <View className="sam-hidden">
+      <KeyPointLabels name="tag2" toName="image" smart="true" smartonly="true">
+        <Label value="Bowl" background="#FFA39E"/>
+        <Label value="Cup" background="#40A9FF"/>
+        <Label value="Knife" background="#FFC069"/>
+      </KeyPointLabels>
+      <RectangleLabels name="tag3" toName="image" smart="true" smartonly="true">
+        <Label value="Bowl" background="#FFA39E"/>
+        <Label value="Cup" background="#40A9FF"/>
+        <Label value="Knife" background="#FFC069"/>
+      </RectangleLabels>
+    </View>
+    <Image name="image" value="$image" zoom="true" zoomControl="true"/>
+  </View>
+</View>

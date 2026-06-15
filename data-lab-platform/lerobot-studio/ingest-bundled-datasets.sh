@@ -60,7 +60,7 @@ if [ -d "${SAMPLES}" ]; then
   copy_if_newer "${SAMPLES}/SenseXperience Ego.zip" "${BUNDLED}/sensexperience_ego.zip" || true
   copy_if_newer "${SAMPLES}/SenseXperience UMI.zip" "${BUNDLED}/sensexperience_umi.zip" || true
   copy_if_newer "${SAMPLES}/DualAirbot Folding.zip" "${BUNDLED}/dualairbot_fold.zip" || true
-  copy_if_newer "${SAMPLES}/ego_lan_214_hand_pose_v1.zip" "${BUNDLED}/ego_lan_214_hand_pose_v1.zip" || true
+  copy_if_newer "${SAMPLES}/ego_214_hand_pose.zip" "${BUNDLED}/ego_214_hand_pose.zip" || true
   if [ -f "${SAMPLES}/DualPiper Pulling.zip" ]; then
     copy_if_newer "${SAMPLES}/DualPiper Pulling.zip" "${BUNDLED}/dualpiper_pulling.zip" || true
   elif [ -f "${SAMPLES}/DualPiper Pulling.tar" ]; then
@@ -84,7 +84,7 @@ fi
 
 # --- Cover images (static .webp, same as io-ai.tech) ---
 fetch_cover "sensexperience_ego.webp"
-fetch_cover "ego_lan_214_hand_pose_v1.webp" || copy_if_newer "${SAMPLES}/ego_lan_214_hand_pose_v1.webp" "${BUNDLED}/covers/ego_lan_214_hand_pose_v1.webp" || true
+fetch_cover "ego_214_hand_pose.webp" || copy_if_newer "${SAMPLES}/ego_214_hand_pose.webp" "${BUNDLED}/covers/ego_214_hand_pose.webp" || true
 fetch_cover "sensexperience_umi.webp"
 fetch_cover "lerobot_dataset_dualairbot_fold.webp"
 fetch_cover "lerobot_dataset_dualpiper_pulling.webp"

@@ -17,6 +17,11 @@ from ego_capture_studio.capture.camera_map import (
     OAK_SOCKET_TO_LEROBOT_VIDEO,
     PRIMARY_OAK_SOCKET,
 )
+from ego_capture_studio.capture.camera_intrinsics import (
+    build_camera_intrinsics_document,
+    read_calibration_from_device,
+    read_camera_intrinsics_entry,
+)
 from ego_capture_studio.capture.ego_spec import (
     OAK_CAPTURE_FPS,
     OAK_CAPTURE_IMU_HZ,
@@ -284,23 +289,10 @@ def _scaled_size(width: int, height: int, max_edge: int) -> tuple[int, int]:
 
 
 def _read_camera_intrinsics(calib: Any, socket: Any, width: int, height: int) -> dict[str, Any]:
-    try:
-        mat = np.array(calib.getCameraIntrinsics(socket, width, height))
-        fx, fy = float(mat[0, 0]), float(mat[1, 1])
-        ppx, ppy = float(mat[0, 2]), float(mat[1, 2])
-    except Exception:
-        fx = fy = float(max(width, height))
-        ppx, ppy = width / 2.0, height / 2.0
-    return {
-        "width": int(width),
-        "height": int(height),
-        "fx": fx,
-        "fy": fy,
-        "ppx": ppx,
-        "ppy": ppy,
-        "coeffs": [0.0, 0.0, 0.0, 0.0, 0.0],
-        "distortion_model_name": "oak_depthai",
-    }
+    entry = read_camera_intrinsics_entry(calib, socket, width, height)
+    # Backward-compatible alias used by older ego buffers.
+    entry["distortion_model_name"] = entry.get("distortion_model", "fisheye")
+    return entry
 
 
 @dataclass(frozen=True)
@@ -342,6 +334,56 @@ class Oak4pEgoRecorder:
         self._last_capture: dict[str, bytes] | dict[str, np.ndarray] = {}
         self._strict_grid_epoch_ns: int | None = None
         self._strict_last_emit_ts_ns: int | None = None
+        self._intrinsics_document: dict[str, Any] | None = None
+        self._calibration_source: str | None = None
+
+    def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
+        """EEPROM intrinsics for all connected cameras at ISP output resolution."""
+        if self._calib is None or self._device is None:
+            raise RuntimeError("call connect() before building camera intrinsics")
+        if self._intrinsics_document is not None:
+            return self._intrinsics_document
+
+        dai = _ensure_depthai()
+        cameras: dict[str, dict[str, Any]] = {}
+        scale_num = int(OAK_ISP_SCALE_NUM)
+        scale_den = int(OAK_ISP_SCALE_DEN) or 1
+        for feat in self._device.getConnectedCameraFeatures():
+            cam_name = CAM_SOCKET_TO_NAME.get(feat.socket.name)
+            if cam_name is None or cam_name not in self._cam_list:
+                continue
+            lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[cam_name]
+            w = max(2, int(round(int(feat.width) * scale_num / scale_den)))
+            h = max(2, int(round(int(feat.height) * scale_num / scale_den)))
+            cameras[lerobot_key] = {
+                "socket": CAM_SOCKET_OPTS[cam_name],
+                "width": w,
+                "height": h,
+                "oak_socket": cam_name,
+            }
+
+        if len(cameras) < len(self._cam_list):
+            cap_w = int(OAK_DEFAULT_FRAME_WIDTH)
+            cap_h = int(OAK_DEFAULT_FRAME_HEIGHT)
+            for cam_name in self._cam_list:
+                lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[cam_name]
+                if lerobot_key in cameras:
+                    continue
+                cameras[lerobot_key] = {
+                    "socket": CAM_SOCKET_OPTS[cam_name],
+                    "width": cap_w,
+                    "height": cap_h,
+                    "oak_socket": cam_name,
+                }
+
+        doc = build_camera_intrinsics_document(
+            self._calib,
+            device_mxid=str(self._device.getMxId()),
+            cameras=cameras,
+            calibration_source=self._calibration_source,
+        )
+        self._intrinsics_document = doc
+        return doc
 
     @property
     def strict_grid_epoch_ns(self) -> int | None:
@@ -493,7 +535,7 @@ class Oak4pEgoRecorder:
             raise
 
         self._device = device
-        self._calib = device.readCalibration2()
+        self._calib, self._calibration_source = read_calibration_from_device(device)
         eeprom = self._calib.getEepromData()
         board_rev = eeprom.boardRev or ""
         revision = parse_board_revision(board_rev)

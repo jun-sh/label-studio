@@ -32,4 +32,4 @@ StandardError=journal
 SyslogIdentifier=ecs-upload-loop
 
 [Install]
-WantedBy=default.target
+WantedBy=ecs-oak-upload-stack.target

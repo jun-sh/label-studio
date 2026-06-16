@@ -141,12 +141,12 @@ describe("BrushRegion", () => {
       expect(region.getMaskImage()).toBeUndefined();
     });
 
-    it("setLayerRef sets layerRef and opacity when ref provided", () => {
+    it("setLayerRef sets layerRef and keeps mask layer fully opaque", () => {
       const canvas = document.createElement("canvas");
       const ref = { canvas: { _canvas: canvas } };
       region.setLayerRef(ref);
       expect(region.layerRef).toBe(ref);
-      expect(canvas.style.opacity).toBe(String(region.opacity));
+      expect(canvas.style.opacity).toBe("1");
     });
 
     it("setLayerRef does nothing when ref is falsy", () => {

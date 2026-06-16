@@ -618,7 +618,18 @@
     "unsaved_discard": "放弃并离开",
     "unsaved_save_leave": "保存并离开",
     "unsaved_save_aria": "保存更改",
-    "page_title_settings": "标注界面设置"
+    "page_title_settings": "标注界面设置",
+    "sam_managed_banner": "此类别由「类别管理」维护。高级用户仍可在代码视图中编辑 XML。"
+  },
+  "sam_classes": {
+    "mode_classes": "类别管理",
+    "out_of_sync_banner": "当前标注配置已手动修改，保存将按此类别列表覆盖生成完整 SAM 配置",
+    "manage_in_classes_tab": "SAM 项目请使用「类别管理」维护标签；代码与可视化视图仅供高级编辑。",
+    "essential_title": "确认更改类别？",
+    "essential_body": "删除或重命名类别可能影响已有标注。是否继续保存？",
+    "essential_confirm": "确认保存",
+    "save_aria": "保存类别",
+    "save_error": "保存类别失败"
   },
   "labeling_templates": {
     "enterprise_badge": "企业版",

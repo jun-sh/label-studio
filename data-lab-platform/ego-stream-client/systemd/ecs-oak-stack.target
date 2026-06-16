@@ -1,6 +1,0 @@
-[Unit]
-Description=EGO OAK capture-only alias (same as ecs-oak-capture-stack; upload is separate)
-Documentation=file:///home/server/workspace/ego-studio/README.md
-After=network-online.target
-Wants=network-online.target
-Wants=ecs-oak-capture-stack.target

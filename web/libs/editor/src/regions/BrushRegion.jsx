@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Group, Image, Layer, Shape } from "react-konva";
+import { Group, Image, Layer, Line, Shape } from "react-konva";
 import { observer } from "mobx-react";
 import { getParent, getRoot, getType, hasParent, isAlive, types } from "mobx-state-tree";
 
@@ -19,7 +19,9 @@ import { KonvaRegionMixin } from "../mixins/KonvaRegion";
 import { ImageModel } from "../tags/object/Image";
 import { colorToRGBAArray, rgbArrayToHex } from "../utils/colors";
 import { FF_ZOOM_OPTIM, isFF } from "../utils/feature-flags";
+import { isDefined } from "../utils/utilities";
 import { AliveRegion } from "./AliveRegion";
+import { generateOutlineFromCanvas } from "./BitmaskRegion/contour";
 import { RegionWrapper } from "./RegionWrapper";
 
 const highlightOptions = {
@@ -140,10 +142,6 @@ const Model = types
      */
     // strokeColor: types.optional(types.string, "red"),
 
-    /**
-     * Determines node opacity. Can be any number between 0 and 1
-     */
-    opacity: 0.6,
     scaleX: 1,
     scaleY: 1,
 
@@ -169,6 +167,39 @@ const Model = types
       },
       get strokeColor() {
         return rgbArrayToHex(self.colorParts);
+      },
+      get opacity() {
+        const style = self.style || self.tag;
+
+        if (!style) return 0.6;
+
+        if (isDefined(style.fillopacity) && style.fillopacity !== "") {
+          return Number(style.fillopacity);
+        }
+
+        if (isDefined(style.opacity) && style.opacity !== "") {
+          const value = Number(style.opacity);
+
+          // Labels default when opacity is omitted from XML; BrushRegion historically used 0.6.
+          if (Math.abs(value - 0.2) < 1e-6) return 0.6;
+
+          return value;
+        }
+
+        return 0.6;
+      },
+      get strokeWidth() {
+        const style = self.style || self.tag;
+
+        if (!style) return 3;
+
+        const width = style.strokewidth ?? style.strokeWidth;
+
+        if (isDefined(width) && width !== "") {
+          return Number(width);
+        }
+
+        return 3;
       },
       get touchesLength() {
         return self.touches.length;
@@ -255,7 +286,8 @@ const Model = types
 
       setLayerRef(ref) {
         if (ref) {
-          ref.canvas._canvas.style.opacity = self.opacity;
+          // Keep the mask layer fully opaque; fill transparency is applied per-shape.
+          ref.canvas._canvas.style.opacity = 1;
           self.layerRef = ref;
         }
       },
@@ -583,6 +615,38 @@ const HtxBrushView = ({ item, setShapeRef }) => {
     };
   }, [image, item.parent?.stageWidth, item.parent?.stageHeight]);
 
+  const maskOutlines = useMemo(() => {
+    if (!image || !item.parent) return [];
+
+    const naturalWidth = item.parent.naturalWidth;
+    const naturalHeight = item.parent.naturalHeight;
+
+    if (naturalWidth <= 1 || naturalHeight <= 1) return [];
+
+    const canvas = document.createElement("canvas");
+
+    canvas.width = naturalWidth;
+    canvas.height = naturalHeight;
+
+    const ctx = canvas.getContext("2d");
+
+    if (!ctx) return [];
+
+    ctx.drawImage(image, 0, 0, naturalWidth, naturalHeight);
+
+    const scaleX = item.parent.stageWidth / naturalWidth;
+    const scaleY = item.parent.stageHeight / naturalHeight;
+
+    return generateOutlineFromCanvas(canvas, scaleX, scaleY);
+  }, [
+    image,
+    item.parent,
+    item.parent?.naturalWidth,
+    item.parent?.naturalHeight,
+    item.parent?.stageWidth,
+    item.parent?.stageHeight,
+  ]);
+
   const { store } = item;
 
   const highlightedImageRef = useRef(new window.Image());
@@ -735,12 +799,34 @@ const HtxBrushView = ({ item, setShapeRef }) => {
           }}
           listening={!suggestion}
         >
-          {/* RLE */}
-          <Image image={image} hitFunc={imageHitFunc} width={item.parent.stageWidth} height={item.parent.stageHeight} />
+          {/* RLE fill (semi-transparent) */}
+          <Group opacity={item.opacity} listening={false}>
+            <Image image={image} hitFunc={imageHitFunc} width={item.parent.stageWidth} height={item.parent.stageHeight} />
 
-          {/* Touches */}
-          <Group>
-            <HtxBrushLayer store={store} item={item} pointsList={item.touches} setShapeRef={setShapeRef} />
+            {/* Touches */}
+            <Group>
+              <HtxBrushLayer store={store} item={item} pointsList={item.touches} setShapeRef={setShapeRef} />
+            </Group>
+          </Group>
+
+          {/* Mask outline (full opacity, not affected by fill transparency) */}
+          <Group listening={false}>
+            {maskOutlines.map((points, index) => (
+              <Line
+                key={`outline-${index}`}
+                points={points}
+                stroke={item.strokeColor}
+                strokeWidth={item.strokeWidth}
+                opacity={1}
+                closed
+                lineJoin="round"
+                lineCap="round"
+                strokeScaleEnabled={false}
+                perfectDrawEnabled={false}
+                shadowForStrokeEnabled={false}
+                listening={false}
+              />
+            ))}
           </Group>
 
           {/* Highlight */}

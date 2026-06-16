@@ -22,6 +22,7 @@ import { Checkbox, CodeEditor, Select } from "@humansignal/ui";
 import { snakeCase } from "@humansignal/core";
 import { useConfigResizer } from "./useConfigResizer";
 import { EditorResizer } from "./EditorResizer";
+import { SamClassesPanel } from "../../Settings/SamClassesPanel";
 
 const wizardClass = cn("wizard");
 const configClass = cn("configure");
@@ -398,6 +399,10 @@ const Configurator = ({
   disableSaveButton,
   warning,
   hasChanges,
+  samClassesEnabled,
+  samClassesMeta,
+  onSamClassesSaved,
+  onSamClassesMetaChange,
 }) => {
   const [configure, setConfigure] = React.useState(isEmptyConfig(config) ? "code" : "visual");
   const [visualLoaded, loadVisual] = React.useState(configure === "visual");
@@ -406,6 +411,23 @@ const Configurator = ({
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(undefined);
   const { t } = useTranslation("common");
+
+  const configureModes = React.useMemo(() => {
+    const items = {
+      code: t("labeling_config.mode_code"),
+      visual: t("labeling_config.mode_visual"),
+    };
+    if (samClassesEnabled) {
+      items.classes = t("sam_classes.mode_classes");
+    }
+    return items;
+  }, [samClassesEnabled, t]);
+
+  React.useEffect(() => {
+    if (!samClassesEnabled && configure === "classes") {
+      setConfigure("visual");
+    }
+  }, [configure, samClassesEnabled]);
 
   // Resizer hook
   const { editorWidthPixels, setEditorWidthPixels, constraints } = useConfigResizer({
@@ -654,12 +676,26 @@ const Configurator = ({
               {t("labeling_config.browse_templates")}
             </Button>
             <ToggleItems
-              items={{ code: t("labeling_config.mode_code"), visual: t("labeling_config.mode_visual") }}
+              items={configureModes}
               active={configure}
               onSelect={onSelect}
             />
           </header>
+          {samClassesEnabled && configure !== "classes" && (
+            <div className={configClass.elem("preview-info-banner").toClassName()}>
+              <IconInfoOutline width={16} height={16} />
+              <span>{t("sam_classes.manage_in_classes_tab")}</span>
+            </div>
+          )}
           <div className={configClass.elem("editor").toClassName()}>
+            {configure === "classes" && samClassesEnabled && (
+              <SamClassesPanel
+                project={project}
+                meta={samClassesMeta}
+                onSaved={onSamClassesSaved}
+                onMetaChange={onSamClassesMetaChange}
+              />
+            )}
             {configure === "code" && (
               <div className={cnm(configClass.elem("code").toClassName(), configure !== "code" ? "!hidden" : "")}>
                 <CodeEditor
@@ -705,7 +741,7 @@ const Configurator = ({
               </div>
             )}
           </div>
-          {disableSaveButton !== true && onSaveClick && (
+          {disableSaveButton !== true && onSaveClick && configure !== "classes" && (
             <Form.Actions size="small" extra={configure === "code" && extra} valid>
               {saved && (
                 <div className={cn("form-indicator").toClassName()}>
@@ -760,6 +796,11 @@ export const ConfigPage = ({
   disableSaveButton,
   show = true,
   hasChanges,
+  configRevision = 0,
+  samClassesEnabled = false,
+  samClassesMeta = null,
+  onSamClassesSaved,
+  onSamClassesMetaChange,
 }) => {
   const [config, _setConfig] = React.useState("");
   const [mode, setMode] = React.useState("list"); // view | list
@@ -855,6 +896,12 @@ export const ConfigPage = ({
     }
   }, []);
 
+  React.useEffect(() => {
+    if (initialConfig) {
+      setTemplate(initialConfig);
+    }
+  }, [initialConfig, configRevision, setTemplate]);
+
   if (!show) return null;
 
   return (
@@ -884,6 +931,10 @@ export const ConfigPage = ({
           onSaveClick={onSaveClick}
           warning={warning}
           hasChanges={hasChanges}
+          samClassesEnabled={samClassesEnabled}
+          samClassesMeta={samClassesMeta}
+          onSamClassesSaved={onSamClassesSaved}
+          onSamClassesMetaChange={onSamClassesMetaChange}
         />
       )}
     </div>

@@ -1,25 +1,8 @@
 import simplify from "simplify-js";
 
-/**
- * Generates outline contours from a pixel-based region/mask
- *
- * @param item - Object containing the canvas with pixel data and rendering properties
- * @returns Array of flattened point coordinates forming contours around the shapes
- */
-export function generateMultiShapeOutline(item: {
-  highlighted: boolean;
-  offscreenCanvasRef: HTMLCanvasElement;
-  parent: any;
-}) {
-  if (!item.offscreenCanvasRef) return [];
+type ContourPoint = [number, number];
 
-  const ctx = item.offscreenCanvasRef.getContext("2d");
-  if (!ctx) return [];
-
-  const { width, height } = item.offscreenCanvasRef;
-  const data = ctx.getImageData(0, 0, width, height).data;
-
-  // Create a binary grid from the image data (1 for visible pixels, 0 for transparent)
+function traceContours(width: number, height: number, data: Uint8ClampedArray): ContourPoint[][] {
   const grid: number[][] = [];
   for (let y = 0; y < height; y++) {
     const row: number[] = [];
@@ -38,13 +21,8 @@ export function generateMultiShapeOutline(item: {
     [0, -1],
   ];
 
-  // Helper to check if two points are within 1 pixel (including diagonals)
   const isNear = (x1: number, y1: number, x2: number, y2: number) => Math.abs(x1 - x2) <= 1 && Math.abs(y1 - y2) <= 1;
 
-  /**
-   * Determines if a pixel is on the edge of a shape
-   * A pixel is an edge if it's non-transparent and has at least one transparent neighbor
-   */
   const isEdge = (x: number, y: number): boolean => {
     if (grid[y][x] === 0) return false;
     for (let dy = -1; dy <= 1; dy++) {
@@ -60,13 +38,9 @@ export function generateMultiShapeOutline(item: {
     return false;
   };
 
-  /**
-   * Traces a contour starting from a given point
-   * Uses a boundary-following algorithm to create a closed path
-   */
   const trace = (sx: number, sy: number) => {
-    const path = [];
-    const seen = new Set();
+    const path: ContourPoint[] = [];
+    const seen = new Set<string>();
     let x = sx;
     let y = sy;
     let dir = 0;
@@ -92,22 +66,19 @@ export function generateMultiShapeOutline(item: {
         }
       }
 
-      // Only close if we're back near the start and the path is long enough
       if (!moved || (path.length > 10 && isNear(x, y, sx, sy))) {
         closed = isNear(x, y, sx, sy) && path.length > 10;
         break;
       }
     }
 
-    // Only accept closed contours
     if (closed) {
       return path;
     }
     return [];
   };
 
-  // Find and trace all contours in the image
-  const contours: number[][][] = [];
+  const contours: ContourPoint[][] = [];
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       if (isEdge(x, y) && !visited[y][x]) {
@@ -119,14 +90,47 @@ export function generateMultiShapeOutline(item: {
     }
   }
 
-  // Scale and simplify the contours for rendering
-  const scale = item.parent.stageZoom;
+  return contours;
+}
+
+/**
+ * Generates outline contours from a canvas mask and scales them for stage rendering.
+ */
+export function generateOutlineFromCanvas(
+  canvas: HTMLCanvasElement,
+  scaleX: number,
+  scaleY: number,
+): number[][] {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return [];
+
+  const { width, height } = canvas;
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const contours = traceContours(width, height, data);
+
   return contours.map((contour) => {
     const simplified = simplify(
-      contour.map(([x, y]) => ({ x: x * scale, y: y * scale })),
+      contour.map(([x, y]) => ({ x: x * scaleX, y: y * scaleY })),
       1.5,
       true,
     );
     return simplified.flatMap(({ x, y }) => [x, y]);
   });
+}
+
+/**
+ * Generates outline contours from a pixel-based region/mask
+ *
+ * @param item - Object containing the canvas with pixel data and rendering properties
+ * @returns Array of flattened point coordinates forming contours around the shapes
+ */
+export function generateMultiShapeOutline(item: {
+  highlighted: boolean;
+  offscreenCanvasRef: HTMLCanvasElement;
+  parent: any;
+}) {
+  if (!item.offscreenCanvasRef) return [];
+
+  const scale = item.parent.stageZoom;
+  return generateOutlineFromCanvas(item.offscreenCanvasRef, scale, scale);
 }

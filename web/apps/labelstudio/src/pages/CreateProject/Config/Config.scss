@@ -545,6 +545,13 @@ $scroll-width: 5px;
   }
 }
 
+.wizard .configure__sam-classes {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--spacing-tighter);
+}
+
 .wizard ul.configure__settings {
   padding: 0;
 

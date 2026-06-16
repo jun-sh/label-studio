@@ -73,7 +73,7 @@ flowchart LR
 | 上传断点 | `/home/server/cache/ego-lan-214/checkpoint/ego-stream-checkpoint.json` | `sessionId`、`nextFrameIndex` |
 | 本地 MJPEG 预览 | `http://127.0.0.1:8765/preview/{cam}/mjpeg` | 不依赖 34 磁盘 |
 | 采集代码 | `/home/server/workspace/ego-studio` | `.venv` 约 15GB，**勿删** |
-| systemd 用户服务 | `~/.config/systemd/user/ecs-record-oak-stream.service` | 含 `ring.conf` drop-in |
+| systemd 用户服务 | `~/.config/systemd/user/ecs-record-oak-stream.service` 等 | 采集：`ecs-oak-capture-stack.target`；上传：`ecs-oak-upload-stack.target` |
 | 上传目标 URL | `http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload` | 不变 |
 | 上传 Token | 环境变量 `STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1` | 请求头 `X-Station-Token` |
 
@@ -219,12 +219,24 @@ docker-compose -f docker-compose.yml \
 - systemd：`data-lab-platform/ego-stream-client/systemd/ecs-record-oak-stream.service`
 - 用户 drop-in：`~/.config/systemd/user/ecs-record-oak-stream.service.d/ring.conf`
 
-**重启采集（214）**
+**214 采集 / 上传（systemd 用户服务，采集与上传分离）**
+
+部署单元：`data-lab-platform/ego-stream-client/systemd/` → `~/.config/systemd/user/`，然后 `systemctl --user daemon-reload`。
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user restart ecs-record-oak-stream
+# 1. 采集（含心跳；不含上传）
+systemctl --user start ecs-oak-capture-stack.target
+systemctl --user stop ecs-oak-capture-stack.target
+systemctl --user status ecs-oak-capture-stack.target
+
+# 2. 上传（有网后手动开，传完再停）
+systemctl --user start ecs-oak-upload-stack.target
+journalctl --user -u ecs-upload-segments-loop -f    # 可选：看进度，pending=0 后停
+systemctl --user stop ecs-oak-upload-stack.target
+
+# 单服务排障
 systemctl --user status ecs-record-oak-stream
+journalctl --user -u ecs-record-oak-stream -f
 ```
 
 ---

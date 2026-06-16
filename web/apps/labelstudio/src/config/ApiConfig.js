@@ -31,6 +31,8 @@ export const API_CONFIG = {
     // Config and Import
     configTemplates: "/templates",
     validateConfig: "POST:/projects/:pk/validate",
+    getSamClasses: "GET:/projects/:pk/sam-classes",
+    updateSamClasses: "PUT:/projects/:pk/sam-classes",
     createSampleTask: "POST:/projects/:pk/sample-task",
     fileUploads: "/projects/:pk/file-uploads",
     deleteFileUploads: "DELETE:/projects/:pk/file-uploads",

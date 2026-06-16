@@ -1,0 +1,37 @@
+{
+  "description": "ASR using Segments demo - embodied robot voice commands (Chinese)",
+  "audio_file": "robot_command_demo.wav",
+  "duration_seconds": 12.14,
+  "template": "Automatic Speech Recognition using Segments",
+  "expected_segments": [
+    {
+      "label": "Noise",
+      "note": "first ~0.8s background noise"
+    },
+    {
+      "label": "Speech",
+      "text": "你好，请向前走三步。"
+    },
+    {
+      "label": "Noise",
+      "note": "~1.5s silence"
+    },
+    {
+      "label": "Speech",
+      "text": "帮我打开客厅的灯。"
+    },
+    {
+      "label": "Noise",
+      "note": "~1.5s silence"
+    },
+    {
+      "label": "Speech",
+      "text": "停下，前面有障碍物。"
+    },
+    {
+      "label": "Noise",
+      "note": "trailing ~1.0s silence"
+    }
+  ],
+  "full_transcript": "你好，请向前走三步。 帮我打开客厅的灯。 停下，前面有障碍物。"
+}

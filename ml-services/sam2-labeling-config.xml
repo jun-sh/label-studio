@@ -19,7 +19,7 @@
   </Style>
   <View>
     <Header value="Choose label"/>
-    <BrushLabels name="tag" toName="image">
+    <BrushLabels name="tag" toName="image" opacity="0.3" strokeWidth="3">
       <Label value="Bowl" background="#FFA39E"/>
       <Label value="Cup" background="#40A9FF"/>
       <Label value="Knife" background="#FFC069"/>

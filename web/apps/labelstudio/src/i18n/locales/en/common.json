@@ -618,7 +618,18 @@
     "unsaved_discard": "Discard and leave",
     "unsaved_save_leave": "Save and Leave",
     "unsaved_save_aria": "Save changes",
-    "page_title_settings": "Labeling Interface Settings"
+    "page_title_settings": "Labeling Interface Settings",
+    "sam_managed_banner": "Classes are managed in the Classes tab. Advanced users can still edit XML in Code view."
+  },
+  "sam_classes": {
+    "mode_classes": "Classes",
+    "out_of_sync_banner": "The labeling config was edited manually. Saving will regenerate the full SAM config from this class list.",
+    "manage_in_classes_tab": "For SAM projects, maintain labels in the Classes tab. Code and Visual views are for advanced editing.",
+    "essential_title": "Confirm class changes?",
+    "essential_body": "Removing or renaming classes may affect existing annotations. Save anyway?",
+    "essential_confirm": "Save changes",
+    "save_aria": "Save classes",
+    "save_error": "Failed to save classes"
   },
   "labeling_templates": {
     "enterprise_badge": "Enterprise"

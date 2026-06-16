@@ -451,3 +451,14 @@ class GetFieldsSerializer(serializers.Serializer):
     def validate_filter(self, value):
         if value in ['all', 'pinned_only', 'exclude_pinned']:
             return value
+
+
+class SamClassSerializer(serializers.Serializer):
+    value = serializers.CharField(max_length=4096)
+    background = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    alias = serializers.CharField(max_length=4096, required=False, allow_blank=True)
+
+
+class SamClassesUpdateSerializer(serializers.Serializer):
+    classes = SamClassSerializer(many=True)
+    image_value = serializers.CharField(max_length=4096, required=False, allow_blank=True)

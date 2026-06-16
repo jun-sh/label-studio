@@ -182,6 +182,43 @@ describe("BrushRegion", () => {
       expect(typeof region.strokeColor).toBe("string");
     });
 
+    it("opacity defaults to legacy 0.6 when no style is available", () => {
+      expect(region.opacity).toBe(0.6);
+    });
+
+    it("opacity uses explicit control opacity from style", () => {
+      Object.defineProperty(region, "style", {
+        configurable: true,
+        get: () => ({ opacity: "0.3", strokecolor: "#FFA39E" }),
+      });
+      expect(region.opacity).toBe(0.3);
+    });
+
+    it("opacity preserves legacy 0.6 when style has Labels default 0.2", () => {
+      Object.defineProperty(region, "style", {
+        configurable: true,
+        get: () => ({ opacity: 0.2, strokecolor: "#FFA39E" }),
+      });
+      expect(region.opacity).toBe(0.6);
+    });
+
+    it("opacity prefers fillopacity over opacity", () => {
+      Object.defineProperty(region, "style", {
+        configurable: true,
+        get: () => ({ opacity: "0.3", fillopacity: "0.25", strokecolor: "#FFA39E" }),
+      });
+      expect(region.opacity).toBe(0.25);
+    });
+
+    it("strokeWidth reads control strokewidth with default 3", () => {
+      expect(region.strokeWidth).toBe(3);
+      Object.defineProperty(region, "style", {
+        configurable: true,
+        get: () => ({ strokewidth: "3", strokecolor: "#FFA39E" }),
+      });
+      expect(region.strokeWidth).toBe(3);
+    });
+
     it("bboxCoordsCanvas returns bbox from first touch points when no imageData", () => {
       region.beginPath({ type: "add", strokeWidth: 25 });
       region.addPoint(10, 10);
@@ -368,13 +405,13 @@ describe("BrushRegion", () => {
       expect(() => region.convertPointsToMask()).not.toThrow();
     });
 
-    it("setLayerRef sets layerRef and canvas opacity when ref provided", () => {
+    it("setLayerRef sets layerRef and keeps mask layer fully opaque", () => {
       const mockLayer = {
         canvas: { _canvas: { style: {} } },
       };
       region.setLayerRef(mockLayer);
       expect(region.layerRef).toBe(mockLayer);
-      expect(mockLayer.canvas._canvas.style.opacity).toBe(region.opacity);
+      expect(mockLayer.canvas._canvas.style.opacity).toBe(1);
     });
 
     it("setLayerRef does nothing when ref is falsy", () => {

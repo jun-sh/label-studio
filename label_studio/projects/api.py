@@ -7,6 +7,13 @@ import pathlib
 from core.feature_flags import flag_set
 from core.filters import ListFilter
 from core.label_config import config_essential_data_has_changed
+from core.sam_label_config import (
+    build_sam_classes_response,
+    is_sam_classes_feature_enabled,
+    normalize_classes,
+    parse_image_settings,
+    render_sam_config,
+)
 from core.mixins import GetParentObjectMixin
 from core.permissions import ViewClassPermission, all_permissions
 from core.redis import start_job_async_or_sync
@@ -20,6 +27,7 @@ from django.conf import settings
 from django.db import IntegrityError
 from django.db.models import F
 from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django_filters import CharFilter, FilterSet
 from django_filters.rest_framework import DjangoFilterBackend
@@ -41,13 +49,16 @@ from projects.serializers import (
     ProjectReimportSerializer,
     ProjectSerializer,
     ProjectSummarySerializer,
+    SamClassesUpdateSerializer,
 )
 from rest_framework import filters, generics, status
 from rest_framework.exceptions import NotFound
+from django.core.exceptions import ValidationError
 from rest_framework.exceptions import ValidationError as RestValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
 from rest_framework.views import exception_handler
@@ -930,3 +941,93 @@ class ProjectAnnotatorsAPI(generics.RetrieveAPIView):
         users = User.objects.filter(id__in=annotator_ids).prefetch_related('om_through').order_by('id')
         data = UserSimpleSerializer(users, many=True, context={'request': request}).data
         return Response(data)
+
+
+@method_decorator(
+    name='get',
+    decorator=extend_schema(
+        tags=['Projects'],
+        summary='Get SAM class definitions for project',
+        description=(
+            'Return SAM-managed class list derived from the project labeling config. '
+            'Available when the config is SAM-managed or the project has an interactive ML backend.'
+        ),
+        extensions={
+            'x-fern-sdk-group-name': 'projects',
+            'x-fern-sdk-method-name': 'get_sam_classes',
+            'x-fern-audiences': ['internal'],
+        },
+    ),
+)
+@method_decorator(
+    name='put',
+    decorator=extend_schema(
+        tags=['Projects'],
+        summary='Update SAM class definitions for project',
+        description=(
+            'Regenerate the project SAM labeling config from a single class list and save via native project validation.'
+        ),
+        request=SamClassesUpdateSerializer,
+        extensions={
+            'x-fern-sdk-group-name': 'projects',
+            'x-fern-sdk-method-name': 'update_sam_classes',
+            'x-fern-audiences': ['internal'],
+        },
+    ),
+)
+class ProjectSamClassesAPI(APIView):
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
+    permission_required = ViewClassPermission(
+        GET=all_permissions.projects_view,
+        PUT=all_permissions.projects_change,
+    )
+
+    def get_project(self):
+        return get_object_or_404(
+            Project.objects.filter(organization=self.request.user.active_organization),
+            pk=self.kwargs['pk'],
+        )
+
+    def get(self, request, *args, **kwargs):
+        project = self.get_project()
+        return Response(build_sam_classes_response(project))
+
+    def put(self, request, *args, **kwargs):
+        project = self.get_project()
+
+        if not is_sam_classes_feature_enabled(project):
+            raise RestValidationError('SAM class management is not enabled for this project')
+
+        serializer = SamClassesUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        image_settings = parse_image_settings(project.label_config or '')
+        image_value = serializer.validated_data.get('image_value') or image_settings['value']
+        image_name = image_settings['name']
+
+        try:
+            classes = normalize_classes(serializer.validated_data['classes'])
+        except ValidationError as exc:
+            raise RestValidationError(exc.messages)
+
+        new_label_config = render_sam_config(classes, image_name=image_name, image_value=image_value)
+
+        try:
+            essential_data_changed = config_essential_data_has_changed(new_label_config, project.label_config)
+        except KeyError:
+            essential_data_changed = True
+
+        project.validate_config(new_label_config, strict=True)
+        project.label_config = new_label_config
+        project.save()
+
+        emit_webhooks_for_instance(
+            request.user.active_organization,
+            project,
+            WebhookAction.PROJECT_UPDATED,
+            project,
+        )
+
+        response = build_sam_classes_response(project)
+        response['config_essential_data_has_changed'] = essential_data_changed
+        return Response(response)

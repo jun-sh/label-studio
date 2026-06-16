@@ -1,10 +1,9 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUpdatePageTitle, createTitleFromSegments } from "@humansignal/core";
 import { useAPI } from "../../providers/ApiProvider";
 import { useProject } from "../../providers/ProjectProvider";
 import { FF_UNSAVED_CHANGES, isFF } from "../../utils/feature-flags";
-import { isEmptyString } from "../../utils/helpers";
 import { ConfigPage } from "../CreateProject/Config/Config";
 
 export const LabelingSettings = () => {
@@ -12,10 +11,29 @@ export const LabelingSettings = () => {
   const { project, fetchProject, updateProject } = useProject();
   const [config, setConfig] = useState("");
   const [essentialDataChanged, setEssentialDataChanged] = useState(false);
+  const [samClassesMeta, setSamClassesMeta] = useState(null);
+  const [configRevision, setConfigRevision] = useState(0);
   const hasChanges = isFF(FF_UNSAVED_CHANGES) && config !== project.label_config;
   const api = useAPI();
 
   useUpdatePageTitle(createTitleFromSegments([project?.title, t("labeling_config.page_title_settings")]));
+
+  const loadSamClasses = useCallback(async () => {
+    if (!project?.id) return;
+
+    const res = await api.callApi("getSamClasses", {
+      params: { pk: project.id },
+      errorFilter: () => true,
+    });
+
+    if (res && !res.error) {
+      setSamClassesMeta(res);
+    }
+  }, [api, project?.id]);
+
+  useEffect(() => {
+    loadSamClasses();
+  }, [loadSamClasses]);
 
   const saveConfig = useCallback(
     isFF(FF_UNSAVED_CHANGES)
@@ -55,29 +73,25 @@ export const LabelingSettings = () => {
     [project, config],
   );
 
-  const projectAlreadySetUp = useMemo(() => {
-    if (project.label_config) {
-      const hasConfig = !isEmptyString(project.label_config);
-      const configIsEmpty = project.label_config.replace(/\s/g, "") === "<View></View>";
-      const hasTasks = project.task_number > 0;
-
-      console.log({ hasConfig, configIsEmpty, hasTasks, project });
-      return hasConfig && !configIsEmpty && hasTasks;
-    }
-    return false;
-  }, [project]);
-
   const onSave = useCallback(async () => {
     return saveConfig();
   }, [essentialDataChanged, saveConfig]);
 
-  const onUpdate = useCallback((config) => {
-    setConfig(config);
+  const onUpdate = useCallback((nextConfig) => {
+    setConfig(nextConfig);
   }, []);
 
   const onValidate = useCallback((validation) => {
     setEssentialDataChanged(validation.config_essential_data_has_changed);
   }, []);
+
+  const onSamClassesSaved = useCallback(async () => {
+    if (project?.id) {
+      await fetchProject(project.id, true);
+    }
+    await loadSamClasses();
+    setConfigRevision((value) => value + 1);
+  }, [fetchProject, loadSamClasses, project?.id]);
 
   if (!project.id) return null;
 
@@ -89,6 +103,11 @@ export const LabelingSettings = () => {
       onSaveClick={onSave}
       onValidate={onValidate}
       hasChanges={hasChanges}
+      configRevision={configRevision}
+      samClassesEnabled={samClassesMeta?.enabled === true}
+      samClassesMeta={samClassesMeta}
+      onSamClassesSaved={onSamClassesSaved}
+      onSamClassesMetaChange={setSamClassesMeta}
     />
   );
 };

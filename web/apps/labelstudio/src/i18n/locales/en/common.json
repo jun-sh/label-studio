@@ -619,7 +619,24 @@
     "unsaved_save_leave": "Save and Leave",
     "unsaved_save_aria": "Save changes",
     "page_title_settings": "Labeling Interface Settings",
-    "sam_managed_banner": "Classes are managed in the Classes tab. Advanced users can still edit XML in Code view."
+    "sam_managed_banner": "Classes are managed in the Classes tab. Advanced users can still edit XML in Code view.",
+    "validation_error": "Validation error",
+    "validation_tag_cant_remove": "There are {{count}} annotation(s) created with tag \"{{tag}}\", you can't remove it",
+    "tag_settings": {
+      "stroke_width": "Width of region borders",
+      "zoom": "Allow image zoom (ctrl+wheel)",
+      "zoom_control": "Show controls to zoom in and out",
+      "rotate_control": "Show controls to rotate image",
+      "granularity": "Select text by words",
+      "display_labels": "Display labels:",
+      "filter": "Add filter for long list of labels",
+      "label_position": {
+        "bottom": "Bottom",
+        "left": "Left",
+        "right": "Right",
+        "top": "Top"
+      }
+    }
   },
   "sam_classes": {
     "mode_classes": "Classes",

@@ -3,23 +3,23 @@ const OBJECTS = {
     type: "Image",
     settings: {
       strokeWidth: {
-        title: "Width of region borders",
+        titleKey: "labeling_config.tag_settings.stroke_width",
         type: Number,
         param: ($obj, value) => $obj.$controls.forEach(($control) => $control.setAttribute("strokeWidth", value)),
         value: ($obj) => $obj.$controls[0]?.getAttribute("strokeWidth") ?? 1,
       },
       zoom: {
-        title: "Allow image zoom (ctrl+wheel)",
+        titleKey: "labeling_config.tag_settings.zoom",
         type: Boolean,
         param: "zoom",
       },
       zoomControl: {
-        title: "Show controls to zoom in and out",
+        titleKey: "labeling_config.tag_settings.zoom_control",
         type: Boolean,
         param: "zoomControl",
       },
       rotateControl: {
-        title: "Show controls to rotate image",
+        titleKey: "labeling_config.tag_settings.rotate_control",
         type: Boolean,
         param: "rotateControl",
       },
@@ -29,7 +29,7 @@ const OBJECTS = {
     type: "Text",
     settings: {
       granularity: {
-        title: "Select text by words",
+        titleKey: "labeling_config.tag_settings.granularity",
         type: Boolean,
         param: ($obj, value) =>
           value ? $obj.setAttribute("granularity", "word") : $obj.removeAttribute("granularity"),
@@ -68,7 +68,7 @@ const Labels = {
   type: "Labels",
   settings: {
     placeLabelsLeft: {
-      title: "Display labels:",
+      titleKey: "labeling_config.tag_settings.display_labels",
       type: ["bottom", "left", "right", "top"],
       control: true,
       when: ($tag) => $tag.$object.tagName !== "Video",
@@ -114,7 +114,7 @@ const Labels = {
       },
     },
     filter: {
-      title: "Add filter for long list of labels",
+      titleKey: "labeling_config.tag_settings.filter",
       type: Boolean,
       control: true,
       param: ($obj, value) => {

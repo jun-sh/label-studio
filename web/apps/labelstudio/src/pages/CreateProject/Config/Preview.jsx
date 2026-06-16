@@ -9,6 +9,26 @@ import { useAPI } from "../../../providers/ApiProvider";
 
 const configClass = cn("configure");
 
+function translateValidationDetail(detail, t) {
+  if (!detail) return detail;
+  if (detail === "Validation error") return t("labeling_config.validation_error");
+  return detail;
+}
+
+function translateValidationMessage(message, t) {
+  if (!message || typeof message !== "string") return message;
+  const tagRemoveMatch = message.match(
+    /^There are (\d+) annotation\(s\) created with tag "([^"]+)", you can't remove it$/,
+  );
+  if (tagRemoveMatch) {
+    return t("labeling_config.validation_tag_cant_remove", {
+      count: Number(tagRemoveMatch[1]),
+      tag: tagRemoveMatch[2],
+    });
+  }
+  return message;
+}
+
 // Lazy load Label Studio with a single promise to avoid multiple loads
 // and enable as early as possible to load the dependencies once this component is mounted for the first time
 let dependencies;
@@ -147,16 +167,16 @@ export const Preview = ({ config, data, error, loading, project }) => {
       {error && (
         <div className={configClass.elem("preview-error").toClassName()}>
           <h2>
-            {error.detail} {error.id}
+            {translateValidationDetail(error.detail, t)} {error.id}
           </h2>
           {error.validation_errors?.non_field_errors?.map?.((err) => (
-            <p key={err}>{err}</p>
+            <p key={err}>{translateValidationMessage(err, t)}</p>
           ))}
           {error.validation_errors?.label_config?.map?.((err) => (
-            <p key={err}>{err}</p>
+            <p key={err}>{translateValidationMessage(err, t)}</p>
           ))}
           {error.validation_errors?.map?.((err) => (
-            <p key={err}>{err}</p>
+            <p key={err}>{translateValidationMessage(err, t)}</p>
           ))}
         </div>
       )}

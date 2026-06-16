@@ -25,7 +25,7 @@
 
   lockLightTheme();
 
-  var SHELL_VERSION = "21";
+  var SHELL_VERSION = "23";
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -59,9 +59,14 @@
       '<path d="M15 16L11 20H21V16H15ZM12.06 7.19L3 16.25V20H6.75L15.81 10.94L12.06 7.19ZM5.92 18H5V17.08L12.06 10L13 10.94L5.92 18ZM18.71 8.04C19.1 7.65 19.1 7 18.71 6.63L16.37 4.29C16.17 4.09 15.92 4 15.66 4C15.41 4 15.15 4.1 14.96 4.29L13.13 6.12L16.88 9.87L18.71 8.04Z" fill="currentColor"/></svg>',
   };
 
+  var MENU_LABELS = {
+    en: { data: "Data", collection: "Collection", projects: "Annotation" },
+    zh: { data: "数据", collection: "采集", projects: "标注" },
+  };
+
   var INJECT_SPECS = [
-    { key: "data", href: "/data", match: /^\/data(?:\/[^/]+)?$/, label: "数据" },
-    { key: "collection", href: "/collection", match: /^\/collection/, label: "采集" },
+    { key: "data", href: "/data", match: /^\/data(?:\/[^/]+)?$/ },
+    { key: "collection", href: "/collection", match: /^\/collection/ },
   ];
 
   var state = {
@@ -287,14 +292,34 @@
   }
 
   function pageLang() {
-    var lang = (document.documentElement && document.documentElement.lang) || "";
+    var lang = "";
+    if (document.documentElement) {
+      lang =
+        document.documentElement.getAttribute("data-ui-locale") ||
+        document.documentElement.lang ||
+        "";
+    }
+    if (!lang) {
+      try {
+        lang = global.localStorage.getItem("ui_locale") || "";
+      } catch (_err) {
+        /* ignore */
+      }
+    }
+    if (!lang && global.APP_SETTINGS) {
+      lang = global.APP_SETTINGS.locale || (global.APP_SETTINGS.user && global.APP_SETTINGS.user.ui_locale) || "";
+    }
     try {
       var q = new URLSearchParams(global.location.search).get("lang");
       if (q) lang = q;
-    } catch (_err) {
+    } catch (_err2) {
       /* ignore */
     }
     return String(lang).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+  }
+
+  function getMenuLabels() {
+    return MENU_LABELS[pageLang()] || MENU_LABELS.en;
   }
 
   function isOnCollectionRoute() {
@@ -448,6 +473,7 @@
   }
 
   function patchDocumentTitle() {
+    if (pageLang() !== "zh") return;
     var title = document.title || "";
     if (title.indexOf("项目 |") >= 0) document.title = title.replace(/项目 \|/g, "标注 |");
     if (title.indexOf("项目 ·") >= 0) document.title = title.replace(/项目 ·/g, "标注 |");
@@ -474,7 +500,7 @@
     iconWrap.innerHTML = ICONS[spec.key] || "";
 
     link.appendChild(iconWrap);
-    link.appendChild(document.createTextNode(spec.label));
+    link.appendChild(document.createTextNode(getMenuLabels()[spec.key]));
 
     li.appendChild(link);
     return li;
@@ -502,13 +528,14 @@
     }
     li.setAttribute("data-datalab-managed", "1");
     setItemIcon(li, ICONS[spec.key]);
+    setLinkLabel(li.querySelector(SEL.item), getMenuLabels()[spec.key]);
     return li;
   }
 
   function patchProjectsItem(menu) {
     var li = findNativeLi(menu, { href: "/projects" });
     if (!li) return;
-    setLinkLabel(li.querySelector(SEL.item), "标注");
+    setLinkLabel(li.querySelector(SEL.item), getMenuLabels().projects);
     setItemIcon(li, ICONS.annotation);
   }
 
@@ -715,6 +742,27 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  function bindLanguageWatcher() {
+    if (!document.documentElement || typeof MutationObserver === "undefined") return;
+    var observer = new MutationObserver(function (mutations) {
+      var m;
+      for (m = 0; m < mutations.length; m++) {
+        if (
+          mutations[m].attributeName === "lang" ||
+          mutations[m].attributeName === "data-ui-locale"
+        ) {
+          scheduleMenuReconcile();
+          patchDocumentTitle();
+          return;
+        }
+      }
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["lang", "data-ui-locale"],
+    });
+  }
+
   function init() {
     patchDocumentTitle();
     bindThemeChrome();
@@ -724,6 +772,7 @@
     bindMenubarTriggerPassthrough();
     watchForMenu();
     bindCollectionVizWatcher();
+    bindLanguageWatcher();
     bindHistory();
 
     if (isCollectionVizMode()) {

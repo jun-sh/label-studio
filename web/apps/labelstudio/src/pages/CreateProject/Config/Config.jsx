@@ -188,11 +188,25 @@ const ConfigureSettings = ({ template }) => {
   if (!settings) return null;
   const keys = Object.keys(settings);
 
+  const settingTitle = (options) => {
+    if (options.titleKey) return t(options.titleKey);
+    return options.title ?? "";
+  };
+
+  const settingOptions = (options) => {
+    if (!Array.isArray(options.type)) return options.type;
+    return options.type.map((value) => ({
+      value,
+      label: t(`labeling_config.tag_settings.label_position.${value}`, { defaultValue: value }),
+    }));
+  };
+
   const items = keys.map((key) => {
     const options = settings[key];
     const type = Array.isArray(options.type) ? Array : options.type;
     const $object = options.object;
     const $tag = options.control ? options.control : $object;
+    const title = settingTitle(options);
 
     if (!$tag) return null;
     if (options.when && !options.when($tag)) return;
@@ -221,10 +235,10 @@ const ConfigureSettings = ({ template }) => {
               triggerClassName="border"
               value={value}
               onChange={onChange}
-              options={options.type}
-              label={options.title}
+              options={settingOptions(options)}
+              label={title}
               isInline={true}
-              dataTestid={`select-trigger-${options.title.replace(/\s+/g, "-").replace(":", "").toLowerCase()}-${value}`}
+              dataTestid={`select-trigger-${title.replace(/\s+/g, "-").replace(":", "").toLowerCase()}-${value}`}
             />
           </li>
         );
@@ -240,7 +254,7 @@ const ConfigureSettings = ({ template }) => {
         return (
           <li key={key}>
             <Checkbox checked={value} onChange={onChange}>
-              {options.title}
+              {title}
             </Checkbox>
           </li>
         );
@@ -258,7 +272,7 @@ const ConfigureSettings = ({ template }) => {
         return (
           <li key={key}>
             <label>
-              {options.title} <Input type="text" onInput={onChange} value={value} size={size} />
+              {title} <Input type="text" onInput={onChange} value={value} size={size} />
             </label>
           </li>
         );

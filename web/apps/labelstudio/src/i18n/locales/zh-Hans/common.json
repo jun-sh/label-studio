@@ -619,7 +619,24 @@
     "unsaved_save_leave": "保存并离开",
     "unsaved_save_aria": "保存更改",
     "page_title_settings": "标注界面设置",
-    "sam_managed_banner": "此类别由「类别管理」维护。高级用户仍可在代码视图中编辑 XML。"
+    "sam_managed_banner": "此类别由「类别管理」维护。高级用户仍可在代码视图中编辑 XML。",
+    "validation_error": "校验错误",
+    "validation_tag_cant_remove": "已有 {{count}} 条使用标签「{{tag}}」的标注，无法移除该标签",
+    "tag_settings": {
+      "stroke_width": "区域边框宽度",
+      "zoom": "允许缩放图片（Ctrl+滚轮）",
+      "zoom_control": "显示放大/缩小控件",
+      "rotate_control": "显示旋转图片控件",
+      "granularity": "按词选择文本",
+      "display_labels": "标签显示位置：",
+      "filter": "为长标签列表添加筛选",
+      "label_position": {
+        "bottom": "底部",
+        "left": "左侧",
+        "right": "右侧",
+        "top": "顶部"
+      }
+    }
   },
   "sam_classes": {
     "mode_classes": "类别管理",

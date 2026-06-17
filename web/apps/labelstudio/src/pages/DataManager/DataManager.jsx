@@ -2,8 +2,8 @@ import { Button, buttonVariant, ToastContext, ToastType } from "@humansignal/ui"
 import { reaction } from "mobx";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { generatePath, useHistory } from "react-router";
-import { Link, NavLink } from "react-router-dom";
+import { generatePath, useHistory, useLocation } from "react-router";
+import { Link, NavLink, Redirect } from "react-router-dom";
 import { Spinner } from "../../components";
 import { modal } from "../../components/Modal/Modal";
 import { Space } from "../../components/Space/Space";
@@ -15,7 +15,7 @@ import { cn } from "../../utils/bem";
 import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
-import { EmbodiedAnnotateToolbarButton } from "../EmbodiedAnnotate";
+import { EmbodiedAnnotateToolbarButton, isEmbodiedAnnotateProject } from "../EmbodiedAnnotate";
 import { APIConfig } from "./api-config";
 
 import "./DataManager.scss";
@@ -103,6 +103,7 @@ export const DataManagerPage = ({ ...props }) => {
   const root = useRef();
   const params = useParams();
   const history = useHistory();
+  const location = useLocation();
   const api = useAPI();
   const { project } = useProject();
   const setContextProps = useContextProps();
@@ -110,6 +111,11 @@ export const DataManagerPage = ({ ...props }) => {
   const [loading, setLoading] = useState(!window.DataManager || !window.LabelStudio);
   const dataManagerRef = useRef();
   const projectId = project?.id;
+
+  const isEmbodiedDataRoute =
+    projectId &&
+    isEmbodiedAnnotateProject(project) &&
+    /^\/projects\/\d+\/data\/?$/.test(location.pathname);
 
   const init = useCallback(async () => {
     if (!window.LabelStudio) return;
@@ -252,15 +258,21 @@ export const DataManagerPage = ({ ...props }) => {
   }, []);
 
   useEffect(() => {
+    if (isEmbodiedDataRoute) return;
+
     Promise.all(dependencies)
       .then(() => setLoading(false))
       .then(init);
-  }, [init]);
+  }, [init, isEmbodiedDataRoute, dependencies]);
 
   useEffect(() => {
     // destroy the data manager when the component is unmounted
     return () => destroyDM();
   }, []);
+
+  if (isEmbodiedDataRoute) {
+    return <Redirect to={`/projects/${projectId}/embodied`} />;
+  }
 
   return crashed ? (
     <div className={cn("crash").toClassName()}>
@@ -356,7 +368,7 @@ DataManagerPage.context = ({ dmRef }) => {
     updateCrumbs(mode);
   }, [i18n.language, dmRef, mode, updateCrumbs]);
 
-  return project && project.id ? (
+  return project && project.id && !isEmbodiedAnnotateProject(project) ? (
     <Space size="small">
       <EmbodiedAnnotateToolbarButton />
       {project.expert_instruction && mode !== "explorer" && (

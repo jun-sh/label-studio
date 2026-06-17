@@ -75,7 +75,7 @@ const ProjectName = ({
           id="project_type"
           value={projectType}
           options={projectTypeOptions}
-          onChange={(val) => setProjectType(val ?? PROJECT_TYPE.multimodal)}
+          onChange={(val) => setProjectType(val ?? PROJECT_TYPE.embodied)}
           triggerClassName="!flex-1"
         />
       </div>
@@ -95,12 +95,12 @@ export const CreateProject = ({ onClose }) => {
   const [name, setName] = React.useState("");
   const [error, setError] = React.useState();
   const [description, setDescription] = React.useState("");
-  const [projectType, setProjectType] = React.useState(PROJECT_TYPE.multimodal);
+  const [projectType, setProjectType] = React.useState(PROJECT_TYPE.embodied);
 
   const projectTypeOptions = React.useMemo(
     () => [
-      { value: PROJECT_TYPE.multimodal, label: t("projects.create_modal.project_type_multimodal") },
       { value: PROJECT_TYPE.embodied, label: t("projects.create_modal.project_type_embodied") },
+      { value: PROJECT_TYPE.multimodal, label: t("projects.create_modal.project_type_multimodal") },
     ],
     [t],
   );

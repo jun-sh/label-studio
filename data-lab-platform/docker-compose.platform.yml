@@ -42,6 +42,8 @@ services:
       - "7862"
     volumes:
       - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
     user: "1000:1000"
     environment:
       - INGEST_PORT=7862
@@ -84,6 +86,10 @@ services:
       - ./data-storage/stream:/srv/stream
       - ./data-storage/ego-archive:/cold-archive:ro
       - ./data-storage/samples:/datalab-samples:ro
+      - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
+      - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
     environment:
       - PORT=7860
       - NODE_ENV=production

@@ -43,31 +43,7 @@
           </ul>
         {% endif %}
       </div>
-      <div class="input-wrapper">
-        <label>How did you hear about Data Lab?</label>
-        <select class="lsf-select-ls" name="how_find_us" id="how_find_us">
-          <option disabled value="" {% if not form.data.how_find_us %}selected{% endif %}>Select an option</option>
-          {% for choice in found_us_options %}
-            <option value="{{ choice.1 }}" {% if choice.1 == user_form.data.how_find_us %}selected{% endif %}>{{ choice.1 }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="input-wrapper" id="elaborateContainer" {% if user_form.data.how_find_us != elaborate %}style="display:none;"{% endif %}> 
-        <label>Please elaborate</label>
-        <input class="lsf-input-ls" name="elaborate" id="elaborate" {% if user_form.data.how_find_us == elaborate %}value="{{ user_form.data.elaborate }}"{% endif %}>
-        </select>
-      </div>
-      <div class="form-group">
-        <input name="allow_newsletters" id="allow_newsletters" type="hidden" value="{% if user_form.data.allow_newsletters == 'false' %}false{% else %}true{% endif %}">
-        <input name="allow_newsletters_visual" id="allow_newsletters_visual" class="lsf-checkbox-ls"
-                type="checkbox" style="width: auto" {% if user_form.data.allow_newsletters == 'false' %}{% else %}checked="checked{% endif %}"
-                onchange="document.getElementById('allow_newsletters').value=document.getElementById('allow_newsletters_visual').checked">
-        <label for="allow_newsletters_visual" style="display: inline-block; cursor: pointer;">
-          Get the latest news from Heidi
-          <img src="{{ settings.HOSTNAME }}{% static 'images/heidi.png' %}" alt="Heidi"
-              width="25" style="position: absolute; right: -2.5em; top: -.25rem;">
-        </label>
-      </div>
+      <input name="allow_newsletters" id="allow_newsletters" type="hidden" value="false">
 
       {% if form.non_field_errors %}
         {% for error in form.non_field_errors %}
@@ -83,10 +59,4 @@
     <p class="">Already have an account?</p>
     <a href="{% url 'user-login' %}{% querystring %}">Log in</a>
   </div>
-  <script>
-    document.querySelector("#how_find_us").addEventListener('change', function(e) {
-      const isOther = e.target.value == '{{ elaborate }}';
-      document.querySelector("#elaborateContainer").style.display = isOther ? 'block' : 'none';
-    });
-  </script>
 {% endblock %}

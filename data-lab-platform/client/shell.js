@@ -25,7 +25,7 @@
 
   lockLightTheme();
 
-  var SHELL_VERSION = "23";
+  var SHELL_VERSION = "24";
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -336,6 +336,34 @@
     }
   }
 
+  /** Hide stale LeRobot iframes in React content before Django station shell mounts. */
+  function hideStaleContentIframesOnCollection() {
+    if (!isOnCollectionRoute()) return;
+    try {
+      if (!new URLSearchParams(global.location.search).get("station")) return;
+    } catch (_err) {
+      return;
+    }
+    document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
+      if (node.id === "datalab-viz-frame" || node.id === "datalab-collection-frame") return;
+      node.style.display = "none";
+    });
+  }
+
+  /** One-shot reload when Django collection shell failed to mount (stale bundle / blocked script). */
+  function ensureCollectionStationShell() {
+    if (!isCollectionVizMode()) return;
+    if (document.getElementById("datalab-station-shell")) return;
+    var key = "datalab-collection-shell-reload";
+    try {
+      if (global.sessionStorage.getItem(key) === "1") return;
+      global.sessionStorage.setItem(key, "1");
+    } catch (_err) {
+      return;
+    }
+    global.location.reload();
+  }
+
   var COLLECTION_LAYER_IDS = [
     "datalab-collection-layer",
     "datalab-station-layer",
@@ -620,6 +648,7 @@
     state.menuPending = true;
     global.requestAnimationFrame(function () {
       state.menuPending = false;
+      hideStaleContentIframesOnCollection();
       maybeTeardownCollectionChrome();
       reconcileMenu();
     });
@@ -774,6 +803,10 @@
     bindCollectionVizWatcher();
     bindLanguageWatcher();
     bindHistory();
+
+    hideStaleContentIframesOnCollection();
+    global.setTimeout(hideStaleContentIframesOnCollection, 0);
+    global.setTimeout(ensureCollectionStationShell, 2000);
 
     if (isCollectionVizMode()) {
       var ticks = 0;

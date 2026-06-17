@@ -3,7 +3,7 @@
 {% block divider %}{% endblock %}
 
 {% block content %}
-{# Collection list or LeRobot viz iframe — mounted on document.body (see bottomjs). #}
+{# Collection list or LeRobot viz iframe — mounted on document.body (see app-js). #}
 {% endblock %}
 
 {% block head %}
@@ -124,8 +124,7 @@
 </style>
 {% endblock %}
 
-{% block bottomjs %}
-{{ block.super }}
+{% block app-js %}
 <script nonce="{{ request.csp_nonce }}">
   document.body.dataset.datalabCollectionPage = "1";
   (function () {
@@ -698,4 +697,5 @@
       });
   })();
 </script>
+{{ block.super }}
 {% endblock %}

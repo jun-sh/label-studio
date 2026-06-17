@@ -31,6 +31,7 @@ services:
     volumes:
       - ./mydata:/label-studio/data:rw
       - ./deploy/nginx/certs:/certs:ro
+      - ./label_studio/core/static_build:/label-studio/label_studio/core/static_build:ro
     #   Optional: Override nginx default conf
     #      - ./deploy/my.conf:/etc/nginx/nginx.conf
     command: nginx
@@ -78,6 +79,9 @@ services:
       - ./label_studio/core/views.py:/label-studio/label_studio/core/views.py:ro
       - ./label_studio/data_manager/urls.py:/label-studio/label_studio/data_manager/urls.py:ro
       - ./label_studio/templates:/label-studio/label_studio/templates:ro
+      - ./label_studio/users/templates:/label-studio/label_studio/users/templates:ro
+      - ./label_studio/core/static:/label-studio/label_studio/core/static:ro
+      - ./label_studio/core/static_build:/label-studio/label_studio/core/static_build:rw
     command: label-studio-uwsgi
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/health/ >/dev/null || exit 1"]

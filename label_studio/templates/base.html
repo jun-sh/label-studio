@@ -30,7 +30,7 @@
 
   {% block theme_colors %}
     {% if feature_flags.fflag_feat_front_optic_1217_theme_toggle_short %}
-    <script>
+    <script nonce="{{request.csp_nonce}}">
       function handleThemeColor() {
         let themeColor = window.localStorage.getItem("preferred-color-scheme");
         if (themeColor === "Auto") {

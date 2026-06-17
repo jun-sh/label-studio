@@ -6,9 +6,12 @@
 # Unified entry: http://10.10.10.34:8080
 # LeRobot visualizer: http://10.10.10.34:8080/lerobot/
 # Embedded route:     http://10.10.10.34:8080/data
+# LeRobot annotate:   http://10.10.10.34:8080/lerobot-annotate/  (host :7861 via nginx)
 
 services:
   nginx:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - APP_HOST=app
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}

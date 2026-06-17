@@ -26,14 +26,16 @@ export function syncBounds(config: DatalabEmbedConfig) {
   const layer = document.getElementById(config.layerId);
   if (!layer) return;
 
+  applyLayerChrome(layer);
+
   const content = document.querySelector(".content-wrapper__content");
   const headerHeight =
     parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
+  const insetFromStorage = readSidebarInset();
 
   if (content) {
     const style = getComputedStyle(content);
     const marginLeft = parseFloat(style.marginLeft) || 0;
-    const insetFromStorage = readSidebarInset();
     const rect = content.getBoundingClientRect();
 
     let left: number;
@@ -49,10 +51,13 @@ export function syncBounds(config: DatalabEmbedConfig) {
       width = rect.width;
     }
 
-    layer.style.top = `${rect.top}px`;
+    const top = rect.top > 0 ? rect.top : headerHeight;
+    const height = Math.max(0, window.innerHeight - top);
+
+    layer.style.top = `${top}px`;
     layer.style.left = `${left}px`;
     layer.style.width = `${width}px`;
-    layer.style.height = `${rect.height > 0 ? rect.height : window.innerHeight - rect.top}px`;
+    layer.style.height = `${height}px`;
     layer.style.right = "";
     layer.style.bottom = "";
   } else {
@@ -69,22 +74,43 @@ export function syncBounds(config: DatalabEmbedConfig) {
   hideDuplicateIframes(config.frameId);
 }
 
+function applyLayerChrome(layer: HTMLElement) {
+  layer.style.position = "fixed";
+  layer.style.zIndex = "150";
+  layer.style.display = "flex";
+  layer.style.flexDirection = "column";
+  layer.style.overflow = "hidden";
+  layer.style.boxSizing = "border-box";
+  layer.style.background = "#0b1220";
+}
+
 export function mountEmbedLayer(config: DatalabEmbedConfig, src: string, title: string) {
   let layer = document.getElementById(config.layerId);
   if (!layer) {
     layer = document.createElement("div");
     layer.id = config.layerId;
+    applyLayerChrome(layer);
     const iframe = document.createElement("iframe");
     iframe.id = config.frameId;
     iframe.src = src;
     iframe.title = title;
     iframe.allow = "fullscreen";
+    iframe.style.flex = "1 1 auto";
+    iframe.style.width = "100%";
+    iframe.style.height = "100%";
+    iframe.style.minHeight = "0";
+    iframe.style.border = "0";
+    iframe.style.display = "block";
     layer.appendChild(iframe);
     document.body.appendChild(layer);
   } else {
+    applyLayerChrome(layer);
     const frame = document.getElementById(config.frameId) as HTMLIFrameElement | null;
-    if (frame && frame.src !== src) {
-      frame.src = src;
+    if (frame) {
+      const resolvedSrc = new URL(src, window.location.origin).href;
+      if (frame.src !== resolvedSrc) {
+        frame.src = src;
+      }
     }
   }
   syncBounds(config);

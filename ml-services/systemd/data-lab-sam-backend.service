@@ -1,0 +1,24 @@
+[Unit]
+Description=Data Lab SAM 2.1 ML Backend (host GPU, :9090)
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/SERVICE-MAINTENANCE.md
+After=network-online.target docker.service nvidia-persistenced.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user01
+Group=user01
+WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+Environment=PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SAM_FOREGROUND=1
+ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/ml-services/start-sam-backend.sh
+ExecStop=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/ml-services/stop-sam-backend.sh
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=data-lab-sam-backend
+
+[Install]
+WantedBy=multi-user.target

@@ -62,6 +62,13 @@
     "viz_page_title": "{{name}} · Dataset playback",
     "back_to_list": "Back to station list"
   },
+  "embodiedAnnotate": {
+    "page_title": "Embodied annotation",
+    "iframe_title": "LeRobot embodied data annotation",
+    "toolbar_button": "Embodied annotate",
+    "dataset_hint": "Dataset path (use as Local directory in Connect):",
+    "back_to_data": "Project data"
+  },
   "home": {
     "page_title": "Home",
     "welcome": "Workbench",
@@ -154,7 +161,11 @@
       "select_option_placeholder": "Select an option",
       "workspace_hint": "Simplify project management by organizing projects into workspaces.",
       "learn_more": "Learn more",
-      "cancel_aria": "Cancel project creation"
+      "cancel_aria": "Cancel project creation",
+      "project_type_label": "Project type",
+      "project_type_multimodal": "Multimodal annotation",
+      "project_type_embodied": "Embodied data annotation",
+      "multimodal_created_toast": "Project created. Go to Settings to configure the labeling template and import data."
     }
   },
   "breadcrumbs": {

@@ -15,6 +15,7 @@ import { cn } from "../../utils/bem";
 import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
+import { EmbodiedAnnotateToolbarButton } from "../EmbodiedAnnotate";
 import { APIConfig } from "./api-config";
 
 import "./DataManager.scss";
@@ -357,6 +358,7 @@ DataManagerPage.context = ({ dmRef }) => {
 
   return project && project.id ? (
     <Space size="small">
+      <EmbodiedAnnotateToolbarButton />
       {project.expert_instruction && mode !== "explorer" && (
         <Button
           size="small"

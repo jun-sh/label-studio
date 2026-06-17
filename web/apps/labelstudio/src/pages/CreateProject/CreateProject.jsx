@@ -1,26 +1,36 @@
-import { EnterpriseBadge, Select, Typography } from "@humansignal/ui";
+import { Select, ToastContext, ToastType } from "@humansignal/ui";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { useHistory } from "react-router";
-import { ToggleItems } from "../../components";
 import { Button } from "@humansignal/ui";
 import { Modal } from "../../components/Modal/Modal";
 import { Space } from "../../components/Space/Space";
-import { HeidiTips } from "../../components/HeidiTips/HeidiTips";
 import { useAPI } from "../../providers/ApiProvider";
 import { cn } from "../../utils/bem";
-import { ConfigPage } from "./Config/Config";
 import "./CreateProject.scss";
-import { ImportPage } from "./Import/Import";
-import { useImportPage } from "./Import/useImportPage";
 import { useDraftProject } from "./utils/useDraftProject";
 import { Input, TextArea } from "../../components/Form";
-import { FF_LSDV_E_297, isFF } from "../../utils/feature-flags";
-import { createURL } from "../../components/HeidiTips/utils";
+import { buildEmbodiedProjectDescription } from "../EmbodiedAnnotate/embodiedAnnotate";
 
-const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, setDescription, show = true }) => {
+export const PROJECT_TYPE = {
+  multimodal: "multimodal",
+  embodied: "embodied",
+};
+
+const ProjectName = ({
+  name,
+  setName,
+  onSaveName,
+  onSubmit,
+  error,
+  description,
+  setDescription,
+  projectType,
+  setProjectType,
+  projectTypeOptions,
+}) => {
   const { t } = useTranslation("common");
-  return !show ? null : (
+  return (
     <form
       className={cn("project-name").toClassName()}
       onSubmit={(e) => {
@@ -35,7 +45,7 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
         <Input
           name="name"
           id="project_name"
-          value={name}
+          value={name ?? ""}
           onChange={(e) => setName(e.target.value)}
           onBlur={onSaveName}
           className="project-title w-full"
@@ -57,122 +67,88 @@ const ProjectName = ({ name, setName, onSaveName, onSubmit, error, description, 
           className="project-description w-full"
         />
       </div>
-      {isFF(FF_LSDV_E_297) && (
-        <div className="w-full flex flex-col gap-2">
-          <label>
-            {t("projects.create_modal.workspace_label")}
-            <EnterpriseBadge className="ml-tight">{t("projects.create_modal.enterprise_badge")}</EnterpriseBadge>
-          </label>
-          <Select
-            placeholder={t("projects.create_modal.select_option_placeholder")}
-            disabled
-            options={[]}
-            triggerClassName="!flex-1"
-          />
-          <Typography size="small" className="mt-tight mb-wider">
-            {t("projects.create_modal.workspace_hint")}{" "}
-            <a
-              href={createURL(
-                "https://docs.humansignal.com/guide/manage_projects#Create-workspaces-to-organize-projects",
-                {
-                  experiment: "project_creation_dropdown",
-                  treatment: "simplify_project_management",
-                },
-              )}
-              target="_blank"
-              rel="noreferrer"
-              className="underline hover:no-underline"
-            >
-              {t("projects.create_modal.learn_more")}
-            </a>
-          </Typography>
-          <HeidiTips collection="projectCreation" />
-        </div>
-      )}
+      <div className="w-full flex flex-col gap-2">
+        <label className="w-full" htmlFor="project_type">
+          {t("projects.create_modal.project_type_label")}
+        </label>
+        <Select
+          id="project_type"
+          value={projectType}
+          options={projectTypeOptions}
+          onChange={(val) => setProjectType(val ?? PROJECT_TYPE.multimodal)}
+          triggerClassName="!flex-1"
+        />
+      </div>
     </form>
   );
 };
 
 export const CreateProject = ({ onClose }) => {
   const { t } = useTranslation("common");
-  const [step, _setStep] = React.useState("name"); // name | import | config
   const [waiting, setWaitingStatus] = React.useState(false);
 
   const { project, setProject: updateProject } = useDraftProject();
   const history = useHistory();
   const api = useAPI();
+  const toast = React.useContext(ToastContext);
 
   const [name, setName] = React.useState("");
   const [error, setError] = React.useState();
   const [description, setDescription] = React.useState("");
-  const [sample, setSample] = React.useState(null);
+  const [projectType, setProjectType] = React.useState(PROJECT_TYPE.multimodal);
 
-  const setStep = React.useCallback((step) => {
-    _setStep(step);
-    const eventNameMap = {
-      name: "project_name",
-      import: "data_import",
-      config: "labeling_setup",
-    };
-    __lsa(`create_project.tab.${eventNameMap[step]}`);
-  }, []);
+  const projectTypeOptions = React.useMemo(
+    () => [
+      { value: PROJECT_TYPE.multimodal, label: t("projects.create_modal.project_type_multimodal") },
+      { value: PROJECT_TYPE.embodied, label: t("projects.create_modal.project_type_embodied") },
+    ],
+    [t],
+  );
 
   React.useEffect(() => {
     setError(null);
   }, [name]);
 
-  const { columns, uploading, uploadDisabled, finishUpload, pageProps, uploadSample } = useImportPage(project, sample);
-
-  const rootClass = cn("create-project");
-  const tabClass = rootClass.elem("tab");
-  const steps = {
-    name: <span className={tabClass.mod({ disabled: !!error }).toClassName()}>{t("projects.create_modal.tab_name")}</span>,
-    import: (
-      <span className={tabClass.mod({ disabled: uploadDisabled }).toClassName()}>{t("projects.create_modal.tab_import")}</span>
-    ),
-    config: t("projects.create_modal.tab_config"),
-  };
-
   // name intentionally skipped from deps:
   // this should trigger only once when we got project loaded
   React.useEffect(() => {
-    project && !name && setName(project.title);
+    if (project?.title && !name) setName(project.title);
   }, [project]);
 
-  const projectBody = React.useMemo(
-    () => ({
-      title: name,
-      description,
-      label_config: project?.label_config ?? "<View></View>",
-    }),
-    [name, description, project?.label_config],
-  );
-
   const onCreate = React.useCallback(async () => {
-    // First, persist project with label_config so import/reimport validates against it
+    const isEmbodied = projectType === PROJECT_TYPE.embodied;
+    const finalDescription = isEmbodied ? buildEmbodiedProjectDescription(description) : description;
+
     const response = await api.callApi("updateProject", {
       params: {
         pk: project.id,
       },
-      body: { ...projectBody, is_draft: false },
+      body: {
+        title: name,
+        description: finalDescription,
+        label_config: project?.label_config ?? "<View></View>",
+        is_draft: false,
+      },
     });
 
     if (response === null) return;
 
-    const imported = await finishUpload();
-
-    if (!imported) return;
-
     setWaitingStatus(true);
 
-    if (sample) await uploadSample(sample);
-
-    __lsa("create_project.create", { sample: sample?.url });
+    __lsa("create_project.create", { project_type: projectType });
 
     setWaitingStatus(false);
 
-    history.push(`/projects/${response.id}/data`);
-  }, [project, projectBody, finishUpload]);
+    if (isEmbodied) {
+      history.push(`/projects/${response.id}/embodied`);
+    } else {
+      toast.show({
+        message: t("projects.create_modal.multimodal_created_toast"),
+        type: ToastType.info,
+      });
+      history.push(`/projects/${response.id}/data`);
+    }
+  }, [project, name, description, projectType, api, history, toast, t]);
 
   const onSaveName = async () => {
     if (error) return;
@@ -207,12 +183,13 @@ export const CreateProject = ({ onClose }) => {
     performClose();
   }, [project]);
 
+  const rootClass = cn("create-project");
+
   return (
     <Modal onHide={onDelete} closeOnClickOutside={false} allowToInterceptEscape fullscreen visible bare>
       <div className={rootClass}>
         <Modal.Header>
           <h1>{t("projects.create_modal.title")}</h1>
-          <ToggleItems items={steps} active={step} onSelect={setStep} />
 
           <Space>
             <Button
@@ -227,9 +204,9 @@ export const CreateProject = ({ onClose }) => {
             <Button
               look="primary"
               onClick={onCreate}
-              waiting={waiting || uploading}
+              waiting={waiting}
               waitingClickable={false}
-              disabled={!project || uploadDisabled || error}
+              disabled={!project || !!error || !(name ?? "").trim()}
             >
               {t("projects.create_modal.save")}
             </Button>
@@ -243,24 +220,9 @@ export const CreateProject = ({ onClose }) => {
           onSubmit={onCreate}
           description={description}
           setDescription={setDescription}
-          show={step === "name"}
-        />
-        <ImportPage
-          project={project}
-          show={step === "import"}
-          sample={sample}
-          onSampleDatasetSelect={setSample}
-          openLabelingConfig={() => setStep("config")}
-          {...pageProps}
-        />
-        <ConfigPage
-          project={project}
-          onUpdate={(config) => {
-            updateProject({ ...project, label_config: config });
-          }}
-          show={step === "config"}
-          columns={columns}
-          disableSaveButton={true}
+          projectType={projectType}
+          setProjectType={setProjectType}
+          projectTypeOptions={projectTypeOptions}
         />
       </div>
     </Modal>

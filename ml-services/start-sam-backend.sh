@@ -21,13 +21,6 @@ if [[ ! -d "$SAM2_DIR" || ! -d "$BACKEND_DIR" ]]; then
   exit 1
 fi
 
-CKPT="$SAM2_DIR/checkpoints/${MODEL_CHECKPOINT:-sam2.1_hiera_large.pt}"
-if [[ ! -f "$CKPT" ]]; then
-  echo "Checkpoint not found: $CKPT" >&2
-  echo "Download: curl -L -o $CKPT https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt" >&2
-  exit 1
-fi
-
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   echo "SAM backend already running (pid $(cat "$PID_FILE"))"
   exit 0
@@ -38,9 +31,24 @@ set -a
 source "$ENV_FILE"
 set +a
 
+CKPT="$SAM2_DIR/checkpoints/${MODEL_CHECKPOINT:-sam2.1_hiera_large.pt}"
+if [[ ! -f "$CKPT" ]]; then
+  echo "Checkpoint not found: $CKPT" >&2
+  echo "Download: curl -L -o $CKPT https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt" >&2
+  exit 1
+fi
+
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 cd "$SAM2_DIR"
+
+if [[ "${SAM_FOREGROUND:-}" == "1" ]]; then
+  echo "Starting SAM ML backend (foreground) on :${PORT:-9090} (cwd=$SAM2_DIR)"
+  exec python3 "$BACKEND_DIR/_wsgi.py" \
+    --host 0.0.0.0 \
+    -p "${PORT:-9090}"
+fi
+
 echo "Starting SAM ML backend on :${PORT:-9090} (cwd=$SAM2_DIR)"
 nohup python3 "$BACKEND_DIR/_wsgi.py" \
   --host 0.0.0.0 \

@@ -62,6 +62,13 @@
     "viz_page_title": "{{name}} · 数据集回放",
     "back_to_list": "返回采集站列表"
   },
+  "embodiedAnnotate": {
+    "page_title": "具身标注",
+    "iframe_title": "LeRobot 具身数据标注",
+    "toolbar_button": "具身标注",
+    "dataset_hint": "数据集路径（在 Connect 中填写 Local directory）：",
+    "back_to_data": "任务数据"
+  },
   "home": {
     "page_title": "首页",
     "welcome": "工作台",
@@ -154,7 +161,11 @@
       "select_option_placeholder": "请选择",
       "workspace_hint": "使用工作区对项目分组，便于协作与管理。",
       "learn_more": "了解更多",
-      "cancel_aria": "取消创建项目"
+      "cancel_aria": "取消创建项目",
+      "project_type_label": "项目类型",
+      "project_type_multimodal": "多模态标注",
+      "project_type_embodied": "具身数据标注",
+      "multimodal_created_toast": "项目创建成功，可前往设置页配置标注模板与导入数据"
     }
   },
   "breadcrumbs": {

@@ -50,4 +50,3 @@ export const sortedProjectsAtom = atom((get) => {
 });
 
 export const creationDialogOpen = atom(false);
-export const invitationOpen = atom(false);

@@ -9,6 +9,7 @@ import { Menu, Pagination } from "../../components";
 import { cn } from "../../utils/bem";
 import { getDateFnsLocale } from "../../utils/dateFnsLocale";
 import { absoluteURL } from "../../utils/helpers";
+import { isEmbodiedAnnotateProject } from "../EmbodiedAnnotate/embodiedAnnotate";
 import { ProjectStateChip } from "@humansignal/app-common";
 
 const DEFAULT_CARD_COLORS = ["#FFFFFF", "#FDFDFC"];
@@ -80,11 +81,15 @@ const ProjectCard = ({ project }) => {
       : {};
   }, [color]);
 
+  const projectPath = isEmbodiedAnnotateProject(project)
+    ? `/projects/${project.id}/embodied`
+    : `/projects/${project.id}/data`;
+
   return (
     <NavLink
       className={cn("projects-page").elem("link").toClassName()}
-      to={`/projects/${project.id}/data`}
-      data-external
+      to={projectPath}
+      {...(isEmbodiedAnnotateProject(project) ? {} : { "data-external": true })}
     >
       <div className={cn("project-card").mod({ colored: !!color }).toClassName()} style={projectColors}>
         <div className={cn("project-card").elem("header").toClassName()}>

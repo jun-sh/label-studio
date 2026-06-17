@@ -19,7 +19,7 @@ const EMBED_CONFIG = {
  * /projects/:id/embodied — fullscreen iframe for lerobot-annotate (via /lerobot-annotate/ proxy).
  */
 export const EmbodiedAnnotatePage = () => {
-  const { t } = useTranslation("common");
+  const { t, i18n } = useTranslation("common");
   const { project } = useProject();
   const params = useParams();
   const projectId = project?.id ?? params?.id;
@@ -39,7 +39,7 @@ export const EmbodiedAnnotatePage = () => {
 
   useEffect(() => {
     mountEmbedLayer(EMBED_CONFIG, buildEmbodiedAnnotateEmbedSrc(), t("embodiedAnnotate.iframe_title"));
-  }, [t]);
+  }, [t, i18n.language]);
 
   if (!projectId) return null;
 

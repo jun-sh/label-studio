@@ -1,0 +1,23 @@
+[Unit]
+Description=Data Lab LeRobot Annotate backend (host :7861)
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/SERVICE-MAINTENANCE.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=LEROBOT_ANNOTATE_FOREGROUND=1
+Environment=LEROBOT_ANNOTATE_ROOT=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/lerobot-annotate
+ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/lerobot-annotate/start-lerobot-annotate.sh
+ExecStop=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/lerobot-annotate/stop-lerobot-annotate.sh
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=data-lab-lerobot-annotate
+
+[Install]
+WantedBy=default.target

@@ -26,5 +26,17 @@ export function buildEmbodiedProjectDescription(userDescription?: string | null)
 }
 
 export function buildEmbodiedAnnotateEmbedSrc(): string {
-  return "/lerobot-annotate/?datalab_embed=1";
+  const params = new URLSearchParams({ datalab_embed: "1" });
+
+  if (typeof window !== "undefined") {
+    const raw =
+      window.i18n?.language ??
+      window.APP_SETTINGS?.user?.ui_locale ??
+      window.APP_SETTINGS?.locale ??
+      localStorage.getItem("ui_locale") ??
+      "en";
+    params.set("lang", String(raw).toLowerCase().startsWith("zh") ? "zh-Hans" : "en");
+  }
+
+  return `/lerobot-annotate/?${params.toString()}`;
 }

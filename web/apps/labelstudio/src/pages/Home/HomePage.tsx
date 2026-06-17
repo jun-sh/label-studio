@@ -1,4 +1,4 @@
-import { IconExternal, IconFolderAdd, IconUserAdd, IconFolderOpen } from "@humansignal/icons";
+import { IconExternal, IconFolderOpen } from "@humansignal/icons";
 import { DataLabMark } from "../../assets/images";
 import { Button, SimpleCard, Spinner, Tooltip, Typography } from "@humansignal/ui";
 import { useQuery } from "@tanstack/react-query";
@@ -10,11 +10,9 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { HeidiTips } from "../../components/HeidiTips/HeidiTips";
 import { useAPI } from "../../providers/ApiProvider";
 import { CreateProject } from "../CreateProject/CreateProject";
-import { InviteLink } from "../Organization/PeoplePage/InviteLink";
 import type { Page } from "../types/Page";
 import {
   creationDialogOpen,
-  invitationOpen,
   locationKeyAtom,
   PROJECTS_TO_SHOW,
   projectsDataAtom,
@@ -23,29 +21,17 @@ import {
 } from "./atoms";
 import { buildHomeResourceLinks } from "../../config/dataLabLinks";
 
-type Action = "createProject" | "inviteMembers";
-
 export const HomePage: Page = () => {
   const { t } = useTranslation("common");
   const api = useAPI();
   const location = useLocation();
   const [modalIsOpen, setModalIsOpen] = useAtom(creationDialogOpen);
-  const [invitationIsOpen, setInvitationIsOpen] = useAtom(invitationOpen);
   const setLocationKey = useSetAtom(locationKeyAtom);
   const setProjectsData = useSetAtom(projectsDataAtom);
   const sortedProjects = useAtomValue(sortedProjectsAtom);
   const visitedIds = useAtomValue(visitedIdsAtom);
 
   const resourceLinks = useMemo(() => buildHomeResourceLinks(t), [t]);
-
-  const actions = useMemo(
-    () =>
-      [
-        { title: t("home.create_project"), icon: IconFolderAdd, type: "createProject" as const },
-        { title: t("home.invite_members"), icon: IconUserAdd, type: "inviteMembers" as const },
-      ] as const,
-    [t],
-  );
 
   useUpdatePageTitle(t("home.page_title"));
 
@@ -96,19 +82,6 @@ export const HomePage: Page = () => {
     }
   }, [data?.results, visitedProjectsData?.results, setProjectsData]);
 
-  const handleActions = (action: Action) => {
-    return () => {
-      switch (action) {
-        case "createProject":
-          setModalIsOpen(true);
-          break;
-        case "inviteMembers":
-          setInvitationIsOpen(true);
-          break;
-      }
-    };
-  };
-
   return (
     <main className="p-6">
       <div className="grid grid-cols-[minmax(0,1fr)_450px] gap-6">
@@ -120,22 +93,6 @@ export const HomePage: Page = () => {
             <Typography size="small" className="text-neutral-content-subtler">
               {t("home.subtitle")}
             </Typography>
-          </div>
-          <div className="flex justify-start gap-4">
-            {actions.map((action) => {
-              return (
-                <Button
-                  key={action.type}
-                  look="outlined"
-                  align="center"
-                  className="flex-grow-0 text-16/24 gap-2 text-primary-content text-left min-w-[250px] [&_svg]:w-6 [&_svg]:h-6 pl-2"
-                  onClick={handleActions(action.type)}
-                  leading={<action.icon />}
-                >
-                  {action.title}
-                </Button>
-              );
-            })}
           </div>
 
           <SimpleCard
@@ -222,7 +179,6 @@ export const HomePage: Page = () => {
         </section>
       </div>
       {modalIsOpen && <CreateProject onClose={() => setModalIsOpen(false)} />}
-      <InviteLink opened={invitationIsOpen} onClosed={() => setInvitationIsOpen(false)} />
     </main>
   );
 };

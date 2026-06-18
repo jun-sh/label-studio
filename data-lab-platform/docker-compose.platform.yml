@@ -1,12 +1,12 @@
 # Data Lab platform overlay — zero Label Studio source changes.
 #
 # Usage (from repo root):
-#   docker compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml up -d --build
+#   docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml up -d --build
 #
 # Unified entry: http://10.10.10.34:8080
 # LeRobot visualizer: http://10.10.10.34:8080/lerobot/
 # Embedded route:     http://10.10.10.34:8080/data
-# LeRobot annotate:   http://10.10.10.34:8080/lerobot-annotate/  (host :7861 via nginx)
+# LeRobot annotate:   http://10.10.10.34:8080/lerobot-annotate/  (embodied-annotate:7861 via nginx)
 
 services:
   nginx:
@@ -25,6 +25,8 @@ services:
       lerobot:
         condition: service_healthy
       stream-ingest:
+        condition: service_healthy
+      embodied-annotate:
         condition: service_healthy
 
   app:
@@ -107,6 +109,30 @@ services:
       timeout: 10s
       retries: 15
       start_period: 300s
+
+  embodied-annotate:
+    build:
+      context: ./data-lab-platform/embodied-annotate
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+    image: ${EMBODIED_ANNOTATE_IMAGE:-data-lab-embodied-annotate:local}
+    restart: unless-stopped
+    expose:
+      - "7861"
+    volumes:
+      - ./data-storage/embodied-annotate/cache:/data/cache
+      - ./data-storage/embodied-annotate/exports:/data/exports
+      - ./data-storage/embodied-annotate/datasets:/data/datasets
+      - ./data-storage/samples:/datalab-samples:ro
+    environment:
+      - LEROBOT_ANNOTATE_CACHE=/data/cache
+      - LEROBOT_ANNOTATE_EXPORT=/data/exports
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7861/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   lerobot-studio-data:

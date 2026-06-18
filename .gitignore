@@ -101,3 +101,9 @@ data-storage/ego-archive/
 !data-storage/ego-archive/.gitkeep
 data-storage/stream_export/
 data-storage/*_export/
+
+# --- embodied-annotate ---
+data-lab-platform/embodied-annotate/.venv/
+data-lab-platform/embodied-annotate/**/__pycache__/
+data-lab-platform/embodied-annotate/**/*.pyc
+data-storage/embodied-annotate/

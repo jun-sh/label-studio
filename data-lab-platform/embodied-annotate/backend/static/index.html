@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeRobot Annotate</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app" class="ls-app">
+    <header class="ls-topbar">
+      <div class="ls-brand">
+        <span class="ls-brand-mark">LS</span>
+        <div>
+          <strong>LeRobot Annotate</strong>
+          <span class="ls-brand-sub">Video frame classification</span>
+        </div>
+      </div>
+      <div class="ls-topbar-actions">
+        <span class="ls-status" id="status">Disconnected</span>
+      </div>
+    </header>
+
+    <section class="ls-panel ls-connect" id="connectPanel">
+      <button type="button" class="ls-connect-toggle" id="connectToggle" aria-expanded="true">
+        Connect dataset
+      </button>
+      <form id="connectForm" class="ls-connect-body">
+        <div class="ls-form-row">
+          <label id="sourceLabel">
+            Source
+            <select id="sourceSelect">
+              <option value="hf">Hugging Face Hub</option>
+              <option value="local">Local directory</option>
+            </select>
+          </label>
+          <label id="repoLabel">
+            Repo ID
+            <input id="repoInput" type="text" placeholder="lerobot/pusht" />
+          </label>
+          <label id="localLabel" class="ls-grow">
+            Dataset directory
+            <input id="localInput" type="text" placeholder="/absolute/path/to/lerobot-dataset" />
+          </label>
+          <label id="revisionLabel">
+            Revision
+            <input id="revisionInput" type="text" placeholder="main" />
+          </label>
+          <label id="videoKeyLabel">
+            Video key
+            <select id="videoKeySelect"></select>
+          </label>
+          <button type="submit" class="ls-btn ls-btn-primary">Load</button>
+        </div>
+        <p class="ls-helper" id="connectHelper"></p>
+      </form>
+    </section>
+
+    <section class="ls-workspace" id="workspace">
+      <aside class="ls-sidebar">
+        <div class="ls-sidebar-head">
+          <h2>Episodes</h2>
+          <input id="episodeSearch" type="search" placeholder="Filter #" />
+        </div>
+        <ul id="episodeList" class="ls-episode-list"></ul>
+      </aside>
+
+      <main class="ls-editor">
+        <div class="ls-editor-head">
+          <div>
+            <h2 id="episodeTitle">Select an episode</h2>
+            <p id="episodeMeta" class="ls-muted"></p>
+          </div>
+          <div class="ls-editor-tools">
+            <span id="frameReadout" class="ls-frame-readout">frame —</span>
+            <button type="button" id="resetEpisode" class="ls-btn ls-btn-ghost" disabled>Clear</button>
+          </div>
+        </div>
+
+        <div id="episodeTaskPanel" class="ls-task-panel" hidden>
+          <span class="ls-task-label">Task</span>
+          <p id="episodeTaskText" class="ls-task-text"></p>
+        </div>
+
+        <div class="ls-video-block">
+          <video id="episodeVideo" controls preload="metadata"></video>
+        </div>
+
+        <div class="ls-labeling-block">
+          <div class="ls-labels-panel">
+            <div class="ls-labels-panel-header">
+              <span class="ls-labels-panel-title">Timeline labels</span>
+              <span class="ls-labels-count" id="labelCount">标签（8）</span>
+            </div>
+            <div id="labelPalette" class="ls-labels-list" role="listbox" aria-label="Subtask labels"></div>
+            <p class="ls-labels-hint" id="labelHint">先选标签，再在时间轴拖拽；相邻分段不重叠，尽量覆盖全片</p>
+          </div>
+
+          <div class="ls-timeline-wrap">
+            <div class="ls-timeline-ruler" id="timelineRuler"></div>
+            <div class="ls-timeline-track" id="timelineTrack">
+              <div class="ls-timeline-regions" id="timelineRegions"></div>
+              <div class="ls-playhead" id="playhead"></div>
+              <div class="ls-drag-preview" id="dragPreview" hidden></div>
+            </div>
+          </div>
+
+          <div class="ls-region-list-wrap">
+            <div class="ls-region-list-head">
+              <span>Regions</span>
+              <span id="regionCount" class="ls-muted">0</span>
+            </div>
+            <div id="regionList" class="ls-region-list"></div>
+          </div>
+
+          <div id="validationPanel" class="ls-validation-panel" hidden>
+            <div id="validationErrors" class="ls-validation-errors"></div>
+            <div id="validationWarnings" class="ls-validation-warnings"></div>
+            <div class="ls-validation-actions">
+              <button type="button" id="validationDismiss" class="ls-btn ls-btn-ghost">返回修改</button>
+              <button type="button" id="validationForceSave" class="ls-btn ls-btn-primary" hidden>仍要保存</button>
+            </div>
+          </div>
+
+          <div class="ls-save-bar">
+            <div id="outcomeGroup" class="ls-outcome-group" role="radiogroup" aria-label="Episode outcome">
+              <span class="ls-outcome-label">Outcome</span>
+              <label class="ls-outcome-option ls-outcome-success">
+                <input type="radio" name="outcome" value="success" />
+                <span>success</span>
+              </label>
+              <label class="ls-outcome-option ls-outcome-fail">
+                <input type="radio" name="outcome" value="fail" />
+                <span>fail</span>
+              </label>
+              <label class="ls-outcome-option ls-outcome-partial">
+                <input type="radio" name="outcome" value="partial" />
+                <span>partial</span>
+              </label>
+            </div>
+            <button type="button" id="saveEpisodeBottom" class="ls-btn ls-btn-primary" disabled aria-label="保存当前片段标注">保存当前片段标注</button>
+            <span id="saveStatusText" class="ls-save-status ok">已保存</span>
+          </div>
+        </div>
+
+        <details class="ls-advanced">
+          <summary>High-level dialogue (optional)</summary>
+          <div class="ls-advanced-body">
+            <div class="ls-form-row">
+              <label>Start (s)<input id="hlStart" type="number" step="0.001" /></label>
+              <label>End (s)<input id="hlEnd" type="number" step="0.001" /></label>
+              <label class="ls-grow">User prompt<input id="hlUser" type="text" /></label>
+            </div>
+            <div class="ls-form-row">
+              <label class="ls-grow">Robot response<input id="hlRobot" type="text" /></label>
+              <button type="button" id="hlSetStart" class="ls-btn ls-btn-ghost">Set start</button>
+              <button type="button" id="hlSetEnd" class="ls-btn ls-btn-ghost">Set end</button>
+              <button type="button" id="addHighLevel" class="ls-btn ls-btn-primary">Add</button>
+            </div>
+            <div id="highLevelList" class="ls-region-list"></div>
+          </div>
+        </details>
+      </main>
+    </section>
+
+    <section class="ls-panel ls-export" id="exportPanel">
+      <h2>Export</h2>
+      <div class="ls-form-row">
+        <label class="ls-grow">
+          Output directory
+          <input id="outputDir" type="text" placeholder="default: data/exports" />
+        </label>
+        <label class="ls-check">
+          <input id="copyVideos" type="checkbox" />
+          Copy videos
+        </label>
+        <button type="button" id="exportBtn" class="ls-btn ls-btn-primary">Export locally</button>
+      </div>
+      <p class="ls-helper" id="exportStatus"></p>
+      <details class="ls-advanced" id="pushHubPanel">
+        <summary>Push to Hugging Face Hub</summary>
+        <div class="ls-advanced-body">
+          <div class="ls-form-row">
+            <label class="ls-grow">HF Token<input id="hfToken" type="password" /></label>
+            <label class="ls-check"><input id="pushInPlace" type="checkbox" checked /> Push in place</label>
+          </div>
+          <div class="ls-form-row" id="newRepoRow">
+            <label class="ls-grow">New repo ID<input id="newRepoId" type="text" /></label>
+            <label class="ls-check"><input id="privateRepo" type="checkbox" /> Private</label>
+          </div>
+          <div class="ls-form-row">
+            <label class="ls-grow">Commit message<input id="commitMessage" value="Add annotations from LeRobot Annotate" /></label>
+            <button type="button" id="pushHubBtn" class="ls-btn ls-btn-primary">Push to Hub</button>
+          </div>
+          <div class="ls-helper" id="pushHubStatus"></div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <script src="/static/i18n.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

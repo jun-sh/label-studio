@@ -1,0 +1,996 @@
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pyarrow.parquet as pq
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
+from pydantic import BaseModel
+
+APP_ROOT = Path(__file__).resolve().parent
+STATIC_DIR = APP_ROOT / "static"
+CACHE_ROOT = Path(os.environ.get("LEROBOT_ANNOTATE_CACHE", "/tmp/lerobot_annotate_cache"))
+EXPORT_ROOT = Path(os.environ.get("LEROBOT_ANNOTATE_EXPORT", "/tmp/lerobot_annotate_exports"))
+TRIMMED_VIDEO_CACHE = CACHE_ROOT / "trimmed_videos"
+
+
+def trim_video_with_ffmpeg(input_path: Path, output_path: Path, start_time: float, end_time: float) -> bool:
+    """Trim a video using FFmpeg to extract only the specified time range.
+    
+    Args:
+        input_path: Path to the source video file
+        output_path: Path where the trimmed video should be saved
+        start_time: Start time in seconds
+        end_time: End time in seconds
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    duration = end_time - start_time
+    if duration <= 0:
+        return False
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Use FFmpeg to trim the video
+        # -ss before -i for fast seeking, -t for duration
+        # -c copy for fast copying without re-encoding (if possible)
+        # -avoid_negative_ts make_zero to handle timestamp issues
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output file if exists
+            "-ss", str(start_time),  # Start time (before -i for input seeking)
+            "-i", str(input_path),
+            "-t", str(duration),  # Duration
+            "-c", "copy",  # Copy codecs (fast, no re-encoding)
+            "-avoid_negative_ts", "make_zero",
+            str(output_path),
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minute timeout
+        )
+        
+        if result.returncode != 0:
+            print(f"FFmpeg error: {result.stderr}")
+            # Try again with re-encoding if copy fails
+            cmd_reencode = [
+                "ffmpeg",
+                "-y",
+                "-ss", str(start_time),
+                "-i", str(input_path),
+                "-t", str(duration),
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-c:a", "aac",
+                str(output_path),
+            ]
+            result = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                print(f"FFmpeg re-encode error: {result.stderr}")
+                return False
+        
+        return output_path.exists()
+    except subprocess.TimeoutExpired:
+        print("FFmpeg timed out")
+        return False
+    except FileNotFoundError:
+        print("FFmpeg not found - please install FFmpeg")
+        return False
+    except Exception as e:
+        print(f"Error trimming video: {e}")
+        return False
+
+
+def get_trimmed_video_cache_path(video_path: Path, episode_index: int, start_time: float, end_time: float) -> Path:
+    """Generate a unique cache path for a trimmed video segment."""
+    # Create a hash based on the source video path and time range
+    key = f"{video_path}_{episode_index}_{start_time:.3f}_{end_time:.3f}"
+    hash_key = hashlib.md5(key.encode()).hexdigest()[:16]
+    return TRIMMED_VIDEO_CACHE / f"ep{episode_index}_{hash_key}.mp4"
+
+
+class DatasetLoadRequest(BaseModel):
+    source: str  # "hf" or "local"
+    repo_id: str | None = None
+    revision: str | None = None
+    local_path: str | None = None
+    video_key: str | None = None
+
+
+class SegmentSubtask(BaseModel):
+    start: float
+    end: float
+    label: str
+
+
+class SegmentHighLevel(BaseModel):
+    start: float
+    end: float
+    user_prompt: str
+    robot_utterance: str
+    skill: str | None = None
+    scenario_type: str | None = None
+    response_type: str | None = None
+
+
+VALID_OUTCOMES = frozenset({"success", "fail", "partial"})
+
+
+class EpisodeAnnotationsPayload(BaseModel):
+    episode_index: int
+    subtasks: list[SegmentSubtask] = []
+    high_levels: list[SegmentHighLevel] = []
+    outcome: str | None = None
+
+
+@dataclass
+class EpisodeAnnotations:
+    subtasks: list[dict[str, Any]] = field(default_factory=list)
+    high_levels: list[dict[str, Any]] = field(default_factory=list)
+    outcome: str | None = None
+
+
+class DataManager:
+    def __init__(self) -> None:
+        self.source: str | None = None
+        self.repo_id: str | None = None
+        self.revision: str | None = None
+        self.dataset_root: Path | None = None
+        self.info: dict[str, Any] | None = None
+        self.episodes_df: pd.DataFrame | None = None
+        self.video_key: str | None = None
+        self.tasks_map: dict[int, str] = {}
+        self.annotations: dict[int, EpisodeAnnotations] = {}
+        self.annotations_path: Path | None = None
+
+    def load_dataset(self, req: DatasetLoadRequest) -> dict[str, Any]:
+        if req.source not in {"hf", "local"}:
+            raise HTTPException(status_code=400, detail="source must be 'hf' or 'local'")
+
+        self.source = req.source
+        self.repo_id = req.repo_id
+        self.revision = req.revision
+
+        if req.source == "local":
+            if not req.local_path:
+                raise HTTPException(status_code=400, detail="local_path is required for local source")
+            root = Path(req.local_path).expanduser().resolve()
+            if not root.exists():
+                raise HTTPException(status_code=404, detail=f"Dataset path not found: {root}")
+            self.dataset_root = root
+        else:
+            if not req.repo_id:
+                raise HTTPException(status_code=400, detail="repo_id is required for hf source")
+            CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+            repo_dir = CACHE_ROOT / req.repo_id.replace("/", "__")
+            repo_dir.mkdir(parents=True, exist_ok=True)
+            snapshot_download(
+                req.repo_id,
+                repo_type="dataset",
+                revision=req.revision,
+                local_dir=repo_dir,
+                allow_patterns=["meta/*"],
+            )
+            self.dataset_root = repo_dir
+
+        self.info = self._load_info(self.dataset_root)
+        self.episodes_df = self._load_episodes(self.dataset_root)
+        self.tasks_map = self._load_tasks_map(self.dataset_root)
+
+        video_keys = self._get_video_keys()
+        if not video_keys:
+            raise HTTPException(status_code=400, detail="Dataset has no video keys")
+        self.video_key = req.video_key or video_keys[0]
+        if self.video_key not in video_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Video key '{self.video_key}' not found. Available: {', '.join(video_keys)}",
+            )
+
+        self.annotations_path = self.dataset_root / "meta" / "lerobot_annotations.json"
+        self._load_existing_annotations()
+        return self._build_summary()
+
+    def _load_info(self, root: Path) -> dict[str, Any]:
+        info_path = root / "meta" / "info.json"
+        if not info_path.exists():
+            raise HTTPException(status_code=404, detail=f"Missing info.json at {info_path}")
+        return json.loads(info_path.read_text())
+
+    def _load_episodes(self, root: Path) -> pd.DataFrame:
+        episodes_root = root / "meta" / "episodes"
+        if not episodes_root.exists():
+            raise HTTPException(status_code=404, detail=f"Missing episodes directory at {episodes_root}")
+        files = sorted(episodes_root.rglob("*.parquet"))
+        if not files:
+            raise HTTPException(status_code=404, detail="No episodes parquet files found")
+        dfs = [pd.read_parquet(path) for path in files]
+        df = pd.concat(dfs, ignore_index=True)
+        if "episode_index" not in df.columns:
+            raise HTTPException(status_code=400, detail="episodes parquet missing 'episode_index' column")
+        return df.sort_values("episode_index").reset_index(drop=True)
+
+    def _load_tasks_map(self, root: Path) -> dict[int, str]:
+        tasks_map: dict[int, str] = {}
+        tasks_parquet = root / "meta" / "tasks.parquet"
+        tasks_jsonl = root / "meta" / "tasks.jsonl"
+
+        if tasks_parquet.exists():
+            df = pd.read_parquet(tasks_parquet)
+            if "task" in df.columns and "task_index" in df.columns:
+                for _, row in df.iterrows():
+                    tasks_map[int(row["task_index"])] = str(row["task"])
+            elif "task_index" in df.columns:
+                for idx_name, row in df.iterrows():
+                    tasks_map[int(row["task_index"])] = str(idx_name)
+            elif "task" in df.columns:
+                for i, row in df.iterrows():
+                    tasks_map[int(i)] = str(row["task"])
+            else:
+                for i, idx_name in enumerate(df.index):
+                    tasks_map[i] = str(idx_name)
+        elif tasks_jsonl.exists():
+            for line in tasks_jsonl.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                idx = int(entry.get("task_index", len(tasks_map)))
+                task_text = entry.get("task", "")
+                if task_text:
+                    tasks_map[idx] = str(task_text)
+
+        return tasks_map
+
+    def _resolve_episode_task_text(self, row: pd.Series) -> tuple[str | None, int | None]:
+        task_index: int | None = None
+
+        if "tasks" in row.index:
+            tasks_val = row["tasks"]
+            if tasks_val is not None and not (isinstance(tasks_val, float) and pd.isna(tasks_val)):
+                if isinstance(tasks_val, str) and tasks_val.strip():
+                    return tasks_val.strip(), None
+                if hasattr(tasks_val, "__len__") and not isinstance(tasks_val, str):
+                    try:
+                        items = list(tasks_val)
+                    except TypeError:
+                        items = []
+                    if items:
+                        text = str(items[0]).strip()
+                        if text:
+                            return text, None
+
+        if "task_index" in row.index:
+            ti = row["task_index"]
+            if pd.notna(ti):
+                task_index = int(ti)
+                if task_index in self.tasks_map:
+                    return self.tasks_map[task_index], task_index
+
+        if len(self.tasks_map) == 1:
+            only_idx = next(iter(self.tasks_map))
+            return self.tasks_map[only_idx], only_idx
+
+        return None, task_index
+
+    def _get_video_keys(self) -> list[str]:
+        features = self.info.get("features", {}) if self.info else {}
+        return sorted([key for key, meta in features.items() if meta.get("dtype") == "video"])
+
+    def _load_existing_annotations(self) -> None:
+        self.annotations = {}
+        if self.annotations_path and self.annotations_path.exists():
+            data = json.loads(self.annotations_path.read_text())
+            for ep_str, payload in data.get("episodes", {}).items():
+                ep_idx = int(ep_str)
+                self.annotations[ep_idx] = EpisodeAnnotations(
+                    subtasks=payload.get("subtasks", []),
+                    high_levels=payload.get("high_levels", []),
+                    outcome=payload.get("outcome"),
+                )
+            return
+
+        # Fall back to skills.json if present
+        skills_path = self.dataset_root / "meta" / "skills.json"
+        if skills_path.exists():
+            data = json.loads(skills_path.read_text())
+            for ep_str, payload in data.get("episodes", {}).items():
+                ep_idx = int(ep_str)
+                skills = payload.get("skills", [])
+                subtasks = [
+                    {"start": s["start"], "end": s["end"], "label": s["name"]}
+                    for s in skills
+                    if "start" in s and "end" in s
+                ]
+                self.annotations[ep_idx] = EpisodeAnnotations(subtasks=subtasks, high_levels=[])
+
+    def _save_annotations(self) -> None:
+        if not self.annotations_path:
+            return
+        payload = {
+            "version": 1,
+            "episodes": {
+                str(ep_idx): {
+                    "subtasks": ann.subtasks,
+                    "high_levels": ann.high_levels,
+                    **({"outcome": ann.outcome} if ann.outcome else {}),
+                }
+                for ep_idx, ann in self.annotations.items()
+            },
+        }
+        self.annotations_path.parent.mkdir(parents=True, exist_ok=True)
+        self.annotations_path.write_text(json.dumps(payload, indent=2))
+
+    def _build_summary(self) -> dict[str, Any]:
+        assert self.info and self.episodes_df is not None
+        fps = float(self.info.get("fps", 30))
+        video_key = self.video_key or self._get_video_keys()[0] if self._get_video_keys() else None
+        
+        # Calculate video offsets for each episode (for concatenated videos)
+        episode_video_offsets = self._calculate_video_offsets(video_key, fps) if video_key else {}
+        
+        episodes = []
+        for _, row in self.episodes_df.iterrows():
+            length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+            duration = length / fps if fps else 0.0
+            ep_idx = int(row["episode_index"])
+            task_text, task_index = self._resolve_episode_task_text(row)
+
+            # Get video timing info for this episode
+            video_info = episode_video_offsets.get(ep_idx, {"video_start_time": 0.0, "video_end_time": duration})
+
+            episode_entry: dict[str, Any] = {
+                "episode_index": ep_idx,
+                "length": length,
+                "duration": duration,
+                "video_start_time": video_info["video_start_time"],
+                "video_end_time": video_info["video_end_time"],
+            }
+            if task_text:
+                episode_entry["task_text"] = task_text
+            if task_index is not None:
+                episode_entry["task_index"] = task_index
+            episodes.append(episode_entry)
+        return {
+            "source": self.source,
+            "repo_id": self.repo_id,
+            "revision": self.revision,
+            "root": str(self.dataset_root),
+            "fps": fps,
+            "video_keys": self._get_video_keys(),
+            "selected_video_key": self.video_key,
+            "episodes": episodes,
+        }
+
+    def _calculate_video_offsets(self, video_key: str, fps: float) -> dict[int, dict[str, float]]:
+        """Get start/end times for each episode within its video file.
+        
+        In LeRobot datasets, videos are concatenated so multiple episodes share
+        the same video file. The timestamps are stored directly in the episode metadata
+        as 'videos/{video_key}/from_timestamp' and 'videos/{video_key}/to_timestamp'.
+        """
+        if self.episodes_df is None:
+            return {}
+        
+        from_ts_col = f"videos/{video_key}/from_timestamp"
+        to_ts_col = f"videos/{video_key}/to_timestamp"
+        
+        # Check if timestamp columns exist in the dataframe
+        has_timestamp_cols = from_ts_col in self.episodes_df.columns and to_ts_col in self.episodes_df.columns
+        
+        result = {}
+        for _, row in self.episodes_df.iterrows():
+            ep_idx = int(row["episode_index"])
+            length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+            duration = length / fps if fps else 0.0
+            
+            # Use the actual timestamps from the episode metadata if available
+            if has_timestamp_cols:
+                from_ts = row.get(from_ts_col)
+                to_ts = row.get(to_ts_col)
+                # Handle NaN/None values
+                if pd.notna(from_ts) and pd.notna(to_ts):
+                    result[ep_idx] = {
+                        "video_start_time": float(from_ts),
+                        "video_end_time": float(to_ts),
+                    }
+                else:
+                    # Fallback if timestamps are null
+                    result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
+            else:
+                # Fallback: assume each episode starts at 0 (individual video file per episode)
+                result[ep_idx] = {"video_start_time": 0.0, "video_end_time": duration}
+        
+        return result
+
+    def get_episode_video_path(self, episode_index: int, video_key: str | None = None) -> Path:
+        if self.episodes_df is None or self.info is None:
+            raise HTTPException(status_code=400, detail="Dataset not loaded")
+        video_key = video_key or self.video_key
+        if not video_key:
+            raise HTTPException(status_code=400, detail="video_key is required")
+
+        row = self.episodes_df[self.episodes_df["episode_index"] == episode_index]
+        if row.empty:
+            raise HTTPException(status_code=404, detail=f"Episode {episode_index} not found")
+        row = row.iloc[0]
+
+        chunk_col = f"videos/{video_key}/chunk_index"
+        file_col = f"videos/{video_key}/file_index"
+        if chunk_col not in row or file_col not in row:
+            raise HTTPException(status_code=400, detail=f"Video key '{video_key}' not available for this dataset")
+
+        chunk_index = int(row[chunk_col])
+        file_index = int(row[file_col])
+        rel_path = self.info.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        rel_path = rel_path.format(video_key=video_key, chunk_index=chunk_index, file_index=file_index)
+        full_path = (self.dataset_root / rel_path).resolve()
+
+        if full_path.exists():
+            return full_path
+
+        if self.source == "hf" and self.repo_id:
+            hf_hub_download(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                filename=rel_path,
+                revision=self.revision,
+                local_dir=self.dataset_root,
+            )
+            if full_path.exists():
+                return full_path
+
+        raise HTTPException(status_code=404, detail=f"Video file not found: {full_path}")
+
+    def get_episode_annotations(self, episode_index: int) -> EpisodeAnnotations:
+        if episode_index not in self.annotations:
+            self.annotations[episode_index] = EpisodeAnnotations()
+        return self.annotations[episode_index]
+
+    def set_episode_annotations(self, payload: EpisodeAnnotationsPayload) -> None:
+        if payload.outcome is not None and payload.outcome not in VALID_OUTCOMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"outcome must be one of {sorted(VALID_OUTCOMES)} or null",
+            )
+        self.annotations[payload.episode_index] = EpisodeAnnotations(
+            subtasks=[seg.dict() for seg in payload.subtasks],
+            high_levels=[seg.dict() for seg in payload.high_levels],
+            outcome=payload.outcome,
+        )
+        self._save_annotations()
+
+    def export_dataset(self, output_dir: str | None = None, copy_videos: bool = False) -> dict[str, Any]:
+        if self.dataset_root is None or self.info is None:
+            raise HTTPException(status_code=400, detail="Dataset not loaded")
+
+        if output_dir:
+            out_root = Path(output_dir).expanduser().resolve()
+        else:
+            EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
+            name = (self.repo_id or "local_dataset").replace("/", "__")
+            out_root = EXPORT_ROOT / f"{name}_annotated"
+
+        out_root.mkdir(parents=True, exist_ok=True)
+
+        # Copy meta directory first
+        src_meta = self.dataset_root / "meta"
+        dst_meta = out_root / "meta"
+        if dst_meta.exists():
+            shutil.rmtree(dst_meta)
+        shutil.copytree(src_meta, dst_meta)
+
+        subtasks_df, subtask_map = build_subtasks_dataframe(self.annotations)
+        tasks_df, task_map = build_high_level_dataframe(self.annotations)
+
+        if not subtasks_df.empty:
+            subtasks_df.to_parquet(dst_meta / "subtasks.parquet", engine="pyarrow", compression="snappy")
+        if not tasks_df.empty:
+            tasks_df.to_parquet(dst_meta / "tasks_high_level.parquet", engine="pyarrow", compression="snappy")
+
+        # Update info.json features
+        info_path = dst_meta / "info.json"
+        info = json.loads(info_path.read_text())
+        info.setdefault("features", {})
+        info["features"].setdefault(
+            "subtask_index",
+            {"dtype": "int64", "shape": [1], "names": None},
+        )
+        info["features"].setdefault(
+            "task_index_high_level",
+            {"dtype": "int64", "shape": [1], "names": None},
+        )
+        info_path.write_text(json.dumps(info, indent=2))
+
+        has_success_feature = "next.success" in info.get("features", {})
+
+        # Update data files
+        data_dir = self.dataset_root / "data"
+        data_files = sorted(data_dir.rglob("*.parquet"))
+        if not data_files:
+            raise HTTPException(status_code=404, detail="No data parquet files found")
+
+        for src_path in data_files:
+            rel_path = src_path.relative_to(self.dataset_root)
+            dst_path = out_root / rel_path
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+            df = pd.read_parquet(src_path)
+            df["subtask_index"] = -1
+            df["task_index_high_level"] = -1
+
+            for ep_idx in df["episode_index"].unique():
+                ann = self.annotations.get(int(ep_idx))
+                if not ann:
+                    continue
+
+                ep_mask = df["episode_index"] == ep_idx
+                if ann.subtasks and subtask_map:
+                    df.loc[ep_mask, "subtask_index"] = assign_indices_by_segments(
+                        df.loc[ep_mask, "timestamp"],
+                        ann.subtasks,
+                        subtask_map,
+                        label_key="label",
+                    )
+
+                if ann.high_levels and task_map:
+                    df.loc[ep_mask, "task_index_high_level"] = assign_indices_by_segments(
+                        df.loc[ep_mask, "timestamp"],
+                        ann.high_levels,
+                        task_map,
+                        label_key="task_key",
+                    )
+
+                if has_success_feature and ann.outcome in VALID_OUTCOMES:
+                    df.loc[ep_mask, "next.success"] = ann.outcome == "success"
+
+            df.to_parquet(dst_path, engine="pyarrow", compression="snappy", index=False)
+
+        # Copy or link videos
+        src_videos = self.dataset_root / "videos"
+        dst_videos = out_root / "videos"
+        if src_videos.exists():
+            if dst_videos.exists():
+                shutil.rmtree(dst_videos)
+            if copy_videos:
+                shutil.copytree(src_videos, dst_videos)
+            else:
+                try:
+                    os.symlink(src_videos, dst_videos)
+                except OSError:
+                    shutil.copytree(src_videos, dst_videos)
+
+        return {
+            "output_dir": str(out_root),
+            "subtasks": len(subtasks_df),
+            "tasks_high_level": len(tasks_df),
+        }
+
+
+def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
+    labels = sorted({seg["label"] for ann in annotations.values() for seg in ann.subtasks if seg.get("label")})
+    data = [{"subtask": label, "subtask_index": idx} for idx, label in enumerate(labels)]
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df = df.set_index("subtask")
+    subtask_map = {label: idx for idx, label in enumerate(labels)}
+    return df, subtask_map
+
+
+def build_high_level_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
+    tasks = []
+    task_map: dict[str, int] = {}
+    for ann in annotations.values():
+        for seg in ann.high_levels:
+            key = make_task_key(seg)
+            if key not in task_map:
+                task_map[key] = len(task_map)
+                tasks.append(seg)
+
+    rows = []
+    for seg in tasks:
+        key = make_task_key(seg)
+        rows.append(
+            {
+                "task": f"{seg.get('user_prompt', '')} | {seg.get('robot_utterance', '')}",
+                "task_index": task_map[key],
+                "user_prompt": seg.get("user_prompt", ""),
+                "robot_utterance": seg.get("robot_utterance", ""),
+                "skill": seg.get("skill") or "",
+                "scenario_type": seg.get("scenario_type") or "",
+                "response_type": seg.get("response_type") or "",
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.set_index("task")
+
+    return df, task_map
+
+
+def make_task_key(seg: dict[str, Any]) -> str:
+    return "||".join(
+        [
+            seg.get("user_prompt", ""),
+            seg.get("robot_utterance", ""),
+            seg.get("skill", ""),
+            seg.get("scenario_type", ""),
+            seg.get("response_type", ""),
+        ]
+    )
+
+
+def assign_indices_by_segments(timestamps: pd.Series, segments: list[dict[str, Any]], mapping: dict[str, int], label_key: str) -> list[int]:
+    values = [-1] * len(timestamps)
+    if not segments:
+        return values
+
+    segments_sorted = sorted(segments, key=lambda s: float(s.get("start", 0)))
+    for i, ts in enumerate(timestamps):
+        ts_val = float(ts)
+        for seg_idx, seg in enumerate(segments_sorted):
+            start = float(seg.get("start", 0))
+            end = float(seg.get("end", 0))
+            is_last = seg_idx == len(segments_sorted) - 1
+            if (start <= ts_val < end) or (is_last and ts_val <= end):
+                label = seg.get(label_key, "")
+                if label_key == "task_key":
+                    label = make_task_key(seg)
+                values[i] = mapping.get(label, -1)
+                break
+    return values
+
+
+def parse_range(range_header: str, file_size: int) -> tuple[int, int] | None:
+    match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+    if not match:
+        return None
+    start = int(match.group(1))
+    end = int(match.group(2)) if match.group(2) else file_size - 1
+    if start >= file_size:
+        return None
+    end = min(end, file_size - 1)
+    return start, end
+
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+manager = DataManager()
+
+
+@app.get("/")
+def root() -> HTMLResponse:
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        return HTMLResponse("<h1>LeRobot Annotate</h1><p>Missing static index.html</p>")
+    return HTMLResponse(index_path.read_text())
+
+
+@app.post("/api/dataset/load")
+def load_dataset(req: DatasetLoadRequest) -> JSONResponse:
+    summary = manager.load_dataset(req)
+    return JSONResponse(summary)
+
+
+@app.get("/api/dataset/info")
+def dataset_info() -> JSONResponse:
+    if manager.info is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    return JSONResponse(manager._build_summary())
+
+
+@app.get("/api/episodes/{episode_index}/annotations")
+def get_annotations(episode_index: int) -> JSONResponse:
+    ann = manager.get_episode_annotations(episode_index)
+    return JSONResponse({
+        "episode_index": episode_index,
+        "subtasks": ann.subtasks,
+        "high_levels": ann.high_levels,
+        "outcome": ann.outcome,
+    })
+
+
+@app.post("/api/episodes/{episode_index}/annotations")
+def set_annotations(episode_index: int, payload: EpisodeAnnotationsPayload) -> JSONResponse:
+    if episode_index != payload.episode_index:
+        raise HTTPException(status_code=400, detail="Episode index mismatch")
+    manager.set_episode_annotations(payload)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/export")
+def export_dataset(payload: dict[str, Any]) -> JSONResponse:
+    output_dir = payload.get("output_dir")
+    copy_videos = bool(payload.get("copy_videos", False))
+    result = manager.export_dataset(output_dir=output_dir, copy_videos=copy_videos)
+    return JSONResponse(result)
+
+
+class PushToHubRequest(BaseModel):
+    hf_token: str
+    push_in_place: bool = True
+    new_repo_id: str | None = None
+    private: bool = False
+    commit_message: str = "Add annotations from LeRobot Annotate"
+
+
+@app.post("/api/push_to_hub")
+def push_to_hub(payload: PushToHubRequest) -> JSONResponse:
+    """Push the annotated dataset to Hugging Face Hub.
+    
+    Can either update the original repo in place, or push to a new repo.
+    """
+    print("[Push to Hub] Received push request")
+    print(f"[Push to Hub] push_in_place={payload.push_in_place}, new_repo_id={payload.new_repo_id}")
+    
+    if manager.dataset_root is None or manager.info is None:
+        print("[Push to Hub] Error: Dataset not loaded")
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    
+    if manager.source != "hf":
+        print(f"[Push to Hub] Error: Source is '{manager.source}', not 'hf'")
+        raise HTTPException(status_code=400, detail="Can only push to Hub for datasets loaded from Hub")
+    
+    # Download data files if they don't exist (they weren't downloaded during initial load)
+    data_dir = manager.dataset_root / "data"
+    data_files_exist = data_dir.exists() and list(data_dir.rglob("*.parquet"))
+    if not data_files_exist:
+        print("[Push to Hub] Data files not found locally, downloading from Hub...")
+        if not manager.repo_id:
+            raise HTTPException(status_code=400, detail="No repo ID available to download data files")
+        try:
+            snapshot_download(
+                manager.repo_id,
+                repo_type="dataset",
+                revision=manager.revision,
+                local_dir=manager.dataset_root,
+                allow_patterns=["data/**/*.parquet"],
+            )
+            print("[Push to Hub] Data files downloaded successfully")
+        except Exception as e:
+            print(f"[Push to Hub] Error downloading data files: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to download data files: {str(e)}")
+    
+    # Download videos if they don't exist (we always copy videos when pushing to hub)
+    videos_dir = manager.dataset_root / "videos"
+    if not videos_dir.exists():
+        print("[Push to Hub] Videos not found locally, downloading from Hub...")
+        if not manager.repo_id:
+            raise HTTPException(status_code=400, detail="No repo ID available to download videos")
+        try:
+            snapshot_download(
+                manager.repo_id,
+                repo_type="dataset",
+                revision=manager.revision,
+                local_dir=manager.dataset_root,
+                allow_patterns=["videos/**/*.mp4"],
+            )
+            print("[Push to Hub] Videos downloaded successfully")
+        except Exception as e:
+            print(f"[Push to Hub] Warning: Could not download videos: {e}")
+            # Videos are optional, so we continue even if download fails
+    
+    # First, export the dataset locally
+    print("[Push to Hub] Exporting dataset locally...")
+    export_result = manager.export_dataset(copy_videos=True)
+    export_dir = Path(export_result["output_dir"])
+    print(f"[Push to Hub] Exported to: {export_dir}")
+    
+    # Determine target repo
+    if payload.push_in_place:
+        if not manager.repo_id:
+            print("[Push to Hub] Error: No original repo ID found")
+            raise HTTPException(status_code=400, detail="No original repo ID found")
+        target_repo = manager.repo_id
+    else:
+        if not payload.new_repo_id:
+            print("[Push to Hub] Error: New repo ID is required")
+            raise HTTPException(status_code=400, detail="New repo ID is required when not pushing in place")
+        target_repo = payload.new_repo_id
+    
+    print(f"[Push to Hub] Target repo: {target_repo}")
+    
+    try:
+        print("[Push to Hub] Initializing HfApi...")
+        api = HfApi(token=payload.hf_token)
+        
+        # Create repo if pushing to new location
+        if not payload.push_in_place:
+            print(f"[Push to Hub] Creating new repo: {target_repo}")
+            try:
+                api.create_repo(
+                    repo_id=target_repo,
+                    repo_type="dataset",
+                    private=payload.private,
+                    exist_ok=True,
+                )
+                print("[Push to Hub] Repo created successfully")
+            except Exception as e:
+                print(f"[Push to Hub] Error creating repo: {e}")
+                raise HTTPException(status_code=400, detail=f"Failed to create repo: {str(e)}")
+        
+        # Upload the entire exported directory
+        print(f"[Push to Hub] Uploading folder to {target_repo}...")
+        api.upload_folder(
+            folder_path=str(export_dir),
+            repo_id=target_repo,
+            repo_type="dataset",
+            commit_message=payload.commit_message,
+        )
+        
+        print(f"[Push to Hub] Successfully pushed to {target_repo}")
+        return JSONResponse({
+            "ok": True,
+            "repo_id": target_repo,
+            "url": f"https://huggingface.co/datasets/{target_repo}",
+            "message": f"Successfully pushed to {target_repo}",
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[Push to Hub] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to push to Hub: {str(e)}")
+
+
+@app.get("/api/debug/columns")
+def debug_columns() -> JSONResponse:
+    """Debug endpoint to see what columns are available in the episodes dataframe."""
+    if manager.episodes_df is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    return JSONResponse({
+        "columns": list(manager.episodes_df.columns),
+        "sample_row": manager.episodes_df.iloc[0].to_dict() if len(manager.episodes_df) > 0 else {},
+    })
+
+
+@app.get("/api/episodes/{episode_index}/video_timing")
+def get_episode_video_timing(episode_index: int, video_key: str | None = None) -> JSONResponse:
+    """Get video timing information for a specific episode.
+    
+    Returns the start and end timestamps within the video file for this episode.
+    This is needed because LeRobot datasets concatenate videos for faster reading.
+    """
+    if manager.episodes_df is None or manager.info is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    
+    video_key = video_key or manager.video_key
+    fps = float(manager.info.get("fps", 30))
+    
+    # Get the episode row
+    row = manager.episodes_df[manager.episodes_df["episode_index"] == episode_index]
+    if row.empty:
+        raise HTTPException(status_code=404, detail=f"Episode {episode_index} not found")
+    row = row.iloc[0]
+    
+    length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
+    duration = length / fps if fps else 0.0
+    
+    # Calculate video offset
+    video_offsets = manager._calculate_video_offsets(video_key, fps) if video_key else {}
+    video_info = video_offsets.get(episode_index, {"video_start_time": 0.0, "video_end_time": duration})
+    
+    return JSONResponse({
+        "episode_index": episode_index,
+        "fps": fps,
+        "length": length,
+        "duration": duration,
+        "video_start_time": video_info["video_start_time"],
+        "video_end_time": video_info["video_end_time"],
+    })
+
+
+@app.get("/api/video/{episode_index}")
+def stream_video(episode_index: int, request: Request, video_key: str | None = None) -> Response:
+    """Stream video for a specific episode.
+    
+    For concatenated videos (where multiple episodes share one file), this endpoint
+    will trim the video to only include the relevant episode portion using FFmpeg.
+    """
+    video_key = video_key or manager.video_key
+    original_path = manager.get_episode_video_path(episode_index, video_key=video_key)
+    
+    # Get the video timing for this episode
+    fps = float(manager.info.get("fps", 30)) if manager.info else 30.0
+    video_offsets = manager._calculate_video_offsets(video_key, fps) if video_key else {}
+    video_info = video_offsets.get(episode_index, {"video_start_time": 0.0, "video_end_time": 0.0})
+    
+    start_time = video_info["video_start_time"]
+    end_time = video_info["video_end_time"]
+    
+    # Determine if we need to trim the video
+    # If start_time > 0, it means this episode is part of a concatenated video
+    needs_trimming = start_time > 0.1 or (end_time > 0 and end_time < get_video_duration(original_path) - 0.5)
+    
+    if needs_trimming and end_time > start_time:
+        # Check if we have a cached trimmed version
+        cache_path = get_trimmed_video_cache_path(original_path, episode_index, start_time, end_time)
+        
+        if not cache_path.exists():
+            # Trim the video and cache it
+            print(f"Trimming video for episode {episode_index}: {start_time:.2f}s - {end_time:.2f}s")
+            success = trim_video_with_ffmpeg(original_path, cache_path, start_time, end_time)
+            if not success:
+                print(f"Failed to trim video, falling back to full video")
+                # Fall back to full video if trimming fails
+                path = original_path
+            else:
+                path = cache_path
+        else:
+            path = cache_path
+    else:
+        path = original_path
+    
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if range_header:
+        byte_range = parse_range(range_header, file_size)
+        if not byte_range:
+            return Response(status_code=416)
+        start, end = byte_range
+        length = end - start + 1
+
+        def iterfile() -> Any:
+            with open(path, "rb") as f:
+                f.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = f.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(length),
+        }
+        return StreamingResponse(iterfile(), status_code=206, media_type="video/mp4", headers=headers)
+
+    return FileResponse(path, media_type="video/mp4")
+
+
+def get_video_duration(video_path: Path) -> float:
+    """Get the duration of a video file using FFprobe."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return float(result.stdout.strip())
+    except Exception as e:
+        print(f"Error getting video duration: {e}")
+    return 0.0
+
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

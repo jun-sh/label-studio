@@ -84,14 +84,17 @@ const ProjectCard = ({ project }) => {
   const projectPath = isEmbodiedAnnotateProject(project)
     ? `/projects/${project.id}/embodied`
     : `/projects/${project.id}/data`;
+  const embodied = isEmbodiedAnnotateProject(project);
 
   return (
-    <NavLink
-      className={cn("projects-page").elem("link").toClassName()}
-      to={projectPath}
-      {...(isEmbodiedAnnotateProject(project) ? {} : { "data-external": true })}
-    >
+    <div className={cn("projects-page").elem("link").toClassName()}>
       <div className={cn("project-card").mod({ colored: !!color }).toClassName()} style={projectColors}>
+        <NavLink
+          to={projectPath}
+          className={cn("project-card").elem("nav-link").toClassName()}
+          aria-label={cardTitle}
+          {...(!embodied ? { "data-external": true } : {})}
+        />
         <div className={cn("project-card").elem("header").toClassName()}>
           <div className={cn("project-card").elem("title").toClassName()}>
             <div className={cn("project-card").elem("title-text-wrapper").toClassName()}>
@@ -102,18 +105,14 @@ const ProjectCard = ({ project }) => {
               </Tooltip>
             </div>
 
-            <div
-              className={cn("project-card").elem("menu").toClassName()}
-              onClick={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-              }}
-            >
+            <div className={cn("project-card").elem("menu").toClassName()}>
               <Dropdown.Trigger
                 content={
-                    <Menu contextual>
+                  <Menu contextual>
                     <Menu.Item href={`/projects/${project.id}/settings`}>{t("projects.settings")}</Menu.Item>
-                    <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>{t("projects.label")}</Menu.Item>
+                    {!embodied && (
+                      <Menu.Item href={`/projects/${project.id}/data?labeling=1`}>{t("projects.label")}</Menu.Item>
+                    )}
                   </Menu>
                 }
               >
@@ -161,6 +160,6 @@ const ProjectCard = ({ project }) => {
           </div>
         </div>
       </div>
-    </NavLink>
+    </div>
   );
 };

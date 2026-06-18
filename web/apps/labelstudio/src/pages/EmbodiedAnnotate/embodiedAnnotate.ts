@@ -40,3 +40,18 @@ export function buildEmbodiedAnnotateEmbedSrc(): string {
 
   return `/lerobot-annotate/?${params.toString()}`;
 }
+
+/** Settings sidebar paths hidden for embodied-annotate projects (Labeling Interface, Annotation). */
+const EMBODIED_HIDDEN_SETTINGS_PATHS = new Set(["/labeling", "/annotation"]);
+
+export function isEmbodiedSettingsMenuItemHidden(settingsPage: { path?: string }): boolean {
+  return settingsPage.path != null && EMBODIED_HIDDEN_SETTINGS_PATHS.has(settingsPage.path);
+}
+
+export function getProjectSettingsMenuItems<T extends { path?: string }>(
+  allItems: T[],
+  project: { description?: string | null } | null | undefined,
+): T[] {
+  if (!isEmbodiedAnnotateProject(project)) return allItems;
+  return allItems.filter((item) => !isEmbodiedSettingsMenuItemHidden(item));
+}

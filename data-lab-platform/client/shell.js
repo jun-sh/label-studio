@@ -25,7 +25,7 @@
 
   lockLightTheme();
 
-  var SHELL_VERSION = "24";
+  var SHELL_VERSION = "25";
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -507,6 +507,15 @@
     if (title.indexOf("项目 ·") >= 0) document.title = title.replace(/项目 ·/g, "标注 |");
   }
 
+  function stripActiveMenuClasses(className) {
+    return String(className || "")
+      .split(/\s+/)
+      .filter(function (token) {
+        return token && token.indexOf("main-menu__item_active") < 0;
+      })
+      .join(" ");
+  }
+
   function buildInjectedItem(menu, spec) {
     var templateLink = getStyleTemplate(menu);
     templateLink = templateLink ? templateLink.querySelector(SEL.item) : null;
@@ -517,7 +526,9 @@
     li.setAttribute("data-datalab-managed", "1");
 
     var link = document.createElement("a");
-    link.className = templateLink ? templateLink.className : "ls-main-menu__item";
+    link.className = stripActiveMenuClasses(
+      templateLink ? templateLink.className : "main-menu__item",
+    );
     link.href = spec.href;
     link.setAttribute("data-external", "");
     link.setAttribute("data-datalab-managed", "1");
@@ -555,8 +566,12 @@
       li = buildInjectedItem(menu, spec);
     }
     li.setAttribute("data-datalab-managed", "1");
+    var link = li.querySelector(SEL.item);
+    if (link) {
+      link.className = stripActiveMenuClasses(link.className);
+    }
     setItemIcon(li, ICONS[spec.key]);
-    setLinkLabel(li.querySelector(SEL.item), getMenuLabels()[spec.key]);
+    setLinkLabel(link, getMenuLabels()[spec.key]);
     return li;
   }
 
@@ -590,30 +605,25 @@
   function syncMenuActiveState(menu) {
     var path = currentPath();
 
-    menu.querySelectorAll('[class*="main-menu__item_active"]').forEach(function (el) {
-      el.classList.remove("ls-main-menu__item_active");
-      el.classList.remove("main-menu__item_active");
-      el.removeAttribute("aria-current");
+    // Only manage injected items; React NavLink owns native home/projects/organization highlighting.
+    menu.querySelectorAll('[data-datalab-managed="1"] ' + SEL.item).forEach(function (link) {
+      link.classList.remove("main-menu__item_active");
+      link.removeAttribute("aria-current");
     });
 
-    function activate(li) {
-      if (!li) return;
+    function activateManaged(key) {
+      var li = document.getElementById(MENU_IDS[key]);
+      if (!li || !menu.contains(li)) return;
       var link = li.querySelector(SEL.item);
       if (!link) return;
-      link.classList.add("ls-main-menu__item_active");
+      link.classList.add("main-menu__item_active");
       link.setAttribute("aria-current", "page");
     }
 
-    if ((path === "/" || path === "") && !isCollectionVizMode()) {
-      activate(findHomeLi(menu));
-    } else if (path.indexOf("/data") === 0) {
-      activate(document.getElementById(MENU_IDS.data));
+    if (path.indexOf("/data") === 0) {
+      activateManaged("data");
     } else if (path.indexOf("/collection") === 0) {
-      activate(document.getElementById(MENU_IDS.collection));
-    } else if (path.indexOf("/projects") === 0) {
-      activate(findNativeLi(menu, { href: "/projects" }));
-    } else if (path.indexOf("/organization") === 0) {
-      activate(findNativeLi(menu, { href: "/organization" }));
+      activateManaged("collection");
     }
   }
 

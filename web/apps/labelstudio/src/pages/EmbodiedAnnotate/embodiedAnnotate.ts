@@ -25,6 +25,27 @@ export function buildEmbodiedProjectDescription(userDescription?: string | null)
   return text ? `${EMBODIED_ANNOTATE_TAG}\n${text}` : EMBODIED_ANNOTATE_TAG;
 }
 
+/** User-visible description for embodied projects (hides system marker / legacy path lines). */
+export function stripEmbodiedMarkerFromDescription(description: string | null | undefined): string {
+  if (!description) return "";
+  const pathFromMarker = parseEmbodiedDatasetPath(description);
+  return description
+    .split(/\r?\n/)
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (trimmed.includes(EMBODIED_ANNOTATE_TAG)) return false;
+      if (pathFromMarker && trimmed === pathFromMarker) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+/** Re-attach system marker before persisting embodied project description. */
+export function ensureEmbodiedMarkerInDescription(userDescription?: string | null): string {
+  return buildEmbodiedProjectDescription(userDescription);
+}
+
 export function buildEmbodiedAnnotateEmbedSrc(): string {
   const params = new URLSearchParams({ datalab_embed: "1" });
 

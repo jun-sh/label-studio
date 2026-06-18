@@ -9,7 +9,7 @@ import { Menu, Pagination } from "../../components";
 import { cn } from "../../utils/bem";
 import { getDateFnsLocale } from "../../utils/dateFnsLocale";
 import { absoluteURL } from "../../utils/helpers";
-import { isEmbodiedAnnotateProject } from "../EmbodiedAnnotate/embodiedAnnotate";
+import { isEmbodiedAnnotateProject, stripEmbodiedMarkerFromDescription } from "../EmbodiedAnnotate/embodiedAnnotate";
 import { ProjectStateChip } from "@humansignal/app-common";
 
 const DEFAULT_CARD_COLORS = ["#FFFFFF", "#FDFDFC"];
@@ -150,7 +150,9 @@ const ProjectCard = ({ project }) => {
             </div>
           </div>
         </div>
-        <div className={cn("project-card").elem("description").toClassName()}>{project.description}</div>
+        <div className={cn("project-card").elem("description").toClassName()}>
+          {embodied ? stripEmbodiedMarkerFromDescription(project.description) : project.description}
+        </div>
         <div className={cn("project-card").elem("info").toClassName()}>
           <div className={cn("project-card").elem("created-date").toClassName()}>
             {format(new Date(project.created_at), "dd MMM yyyy, HH:mm", { locale: dateLocale })}

@@ -18,13 +18,115 @@
   var FETCH_TIMEOUT_MS = 6_000;
   var CATALOG_TIMEOUT_MS = 4_000;
 
+  var STATION_NAME_EN = {
+    "ego-lan-214": "EGO station · Lab A (214)",
+    "ego-lan-02": "EGO station · Lab B",
+    "ego-wan-01": "EGO station · Public node",
+  };
+
+  var STRINGS = {
+    zh: {
+      pageTitle: "EGO 采集站",
+      pageSubtitle: "采集站列表 · 在线状态",
+      documentTitle: "采集 | Data Lab",
+      loadingList: "正在加载采集站列表…",
+      reloading: "正在重新加载…",
+      loadingRetry: function (n, max) {
+        return "正在加载采集站列表…（" + n + "/" + max + "）";
+      },
+      loadError: "加载采集站列表失败，请稍后重试。",
+      retry: "重试",
+      noStations: "未找到可用采集站。",
+      online: "在线",
+      offline: "离线",
+      scopeLan: "局域网",
+      scopeWan: "公网",
+    },
+    en: {
+      pageTitle: "EGO collection stations",
+      pageSubtitle: "Station list · online status",
+      documentTitle: "Collection | Data Lab",
+      loadingList: "Loading station list…",
+      reloading: "Reloading…",
+      loadingRetry: function (n, max) {
+        return "Loading station list… (" + n + "/" + max + ")";
+      },
+      loadError: "Failed to load station list. Please try again later.",
+      retry: "Retry",
+      noStations: "No collection stations available.",
+      online: "Online",
+      offline: "Offline",
+      scopeLan: "LAN",
+      scopeWan: "Public",
+    },
+  };
+
   var stations = [];
   var hasRendered = false;
   var refreshTimer = null;
 
+  function pageLang() {
+    try {
+      var q = new URLSearchParams(window.location.search).get("lang");
+      if (q) return String(q).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    } catch (err) {
+      /* ignore */
+    }
+    try {
+      var topWin = window.top || window.parent;
+      if (topWin && topWin !== window && topWin.APP_SETTINGS) {
+        var fromSettings =
+          topWin.APP_SETTINGS.locale ||
+          (topWin.APP_SETTINGS.user && topWin.APP_SETTINGS.user.ui_locale) ||
+          "";
+        if (fromSettings) {
+          return String(fromSettings).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        }
+      }
+    } catch (err2) {
+      /* cross-origin */
+    }
+    try {
+      var stored = window.localStorage.getItem("ui_locale");
+      if (stored) return String(stored).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    } catch (err3) {
+      /* ignore */
+    }
+    var docLang =
+      (document.documentElement &&
+        (document.documentElement.getAttribute("data-ui-locale") ||
+          document.documentElement.lang)) ||
+      "";
+    return String(docLang).toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+  }
+
+  function t(key) {
+    var lang = pageLang();
+    var bucket = STRINGS[lang] || STRINGS.en;
+    return bucket[key];
+  }
+
+  function applyPageChrome() {
+    var lang = pageLang();
+    document.documentElement.lang = lang === "zh" ? "zh-Hans" : "en";
+    var titleEl = document.querySelector(".datalab-collection-page__title");
+    var subtitleEl = document.querySelector(".datalab-collection-page__subtitle");
+    if (titleEl) titleEl.textContent = t("pageTitle");
+    if (subtitleEl) subtitleEl.textContent = t("pageSubtitle");
+    document.title = t("documentTitle");
+  }
+
+  function stationDisplayName(station) {
+    if (pageLang() === "en") {
+      if (station.name_en) return station.name_en;
+      if (STATION_NAME_EN[station.id]) return STATION_NAME_EN[station.id];
+    }
+    return station.name || "—";
+  }
+
   function scopeLabel(scope) {
-    if (scope === "wan") return "公网";
-    if (scope === "lan") return "局域网";
+    if (scope === "wan") return t("scopeWan");
+    if (scope === "lan") return t("scopeLan");
     return scope || "—";
   }
 
@@ -58,16 +160,18 @@
     if (!listEl) return;
     listEl.innerHTML =
       '<p class="datalab-collection-page__loading">' +
-      (message || "正在加载采集站列表…") +
+      (message || t("loadingList")) +
       "</p>";
   }
 
   function showError() {
     if (!listEl) return;
     listEl.innerHTML =
-      '<p class="datalab-collection-page__error">加载采集站列表失败，请稍后重试。</p>' +
+      '<p class="datalab-collection-page__error">' + t("loadError") + "</p>" +
       '<p class="datalab-collection-page__loading" style="margin-top:8px;">' +
-      '<button type="button" class="datalab-collection-page__retry" id="datalab-station-retry">重试</button>' +
+      '<button type="button" class="datalab-collection-page__retry" id="datalab-station-retry">' +
+      t("retry") +
+      "</button>" +
       "</p>";
     var btn = document.getElementById("datalab-station-retry");
     if (btn) {
@@ -103,7 +207,7 @@
   function renderList() {
     if (!listEl) return;
     if (!stations.length) {
-      listEl.innerHTML = '<p class="datalab-collection-page__error">未找到可用采集站。</p>';
+      listEl.innerHTML = '<p class="datalab-collection-page__error">' + t("noStations") + "</p>";
       return;
     }
 
@@ -130,11 +234,11 @@
         "</div>" +
         '<span class="datalab-station-card__badge"></span>';
 
-      card.querySelector(".datalab-station-card__name").textContent = station.name;
+      card.querySelector(".datalab-station-card__name").textContent = stationDisplayName(station);
       card.querySelector(".datalab-station-card__meta").textContent =
         scopeLabel(station.scope) + " · " + (station.host || "—");
       var badge = card.querySelector(".datalab-station-card__badge");
-      badge.textContent = online ? "在线" : "离线";
+      badge.textContent = online ? t("online") : t("offline");
       badge.className +=
         online ? " datalab-station-card__badge--online" : " datalab-station-card__badge--offline";
 
@@ -270,7 +374,7 @@
     var userInitiated = Boolean(options.userInitiated);
 
     if (!hasRendered) {
-      showLoading(userInitiated ? "正在重新加载…" : "正在加载采集站列表…");
+      showLoading(userInitiated ? t("reloading") : t("loadingList"));
     }
 
     function tryFetch() {
@@ -278,7 +382,7 @@
         attempt += 1;
         if (attempt < MAX_RETRIES) {
           if (!hasRendered) {
-            showLoading("正在加载采集站列表…（" + attempt + "/" + MAX_RETRIES + "）");
+            showLoading(t("loadingRetry")(attempt, MAX_RETRIES));
           }
           return new Promise(function (resolve) {
             setTimeout(resolve, RETRY_BASE_MS * attempt);
@@ -301,6 +405,8 @@
       });
     }, REFRESH_MS);
   }
+
+  applyPageChrome();
 
   var cached = readCache();
   if (cached) {

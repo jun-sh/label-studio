@@ -2,6 +2,7 @@
   {
     "id": "ego-lan-214",
     "name": "EGO 采集站 · 实验室 A (214)",
+    "name_en": "EGO station · Lab A (214)",
     "scope": "lan",
     "host": "10.10.10.214",
     "online": false,
@@ -14,6 +15,7 @@
   {
     "id": "ego-lan-02",
     "name": "EGO 采集站 · 实验室 B",
+    "name_en": "EGO station · Lab B",
     "scope": "lan",
     "host": "10.10.10.102",
     "online": false,
@@ -24,6 +26,7 @@
   {
     "id": "ego-wan-01",
     "name": "EGO 采集站 · 公网节点",
+    "name_en": "EGO station · Public node",
     "scope": "wan",
     "host": "ego.example.com",
     "online": true,

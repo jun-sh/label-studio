@@ -164,7 +164,7 @@
       "cancel_aria": "取消创建项目",
       "project_type_label": "项目类型",
       "project_type_multimodal": "多模态标注",
-      "project_type_embodied": "具身数据标注",
+      "project_type_embodied": "具身标注",
       "multimodal_created_toast": "项目创建成功，可前往设置页配置标注模板与导入数据"
     }
   },

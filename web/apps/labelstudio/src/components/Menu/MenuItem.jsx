@@ -18,17 +18,9 @@ export const MenuItem = ({
 }) => {
   const rootClass = cn("main-menu", { elem: "item" });
   const classList = [rootClass.toClassName()];
-  const isActive = (() => {
-    const pathname = location.pathname.replace(/\/$/, "");
-    const url = to ?? href;
 
-    if (exact) {
-      return pathname === url;
-    }
-    return pathname.includes(url);
-  })();
-
-  if (isActive || active) classList.push(rootClass.mod({ active: true }));
+  // Route highlighting is owned by NavLink.activeClassName; only non-route items (e.g. pin) pass `active`.
+  if (active) classList.push(rootClass.mod({ active: true }));
 
   if (isDangerous) classList.push(rootClass.mod({ dangerous: true }));
 

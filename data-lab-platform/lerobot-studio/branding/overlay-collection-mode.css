@@ -51,6 +51,10 @@ html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
   pointer-events: none !important;
 }
 
+html[data-datalab-parent-chrome="1"] [data-datalab-collection-mode-root] {
+  display: none !important;
+}
+
 html[data-datalab-collection-embed="1"] [data-datalab-collection-mode-root] {
   display: inline-flex;
   align-items: center;

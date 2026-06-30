@@ -3,15 +3,9 @@
 
   var g = typeof globalThis !== "undefined" ? globalThis : window;
 
-  /** Lock light theme before React reads localStorage on collection embed URLs. */
-  (function lockCollectionThemeEarly() {
-    try {
-      var params = new URLSearchParams(g.location.search);
-      if (params.get("datalab_collection") !== "1") return;
-      localStorage.setItem("theme", "light");
-    } catch (e) {
-      /* ignore */
-    }
+  /** Do not force light theme in collection embed — LeRobot theme picker controls iframe UI. */
+  (function unlockCollectionThemeEarly() {
+    /* no-op */
   })();
   var SUBTITLE_EN = "Preview robot datasets in browser";
   var chromeApplied = false;
@@ -333,44 +327,9 @@
     btn.setAttribute("data-datalab-chrome", "theme-toggle");
   }
 
-  /** Collection station embed: hide theme picker and keep resolved theme light. */
-  function forceCollectionLightTheme() {
-    if (!isCollectionStationEmbed()) return;
-    try {
-      localStorage.setItem("theme", "light");
-    } catch (e) {
-      /* ignore */
-    }
-    var appRoot = document.getElementById("lerobot-root");
-    if (appRoot) appRoot.classList.remove("dark");
-    document.querySelectorAll(".dockview-react").forEach(function (dv) {
-      dv.classList.remove("dockview-theme-dark");
-      dv.classList.add("dockview-theme-light");
-    });
-  }
-
+  /** Collection embed: theme picker handled separately from parent chrome. */
   function hideThemeStyleControl() {
-    if (!isCollectionStationEmbed()) return;
-    forceCollectionLightTheme();
-
-    document.querySelectorAll("button").forEach(function (btn) {
-      if (btn.closest("[data-datalab-collection-mode-root]")) return;
-      if (isThemeTriggerButton(btn)) {
-        hideThemeDropdownRoot(btn);
-        return;
-      }
-      var text = (btn.textContent || "").replace(/\s+/g, " ").trim();
-      if (!isThemeMenuItemLabel(text)) return;
-      btn.style.display = "none";
-      btn.setAttribute("data-datalab-chrome", "theme-style");
-    });
-
-    document.querySelectorAll('[role="menuitem"], [role="menuitemradio"]').forEach(function (item) {
-      var text = (item.textContent || "").replace(/\s+/g, " ").trim();
-      if (!isThemeMenuItemLabel(text)) return;
-      item.style.display = "none";
-      item.setAttribute("data-datalab-chrome", "theme-style");
-    });
+    /* no-op */
   }
 
   /** Embed mode: hide language toggle on collection embed only (/data keeps it). */

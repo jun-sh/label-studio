@@ -1,0 +1,19 @@
+/* Collection embed: Episodes toolbar import button (modal renders on parent page). */
+
+html[data-datalab-collection-embed="1"] .dv-groupview[data-datalab-episodes-panel="1"] {
+  min-width: 0;
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-episodes-toolbar="1"] {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px 6px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-import-trigger="1"] {
+  flex-shrink: 0;
+}

@@ -16,6 +16,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from core import views
+from core.collection_import import collection_station_import_task, collection_station_import_upload
 from core.utils.static_serve import serve
 from django.conf import settings
 from django.conf.urls import include
@@ -35,6 +36,16 @@ urlpatterns = [
     re_path(r'^$', views.main, name='main'),
     re_path(r'^data(?:/(?P<dataset>[\w-]+))?/?$', views.data_viz_page, name='data-viz'),
     re_path(r'^collection/?$', views.collection_viz_page, name='collection-viz'),
+    re_path(
+        r'^api/collection/stations/(?P<station_id>[\w-]+)/import/tasks/(?P<task_id>[0-9a-f-]+)/?$',
+        collection_station_import_task,
+        name='collection-station-import-task',
+    ),
+    re_path(
+        r'^api/collection/stations/(?P<station_id>[\w-]+)/import/?$',
+        collection_station_import_upload,
+        name='collection-station-import-upload',
+    ),
     re_path(r'^sw\.js$', views.static_file_with_host_resolver('js/sw.js', content_type='text/javascript')),
     re_path(
         r'^sw-fallback\.js$',

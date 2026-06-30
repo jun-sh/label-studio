@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -9,10 +10,9 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 try:
     import requests
@@ -26,9 +26,13 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
     segment_file_key,
 )
+from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, sha256_file
 
 STATION_TOKEN_HEADER = "X-Station-Token"
-DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "120"))
+DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "300"))
+UPLOAD_PROTOCOL = os.environ.get("UPLOAD_PROTOCOL", "tarzst").strip().lower()
+UPLOAD_MAX_RETRIES = max(1, int(os.environ.get("EGO_UPLOAD_MAX_RETRIES", "3")))
+UPLOAD_CONCURRENCY = max(1, int(os.environ.get("EGO_UPLOAD_CONCURRENCY", "2")))
 DELETE_AFTER_UPLOAD = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
     "1",
     "true",
@@ -57,11 +61,13 @@ class SegmentUploader:
         *,
         timeout_s: float = DEFAULT_UPLOAD_TIMEOUT_S,
         station_token: str | None = None,
+        protocol: str | None = None,
     ) -> None:
         self.upload_url = upload_url.rstrip("/")
         if not self.upload_url.endswith("/upload"):
             raise ValueError("upload_url must end with /upload")
         self.timeout_s = timeout_s
+        self.protocol = (protocol or UPLOAD_PROTOCOL).strip().lower()
         self.station_token = station_token or os.environ.get("STATION_UPLOAD_TOKEN") or None
         self._http_session = requests.Session() if requests is not None else None
         if self._http_session and self.station_token:
@@ -96,6 +102,66 @@ class SegmentUploader:
         return self._post_json(body)
 
     def upload_segment_dir(self, segment_dir: Path) -> dict[str, Any]:
+        if self.protocol == "multipart":
+            return self._upload_segment_multipart(segment_dir)
+        if self.protocol == "tarzst":
+            return self._upload_segment_tarzst(segment_dir)
+        raise ValueError(f"unknown UPLOAD_PROTOCOL: {self.protocol!r}")
+
+    def _upload_segment_tarzst(self, segment_dir: Path) -> dict[str, Any]:
+        segment_dir = Path(segment_dir).resolve()
+        manifest_path = segment_dir / "manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"missing manifest: {segment_dir}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        session_id = str(manifest["session_id"])
+        segment_id = str(manifest["segment_id"])
+        seg_seq = manifest.get("segment_seq")
+        if seg_seq is None:
+            try:
+                seg_seq = int(segment_id.rsplit("_", 1)[-1])
+            except ValueError:
+                seg_seq = 0
+
+        cache_dir = segment_dir / ".upload"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = cache_dir / f"{segment_id}.tar.zst"
+        if not archive_path.is_file():
+            pack_segment_tar_zst(segment_dir, archive_path)
+        digest = sha256_file(archive_path)
+
+        headers = self._headers(
+            {
+                "Content-Type": "application/zstd",
+                "X-Upload-Protocol": "tarzst",
+                "X-Session-Id": session_id,
+                "X-Segment-Id": segment_id,
+                "X-Segment-Seq": str(seg_seq),
+                "X-Content-Sha256": digest,
+            }
+        )
+        if self._http_session is not None:
+            with archive_path.open("rb") as body_fp:
+                resp = self._http_session.post(
+                    self.upload_url,
+                    data=body_fp,
+                    headers=headers,
+                    timeout=self.timeout_s,
+                )
+            resp.raise_for_status()
+            return self._parse_response(resp.text)
+
+        with archive_path.open("rb") as body_fp:
+            req = urllib.request.Request(
+                self.upload_url,
+                data=body_fp.read(),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                return self._parse_response(resp.read().decode("utf-8"))
+
+    def _upload_segment_multipart(self, segment_dir: Path) -> dict[str, Any]:
         manifest = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
         session_id = str(manifest["session_id"])
         segment_id = str(manifest["segment_id"])
@@ -249,18 +315,37 @@ class SegmentUploader:
             self._http_session.close()
 
 
-def upload_pending_segments(
+def _quarantine_orphan_segments(root: Path, session_id: str) -> int:
+    """Skip segment dirs without manifest so they never block the upload queue."""
+    seg_root = root / "sessions" / session_id / "segments"
+    if not seg_root.is_dir():
+        return 0
+    quarantined = 0
+    for child in sorted(seg_root.iterdir()):
+        if not child.is_dir() or not child.name.startswith("seg_"):
+            continue
+        if (child / "manifest.json").is_file():
+            continue
+        skip_marker = child / ".upload_skip"
+        if skip_marker.is_file():
+            continue
+        skip_marker.write_text(
+            json.dumps({"reason": "missing_manifest", "at": time.time()}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _log("segment_skip", session_id=session_id, segment_id=child.name, reason="missing_manifest")
+        quarantined += 1
+    return quarantined
+
+
+def _upload_one_segment(
     *,
-    root: Path,
+    segment_dir: Path,
     session_id: str,
     uploader: SegmentUploader,
-    limit: int | None = None,
-) -> int:
-    uploaded = 0
-    pending = list_closed_pending_segments(root, session_id)
-    for segment_dir in pending:
-        if limit is not None and uploaded >= limit:
-            break
+) -> bool:
+    segment_id = segment_dir.name
+    for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         t0 = time.monotonic()
         try:
             out = uploader.upload_segment_dir(segment_dir)
@@ -269,18 +354,59 @@ def upload_pending_segments(
             _log(
                 "segment_ok",
                 session_id=session_id,
-                segment_id=segment_dir.name,
+                segment_id=segment_id,
                 frames=out.get("framesCommitted"),
                 elapsed_s=round(elapsed, 2),
                 duplicate=bool(out.get("duplicate")),
+                protocol=uploader.protocol,
+                attempt=attempt,
             )
-            uploaded += 1
+            return True
         except Exception as exc:
-            _log(
-                "segment_fail",
+            if attempt >= UPLOAD_MAX_RETRIES:
+                _log(
+                    "segment_fail",
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    err=str(exc)[:200],
+                    attempts=attempt,
+                )
+                return False
+            time.sleep(min(8.0, 2.0 ** (attempt - 1)))
+    return False
+
+
+def upload_pending_segments(
+    *,
+    root: Path,
+    session_id: str,
+    uploader: SegmentUploader,
+    limit: int | None = None,
+) -> int:
+    _quarantine_orphan_segments(root, session_id)
+    pending = list_closed_pending_segments(root, session_id)
+    if limit is not None:
+        pending = pending[:limit]
+
+    uploaded = 0
+    if UPLOAD_CONCURRENCY <= 1 or len(pending) <= 1:
+        for segment_dir in pending:
+            if _upload_one_segment(segment_dir=segment_dir, session_id=session_id, uploader=uploader):
+                uploaded += 1
+        return uploaded
+
+    workers = min(UPLOAD_CONCURRENCY, len(pending))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _upload_one_segment,
+                segment_dir=segment_dir,
                 session_id=session_id,
-                segment_id=segment_dir.name,
-                err=str(exc)[:200],
-            )
-            break
+                uploader=uploader,
+            ): segment_dir
+            for segment_dir in pending
+        }
+        for fut in as_completed(futures):
+            if fut.result():
+                uploaded += 1
     return uploaded

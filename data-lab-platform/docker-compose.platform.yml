@@ -33,6 +33,10 @@ services:
     environment:
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}
       - DATA_LAB_PUBLIC_BASE_URL=${DATA_LAB_PUBLIC_BASE_URL:-http://10.10.10.34:8080}
+      - STREAM_INGEST_INTERNAL_URL=http://stream-ingest:7862
+      - COLLECTION_STATION_TOKENS_JSON=/datalab-config/collection-station-tokens.json
+    volumes:
+      - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/datalab-config/collection-station-tokens.json:ro
 
   stream-ingest:
     build:
@@ -46,6 +50,9 @@ services:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/import-handlers.mjs:/app/import-handlers.mjs:ro
+      - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
     user: "1000:1000"
     environment:
       - INGEST_PORT=7862
@@ -70,6 +77,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/scripts/sync-stream-parquet.py:ro
     user: "1000:1000"
     environment:
       - STREAM_SYNC_INTERVAL=5
@@ -92,6 +100,7 @@ services:
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
+      - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
     environment:
       - PORT=7860
       - NODE_ENV=production

@@ -17,6 +17,8 @@ VIDEO_KEYS = [
     "observation.images.camera_rear_right",
 ]
 
+DEFAULT_TASK = "Perform egocentric manipulation tasks at the laboratory workbench"
+
 
 def read_json(path: Path, default=None):
     try:
@@ -54,12 +56,32 @@ def _atomic_parquet_write(table: pa.Table, out: Path) -> None:
     tmp.replace(out)
 
 
-def write_data_parquet(root: Path, rows: list[dict], fps: float) -> None:
+def load_episodes_index(root: Path) -> list[dict]:
+    raw = read_json(root / "live" / "episodes-index.json", {})
+    episodes = raw.get("episodes") if isinstance(raw, dict) else None
+    if not isinstance(episodes, list) or not episodes:
+        return []
+    return sorted(episodes, key=lambda ep: int(ep.get("episode_index", 0)))
+
+
+def episode_index_for_frame(episodes: list[dict], frame_index: int) -> int:
+    for ep in episodes:
+        start = int(ep.get("dataset_from_index", 0))
+        end = int(ep.get("dataset_to_index", start))
+        if start <= frame_index < end:
+            return int(ep.get("episode_index", 0))
+    return 0
+
+
+def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[dict]) -> None:
     n = len(rows)
     if n == 0:
         return
     frame_index = [int(r.get("frame_index", i)) for i, r in enumerate(rows)]
-    episode_index = [0] * n
+    if episodes:
+        episode_index = [episode_index_for_frame(episodes, fi) for fi in frame_index]
+    else:
+        episode_index = [0] * n
     index = frame_index[:]
     task_index = [0] * n
     timestamp = [float(i) / fps for i in frame_index]
@@ -76,18 +98,20 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float) -> None:
     _atomic_parquet_write(table, out)
 
 
-def write_episodes_parquet(root: Path, total_frames: int, fps: float, task: str) -> None:
-    if total_frames <= 0:
-        return
-    duration = total_frames / fps if fps > 0 else 0.0
+def _episode_row(ep: dict, fps: float) -> dict:
+    length = int(ep.get("length") or 0)
+    from_idx = int(ep.get("dataset_from_index") or 0)
+    to_idx = int(ep.get("dataset_to_index") or from_idx + length)
+    if length <= 0:
+        length = max(0, to_idx - from_idx)
+    duration = length / fps if fps > 0 else 0.0
+    task = str(ep.get("title") or ep.get("task") or DEFAULT_TASK)
     row: dict = {
-        "episode_index": 0.0,
-        "length": float(total_frames),
-        # LeRobot v3 expects list<string>; a bare string is iterated char-by-char ("E", "G", …).
-        "tasks": [task],
+        "episode_index": float(ep.get("episode_index", 0)),
+        "length": float(length),
         "task_index": 0.0,
-        "dataset_from_index": 0.0,
-        "dataset_to_index": float(total_frames),
+        "dataset_from_index": float(from_idx),
+        "dataset_to_index": float(to_idx),
         "data/chunk_index": 0.0,
         "data/file_index": 0.0,
         "chunk_index": 0.0,
@@ -96,10 +120,37 @@ def write_episodes_parquet(root: Path, total_frames: int, fps: float, task: str)
     for key in VIDEO_KEYS:
         row[f"videos/{key}/chunk_index"] = 0.0
         row[f"videos/{key}/file_index"] = 0.0
-        row[f"videos/{key}/from_timestamp"] = 0.0
-        row[f"videos/{key}/to_timestamp"] = duration
-    columns = {k: pa.array([v]) for k, v in row.items() if k != "tasks"}
-    columns["tasks"] = pa.array([[task]], type=pa.list_(pa.string()))
+        row[f"videos/{key}/from_timestamp"] = float(from_idx) / fps if fps > 0 else 0.0
+        row[f"videos/{key}/to_timestamp"] = float(to_idx) / fps if fps > 0 else duration
+    row["tasks"] = task
+    row["_duration"] = duration
+    return row
+
+
+def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: str) -> None:
+    if not episodes:
+        total_frames = int(read_json(root / "meta" / "info.json", {}).get("total_frames") or 0)
+        if total_frames <= 0:
+            return
+        episodes = [
+            {
+                "episode_index": 0,
+                "length": total_frames,
+                "dataset_from_index": 0,
+                "dataset_to_index": total_frames,
+                "title": task,
+            }
+        ]
+
+    rows = [_episode_row(ep, fps) for ep in episodes]
+    columns: dict[str, pa.Array] = {}
+    for key in rows[0]:
+        if key == "tasks":
+            continue
+        if key == "_duration":
+            continue
+        columns[key] = pa.array([row[key] for row in rows], type=pa.float64())
+    columns["tasks"] = pa.array([[row["tasks"]] for row in rows], type=pa.list_(pa.string()))
     table = pa.table(columns)
     out = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
     _atomic_parquet_write(table, out)
@@ -121,6 +172,7 @@ def main() -> int:
         or "Perform egocentric manipulation tasks at the laboratory workbench"
     )
     total_frames = int(info.get("total_frames") or 0)
+    episodes = load_episodes_index(root)
     jsonl_path = root / "data" / "chunk-000" / "file-000.jsonl"
     try:
         jsonl_mtime = int(jsonl_path.stat().st_mtime) if jsonl_path.is_file() else 0
@@ -128,9 +180,10 @@ def main() -> int:
         jsonl_mtime = 0
     marker_path = root / "live" / "parquet_sync.json"
     marker = read_json(marker_path, {})
+    episodes_key = len(episodes)
 
     write_tasks_jsonl(root, task)
-    write_episodes_parquet(root, total_frames, fps, task)
+    write_episodes_parquet(root, episodes, fps, task)
     if meta_only:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_path.write_text(
@@ -139,6 +192,7 @@ def main() -> int:
                     "total_frames": total_frames,
                     "jsonl_mtime": jsonl_mtime,
                     "episodes_tasks_list": True,
+                    "episodes_count": episodes_key,
                 },
                 indent=2,
             )
@@ -151,11 +205,12 @@ def main() -> int:
         marker.get("total_frames") == total_frames
         and marker.get("jsonl_mtime") == jsonl_mtime
         and marker.get("episodes_tasks_list") is True
+        and marker.get("episodes_count") == episodes_key
         and (root / "meta" / "episodes" / "chunk-000" / "file-000.parquet").is_file()
     ):
         return 0
     rows = read_jsonl(jsonl_path)
-    write_data_parquet(root, rows, fps)
+    write_data_parquet(root, rows, fps, episodes)
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(
         json.dumps(
@@ -163,6 +218,7 @@ def main() -> int:
                 "total_frames": total_frames,
                 "jsonl_mtime": jsonl_mtime,
                 "episodes_tasks_list": True,
+                "episodes_count": episodes_key,
             },
             indent=2,
         )

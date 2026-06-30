@@ -247,17 +247,33 @@ function resolveHandKp2dPayload(datasetId) {
   );
 }
 
-function injectBranding(html) {
-  const inject =
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=60"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=54"/>' +
+function isCollectionEmbedSearch(search = "") {
+  try {
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    return params.get("datalab_collection") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function injectBranding(html, search = "") {
+  const collectionEmbed = isCollectionEmbedSearch(search);
+  let inject =
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=55"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=55"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=2"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
-    '<script defer src="/lerobot/branding/overlay.js?v=60"></script>' +
+    '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=54"></script>' +
     '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=2"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
+  if (collectionEmbed) {
+    inject +=
+      '<link rel="stylesheet" href="/lerobot/branding/overlay-import.css?v=5"/>' +
+      '<script src="/_datalab/import-core.js?v=3"></script>' +
+      '<script defer src="/lerobot/branding/overlay-import.js?v=7"></script>';
+  }
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");
   if (!html.includes("/lerobot/branding/overlay.js")) {
@@ -449,7 +465,7 @@ const server = http.createServer((req, res) => {
 
   if (fs.existsSync(disk) && fs.statSync(disk).isFile()) {
     if (disk.endsWith(".html")) {
-      const html = injectBranding(fs.readFileSync(disk, "utf8"));
+      const html = injectBranding(fs.readFileSync(disk, "utf8"), url.search);
       return send(res, 200, html, { "Content-Type": "text/html; charset=utf-8" });
     }
     return serveFile(req, res, disk);
@@ -461,7 +477,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (fs.existsSync(index)) {
-    const html = injectBranding(fs.readFileSync(index, "utf8"));
+    const html = injectBranding(fs.readFileSync(index, "utf8"), url.search);
     return send(res, 200, html, { "Content-Type": "text/html; charset=utf-8" });
   }
 

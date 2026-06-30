@@ -14,9 +14,11 @@ ul[class*="main-menu"] > li:has(a[href*="/data"]):not([data-datalab-managed="1"]
   pointer-events: none !important;
 }
 
-/* Data Lab: hide LS menubar theme toggle; shell.js forces light mode */
-button[class*="themeToggle"],
-[data-datalab-chrome="theme-toggle"] {
+/* Data Lab: hide LS menubar theme toggle outside collection routes */
+body:not([data-datalab-collection-page="1"]):not([data-datalab-collection-viz="1"])
+  button[class*="themeToggle"],
+body:not([data-datalab-collection-page="1"]):not([data-datalab-collection-viz="1"])
+  [data-datalab-chrome="theme-toggle"] {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;

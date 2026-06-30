@@ -1,0 +1,223 @@
+/* Offline import modal — parent page + iframe fallback (solid colors, no CSS var dependency) */
+
+html.datalab-import-modal-open {
+  overflow: hidden;
+}
+
+.datalab-import-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+.datalab-import-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.datalab-import-modal__dialog {
+  position: relative;
+  z-index: 1;
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #18181b;
+  border: 1px solid #e4e4e7;
+  border-radius: 10px;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
+  outline: none;
+}
+
+.datalab-import-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 8px;
+}
+
+.datalab-import-modal__title {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #18181b;
+}
+
+.datalab-import-modal__help {
+  margin: 6px 0 0;
+  font-size: 0.875rem;
+  color: #71717a;
+  line-height: 1.45;
+}
+
+.datalab-import-modal__icon-close {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #71717a;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.datalab-import-modal__icon-close:hover {
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.datalab-import-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 20px 12px;
+}
+
+.datalab-import-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px 20px;
+  border-top: 1px solid #e4e4e7;
+}
+
+.datalab-import-modal__close {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid #e4e4e7;
+  background: #f4f4f5;
+  color: #18181b;
+  cursor: pointer;
+}
+
+.datalab-import-modal__close:hover {
+  background: #e4e4e7;
+}
+
+.datalab-import-modal .datalab-import-ui__drop {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 20px 16px;
+  border: 1px dashed #d4d4d8;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: #fafafa;
+}
+
+.datalab-import-modal .datalab-import-ui__drop.is-dragover,
+.datalab-import-modal .datalab-import-ui__drop:hover {
+  border-color: #4c5fa9;
+  background: rgba(76, 95, 169, 0.06);
+}
+
+.datalab-import-modal .datalab-import-ui__drop-text {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #71717a;
+}
+
+.datalab-import-modal .datalab-import-ui__total {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.datalab-import-modal .datalab-import-ui__total-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #18181b;
+}
+
+.datalab-import-modal .datalab-import-ui__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: #e4e4e7;
+  overflow: hidden;
+}
+
+.datalab-import-modal .datalab-import-ui__bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: #4c5fa9;
+  transition: width 0.25s ease;
+}
+
+.datalab-import-modal .datalab-import-ui__total-meta {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: #71717a;
+}
+
+.datalab-import-modal .datalab-import-ui__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  width: 100%;
+}
+
+.datalab-import-modal .datalab-import-ui__row {
+  padding: 10px 0;
+  border-top: 1px solid #e4e4e7;
+}
+
+.datalab-import-modal .datalab-import-ui__row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+  margin-bottom: 6px;
+}
+
+.datalab-import-modal .datalab-import-ui__fname {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.datalab-import-modal .datalab-import-ui__stage {
+  flex-shrink: 0;
+  color: #71717a;
+}
+
+.datalab-import-modal .datalab-import-ui__bar--row {
+  height: 4px;
+}
+
+.datalab-import-modal .datalab-import-ui__err {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: #b45309;
+}
+
+.datalab-import-modal .datalab-import-ui__retry {
+  margin-top: 6px;
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #e4e4e7;
+  background: #f4f4f5;
+  color: #18181b;
+  cursor: pointer;
+}
+
+.datalab-import-modal .datalab-import-ui__retry:hover {
+  border-color: #4c5fa9;
+}

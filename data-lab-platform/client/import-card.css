@@ -1,0 +1,155 @@
+/* Offline import — parent-page fallback card (hidden on collection viz; iframe modal is primary) */
+
+.datalab-import-card {
+  flex-direction: column;
+  align-items: stretch;
+  margin: 0 16px 12px;
+  cursor: default;
+}
+
+.datalab-import-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.datalab-import-card__title {
+  margin: 0 0 4px;
+}
+
+.datalab-import-card__help {
+  margin: 0;
+}
+
+#datalab-import-card-slot {
+  flex: 0 0 auto;
+  background: var(--color-neutral-background, #fdfdf8);
+}
+
+#datalab-import-card-slot[hidden] {
+  display: none !important;
+}
+
+/* Parent fallback uses collection-page theme tokens */
+.datalab-import-card .datalab-import-ui__drop {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 20px 16px;
+  border: 1px dashed var(--color-neutral-border);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.datalab-import-card .datalab-import-ui__drop.is-dragover,
+.datalab-import-card .datalab-import-ui__drop:hover {
+  border-color: var(--color-primary-content);
+  background: rgba(76, 95, 169, 0.06);
+}
+
+.datalab-import-card .datalab-import-ui__drop-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.datalab-import-card .datalab-import-ui__total {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.datalab-import-card .datalab-import-ui__total-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.datalab-import-card .datalab-import-ui__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(107, 104, 96, 0.15);
+  overflow: hidden;
+}
+
+.datalab-import-card .datalab-import-ui__bar-fill {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--color-primary-content);
+  transition: width 0.25s ease;
+}
+
+.datalab-import-card .datalab-import-ui__total-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.datalab-import-card .datalab-import-ui__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  width: 100%;
+}
+
+.datalab-import-card .datalab-import-ui__row {
+  padding: 10px 0;
+  border-top: 1px solid var(--color-neutral-border);
+}
+
+.datalab-import-card .datalab-import-ui__row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.datalab-import-card .datalab-import-ui__fname {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.datalab-import-card .datalab-import-ui__stage {
+  flex-shrink: 0;
+  color: var(--color-muted);
+}
+
+.datalab-import-card .datalab-import-ui__bar--row {
+  height: 4px;
+}
+
+.datalab-import-card .datalab-import-ui__err {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #b45309;
+}
+
+.datalab-import-card .datalab-import-ui__retry {
+  margin-top: 6px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-neutral-border);
+  background: var(--color-neutral-background);
+  cursor: pointer;
+}
+
+.datalab-import-card .datalab-import-ui__retry:hover {
+  border-color: var(--color-primary-content);
+}
+
+#datalab-station-shell {
+  background: #0b1220;
+}
+
+#datalab-station-shell #datalab-station-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}

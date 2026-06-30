@@ -15,7 +15,10 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=10" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=13" />
+<link rel="stylesheet" href="/_datalab/collection-page.css?v=7" />
+<link rel="stylesheet" href="/_datalab/import-card.css?v=2" />
+<link rel="stylesheet" href="/_datalab/import-modal.css?v=1" />
 <style nonce="{{ request.csp_nonce }}">
   /*
    * Layers are direct children of body (z-index 50). The React shell (.app-wrapper) has
@@ -64,14 +67,14 @@
   }
   #datalab-station-layer,
   #datalab-stream-loading-layer {
-    background: #0b1220;
+    background: var(--color-neutral-background, #fdfdf8);
   }
   #datalab-stream-loading-layer {
     display: flex;
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
-    color: #e2e8f0;
+    color: var(--color-neutral-content, #262522);
     font-size: 15px;
     font-weight: 500;
     letter-spacing: 0.02em;
@@ -80,8 +83,8 @@
     width: 28px;
     height: 28px;
     margin-right: 12px;
-    border: 2px solid rgba(148, 163, 184, 0.35);
-    border-top-color: #38bdf8;
+    border: 2px solid var(--color-neutral-border, #e1ded5);
+    border-top-color: var(--color-primary-content, #4c5fa9);
     border-radius: 50%;
     animation: datalab-stream-spin 0.8s linear infinite;
   }
@@ -115,16 +118,12 @@
     visibility: hidden !important;
     pointer-events: none !important;
   }
-  /* Collection route only: hide LS theme toggle (no theme forcing). */
-  [class*="themeToggle"] {
-    display: none !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-  }
 </style>
 {% endblock %}
 
 {% block app-js %}
+<script src="/_datalab/import-core.js?v=4" nonce="{{ request.csp_nonce }}"></script>
+<script src="/_datalab/import-card.js?v=2" nonce="{{ request.csp_nonce }}"></script>
 <script nonce="{{ request.csp_nonce }}">
   document.body.dataset.datalabCollectionPage = "1";
   (function () {
@@ -146,11 +145,21 @@
     var LABEL_OFFLINE = ZH ? "采集离线" : "Station offline";
     var LABEL_LIVE = ZH ? "采集中" : "Live";
     var COLLECTION_MODE_MSG = "datalab-collection-mode";
+    var IMPORT_DONE_MSG = "datalab-import-done";
     var LABEL_DATASET_LOADING = ZH ? "正在加载流式数据集…" : "Loading live stream dataset…";
 
     var STATION_FETCH_TIMEOUT_MS = 5000;
     var PING_TIMEOUT_MS = 4000;
     var STREAM_INFO_TIMEOUT_MS = 15000;
+
+    window.addEventListener("message", function (event) {
+      if (event.origin !== window.location.origin) return;
+      var data = event.data;
+      if (!data || typeof data !== "object" || data.type !== IMPORT_DONE_MSG) return;
+      if (typeof g.__datalabCollectionSetDatasetReady === "function") {
+        g.__datalabCollectionSetDatasetReady(true);
+      }
+    });
 
     function fetchWithTimeout(url, timeoutMs) {
       var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -429,6 +438,15 @@
       layer.id = VIZ_LAYER;
       layer.innerHTML =
         '<div id="datalab-station-shell">' +
+        '<header id="datalab-station-toolbar">' +
+        '<span id="datalab-station-toolbar-title"></span>' +
+        '<div id="datalab-station-mode-pill" role="tablist">' +
+        '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="preview" role="tab"></button>' +
+        '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="dataset" role="tab"></button>' +
+        "</div>" +
+        '<span id="datalab-station-mode-status" hidden></span>' +
+        "</header>" +
+        '<div id="datalab-import-card-slot" hidden aria-hidden="true"></div>' +
         '<div id="datalab-station-body">' +
         '<div id="datalab-dataset-loading">' +
         LABEL_DATASET_LOADING +
@@ -440,6 +458,14 @@
 
       var datasetLoadingEl = layer.querySelector("#datalab-dataset-loading");
       var vizSlot = layer.querySelector("#datalab-viz-slot");
+      var toolbarTitleEl = layer.querySelector("#datalab-station-toolbar-title");
+      var modePreviewBtn = layer.querySelector('[data-datalab-station-mode="preview"]');
+      var modeDatasetBtn = layer.querySelector('[data-datalab-station-mode="dataset"]');
+      var modeStatusEl = layer.querySelector("#datalab-station-mode-status");
+
+      if (toolbarTitleEl) toolbarTitleEl.textContent = VIZ_TITLE;
+      if (modePreviewBtn) modePreviewBtn.textContent = LABEL_PREVIEW;
+      if (modeDatasetBtn) modeDatasetBtn.textContent = LABEL_DATASET;
 
       var lerobotMounted = false;
       var vizFrame = null;
@@ -449,6 +475,37 @@
       var offlinePingStreak = 0;
       var OFFLINE_PING_STRIKES = 3;
       var iframeModeListenerBound = false;
+
+      function updateParentModeChrome() {
+        if (!modePreviewBtn || !modeDatasetBtn) return;
+        var isPreview = currentMode === "preview";
+        modePreviewBtn.classList.toggle("is-active", isPreview);
+        modeDatasetBtn.classList.toggle("is-active", !isPreview);
+        modePreviewBtn.setAttribute("aria-selected", isPreview ? "true" : "false");
+        modeDatasetBtn.setAttribute("aria-selected", !isPreview ? "true" : "false");
+        if (modeStatusEl) {
+          if (!liveOnline) {
+            modeStatusEl.hidden = false;
+            modeStatusEl.textContent = LABEL_OFFLINE;
+            modeStatusEl.classList.add("is-offline");
+          } else {
+            modeStatusEl.hidden = true;
+            modeStatusEl.textContent = "";
+            modeStatusEl.classList.remove("is-offline");
+          }
+        }
+      }
+
+      if (modePreviewBtn) {
+        modePreviewBtn.addEventListener("click", function () {
+          setMode("preview");
+        });
+      }
+      if (modeDatasetBtn) {
+        modeDatasetBtn.addEventListener("click", function () {
+          setMode("dataset");
+        });
+      }
 
       function syncOnlineToIframe() {
         postModeToIframe(iframeModeToSend());
@@ -533,10 +590,9 @@
         }
         if (wasLive && !liveOnline && currentMode === "preview") {
           setMode("dataset");
-        } else if (!wasLive && liveOnline && currentMode === "dataset") {
-          setMode("preview");
         } else {
           syncOnlineToIframe();
+          updateParentModeChrome();
         }
       };
 
@@ -547,6 +603,7 @@
         currentMode = mode;
         ensureLerobotMounted(false);
         updateBodyLayout();
+        updateParentModeChrome();
         syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
 
@@ -573,6 +630,7 @@
         currentMode = mode;
         ensureLerobotMounted(false);
         updateBodyLayout();
+        updateParentModeChrome();
         syncIframeMode();
         syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
@@ -580,7 +638,7 @@
       bindIframeModeListener();
       ensureLerobotMounted(false);
       vizSlot.classList.add("is-visible");
-      setMode(liveOnline ? "preview" : "dataset");
+      setMode("dataset");
 
       activeLayerId = VIZ_LAYER;
       activeFrameId = VIZ_FRAME;

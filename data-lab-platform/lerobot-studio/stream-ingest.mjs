@@ -5,7 +5,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { unpackFrameBin } from "./frame_bin_codec.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -215,6 +217,15 @@ function acquireFileLock(lockPath, timeoutMs = 60_000) {
       return fd;
     } catch (e) {
       if (/** @type {NodeJS.ErrnoException} */ (e).code !== "EEXIST") throw e;
+      try {
+        const st = fs.statSync(lockPath);
+        if (Date.now() - st.mtimeMs > Math.max(timeoutMs, 120_000)) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        /* ignore */
+      }
     }
     sleepMs(25);
   }
@@ -391,11 +402,14 @@ function initChunksManifest(root, { resetViewer = false } = {}) {
 
 function writeViewerInfoSnapshot(root, viewerFrames) {
   const info = readJson(path.join(root, "meta", "info.json"), {});
+  const index = loadEpisodesIndex(root);
+  ensureLegacyEpisodeSlot(root, index);
+  saveEpisodesIndex(root, index);
   const viewerInfo = {
     ...info,
     total_frames: viewerFrames,
-    total_episodes: 1,
-    splits: info.splits || { train: "0:1" },
+    total_episodes: Math.max(1, index.episodes.length || 1),
+    splits: info.splits || { train: `0:${Math.max(1, index.episodes.length || 1)}` },
   };
   writeJsonAtomic(viewerInfoPath(root), viewerInfo);
   return viewerInfo;
@@ -526,6 +540,115 @@ function markSegmentCommitted(root, sessionId, segmentId) {
   fs.writeFileSync(marker, "");
 }
 
+function episodesIndexPath(root) {
+  return path.join(root, "live", "episodes-index.json");
+}
+
+function segmentMetaPath(root, sessionId, segmentId) {
+  return path.join(root, "live", "sessions", sessionId, "segments", `${segmentId}.json`);
+}
+
+function loadEpisodesIndex(root) {
+  const raw = readJson(episodesIndexPath(root), null);
+  if (!raw || !Array.isArray(raw.episodes)) {
+    return { version: 1, episodes: [] };
+  }
+  return raw;
+}
+
+function saveEpisodesIndex(root, index) {
+  writeJsonAtomic(episodesIndexPath(root), index);
+}
+
+function formatEpisodeTitle(segmentId, length, fps, source) {
+  const seconds = fps > 0 ? Math.max(1, Math.round(length / fps)) : length;
+  const durationLabel = seconds < 120 ? `${seconds}秒` : `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+  const sourceLabel =
+    source === "import"
+      ? "离线导入"
+      : source === "edge"
+        ? "站端上传"
+        : source === "legacy"
+          ? "历史合集"
+          : "实时采集";
+  return `[已入库] ${segmentId} · ${durationLabel} · ${sourceLabel}`;
+}
+
+function ensureLegacyEpisodeSlot(root, index) {
+  const info = readJson(path.join(root, "meta", "info.json"), {});
+  const total = Number(info.total_frames || 0);
+  if (total <= 0) return;
+  const legacy = index.episodes.find((ep) => ep.segment_id === "legacy");
+  if (legacy) {
+    legacy.dataset_to_index = total;
+    legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
+    legacy.title = `[已入库] 历史合集 · ${legacy.length}帧`;
+    return;
+  }
+  if (index.episodes.length > 0) return;
+  index.episodes.push({
+    episode_index: 0,
+    segment_id: "legacy",
+    session_id: getActiveSessionId(root) || "unknown",
+    dataset_from_index: 0,
+    dataset_to_index: total,
+    length: total,
+    source: "legacy",
+    title: `[已入库] 历史合集 · ${total}帧`,
+    committed_at: new Date().toISOString(),
+  });
+}
+
+function registerSegmentEpisode(root, { sessionId, segmentId, fromFrame, toFrame, source }) {
+  const fps = Number(readJson(path.join(root, "meta", "info.json"), {}).fps || DEFAULT_FPS);
+  const fromIdx = Math.max(0, Number(fromFrame));
+  const toIdx = Math.max(fromIdx + 1, Number(toFrame));
+  const length = toIdx - fromIdx;
+  if (!Number.isFinite(length) || length <= 0) return null;
+
+  const index = loadEpisodesIndex(root);
+  if (index.episodes.some((ep) => ep.segment_id === segmentId)) {
+    return index.episodes.find((ep) => ep.segment_id === segmentId);
+  }
+
+  ensureLegacyEpisodeSlot(root, index);
+  const legacy = index.episodes.find((ep) => ep.segment_id === "legacy");
+  if (legacy && fromIdx > legacy.dataset_from_index && fromIdx < legacy.dataset_to_index) {
+    legacy.dataset_to_index = fromIdx;
+    legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
+    legacy.title = `[已入库] 历史合集 · ${legacy.length}帧`;
+  }
+
+  const episodeIndex = index.episodes.length;
+  const title = formatEpisodeTitle(segmentId, length, fps, source || "stream");
+  const entry = {
+    episode_index: episodeIndex,
+    segment_id: segmentId,
+    session_id: sessionId,
+    dataset_from_index: fromIdx,
+    dataset_to_index: toIdx,
+    length,
+    source: source || "stream",
+    title,
+    committed_at: new Date().toISOString(),
+  };
+  index.episodes.push(entry);
+  saveEpisodesIndex(root, index);
+  writeJsonAtomic(segmentMetaPath(root, sessionId, segmentId), entry);
+  return entry;
+}
+
+function syncInfoEpisodeCount(root) {
+  const index = loadEpisodesIndex(root);
+  ensureLegacyEpisodeSlot(root, index);
+  saveEpisodesIndex(root, index);
+  const infoPath = path.join(root, "meta", "info.json");
+  const info = readJson(infoPath, null);
+  if (!info) return;
+  info.total_episodes = Math.max(1, index.episodes.length);
+  writeJsonAtomic(infoPath, info);
+}
+
 function segmentImageKey(frameIndex, videoKey) {
   return `${frameIndex}__${videoKey.replace(/\./g, "_")}`;
 }
@@ -569,6 +692,7 @@ function processSegmentIngestJob(stationId, job) {
 
   if (isSegmentCommitted(root, sessionId, segmentId)) {
     touchHeartbeat(root, stationId, host || live.host || null);
+    scheduleParquetSync(stationId);
     return { framesCommitted: 0, duplicate: true };
   }
 
@@ -586,6 +710,8 @@ function processSegmentIngestJob(stationId, job) {
 
   let committed = 0;
   let maxFrame = info.total_frames || 0;
+  let minFrame = null;
+  let maxCommittedFrame = null;
   for (const f of frames) {
     const frameIndex = Number(f.frameIndex ?? f.frame_index ?? -1);
     if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
@@ -610,10 +736,12 @@ function processSegmentIngestJob(stationId, job) {
     markFrameCommitted(root, sessionId, frameIndex);
     committed += 1;
     maxFrame = Math.max(maxFrame, frameIndex + 1);
+    minFrame = minFrame === null ? frameIndex : Math.min(minFrame, frameIndex);
+    maxCommittedFrame = maxCommittedFrame === null ? frameIndex : Math.max(maxCommittedFrame, frameIndex);
   }
 
   info.total_frames = maxFrame;
-  info.total_episodes = 1;
+  syncInfoEpisodeCount(root);
   writeJsonAtomic(path.join(root, "meta", "info.json"), info);
 
   live.sessionId = sessionId;
@@ -622,6 +750,17 @@ function processSegmentIngestJob(stationId, job) {
   writeJson(livePath, live);
 
   markSegmentCommitted(root, sessionId, segmentId);
+  if (committed > 0 && minFrame !== null && maxCommittedFrame !== null) {
+    registerSegmentEpisode(root, {
+      sessionId,
+      segmentId,
+      fromFrame: minFrame,
+      toFrame: maxCommittedFrame + 1,
+      source: job.ingestSource || "stream",
+    });
+    syncInfoEpisodeCount(root);
+    scheduleParquetSync(stationId);
+  }
   touchHeartbeat(root, stationId, host || live.host || null);
 
   streamLog(stationId, "segment_committed", {
@@ -1363,6 +1502,239 @@ export function readStreamUploadBody(req) {
   });
 }
 
+function headerValue(req, name) {
+  const raw = req.headers[name] ?? req.headers[name.toLowerCase()];
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function isTarZstUploadRequest(req) {
+  const contentType = (req.headers["content-type"] || "").toLowerCase();
+  const protocol = headerValue(req, "x-upload-protocol").toLowerCase();
+  return contentType.includes("application/zstd") || protocol === "tarzst";
+}
+
+function streamRequestToFile(req, destPath) {
+  return new Promise((resolve, reject) => {
+    ensureDir(path.dirname(destPath));
+    const ws = createWriteStream(destPath);
+    req.pipe(ws);
+    ws.on("finish", resolve);
+    ws.on("error", reject);
+    req.on("error", reject);
+  });
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const rs = fs.createReadStream(filePath);
+    rs.on("data", (chunk) => hash.update(chunk));
+    rs.on("end", () => resolve(hash.digest("hex")));
+    rs.on("error", reject);
+  });
+}
+
+async function extractTarZstArchive(archivePath, destDir) {
+  ensureDir(destDir);
+  const zstd = spawn("zstd", ["-d", "-c", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
+  const tar = spawn("tar", ["-x", "-C", destDir], { stdio: ["pipe", "ignore", "pipe"] });
+  let err = "";
+  zstd.stderr.on("data", (d) => {
+    err += d.toString();
+  });
+  tar.stderr.on("data", (d) => {
+    err += d.toString();
+  });
+  await new Promise((resolve, reject) => {
+    zstd.stdout.pipe(tar.stdin);
+    zstd.on("error", reject);
+    tar.on("error", reject);
+    tar.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar extract failed: ${err.slice(0, 400)}`));
+    });
+    zstd.on("close", (code) => {
+      if (code !== 0) reject(new Error(`zstd decompress failed: ${err.slice(0, 400)}`));
+    });
+  });
+}
+
+function markSegmentIngestError(root, sessionId, segmentId, error) {
+  const errDir = path.join(root, "live", "sessions", sessionId, "ingest_errors");
+  ensureDir(errDir);
+  const errPath = path.join(errDir, `${segmentId}.json`);
+  writeJsonAtomic(errPath, {
+    sessionId,
+    segmentId,
+    error: String(error?.message || error),
+    at: new Date().toISOString(),
+  });
+}
+
+function buildSegmentBodyFromExtractedDir(extractDir) {
+  const manifestPath = path.join(extractDir, "manifest.json");
+  const rowsPath = path.join(extractDir, "rows.jsonl");
+  if (!fs.existsSync(manifestPath) || !fs.existsSync(rowsPath)) {
+    throw new Error("extracted segment missing manifest.json or rows.jsonl");
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const rows = fs
+    .readFileSync(rowsPath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const images = {};
+  const frames = [];
+  for (const row of rows) {
+    const frameIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
+    if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
+    const binPath = path.join(extractDir, "frames", `${String(frameIndex).padStart(8, "0")}.bin`);
+    if (!fs.existsSync(binPath)) {
+      throw new Error(`missing frame bin: ${binPath}`);
+    }
+    const cameraJpegs = unpackFrameBin(fs.readFileSync(binPath));
+    for (const [videoKey, jpeg] of Object.entries(cameraJpegs)) {
+      images[segmentImageKey(frameIndex, videoKey)] = jpeg;
+    }
+    frames.push({
+      frameIndex,
+      timestampNs: row.timestamp_ns ?? row.timestampNs ?? 0,
+      task: row.task || DEFAULT_STREAM_TASK,
+      observationState: row["observation.state"] || row.observationState || [0, 0, 0, 0, 0, 0],
+      observationPose: row["observation.pose"] || row.observationPose || [0, 0, 0, 0, 0, 0, 1],
+      observationHands: row["observation.hands"] || row.observationHands || new Array(63).fill(0),
+      actionVector: row.action || row.actionVector || [0],
+    });
+  }
+  return {
+    action: "segment",
+    sessionId: manifest.session_id || manifest.sessionId,
+    segmentId: manifest.segment_id || manifest.segmentId,
+    startFrameIndex: Number(manifest.start_frame_index ?? manifest.startFrameIndex ?? 0),
+    endFrameIndex: Number(manifest.end_frame_index ?? manifest.endFrameIndex ?? 0),
+    frames,
+    images,
+    host: null,
+  };
+}
+
+function ensureSessionForImport(stationId, body) {
+  const root = stationRoot(stationId);
+  const livePath = path.join(root, "live", "session.json");
+  const live = readJson(livePath, {});
+  const sessionId = body.sessionId;
+  const sessionDir = sessionPath(root, sessionId);
+  if (live.sessionId === sessionId && fs.existsSync(sessionDir)) {
+    return;
+  }
+  const task = body.frames[0]?.task || DEFAULT_STREAM_TASK;
+  const videoShapes = {};
+  for (const key of VIDEO_KEYS) {
+    videoShapes[key] = [800, 1280];
+  }
+  handleStreamUpload(stationId, {
+    action: "session_start",
+    sessionId,
+    task,
+    videoShapes,
+  });
+}
+
+/**
+ * Process a local tar.zst segment archive (same path as online tarzst upload).
+ * @param {string} filePath absolute path to .tar.zst
+ * @param {string} stationId
+ * @param {{ expectedSha?: string, sessionId?: string, segmentId?: string, onStatus?: (s: string) => void }} [options]
+ */
+export async function processTarZstFromFile(filePath, stationId, options = {}) {
+  const { expectedSha, sessionId: expectSessionId, segmentId: expectSegmentId, onStatus } = options;
+  const root = stationRoot(stationId);
+  const archivePath = path.resolve(filePath);
+  const extractRoot = path.join(root, ".upload", "extract");
+  const extractDir = path.join(
+    extractRoot,
+    `import_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+  );
+  const t0 = Date.now();
+  let body = null;
+  try {
+    onStatus?.("validating");
+    const actualSha = await sha256File(archivePath);
+    if (expectedSha && actualSha !== expectedSha.toLowerCase()) {
+      throw new Error(`sha256 mismatch expected=${expectedSha.slice(0, 12)} actual=${actualSha.slice(0, 12)}`);
+    }
+    onStatus?.("extracting");
+    await extractTarZstArchive(archivePath, extractDir);
+    body = buildSegmentBodyFromExtractedDir(extractDir);
+    if (expectSessionId && body.sessionId !== expectSessionId) {
+      throw new Error("manifest session/segment mismatch with upload headers");
+    }
+    if (expectSegmentId && body.segmentId !== expectSegmentId) {
+      throw new Error("manifest session/segment mismatch with upload headers");
+    }
+    ensureSessionForImport(stationId, body);
+    onStatus?.("committing");
+    body.ingestSource = expectSessionId ? "edge" : "import";
+    const out = handleStreamUpload(stationId, body);
+    streamLog(stationId, "tarzst_segment_ok", {
+      sessionId: body.sessionId,
+      segmentId: body.segmentId,
+      bytes: fs.statSync(archivePath).size,
+      elapsedMs: Date.now() - t0,
+      frames: body.frames.length,
+      source: expectSessionId ? "edge" : "import",
+    });
+    return { body, out };
+  } catch (err) {
+    const sid = body?.sessionId || expectSessionId;
+    const seg = body?.segmentId || expectSegmentId;
+    if (sid && seg) {
+      markSegmentIngestError(root, sid, seg, err);
+    }
+    streamLog(stationId, "tarzst_segment_fail", {
+      sessionId: sid,
+      segmentId: seg,
+      message: err?.message || String(err),
+    });
+    throw err;
+  } finally {
+    try {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function handleTarZstSegmentUpload(stationId, req) {
+  const sessionId = headerValue(req, "x-session-id");
+  const segmentId = headerValue(req, "x-segment-id");
+  const expectedSha = headerValue(req, "x-content-sha256").toLowerCase();
+  if (!sessionId || !segmentId) {
+    throw new Error("X-Session-Id and X-Segment-Id required for tarzst upload");
+  }
+  const root = stationRoot(stationId);
+  const incomingDir = path.join(root, ".upload", "incoming");
+  ensureDir(incomingDir);
+  const archivePath = path.join(incomingDir, `${segmentId}_${Date.now()}.tar.zst`);
+  try {
+    await streamRequestToFile(req, archivePath);
+    const { out } = await processTarZstFromFile(archivePath, stationId, {
+      expectedSha,
+      sessionId,
+      segmentId,
+    });
+    return out;
+  } finally {
+    try {
+      fs.rmSync(archivePath, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export async function handleStreamUploadRequest(stationId, req) {
   const auth = verifyStationUploadToken(stationId, req);
   if (!auth.ok) {
@@ -1370,6 +1742,9 @@ export async function handleStreamUploadRequest(stationId, req) {
     err.statusCode = 401;
     err.reason = auth.reason;
     throw err;
+  }
+  if (isTarZstUploadRequest(req)) {
+    return handleTarZstSegmentUpload(stationId, req);
   }
   const body = await readStreamUploadBody(req);
   return handleStreamUpload(stationId, body);
@@ -1382,8 +1757,43 @@ function scheduleMux(stationId) {
   muxQueue.set(stationId, state);
 }
 
-function encodeStagingToMp4(inDir, range, destPath) {
-  const inputPattern = path.join(inDir, "frame_%06d.jpg");
+function escapeConcatPath(p) {
+  return String(p).replace(/'/g, "'\\''");
+}
+
+/** Build ffconcat list aligned to dataset frame indices (hold last frame across gaps). */
+function buildStagingConcatList(inDir, fps, fromIdx, toIdx) {
+  if (!fs.existsSync(inDir) || toIdx < fromIdx) return null;
+  const byIdx = new Map();
+  for (const f of fs.readdirSync(inDir)) {
+    const m = /^frame_(\d+)\.jpg$/.exec(f);
+    if (!m) continue;
+    byIdx.set(Number.parseInt(m[1], 10), f);
+  }
+  if (byIdx.size === 0) return null;
+
+  const dt = 1 / fps;
+  const lines = ["ffconcat version 1.0"];
+  let holdPath = null;
+  for (let i = fromIdx; i <= toIdx; i += 1) {
+    const name = byIdx.get(i);
+    if (name) {
+      holdPath = path.join(inDir, name);
+    }
+    if (!holdPath) continue;
+    lines.push(`file '${escapeConcatPath(holdPath)}'`);
+    lines.push(`duration ${dt}`);
+  }
+  if (!holdPath) return null;
+  lines.push(`file '${escapeConcatPath(holdPath)}'`);
+  return lines.join("\n");
+}
+
+function encodeStagingToMp4(inDir, fromIdx, toIdx, fps, destPath) {
+  const listContent = buildStagingConcatList(inDir, fps, fromIdx, toIdx);
+  if (!listContent) return Promise.resolve(false);
+  const listPath = `${destPath}.concat.txt`;
+  writeFileAtomic(listPath, listContent);
   return new Promise((resolve) => {
     const ff = spawn(
       "ffmpeg",
@@ -1392,12 +1802,12 @@ function encodeStagingToMp4(inDir, range, destPath) {
         "-hide_banner",
         "-loglevel",
         "error",
-        "-framerate",
-        String(DEFAULT_FPS),
-        "-start_number",
-        String(range.min),
+        "-f",
+        "concat",
+        "-safe",
+        "0",
         "-i",
-        inputPattern,
+        listPath,
         "-vf",
         "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'",
         "-c:v",
@@ -1406,13 +1816,18 @@ function encodeStagingToMp4(inDir, range, destPath) {
         "yuv420p",
         "-movflags",
         "+faststart",
-        "-f",
-        "mp4",
         destPath,
       ],
       { stdio: "ignore" },
     );
-    ff.on("close", (code) => resolve(code === 0 && fs.existsSync(destPath)));
+    ff.on("close", (code) => {
+      try {
+        fs.unlinkSync(listPath);
+      } catch {
+        /* ignore */
+      }
+      resolve(code === 0 && fs.existsSync(destPath));
+    });
     ff.on("error", () => resolve(false));
   });
 }
@@ -1469,6 +1884,13 @@ function muxOneCamera(stationId, root, videoKey, muxSessionId) {
   const lastMuxed = typeof camState.lastMuxedFrame === "number" ? camState.lastMuxedFrame : -1;
   if (range.max <= lastMuxed) return Promise.resolve({ ok: true, skipped: true });
 
+  const info = readJson(path.join(root, "meta", "info.json"), {});
+  const totalFrames = Math.max(0, Number(info.total_frames || 0));
+  const incremental = fs.existsSync(outFile) && lastMuxed >= 0;
+  const muxFrom = incremental ? lastMuxed + 1 : 0;
+  const muxTo = incremental ? range.max : Math.max(range.max, totalFrames > 0 ? totalFrames - 1 : range.max);
+  if (muxTo < muxFrom) return Promise.resolve({ ok: true, skipped: true });
+
   ensureDir(path.dirname(outFile));
   const segmentPath = `${outFile}.segment.tmp.mp4`;
   const tmpOut = `${outFile}.muxing.tmp`;
@@ -1480,7 +1902,7 @@ function muxOneCamera(stationId, root, videoKey, muxSessionId) {
     }
   }
 
-  return encodeStagingToMp4(inDir, range, segmentPath).then(async (segmentOk) => {
+  return encodeStagingToMp4(inDir, muxFrom, muxTo, DEFAULT_FPS, segmentPath).then(async (segmentOk) => {
     if (!segmentOk) {
       streamLog(stationId, "mux_fail", { sessionId: muxSessionId, videoKey, stage: "segment" });
       try {
@@ -1791,6 +2213,7 @@ export function handleStreamUpload(stationId, body) {
       images,
       shapes,
       host: live.host || null,
+      ingestSource: body.ingestSource || "stream",
     });
 
     const optimisticTotal = Math.max(
@@ -1955,4 +2378,29 @@ export function resolveStreamFile(stationId, urlPath) {
 /** Ops hook: refresh viewer snapshot + chunk publish flags without waiting for parquet. */
 export function publishStreamViewer(stationId) {
   runViewerPublish(stationId);
+}
+
+/** Rebuild episodes parquet + viewer snapshot after import or segment commit. */
+export function refreshStreamEpisodesCatalog(stationId) {
+  const root = stationRoot(stationId);
+  syncInfoEpisodeCount(root);
+  scheduleMux(stationId);
+  runParquetSync(stationId);
+}
+
+/** Resume video mux for stations that still have staging jpgs or unfinished mp4 publish flags. */
+export function resumePendingStreamMuxForAllStations() {
+  if (!fs.existsSync(STREAM_ROOT)) return;
+  for (const stationId of fs.readdirSync(STREAM_ROOT)) {
+    const root = stationRoot(stationId);
+    if (!fs.existsSync(path.join(root, "meta", "info.json"))) continue;
+    const manifest = readChunksManifest(root);
+    const videosPending = Object.entries(manifest.publish || {}).some(
+      ([rel, st]) => rel.startsWith("videos/") && st?.status !== "finished",
+    );
+    const hasStaging = countStagingFramesScan(root) > 0;
+    if (videosPending || hasStaging) {
+      scheduleMux(stationId);
+    }
+  }
 }

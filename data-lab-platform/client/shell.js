@@ -23,9 +23,23 @@
     }
   }
 
-  lockLightTheme();
+  function isCollectionChromePage() {
+    if (!document.body) return false;
+    return (
+      document.body.dataset.datalabCollectionPage === "1" ||
+      document.body.dataset.datalabCollectionViz === "1"
+    );
+  }
 
-  var SHELL_VERSION = "25";
+  function shouldLockParentTheme() {
+    return !isCollectionChromePage();
+  }
+
+  var SHELL_VERSION = "26";
+
+  if (shouldLockParentTheme()) {
+    lockLightTheme();
+  }
 
   if (global.__DATALAB_SHELL_BOOTED__ === SHELL_VERSION) {
     return;
@@ -689,14 +703,6 @@
     state.menuObserver.observe(menu, { childList: true, subtree: false });
   }
 
-  function isCollectionChromePage() {
-    if (!document.body) return false;
-    return (
-      document.body.dataset.datalabCollectionPage === "1" ||
-      document.body.dataset.datalabCollectionViz === "1"
-    );
-  }
-
   /** Django collection layers sit on body above .app-wrapper; ensure trigger receives clicks. */
   function bindMenubarTriggerPassthrough() {
     document.addEventListener(
@@ -767,14 +773,17 @@
   }
 
   function applyThemeChrome() {
+    if (!shouldLockParentTheme()) return;
     lockLightTheme();
     hideThemeToggle();
   }
 
   function bindThemeChrome() {
+    if (!shouldLockParentTheme()) return;
     applyThemeChrome();
     if (!document.body || typeof MutationObserver === "undefined") return;
     var observer = new MutationObserver(function () {
+      if (!shouldLockParentTheme()) return;
       lockLightTheme();
       hideThemeToggle();
     });

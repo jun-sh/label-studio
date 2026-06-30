@@ -337,9 +337,25 @@
       previewSnapshotTimer = null;
     }
     collectionPreviewSlots.forEach(function (slot) {
-      if (slot.overlay) slot.overlay.removeAttribute("src");
+      if (slot.overlay) {
+        slot.overlay.onload = null;
+        slot.overlay.onerror = null;
+        slot.overlay.removeAttribute("src");
+        if (slot.overlay.parentElement) {
+          slot.overlay.parentElement.removeChild(slot.overlay);
+        }
+      }
+      if (slot.wrap) {
+        slot.wrap.removeAttribute("data-datalab-preview-panel");
+      }
     });
     collectionPreviewSlots.clear();
+    document.querySelectorAll("[data-datalab-preview-overlay]").forEach(function (node) {
+      node.remove();
+    });
+    document.querySelectorAll("[data-datalab-preview-panel]").forEach(function (node) {
+      node.removeAttribute("data-datalab-preview-panel");
+    });
     resumeReplayVideosAfterPreview();
   }
 

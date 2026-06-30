@@ -35,7 +35,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "26";
+  var SHELL_VERSION = "27";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -773,19 +773,18 @@
   }
 
   function applyThemeChrome() {
+    hideThemeToggle();
     if (!shouldLockParentTheme()) return;
     lockLightTheme();
-    hideThemeToggle();
   }
 
   function bindThemeChrome() {
-    if (!shouldLockParentTheme()) return;
     applyThemeChrome();
     if (!document.body || typeof MutationObserver === "undefined") return;
     var observer = new MutationObserver(function () {
+      hideThemeToggle();
       if (!shouldLockParentTheme()) return;
       lockLightTheme();
-      hideThemeToggle();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }

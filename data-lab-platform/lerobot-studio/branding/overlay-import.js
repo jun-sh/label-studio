@@ -41,6 +41,52 @@
   var tickScheduled = false;
   var tickDebounceTimer = null;
   var TICK_DEBOUNCE_MS = 250;
+  var fullTaskTooltipCache = null;
+  var fullTaskTooltipLoading = false;
+
+  function fetchFullTask(stationId, cb) {
+    if (fullTaskTooltipCache !== null) {
+      cb(fullTaskTooltipCache);
+      return;
+    }
+    if (fullTaskTooltipLoading) return;
+    fullTaskTooltipLoading = true;
+    var url =
+      "/lerobot/api/stream/" + encodeURIComponent(stationId) + "/live/session.json";
+    fetch(url)
+      .then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+      .then(function (data) {
+        var task = data && data.task != null ? String(data.task).trim() : "";
+        fullTaskTooltipCache = task;
+        cb(task);
+      })
+      .catch(function () {
+        cb("");
+      })
+      .finally(function () {
+        fullTaskTooltipLoading = false;
+      });
+  }
+
+  function applyEpisodeTooltips(stationId) {
+    fetchFullTask(stationId, function (fullTask) {
+      var buttons = document.querySelectorAll("button");
+      for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        if (btn.getAttribute("data-datalab-episode-tooltip")) continue;
+        var label = btn.getAttribute("aria-label") || "";
+        if (!/^(选择 Episode|Select Episode)\s+\d+/i.test(label)) continue;
+        if (fullTask) {
+          btn.setAttribute("title", fullTask);
+        } else {
+          btn.removeAttribute("title");
+        }
+        btn.setAttribute("data-datalab-episode-tooltip", "1");
+      }
+    });
+  }
 
   function stationIdFromContext() {
     try {
@@ -316,6 +362,8 @@
     installImportButton();
     var anchor = findEpisodeToolbarAnchor();
     if (anchor) markEpisodesPanel(anchor);
+    var stationId = stationIdFromContext();
+    if (stationId) applyEpisodeTooltips(stationId);
   }
 
   function scheduleTick() {

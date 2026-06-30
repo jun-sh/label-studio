@@ -21,13 +21,6 @@ html[data-datalab-embed="1"]:not([data-datalab-data-viz-embed="1"]) [data-datala
   display: none !important;
 }
 
-html[data-datalab-collection-embed="1"] [data-datalab-chrome="theme-toggle"],
-html[data-datalab-collection-embed="1"] [data-datalab-chrome="theme-style"],
-html[data-datalab-collection-embed="1"] button[aria-label*="主题"],
-html[data-datalab-collection-embed="1"] button[aria-label*="Theme" i] {
-  display: none !important;
-}
-
 
 /* Top promo strip */
 [class*="banner" i][class*="welcome" i],

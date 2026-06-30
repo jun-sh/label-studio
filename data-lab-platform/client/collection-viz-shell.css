@@ -38,7 +38,19 @@
   gap: 2px;
 }
 
-#datalab-station-toolbar button.datalab-station-mode-seg {
+#datalab-station-theme-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 9999px;
+  border: 1px solid var(--color-neutral-border, #e1ded5);
+  background: var(--color-neutral-surface, #f5f4ed);
+  gap: 2px;
+  margin-left: auto;
+}
+
+#datalab-station-toolbar button.datalab-station-mode-seg,
+#datalab-station-toolbar button.datalab-station-theme-seg {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -56,25 +68,28 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-#datalab-station-toolbar button.datalab-station-mode-seg:hover:not(:disabled):not(.is-active) {
+#datalab-station-toolbar button.datalab-station-mode-seg:hover:not(:disabled):not(.is-active),
+#datalab-station-toolbar button.datalab-station-theme-seg:hover:not(:disabled):not(.is-active) {
   color: var(--color-neutral-content, #262522);
   background: var(--color-neutral-background, #fdfdf8);
 }
 
-#datalab-station-toolbar button.datalab-station-mode-seg.is-active {
+#datalab-station-toolbar button.datalab-station-mode-seg.is-active,
+#datalab-station-toolbar button.datalab-station-theme-seg.is-active {
   background: var(--color-neutral-background, #fdfdf8);
   color: var(--color-primary-content, #4c5fa9);
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(38, 37, 34, 0.08);
 }
 
-#datalab-station-toolbar button.datalab-station-mode-seg:disabled {
+#datalab-station-toolbar button.datalab-station-mode-seg:disabled,
+#datalab-station-toolbar button.datalab-station-theme-seg:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
 #datalab-station-mode-status {
-  margin-left: auto;
+  margin-left: 8px;
   font-size: 12px;
   font-weight: 500;
   color: var(--color-neutral-content-subtle, #6b6860);
@@ -147,4 +162,127 @@
   height: 100%;
   min-height: 0;
   border: 0;
+}
+
+/* Parent station chrome — match LeRobot #lerobot-root light/dark tokens */
+#datalab-station-shell[data-datalab-station-theme="light"] {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --border: 214.3 31.8% 91.4%;
+  --accent: 210 40% 96.1%;
+  --primary: 221.2 83.2% 53.3%;
+  --datalab-station-bg: hsl(var(--background));
+  --datalab-station-surface: hsl(var(--muted));
+  --datalab-station-border: hsl(var(--border));
+  --datalab-station-text: hsl(var(--foreground));
+  --datalab-station-text-subtle: hsl(var(--muted-foreground));
+  --datalab-station-active-bg: hsl(var(--background));
+  --datalab-station-active-text: hsl(var(--primary));
+  --datalab-station-shadow: rgba(38, 37, 34, 0.08);
+  background: var(--datalab-station-bg);
+}
+
+#datalab-station-shell[data-datalab-station-theme="dark"] {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+  --border: 217.2 32.6% 17.5%;
+  --accent: 217.2 32.6% 17.5%;
+  --primary: 217.2 91% 60%;
+  --datalab-station-bg: hsl(var(--background));
+  --datalab-station-surface: hsl(var(--muted));
+  --datalab-station-border: hsl(var(--border));
+  --datalab-station-text: hsl(var(--foreground));
+  --datalab-station-text-subtle: hsl(var(--muted-foreground));
+  --datalab-station-active-bg: hsl(var(--accent));
+  --datalab-station-active-text: hsl(var(--primary));
+  --datalab-station-shadow: rgba(0, 0, 0, 0.35);
+  background: var(--datalab-station-bg);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-toolbar,
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-body,
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-dataset-loading,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-toolbar,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-body,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-dataset-loading {
+  background: var(--datalab-station-bg);
+  color: var(--datalab-station-text);
+  border-color: var(--datalab-station-border);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-toolbar-title,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-toolbar-title {
+  color: var(--datalab-station-text);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-mode-pill,
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-theme-pill,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-mode-pill,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-theme-pill {
+  border-color: var(--datalab-station-border);
+  background: var(--datalab-station-surface);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg,
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg,
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg,
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg {
+  color: var(--datalab-station-text-subtle);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg:hover:not(:disabled):not(.is-active),
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg:hover:not(:disabled):not(.is-active),
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg:hover:not(:disabled):not(.is-active),
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg:hover:not(:disabled):not(.is-active) {
+  color: var(--datalab-station-text);
+  background: var(--datalab-station-active-bg);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg.is-active,
+#datalab-station-shell[data-datalab-station-theme="light"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg.is-active,
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-mode-seg.is-active,
+#datalab-station-shell[data-datalab-station-theme="dark"]
+  #datalab-station-toolbar
+  button.datalab-station-theme-seg.is-active {
+  background: var(--datalab-station-active-bg);
+  color: var(--datalab-station-active-text);
+  box-shadow: 0 1px 2px var(--datalab-station-shadow);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-mode-status,
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-station-mode-status.is-offline,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-mode-status,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-station-mode-status.is-offline {
+  color: var(--datalab-station-text-subtle);
+}
+
+#datalab-station-shell[data-datalab-station-theme="light"] #datalab-dataset-loading,
+#datalab-station-shell[data-datalab-station-theme="dark"] #datalab-dataset-loading {
+  color: var(--datalab-station-text);
 }

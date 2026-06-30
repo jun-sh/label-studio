@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { unpackFrameBin } from "./frame_bin_codec.mjs";
+import { decompress as fzstdDecompress } from "./vendor/fzstd.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -560,18 +561,59 @@ function saveEpisodesIndex(root, index) {
   writeJsonAtomic(episodesIndexPath(root), index);
 }
 
-function formatEpisodeTitle(segmentId, length, fps, source) {
-  const seconds = fps > 0 ? Math.max(1, Math.round(length / fps)) : length;
-  const durationLabel = seconds < 120 ? `${seconds}秒` : `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
-  const sourceLabel =
-    source === "import"
-      ? "离线导入"
-      : source === "edge"
-        ? "站端上传"
-        : source === "legacy"
-          ? "历史合集"
-          : "实时采集";
-  return `[已入库] ${segmentId} · ${durationLabel} · ${sourceLabel}`;
+const TASK_SHORT_NAMES = {
+  [DEFAULT_STREAM_TASK.toLowerCase()]: "工作台操作",
+};
+
+const TASK_LABEL_FALLBACK = "未命名任务";
+
+function abbreviateTask(task) {
+  const trimmed = String(task || "").trim();
+  if (!trimmed) return TASK_LABEL_FALLBACK;
+  const key = trimmed.toLowerCase();
+  if (TASK_SHORT_NAMES[key]) return TASK_SHORT_NAMES[key];
+  if (trimmed.length <= 32) return trimmed;
+  return `${trimmed.slice(0, 30)}…`;
+}
+
+function formatCollectedAt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
+/** Full task from session only; empty when not configured. */
+function getStationTask(root) {
+  const live = readJson(path.join(root, "live", "session.json"), {});
+  return String(live.task ?? "").trim();
+}
+
+/** LeRobot sidebar line 3: tasks[0] (lines 1–2 are #index and duration). */
+function formatEpisodeListTask(ep, fullTask) {
+  const short = abbreviateTask(fullTask);
+  const length = Math.max(0, Number(ep.length) || 0);
+  const collected = formatCollectedAt(ep.committed_at);
+  const parts = [short];
+  if (collected) parts.push(collected);
+  if (length > 0) parts.push(`${length}f`);
+  return parts.join(" · ");
+}
+
+function formatEpisodeTitle(root, segmentId, length, source) {
+  const fullTask = getStationTask(root);
+  return formatEpisodeListTask(
+    {
+      length,
+      source: source || "stream",
+      committed_at: new Date().toISOString(),
+    },
+    fullTask,
+  );
 }
 
 function ensureLegacyEpisodeSlot(root, index) {
@@ -579,10 +621,18 @@ function ensureLegacyEpisodeSlot(root, index) {
   const total = Number(info.total_frames || 0);
   if (total <= 0) return;
   const legacy = index.episodes.find((ep) => ep.segment_id === "legacy");
+  const nonLegacy = index.episodes.filter((ep) => ep.segment_id !== "legacy");
   if (legacy) {
-    legacy.dataset_to_index = total;
+    if (nonLegacy.length > 0) {
+      const minOtherStart = Math.min(
+        ...nonLegacy.map((ep) => Number(ep.dataset_from_index ?? total)),
+      );
+      legacy.dataset_to_index = Math.min(Number(legacy.dataset_to_index ?? total), minOtherStart);
+    } else {
+      legacy.dataset_to_index = total;
+    }
     legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
-    legacy.title = `[已入库] 历史合集 · ${legacy.length}帧`;
+    legacy.title = formatEpisodeListTask(legacy, getStationTask(root));
     return;
   }
   if (index.episodes.length > 0) return;
@@ -594,7 +644,10 @@ function ensureLegacyEpisodeSlot(root, index) {
     dataset_to_index: total,
     length: total,
     source: "legacy",
-    title: `[已入库] 历史合集 · ${total}帧`,
+    title: formatEpisodeListTask(
+      { length: total, source: "legacy", committed_at: new Date().toISOString() },
+      getStationTask(root),
+    ),
     committed_at: new Date().toISOString(),
   });
 }
@@ -616,11 +669,11 @@ function registerSegmentEpisode(root, { sessionId, segmentId, fromFrame, toFrame
   if (legacy && fromIdx > legacy.dataset_from_index && fromIdx < legacy.dataset_to_index) {
     legacy.dataset_to_index = fromIdx;
     legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
-    legacy.title = `[已入库] 历史合集 · ${legacy.length}帧`;
+    legacy.title = formatEpisodeListTask(legacy, getStationTask(root));
   }
 
   const episodeIndex = index.episodes.length;
-  const title = formatEpisodeTitle(segmentId, length, fps, source || "stream");
+  const title = formatEpisodeTitle(root, segmentId, length, source || "stream");
   const entry = {
     episode_index: episodeIndex,
     segment_id: segmentId,
@@ -821,8 +874,19 @@ function enqueueSegmentIngest(stationId, job) {
 
 function writeTasksJsonl(root, task) {
   ensureDir(path.join(root, "meta"));
-  const line = JSON.stringify({ task_index: 0, task: task || DEFAULT_STREAM_TASK });
-  fs.writeFileSync(path.join(root, "meta", "tasks.jsonl"), `${line}\n`);
+  const explicit = task !== undefined && task !== null ? String(task).trim() : "";
+  const fullTask = explicit || getStationTask(root);
+  const index = loadEpisodesIndex(root);
+  const lines =
+    index.episodes.length > 0
+      ? index.episodes.map((ep) =>
+          JSON.stringify({
+            task_index: Number(ep.episode_index) || 0,
+            task: formatEpisodeListTask(ep, fullTask),
+          }),
+        )
+      : [JSON.stringify({ task_index: 0, task: abbreviateTask(fullTask) })];
+  fs.writeFileSync(path.join(root, "meta", "tasks.jsonl"), `${lines.join("\n")}\n`);
 }
 
 function isRecentActivity(iso) {
@@ -1534,8 +1598,36 @@ function sha256File(filePath) {
   });
 }
 
-async function extractTarZstArchive(archivePath, destDir) {
-  ensureDir(destDir);
+function zstdCliAvailable() {
+  for (const bin of ["/usr/bin/zstd", "/usr/local/bin/zstd"]) {
+    try {
+      fs.accessSync(bin, fs.constants.X_OK);
+      return true;
+    } catch {
+      /* try next */
+    }
+  }
+  return false;
+}
+
+function extractTarBufferToDir(tarBuf, destDir) {
+  return new Promise((resolve, reject) => {
+    const tar = spawn("tar", ["-x", "-C", destDir], { stdio: ["pipe", "ignore", "pipe"] });
+    let err = "";
+    tar.stderr.on("data", (d) => {
+      err += d.toString();
+    });
+    tar.on("error", reject);
+    tar.stdin.write(tarBuf);
+    tar.stdin.end();
+    tar.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar extract failed: ${err.slice(0, 400)}`));
+    });
+  });
+}
+
+async function extractTarZstArchiveCli(archivePath, destDir) {
   const zstd = spawn("zstd", ["-d", "-c", archivePath], { stdio: ["ignore", "pipe", "pipe"] });
   const tar = spawn("tar", ["-x", "-C", destDir], { stdio: ["pipe", "ignore", "pipe"] });
   let err = "";
@@ -1557,6 +1649,26 @@ async function extractTarZstArchive(archivePath, destDir) {
       if (code !== 0) reject(new Error(`zstd decompress failed: ${err.slice(0, 400)}`));
     });
   });
+}
+
+async function extractTarZstArchiveJs(archivePath, destDir) {
+  const compressed = await fs.promises.readFile(archivePath);
+  const tarBuf = fzstdDecompress(compressed);
+  await extractTarBufferToDir(Buffer.from(tarBuf.buffer, tarBuf.byteOffset, tarBuf.byteLength), destDir);
+}
+
+async function extractTarZstArchive(archivePath, destDir) {
+  ensureDir(destDir);
+  if (zstdCliAvailable()) {
+    try {
+      await extractTarZstArchiveCli(archivePath, destDir);
+      return;
+    } catch (err) {
+      const msg = String(err?.message || err);
+      if (!msg.includes("ENOENT") && err?.code !== "ENOENT") throw err;
+    }
+  }
+  await extractTarZstArchiveJs(archivePath, destDir);
 }
 
 function markSegmentIngestError(root, sessionId, segmentId, error) {

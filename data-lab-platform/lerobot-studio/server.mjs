@@ -259,20 +259,21 @@ function isCollectionEmbedSearch(search = "") {
 function injectBranding(html, search = "") {
   const collectionEmbed = isCollectionEmbedSearch(search);
   let inject =
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=55"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=55"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=2"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=56"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=5"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=54"></script>' +
-    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=2"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=55"></script>' +
+    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=5"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=
       '<link rel="stylesheet" href="/lerobot/branding/overlay-import.css?v=5"/>' +
       '<script src="/_datalab/import-core.js?v=3"></script>' +
-      '<script defer src="/lerobot/branding/overlay-import.js?v=7"></script>';
+      '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
+      '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");

@@ -18,6 +18,12 @@ html[data-datalab-collection-embed="1"] img.datalab-collection-preview-overlay {
   pointer-events: none;
 }
 
+html[data-datalab-collection-embed="1"]:not([data-datalab-collection-preview="1"])
+  img.datalab-collection-preview-overlay {
+  display: none !important;
+  visibility: hidden !important;
+}
+
 /* Stretch dockview panel body to the full quadrant; hidden <video> must not reserve layout height. */
 html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
   .dv-groupview:has([data-datalab-preview-panel]) {

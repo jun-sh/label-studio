@@ -15,7 +15,7 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=13" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=17" />
 <link rel="stylesheet" href="/_datalab/collection-page.css?v=7" />
 <link rel="stylesheet" href="/_datalab/import-card.css?v=2" />
 <link rel="stylesheet" href="/_datalab/import-modal.css?v=1" />
@@ -140,11 +140,14 @@
     var LOADING_LABEL = "{% if user.ui_locale|slice:':2' == 'zh' %}正在连接采集站…{% else %}Connecting to station…{% endif %}";
     var LOADING_LAYER = "datalab-stream-loading-layer";
     var ZH = LANG.indexOf("zh") === 0;
-    var LABEL_PREVIEW = ZH ? "实时预览" : "Live preview";
-    var LABEL_DATASET = ZH ? "数据集回放" : "Dataset playback";
+    var LABEL_PREVIEW = ZH ? "实时" : "Live";
+    var LABEL_DATASET = ZH ? "回放" : "Playback";
     var LABEL_OFFLINE = ZH ? "采集离线" : "Station offline";
-    var LABEL_LIVE = ZH ? "采集中" : "Live";
+    var LABEL_THEME_LIGHT = ZH ? "浅色" : "Light";
+    var LABEL_THEME_DARK = ZH ? "深色" : "Dark";
     var COLLECTION_MODE_MSG = "datalab-collection-mode";
+    var THEME_MSG = "datalab-lerobot-theme";
+    var THEME_SYNC_MSG = "datalab-lerobot-theme-sync";
     var IMPORT_DONE_MSG = "datalab-import-done";
     var LABEL_DATASET_LOADING = ZH ? "正在加载流式数据集…" : "Loading live stream dataset…";
 
@@ -444,6 +447,12 @@
         '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="preview" role="tab"></button>' +
         '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="dataset" role="tab"></button>' +
         "</div>" +
+        '<div id="datalab-station-theme-pill" role="group" aria-label="' +
+        (ZH ? "界面主题" : "Theme") +
+        '">' +
+        '<button type="button" class="datalab-station-theme-seg" data-datalab-station-theme="light"></button>' +
+        '<button type="button" class="datalab-station-theme-seg" data-datalab-station-theme="dark"></button>' +
+        "</div>" +
         '<span id="datalab-station-mode-status" hidden></span>' +
         "</header>" +
         '<div id="datalab-import-card-slot" hidden aria-hidden="true"></div>' +
@@ -462,19 +471,98 @@
       var modePreviewBtn = layer.querySelector('[data-datalab-station-mode="preview"]');
       var modeDatasetBtn = layer.querySelector('[data-datalab-station-mode="dataset"]');
       var modeStatusEl = layer.querySelector("#datalab-station-mode-status");
+      var themeLightBtn = layer.querySelector('[data-datalab-station-theme="light"]');
+      var themeDarkBtn = layer.querySelector('[data-datalab-station-theme="dark"]');
+      var stationShellEl = layer.querySelector("#datalab-station-shell");
 
       if (toolbarTitleEl) toolbarTitleEl.textContent = VIZ_TITLE;
       if (modePreviewBtn) modePreviewBtn.textContent = LABEL_PREVIEW;
       if (modeDatasetBtn) modeDatasetBtn.textContent = LABEL_DATASET;
+      if (themeLightBtn) themeLightBtn.textContent = LABEL_THEME_LIGHT;
+      if (themeDarkBtn) themeDarkBtn.textContent = LABEL_THEME_DARK;
 
       var lerobotMounted = false;
       var vizFrame = null;
       var streamDatasetReady = Boolean(datasetReady);
       var currentMode = "dataset";
+      var currentTheme = "light";
       var liveOnline = Boolean(stationOnline);
       var offlinePingStreak = 0;
       var OFFLINE_PING_STRIKES = 3;
       var iframeModeListenerBound = false;
+      var iframeThemeListenerBound = false;
+
+      function normalizeTheme(theme) {
+        var t = String(theme || "light").toLowerCase();
+        if (t === "dark") return "dark";
+        if (t === "system" || t === "auto") {
+          try {
+            return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          } catch (e) {
+            return "light";
+          }
+        }
+        return "light";
+      }
+
+      function updateParentThemeChrome() {
+        var buttons = [
+          { el: themeLightBtn, theme: "light" },
+          { el: themeDarkBtn, theme: "dark" },
+        ];
+        buttons.forEach(function (entry) {
+          if (!entry.el) return;
+          var active = currentTheme === entry.theme;
+          entry.el.classList.toggle("is-active", active);
+          entry.el.setAttribute("aria-pressed", active ? "true" : "false");
+        });
+        if (stationShellEl) {
+          stationShellEl.setAttribute("data-datalab-station-theme", currentTheme);
+        }
+      }
+
+      function readThemeFromIframe() {
+        if (!vizFrame || !vizFrame.contentWindow) return null;
+        try {
+          return normalizeTheme(vizFrame.contentWindow.localStorage.getItem("theme"));
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function syncThemeFromIframe() {
+        var theme = readThemeFromIframe();
+        if (!theme) return;
+        currentTheme = theme;
+        updateParentThemeChrome();
+      }
+
+      function postThemeToIframe(theme) {
+        if (!vizFrame || !vizFrame.contentWindow) return;
+        try {
+          vizFrame.contentWindow.postMessage(
+            {
+              type: THEME_MSG,
+              theme: normalizeTheme(theme),
+              source: "parent-ui",
+            },
+            window.location.origin,
+          );
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
+      function setTheme(theme) {
+        theme = normalizeTheme(theme);
+        if (currentTheme === theme) {
+          postThemeToIframe(theme);
+          return;
+        }
+        currentTheme = theme;
+        updateParentThemeChrome();
+        postThemeToIframe(theme);
+      }
 
       function updateParentModeChrome() {
         if (!modePreviewBtn || !modeDatasetBtn) return;
@@ -506,6 +594,18 @@
           setMode("dataset");
         });
       }
+      if (themeLightBtn) {
+        themeLightBtn.addEventListener("click", function () {
+          setTheme("light");
+        });
+      }
+      if (themeDarkBtn) {
+        themeDarkBtn.addEventListener("click", function () {
+          setTheme("dark");
+        });
+      }
+
+      updateParentThemeChrome();
 
       function syncOnlineToIframe() {
         postModeToIframe(iframeModeToSend());
@@ -556,6 +656,8 @@
           vizFrame.src = src;
           vizFrame.addEventListener("load", function () {
             syncIframeMode();
+            syncThemeFromIframe();
+            postThemeToIframe(currentTheme);
           });
           vizSlot.appendChild(vizFrame);
           lerobotMounted = true;
@@ -572,6 +674,8 @@
         if (!streamDatasetReady) return;
         ensureLerobotMounted(true);
         syncIframeMode();
+        syncThemeFromIframe();
+        postThemeToIframe(currentTheme);
       };
 
       g.__datalabCollectionApplyStation = function (patch) {
@@ -607,20 +711,29 @@
         syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
 
-      function handleIframeModeMessage(event) {
+      function handleIframeChromeMessage(event) {
         if (!vizFrame || event.source !== vizFrame.contentWindow) return;
         if (event.origin !== window.location.origin) return;
         var data = event.data;
-        if (!data || typeof data !== "object" || data.type !== COLLECTION_MODE_MSG) return;
-        if (data.source !== "iframe-ui") return;
-        if (data.mode !== "preview" && data.mode !== "dataset") return;
-        setModeFromIframe(data.mode);
+        if (!data || typeof data !== "object") return;
+        if (data.type === COLLECTION_MODE_MSG) {
+          if (data.source !== "iframe-ui") return;
+          if (data.mode !== "preview" && data.mode !== "dataset") return;
+          setModeFromIframe(data.mode);
+          return;
+        }
+        if (data.type === THEME_SYNC_MSG) {
+          if (data.source !== "iframe-ui") return;
+          currentTheme = normalizeTheme(data.theme);
+          updateParentThemeChrome();
+        }
       }
 
       function bindIframeModeListener() {
         if (iframeModeListenerBound) return;
         iframeModeListenerBound = true;
-        window.addEventListener("message", handleIframeModeMessage);
+        iframeThemeListenerBound = true;
+        window.addEventListener("message", handleIframeChromeMessage);
       }
 
       function setMode(mode) {

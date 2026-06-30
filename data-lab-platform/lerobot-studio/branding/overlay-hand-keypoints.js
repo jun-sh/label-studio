@@ -16,6 +16,14 @@
     [0, 17], [17, 18], [18, 19], [19, 20],
   ];
 
+  // Legacy HaMeR / stream ingest names -> LeRobot v3 panel feature keys.
+  var LEGACY_TO_CANONICAL_VIDEO_KEY = {
+    "observation.images.camera_head_left": "observation.images.camera_front_left",
+    "observation.images.camera_head_right": "observation.images.camera_front_right",
+    "observation.images.camera_depth_head": "observation.images.camera_rear_left",
+    "observation.images.camera_02": "observation.images.camera_rear_right",
+  };
+
   var state = {
     enabled: true,
     datasetId: null,
@@ -29,6 +37,7 @@
     pill: null,
     loading: false,
     loadError: null,
+    fetchPromise: null,
   };
 
   function pageLang() {
@@ -65,6 +74,28 @@
     return short ? text.indexOf(short) >= 0 : false;
   }
 
+  function resolveVideoKeyCandidates(featureKey) {
+    var out = [];
+    var seen = {};
+    function push(key) {
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(key);
+    }
+    push(featureKey);
+    push(LEGACY_TO_CANONICAL_VIDEO_KEY[featureKey]);
+    for (var legacy in LEGACY_TO_CANONICAL_VIDEO_KEY) {
+      if (LEGACY_TO_CANONICAL_VIDEO_KEY[legacy] === featureKey) {
+        push(legacy);
+      }
+    }
+    return out;
+  }
+
+  function canonicalVideoKey(featureKey) {
+    return LEGACY_TO_CANONICAL_VIDEO_KEY[featureKey] || featureKey;
+  }
+
   function findPreviewPanelWrap(video) {
     var node = video.parentElement;
     while (node && node !== document.body) {
@@ -78,18 +109,30 @@
 
   function findFeatureVideoSlot(featureKey) {
     var videos = document.querySelectorAll("video");
+    var best = null;
     for (var i = 0; i < videos.length; i++) {
       var video = videos[i];
       var node = video.parentElement;
       for (var depth = 0; depth < 18 && node; depth += 1) {
         var blob = (node.getAttribute("title") || "") + (node.textContent || "");
         if (featureMatchesText(blob, featureKey)) {
-          return { video: video, wrap: findPreviewPanelWrap(video) || video.parentElement };
+          if (!best || depth < best.depth) {
+            best = {
+              video: video,
+              depth: depth,
+              wrap: findPreviewPanelWrap(video) || video.parentElement,
+            };
+          }
+          break;
         }
         node = node.parentElement;
       }
     }
-    return null;
+    return best ? { video: best.video, wrap: best.wrap } : null;
+  }
+
+  function slotIsLive(slot) {
+    return !!(slot && slot.canvas && slot.canvas.isConnected && slot.video && slot.video.isConnected);
   }
 
   function buildLookup(payload) {
@@ -145,19 +188,23 @@
     var epPayload = resolveEpisodePayload(state.payload);
     if (!epPayload) return;
     state.lookup = buildLookup(epPayload);
-    state.activeVideoKey = epPayload.video_key || "observation.images.camera_head_left";
+    state.activeVideoKey = canonicalVideoKey(
+      epPayload.video_key || "observation.images.camera_front_left",
+    );
     state.activeEpisode = detectActiveEpisodeIndex();
   }
 
   function fetchHandKp2d(datasetId) {
-    if (state.loading) return Promise.resolve(null);
     if (state.payload && state.datasetId === datasetId) {
       return Promise.resolve(state.payload);
+    }
+    if (state.fetchPromise) {
+      return state.fetchPromise;
     }
     state.loading = true;
     state.loadError = null;
     var url = "/lerobot/api/sample/" + encodeURIComponent(datasetId) + "/hand-kp2d.json";
-    return fetch(url, { credentials: "same-origin" })
+    state.fetchPromise = fetch(url, { credentials: "same-origin" })
       .then(function (res) {
         if (!res.ok) throw new Error("hand_kp2d_http_" + res.status);
         return res.json();
@@ -167,17 +214,28 @@
         state.payload = payload;
         refreshActiveEpisodeLookup();
         state.loading = false;
+        state.loadError = null;
         return payload;
       })
       .catch(function (err) {
         state.loading = false;
         state.loadError = err;
         return null;
+      })
+      .finally(function () {
+        state.fetchPromise = null;
       });
+    return state.fetchPromise;
   }
 
   function ensureCanvasSlot(featureKey) {
-    var found = findFeatureVideoSlot(featureKey);
+    var candidates = resolveVideoKeyCandidates(featureKey);
+    var found = null;
+    for (var ci = 0; ci < candidates.length; ci += 1) {
+      found = findFeatureVideoSlot(candidates[ci]);
+      if (found && found.wrap && found.video) break;
+      found = null;
+    }
     if (!found || !found.wrap || !found.video) return null;
 
     var wrap = found.wrap;
@@ -273,13 +331,17 @@
     if (!flat || flat.length < 42) return;
 
     var scale = display.scale || 1;
+    var srcW = payload.width || video.videoWidth || 0;
+    var srcH = payload.height || video.videoHeight || 0;
+    var scaleX = srcW > 0 ? display.width / srcW : scale;
+    var scaleY = srcH > 0 ? display.height / srcH : scale;
     var pts = [];
     for (var j = 0; j < 21; j += 1) {
       var u = flat[j * 2];
       var v = flat[j * 2 + 1];
       pts.push({
-        x: u * scale,
-        y: v * scale,
+        x: u * scaleX,
+        y: v * scaleY,
         ok: isValidJoint(u, v),
       });
     }
@@ -309,9 +371,18 @@
 
   function paintLoop() {
     state.rafId = 0;
-    if (!state.payload || !state.slot) return;
-    var epPayload = resolveEpisodePayload(state.payload) || state.payload;
-    drawSkeleton(state.slot.canvas, state.slot.video, state.slot.wrap, epPayload, state.lookup);
+    if (!state.payload) return;
+    if (!slotIsLive(state.slot)) {
+      var epPayload = resolveEpisodePayload(state.payload) || state.payload;
+      var vk =
+        state.activeVideoKey ||
+        canonicalVideoKey(epPayload.video_key || "observation.images.camera_front_left");
+      state.slot = ensureCanvasSlot(vk);
+    }
+    if (state.slot) {
+      var epPayload2 = resolveEpisodePayload(state.payload) || state.payload;
+      drawSkeleton(state.slot.canvas, state.slot.video, state.slot.wrap, epPayload2, state.lookup);
+    }
     if (state.enabled) {
       state.rafId = g.requestAnimationFrame(paintLoop);
     }
@@ -379,6 +450,7 @@
     state.datasetId = null;
     state.payload = null;
     state.lookup = null;
+    state.fetchPromise = null;
   }
 
   function activateForDataset(datasetId) {
@@ -390,9 +462,10 @@
       document.documentElement.setAttribute("data-datalab-hand-kp2d", "1");
       ensurePill();
       refreshActiveEpisodeLookup();
-      var vk = state.activeVideoKey || (payload.video_key || "observation.images.camera_head_left");
+      var vk =
+        state.activeVideoKey ||
+        canonicalVideoKey(payload.video_key || "observation.images.camera_front_left");
       state.slot = ensureCanvasSlot(vk);
-      if (!state.slot) return;
       startPaintLoop();
     });
   }
@@ -415,12 +488,14 @@
       var epChanged = prevEp !== state.activeEpisode;
       var vk =
         state.activeVideoKey ||
-        (resolveEpisodePayload(state.payload) || {}).video_key ||
-        "observation.images.camera_head_left";
-      if (epChanged || !state.slot) {
+        canonicalVideoKey(
+          (resolveEpisodePayload(state.payload) || {}).video_key ||
+            "observation.images.camera_front_left",
+        );
+      if (epChanged || !slotIsLive(state.slot)) {
         state.slot = ensureCanvasSlot(vk);
       }
-      if (state.slot && state.enabled) startPaintLoop();
+      if (state.enabled) startPaintLoop();
     }
   }
 

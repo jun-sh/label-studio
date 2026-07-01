@@ -129,7 +129,7 @@ def main() -> None:
     p.add_argument(
         "--task",
         type=str,
-        default="Perform egocentric manipulation tasks at the laboratory workbench",
+        default="",
     )
     p.add_argument(
         "--checkpoint-path",

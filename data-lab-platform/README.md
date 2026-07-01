@@ -179,6 +179,7 @@ docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platfor
 | 场景 | 命令 |
 |------|------|
 | 更新样例 zip 后重新导入 | `bash data-lab-platform/deploy-local-datasets.sh` |
+| EGO 数据集管理（Viewer vs 训练、prune） | [docs/ego-dataset-management.md](../docs/ego-dataset-management.md) |
 | 仅重建 lerobot 镜像并启动 | `bash data-lab-platform/deploy-lerobot-studio.sh` |
 | 查看 shell 是否注入 | 浏览器控制台：`window.__DATALAB_SHELL_VERSION__` → `"11"` |
 | 验证 manifest | `curl http://<host>:8080/lerobot/sample-datasets.manifest.json` |

@@ -41,6 +41,8 @@ patch_file() {
     -e 's|function Pi(){let e=Ni();if(e)try{return new URL(`sample-datasets.manifest.json`,e).toString()}catch{}try{return new URL(`/sample-datasets.manifest.json`,window.location.origin).toString()}catch{return null}}|function Pi(){try{return new URL("/lerobot/sample-datasets.manifest.json",window.location.origin).href}catch(e){return null}}|g' \
     -e 's|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}return{kind:`unknown`,raw:t}}|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}|g' \
     -e 's|async openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`remoteArchive`)|async openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`httpDataset`&&typeof window.__datalabOpenHttpDataset==`function`){this.deps.setWelcomeRequest(null),await window.__datalabOpenHttpDataset(this,n.raw,t);return}if(n.kind===`remoteArchive`)|g' \
+    -e 's/selectAll:`全选`/selectAll:`显示全部通道`/g' \
+    -e 's/selectAll:`Select All`/selectAll:`Show all channels`/g' \
   "$f" || true
 }
 
@@ -48,5 +50,7 @@ patch_file "${ROOT}/index.html"
 for f in "${ROOT}"/assets/index-*.js; do
   [ -f "$f" ] && patch_file "$f"
 done
+
+sh "$(dirname "$0")/patch-dockview-scalar-chart.sh" "${ROOT}"
 
 echo "Branding patch applied under ${ROOT}"

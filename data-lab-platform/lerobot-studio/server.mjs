@@ -261,12 +261,12 @@ function injectBranding(html, search = "") {
   let inject =
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=56"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=5"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=8"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=55"></script>' +
-    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=5"></script>' +
+    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=8"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=

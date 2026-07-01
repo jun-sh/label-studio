@@ -1,0 +1,18 @@
+// Allow server user to start/stop WiFi hotspot via NetworkManager (nmcli),
+// without full sudo. Install to /etc/polkit-1/rules.d/50-ego-hotspot.rules
+polkit.addRule(function(action, subject) {
+    if (subject.user != "server" || !subject.local || !subject.active) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var id = action.id;
+    if (id == "org.freedesktop.NetworkManager.wifi.share.open" ||
+        id == "org.freedesktop.NetworkManager.wifi.share.protected" ||
+        id == "org.freedesktop.NetworkManager.device.enable" ||
+        id == "org.freedesktop.NetworkManager.device.modify" ||
+        id == "org.freedesktop.NetworkManager.settings.modify.own" ||
+        id == "org.freedesktop.NetworkManager.settings.modify.system" ||
+        id == "org.freedesktop.NetworkManager.network.control") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

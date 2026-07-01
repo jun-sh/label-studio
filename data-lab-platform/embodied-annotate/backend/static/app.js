@@ -192,6 +192,11 @@ const state = {
   validationResult: null,
   conflictIndices: new Set(),
   forceSaveDespiteWarnings: false,
+  egoMode: false,
+  egoDatasetPath: null,
+  egoFeatures: [],
+  egoHandPoses: null,
+  egoHandPosesByFrame: new Map(),
 };
 
 // ---------------------------------------------------------------------------
@@ -244,6 +249,139 @@ function framesToSeg(startFrame, endFrame, label) {
     end: endFrameToSeconds(e),
     label,
   };
+}
+
+function parseEgoUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  const ego = params.get('ego') === '1' || params.has('datasetPath');
+  const datasetPath = params.get('datasetPath');
+  const episodeIndex = Number(params.get('episodeIndex') || '0');
+  return { ego, datasetPath, episodeIndex: Number.isFinite(episodeIndex) ? episodeIndex : 0 };
+}
+
+function egoSegmentsToTimelineSubtasks(segments) {
+  return (segments || []).map((seg) =>
+    framesToSeg(seg.start_frame, seg.end_frame, seg.subtask_name || 'subtask'),
+  );
+}
+
+function timelineSubtasksToEgoPayload(subtasks) {
+  return subtasks.map((seg, index) => {
+    const frames = segToFrames(seg);
+    return {
+      start_frame: frames.startFrame,
+      end_frame: frames.endFrame,
+      subtask_index: index,
+      subtask_name: seg.label,
+    };
+  });
+}
+
+function hasEgoFeature(prefix) {
+  return (state.egoFeatures || []).some((f) => String(f).startsWith(prefix));
+}
+
+let egoHandCanvas = null;
+let egoHandCtx = null;
+
+function ensureEgoHandCanvas() {
+  if (!episodeVideo || !episodeVideo.parentElement) return null;
+  if (!egoHandCanvas) {
+    egoHandCanvas = document.createElement('canvas');
+    egoHandCanvas.id = 'egoHandOverlay';
+    egoHandCanvas.style.position = 'absolute';
+    egoHandCanvas.style.left = '0';
+    egoHandCanvas.style.top = '0';
+    egoHandCanvas.style.pointerEvents = 'none';
+    egoHandCanvas.style.zIndex = '2';
+    const wrap = episodeVideo.parentElement;
+    if (wrap.style.position !== 'relative' && wrap.style.position !== 'absolute') {
+      wrap.style.position = 'relative';
+    }
+    wrap.appendChild(egoHandCanvas);
+    egoHandCtx = egoHandCanvas.getContext('2d');
+  }
+  return egoHandCtx;
+}
+
+function projectHandPoseTo2D(pose63, videoW, videoH) {
+  const pts = [];
+  const arr = pose63 || [];
+  if (arr.length < 63) return pts;
+  for (let j = 0; j < 21; j += 1) {
+    const x = Number(arr[j * 3]);
+    const y = Number(arr[j * 3 + 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (Math.abs(x) < 1e-3 && Math.abs(y) < 1e-3) continue;
+    const px = x <= 1.5 ? x * videoW : x;
+    const py = y <= 1.5 ? y * videoH : y;
+    pts.push([px, py]);
+  }
+  return pts;
+}
+
+function drawEgoHandOverlay() {
+  if (!state.egoMode || !hasEgoFeature('observation.hand_pose_')) {
+    if (egoHandCanvas) egoHandCanvas.style.display = 'none';
+    return;
+  }
+  const ctx = ensureEgoHandCanvas();
+  if (!ctx || !episodeVideo.videoWidth) return;
+  const rect = episodeVideo.getBoundingClientRect();
+  egoHandCanvas.width = rect.width;
+  egoHandCanvas.height = rect.height;
+  egoHandCanvas.style.width = `${rect.width}px`;
+  egoHandCanvas.style.height = `${rect.height}px`;
+  egoHandCanvas.style.display = 'block';
+  ctx.clearRect(0, 0, egoHandCanvas.width, egoHandCanvas.height);
+  const frame = secondsToStartFrame(episodeVideo.currentTime || 0);
+  const poseRow = state.egoHandPosesByFrame.get(frame);
+  if (!poseRow) return;
+  const sx = rect.width / episodeVideo.videoWidth;
+  const sy = rect.height / episodeVideo.videoHeight;
+  const drawSide = (pose, color) => {
+    const pts = projectHandPoseTo2D(pose, episodeVideo.videoWidth, episodeVideo.videoHeight);
+    if (pts.length < 2) return;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0] * sx, pts[0][1] * sy);
+    for (let i = 1; i < pts.length; i += 1) {
+      ctx.lineTo(pts[i][0] * sx, pts[i][1] * sy);
+    }
+    ctx.stroke();
+    pts.forEach(([x, y]) => {
+      ctx.beginPath();
+      ctx.arc(x * sx, y * sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  };
+  drawSide(poseRow.hand_pose_left, '#34d399');
+  drawSide(poseRow.hand_pose_right, '#60a5fa');
+}
+
+async function loadEgoContext(epIdx) {
+  if (!state.egoMode || !state.egoDatasetPath) return null;
+  const url = `/api/ego/load?datasetPath=${encodeURIComponent(state.egoDatasetPath)}&episodeIndex=${epIdx}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || 'Failed to load EGO dataset');
+  state.egoFeatures = data.features || [];
+  if (hasEgoFeature('observation.hand_pose_')) {
+    const hpRes = await fetch(
+      `/api/ego/hand_poses?datasetPath=${encodeURIComponent(state.egoDatasetPath)}&episodeIndex=${epIdx}`,
+    );
+    const hpData = await hpRes.json();
+    if (hpRes.ok) {
+      state.egoHandPosesByFrame = new Map(
+        (hpData.poses || []).map((row) => [row.frame_index, row]),
+      );
+    }
+  } else {
+    state.egoHandPosesByFrame = new Map();
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -946,13 +1084,28 @@ async function selectEpisode(epIdx) {
     : '';
   renderTaskPanel(ep);
 
-  const res = await fetch(`/api/episodes/${epIdx}/annotations`);
-  const data = await res.json();
-  state.annotations[epIdx] = {
-    subtasks: data.subtasks || [],
-    high_levels: data.high_levels || [],
-    outcome: data.outcome ?? null,
-  };
+  if (state.egoMode && state.egoDatasetPath) {
+    try {
+      const egoData = await loadEgoContext(epIdx);
+      const subtasks = egoSegmentsToTimelineSubtasks(egoData?.segments || []);
+      state.annotations[epIdx] = {
+        subtasks,
+        high_levels: [],
+        outcome: null,
+      };
+    } catch (err) {
+      setHelper(connectHelper, err.message);
+      state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null };
+    }
+  } else {
+    const res = await fetch(`/api/episodes/${epIdx}/annotations`);
+    const data = await res.json();
+    state.annotations[epIdx] = {
+      subtasks: data.subtasks || [],
+      high_levels: data.high_levels || [],
+      outcome: data.outcome ?? null,
+    };
+  }
   setOutcomeUI(state.annotations[epIdx].outcome);
 
   const videoUrl = `/api/video/${epIdx}?video_key=${encodeURIComponent(state.dataset.selected_video_key)}`;
@@ -972,6 +1125,35 @@ async function selectEpisode(epIdx) {
 async function saveEpisode() {
   if (state.currentEpisode == null) return;
   const ann = getEpisodeAnnotations(state.currentEpisode);
+
+  if (state.egoMode && state.egoDatasetPath) {
+    const payload = {
+      dataset_path: state.egoDatasetPath,
+      episode_index: state.currentEpisode,
+      subtasks: timelineSubtasksToEgoPayload(ann.subtasks),
+    };
+    const res = await fetch('/api/ego/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      clearDirty();
+      setStatus(t('status_saved'), true);
+      setHelper(connectHelper, t('connect_episode_saved', { idx: state.currentEpisode }), true);
+      if (saveStatusText) {
+        saveStatusText.textContent = t('save_ok');
+        saveStatusText.classList.remove('dirty');
+        saveStatusText.classList.add('ok');
+      }
+      await loadEgoContext(state.currentEpisode);
+    } else {
+      setHelper(connectHelper, data.detail || t('save_failed'));
+    }
+    return;
+  }
+
   const payload = {
     episode_index: state.currentEpisode,
     subtasks: ann.subtasks,
@@ -1065,6 +1247,12 @@ connectForm.addEventListener('submit', async (event) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Failed to load dataset');
 
+    const egoParams = parseEgoUrlParams();
+    state.egoMode = egoParams.ego && !!egoParams.datasetPath;
+    state.egoDatasetPath = state.egoMode
+      ? egoParams.datasetPath
+      : (isLocal ? localPath : null);
+
     state.dataset = data;
     state.episodes = data.episodes || [];
     setStatus(t('status_loaded', { name: data.repo_id || data.root }), true);
@@ -1078,7 +1266,8 @@ connectForm.addEventListener('submit', async (event) => {
     populateVideoKeys(data.video_keys, data.selected_video_key);
     renderEpisodes();
     if (state.episodes.length > 0) {
-      await selectEpisode(state.episodes[0].episode_index);
+      const startEp = state.egoMode ? (parseEgoUrlParams().episodeIndex || state.episodes[0].episode_index) : state.episodes[0].episode_index;
+      await selectEpisode(startEp);
     }
   } catch (err) {
     setStatus(t('status_disconnected'));
@@ -1170,9 +1359,13 @@ episodeSearch.addEventListener('input', renderEpisodes);
 
 episodeVideo.addEventListener('loadedmetadata', () => {
   renderAllTimeline();
+  drawEgoHandOverlay();
 });
 
-episodeVideo.addEventListener('timeupdate', updatePlayhead);
+episodeVideo.addEventListener('timeupdate', () => {
+  updatePlayhead();
+  drawEgoHandOverlay();
+});
 
 exportBtn.addEventListener('click', async () => {
   exportStatus.textContent = t('export_running');
@@ -1234,3 +1427,12 @@ updateLabelHintForSelection(state.selectedLabel);
 bindTimelineEvents();
 updateConnectFields();
 updateSaveUI();
+
+(() => {
+  const egoParams = parseEgoUrlParams();
+  if (egoParams.datasetPath && localInput) {
+    localInput.value = egoParams.datasetPath;
+    if (sourceSelect) sourceSelect.value = 'local';
+    updateConnectFields();
+  }
+})();

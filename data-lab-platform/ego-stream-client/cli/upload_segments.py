@@ -91,7 +91,7 @@ def main() -> None:
                     )
             uploader.start_session(
                 session_id=session_id,
-                task=task or "Perform egocentric manipulation tasks at the laboratory workbench",
+                task=task or None,
                 video_shapes=shapes,
                 camera_intrinsics=camera_intrinsics,
             )

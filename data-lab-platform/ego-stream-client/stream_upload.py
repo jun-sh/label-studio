@@ -452,19 +452,21 @@ class FrameStreamUploader:
     def start_session(
         self,
         *,
-        task: str,
+        task: str = "",
         video_shapes: dict[str, tuple[int, int]],
         session_id: str | None = None,
     ) -> str:
         self.session_id = session_id or self.session_id or new_session_id()
         shapes_out = {k: [int(h), int(w)] for k, (h, w) in video_shapes.items()}
+        body: dict[str, Any] = {
+            "action": "session_start",
+            "sessionId": self.session_id,
+            "videoShapes": shapes_out,
+        }
+        if task:
+            body["task"] = task
         out = self._post_control_plane(
-            {
-                "action": "session_start",
-                "sessionId": self.session_id,
-                "task": task,
-                "videoShapes": shapes_out,
-            },
+            body,
             event="session_start",
         )
         self.session_id = out.get("sessionId") or self.session_id

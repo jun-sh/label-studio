@@ -26,10 +26,13 @@ docker cp data-lab-platform/lerobot-studio/config/collection-stations.json data-
 docker cp data-lab-platform/lerobot-studio/branding data-lab-lerobot-1:/app/
 docker cp data-lab-platform/lerobot-studio/server.mjs data-lab-lerobot-1:/app/server.mjs
 docker cp data-lab-platform/lerobot-studio/stream-ingest.mjs data-lab-lerobot-1:/app/stream-ingest.mjs
+docker cp data-lab-platform/lerobot-studio/task-naming.mjs data-lab-lerobot-1:/app/task-naming.mjs
 docker cp data-lab-platform/lerobot-studio/ingest-server.mjs data-lab-lerobot-1:/app/ingest-server.mjs 2>/dev/null || true
 docker cp data-lab-platform/lerobot-studio/server.mjs data-lab-lerobot-1:/app/server.mjs
 docker cp data-lab-platform/lerobot-studio/scripts data-lab-lerobot-1:/app/scripts
 docker cp data-lab-platform/lerobot-studio/patches/apply-branding.sh data-lab-lerobot-1:/app/patches/apply-branding.sh
+docker cp data-lab-platform/lerobot-studio/patches/patch-dockview-scalar-chart.sh data-lab-lerobot-1:/app/patches/patch-dockview-scalar-chart.sh
+docker exec data-lab-lerobot-1 chmod +x /app/patches/patch-dockview-scalar-chart.sh
 docker cp data-lab-platform/lerobot-studio/ingest-bundled-datasets.sh data-lab-lerobot-1:/app/ingest-bundled-datasets.sh
 docker exec data-lab-lerobot-1 chmod +x /app/ingest-bundled-datasets.sh
 docker exec data-lab-lerobot-1 sh /app/patches/apply-branding.sh /srv/lerobot

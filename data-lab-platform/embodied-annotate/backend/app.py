@@ -16,7 +16,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+import ego_parquet
+from ego_parquet import (
+    episode_meta_public,
+    episode_row,
+    episode_total_frames,
+    load_info,
+    read_annotation_boundaries,
+    read_hand_poses_for_episode,
+    scalar_features,
+    segments_from_boundaries,
+    update_episode_after_subtask_save,
+    write_annotations_for_episode,
+)
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_DIR = APP_ROOT / "static"
@@ -735,6 +749,85 @@ class PushToHubRequest(BaseModel):
     new_repo_id: str | None = None
     private: bool = False
     commit_message: str = "Add annotations from LeRobot Annotate"
+
+
+class EgoSubtaskSegment(BaseModel):
+    start_frame: int
+    end_frame: int
+    subtask_index: int
+    subtask_name: str
+
+
+class EgoSaveRequest(BaseModel):
+    dataset_path: str
+    episode_index: int = 0
+    subtasks: list[EgoSubtaskSegment] = Field(default_factory=list)
+
+
+@app.get("/api/ego/load")
+def ego_load(datasetPath: str, episodeIndex: int = 0) -> JSONResponse:
+    root = Path(datasetPath).expanduser().resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"Dataset path not found: {root}")
+    try:
+        info = load_info(root)
+        row = episode_row(root, episodeIndex)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    total_frames = episode_total_frames(root, episodeIndex, info)
+    boundaries = read_annotation_boundaries(root, episodeIndex)
+    return JSONResponse(
+        {
+            "episode_meta": episode_meta_public(row),
+            "total_frames": total_frames,
+            "fps": float(info.get("fps") or 30),
+            "features": scalar_features(info),
+            "subtasks": boundaries,
+            "segments": segments_from_boundaries(boundaries, total_frames),
+        }
+    )
+
+
+@app.get("/api/ego/hand_poses")
+def ego_hand_poses(datasetPath: str, episodeIndex: int = 0) -> JSONResponse:
+    root = Path(datasetPath).expanduser().resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"Dataset path not found: {root}")
+    try:
+        load_info(root)
+        poses = read_hand_poses_for_episode(root, episodeIndex)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return JSONResponse({"episode_index": episodeIndex, "poses": poses})
+
+
+@app.post("/api/ego/save")
+def ego_save(payload: EgoSaveRequest) -> JSONResponse:
+    root = Path(payload.dataset_path).expanduser().resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"Dataset path not found: {root}")
+    episode_index = int(payload.episode_index)
+    try:
+        row = episode_row(root, episode_index)
+        status = str(row.get("annotation_status") or "raw")
+        if status == "failed":
+            raise HTTPException(status_code=400, detail="cannot annotate episode with annotation_status=failed")
+        if status not in ("raw", "hand_done", "subtask_done"):
+            raise HTTPException(status_code=400, detail=f"unsupported annotation_status: {status}")
+
+        segments = [seg.dict() for seg in payload.subtasks]
+        updated_rows = write_annotations_for_episode(root, episode_index, segments)
+        update_episode_after_subtask_save(root, episode_index)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return JSONResponse({"success": True, "updated_rows": updated_rows})
 
 
 @app.post("/api/push_to_hub")

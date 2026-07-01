@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "session_id": "sess_example_human_demo",
+  "segment_id": "seg_000001",
+  "station_id": "ego-lan-214",
+  "embodiment": "human_demo",
+  "task_id": "fold_towel_001",
+  "extended_info": {
+    "scene_id": "kitchen_table_01",
+    "operator_id": "demo_operator_01",
+    "capture_mode": "segmented"
+  }
+}

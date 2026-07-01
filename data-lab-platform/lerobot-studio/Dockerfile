@@ -9,17 +9,18 @@ RUN sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories \
   && apk add --no-cache wget ca-certificates unzip ffmpeg python3 py3-pyarrow
 
 WORKDIR /app
-COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs ingest-server.mjs frame_bin_codec.mjs /app/
+COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs /app/
 COPY vendor/ /app/vendor/
 COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
 COPY patches/apply-branding.sh /app/patches/apply-branding.sh
+COPY patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
 COPY branding/ /app/branding/
 COPY config/datasets.json /app/config/datasets.json
 COPY config/sample-datasets.manifest.json /app/config/sample-datasets.manifest.json
 COPY config/collection-stations.json /app/config/collection-stations.json
 
 RUN chmod +x /app/download-assets.sh /app/docker-entrypoint.sh /app/prepare-bundled-dataset.sh \
-  /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh
+  /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh /app/patches/patch-dockview-scalar-chart.sh
 
 ENV PORT=7860
 ENV LEROBOT_STUDIO_ROOT=/srv/lerobot

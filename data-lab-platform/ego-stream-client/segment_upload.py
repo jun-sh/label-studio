@@ -86,7 +86,7 @@ class SegmentUploader:
         self,
         *,
         session_id: str,
-        task: str,
+        task: str | None = None,
         video_shapes: dict[str, tuple[int, int]],
         camera_intrinsics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -94,9 +94,10 @@ class SegmentUploader:
         body: dict[str, Any] = {
             "action": "session_start",
             "sessionId": session_id,
-            "task": task,
             "videoShapes": shapes_out,
         }
+        if task:
+            body["task"] = task
         if camera_intrinsics:
             body["cameraIntrinsics"] = camera_intrinsics
         return self._post_json(body)

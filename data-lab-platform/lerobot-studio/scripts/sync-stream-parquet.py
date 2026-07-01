@@ -10,6 +10,36 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+import re
+from datetime import datetime, timezone
+
+PIPELINE_VERSION = "1.0.0"
+
+EPISODE_META_STRING_COLS = (
+    "station_id",
+    "embodiment",
+    "task_id",
+    "annotation_status",
+    "pipeline_version",
+    "extended_info",
+)
+
+EPISODE_META_FLOAT_COLS = (
+    "quality_valid_hand_ratio",
+    "quality_mean_jitter",
+)
+
+EPISODE_META_DEFAULTS = {
+    "station_id": "unknown",
+    "embodiment": "human_demo",
+    "task_id": "",
+    "annotation_status": "raw",
+    "pipeline_version": PIPELINE_VERSION,
+    "extended_info": "{}",
+    "quality_valid_hand_ratio": None,
+    "quality_mean_jitter": None,
+}
+
 VIDEO_KEYS = [
     "observation.images.camera_front_left",
     "observation.images.camera_front_right",
@@ -17,54 +47,92 @@ VIDEO_KEYS = [
     "observation.images.camera_rear_right",
 ]
 
-DEFAULT_TASK = "Perform egocentric manipulation tasks at the laboratory workbench"
-
-TASK_SHORT_NAMES = {
-    DEFAULT_TASK.lower(): "工作台操作",
-}
-
+LEGACY_PLACEHOLDER_TASK = (
+    "Perform egocentric manipulation tasks at the laboratory workbench"
+)
 TASK_LABEL_FALLBACK = "未命名任务"
+_FRAME_SUFFIX_RE = re.compile(r" · \d+f$")
 
 
-def abbreviate_task(task: str) -> str:
-    trimmed = task.strip()
-    if not trimmed:
-        return TASK_LABEL_FALLBACK
-    key = trimmed.lower()
-    if key in TASK_SHORT_NAMES:
-        return TASK_SHORT_NAMES[key]
-    if len(trimmed) <= 32:
-        return trimmed
-    return trimmed[:30] + "…"
+def station_short_name(station_id: str) -> str:
+    sid = str(station_id or "").strip().lower()
+    match = re.match(r"ego-lan-(\d+)", sid)
+    if match:
+        return f"EGO-{match.group(1)}"
+    if sid.startswith("ego-"):
+        parts = [p for p in sid.removeprefix("ego-").split("-") if p]
+        if parts and parts[-1].isdigit():
+            return f"EGO-{parts[-1]}"
+    if sid:
+        return sid.upper().replace("_", "-")
+    return "EGO"
 
 
-def format_collected_at(iso: str | None) -> str:
-    if not iso:
-        return ""
-    try:
-        from datetime import datetime
+def session_id_short(session_id: str) -> str:
+    token = str(session_id or "").strip()
+    if token.lower().startswith("sess_"):
+        token = token[5:]
+    return token[:8].lower()
 
-        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
-        return dt.strftime("%m-%d %H:%M")
-    except (ValueError, TypeError):
-        return ""
+
+def format_session_date(created_at: str | None) -> str:
+    if not created_at:
+        dt = datetime.now(timezone.utc)
+    else:
+        dt = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.strftime("%m-%d")
+
+
+def auto_task_name(*, station_id: str, session_id: str, created_at: str | None) -> str:
+    return (
+        f"{station_short_name(station_id)} · "
+        f"{session_id_short(session_id)} · "
+        f"{format_session_date(created_at)}"
+    )
+
+
+def is_legacy_placeholder_task(task: str | None) -> bool:
+    return str(task or "").strip().lower() == LEGACY_PLACEHOLDER_TASK.lower()
+
+
+def resolve_task_name(
+    *,
+    explicit: str | None,
+    station_id: str,
+    session_id: str,
+    created_at: str | None,
+) -> str:
+    label = str(explicit or "").strip()
+    if label and not is_legacy_placeholder_task(label):
+        return label
+    return auto_task_name(
+        station_id=station_id,
+        session_id=session_id,
+        created_at=created_at,
+    )
+
+
+def format_episode_display_task(base_task: str, length: int) -> str:
+    base = str(base_task or "").strip()
+    if is_legacy_placeholder_task(base):
+        base = ""
+    if not base:
+        base = TASK_LABEL_FALLBACK
+    if length > 0:
+        return f"{base} · {length}f"
+    return base
 
 
 def format_episode_list_task(ep: dict, full_task: str) -> str:
-    """LeRobot sidebar: line1=#index, line2=duration, line3=tasks[0]."""
-    short = abbreviate_task(full_task)
+    """LeRobot sidebar line 3: {task} · {frames}f"""
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
     to_idx = int(ep.get("dataset_to_index") or from_idx + length)
     if length <= 0:
         length = max(0, to_idx - from_idx)
-    collected = format_collected_at(ep.get("committed_at"))
-    parts = [short]
-    if collected:
-        parts.append(collected)
-    if length > 0:
-        parts.append(f"{length}f")
-    return " · ".join(parts)
+    return format_episode_display_task(full_task, length)
 
 
 def read_json(path: Path, default=None):
@@ -102,7 +170,13 @@ def write_tasks_jsonl(root: Path, episodes: list[dict], full_task: str) -> None:
             )
     else:
         lines.append(
-            json.dumps({"task_index": 0, "task": abbreviate_task(full_task)}, ensure_ascii=False)
+            json.dumps(
+                {
+                    "task_index": 0,
+                    "task": format_episode_display_task(full_task, 0),
+                },
+                ensure_ascii=False,
+            )
         )
     (meta / "tasks.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -112,6 +186,61 @@ def _atomic_parquet_write(table: pa.Table, out: Path) -> None:
     tmp = out.with_suffix(out.suffix + ".tmp")
     pq.write_table(table, tmp)
     tmp.replace(out)
+
+
+def load_episode_meta_defaults(root: Path) -> dict:
+    raw = read_json(root / "live" / "episode-meta.json", {})
+    if not isinstance(raw, dict):
+        return dict(EPISODE_META_DEFAULTS)
+    out = dict(EPISODE_META_DEFAULTS)
+    for key in EPISODE_META_STRING_COLS:
+        if key in raw and raw[key] is not None:
+            out[key] = str(raw[key])
+    for key in EPISODE_META_FLOAT_COLS:
+        if key in raw and raw[key] is not None:
+            try:
+                out[key] = float(raw[key])
+            except (TypeError, ValueError):
+                out[key] = None
+    if not isinstance(out.get("extended_info"), str):
+        out["extended_info"] = json.dumps(out.get("extended_info") or {}, ensure_ascii=False)
+    return out
+
+
+def episode_meta_for_index_entry(ep: dict, defaults: dict) -> dict:
+    nested = ep.get("episode_meta") if isinstance(ep.get("episode_meta"), dict) else {}
+    merged = {**defaults, **nested}
+    if not isinstance(merged.get("extended_info"), str):
+        merged["extended_info"] = json.dumps(merged.get("extended_info") or {}, ensure_ascii=False)
+    return merged
+
+
+def ensure_annotations_skeleton(root: Path) -> None:
+    out = root / "meta" / "annotations.parquet"
+    if out.is_file():
+        table = pq.read_table(out)
+        if "episode_index" in table.column_names:
+            return
+        n = table.num_rows
+        migrated = pa.table(
+            {
+                "episode_index": pa.array([0] * n, type=pa.int64()),
+                "frame_index": table["frame_index"],
+                "subtask_index": table["subtask_index"],
+                "subtask_name": table["subtask_name"],
+            }
+        )
+        _atomic_parquet_write(migrated, out)
+        return
+    table = pa.table(
+        {
+            "episode_index": pa.array([], type=pa.int64()),
+            "frame_index": pa.array([], type=pa.int64()),
+            "subtask_index": pa.array([], type=pa.int64()),
+            "subtask_name": pa.array([], type=pa.string()),
+        }
+    )
+    _atomic_parquet_write(table, out)
 
 
 def load_episodes_index(root: Path) -> list[dict]:
@@ -159,6 +288,8 @@ def default_feature_vector(key: str, info: dict) -> list:
     dtype = str(spec.get("dtype") or "float32")
     zero = 0 if dtype.startswith("int") else 0.0
     if key == "observation.pose" and size == 7:
+        return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    if key == "observation.head_pose" and size == 7:
         return [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
     return [zero] * size
 
@@ -248,7 +379,7 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     _atomic_parquet_write(pa.table(table_cols), out)
 
 
-def _episode_row(ep: dict, fps: float, full_task: str) -> dict:
+def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> dict:
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
     to_idx = int(ep.get("dataset_to_index") or from_idx + length)
@@ -257,6 +388,7 @@ def _episode_row(ep: dict, fps: float, full_task: str) -> dict:
     duration = length / fps if fps > 0 else 0.0
     task = format_episode_list_task(ep, full_task)
     ep_index = int(ep.get("episode_index", 0))
+    ep_meta = episode_meta_for_index_entry(ep, meta_defaults)
     row: dict = {
         "episode_index": float(ep_index),
         "length": float(length),
@@ -268,6 +400,11 @@ def _episode_row(ep: dict, fps: float, full_task: str) -> dict:
         "chunk_index": 0.0,
         "file_index": 0.0,
     }
+    for key in EPISODE_META_STRING_COLS:
+        row[key] = ep_meta.get(key, EPISODE_META_DEFAULTS[key])
+    for key in EPISODE_META_FLOAT_COLS:
+        val = ep_meta.get(key)
+        row[key] = float(val) if val is not None else float("nan")
     for key in VIDEO_KEYS:
         row[f"videos/{key}/chunk_index"] = 0.0
         row[f"videos/{key}/file_index"] = 0.0
@@ -279,6 +416,7 @@ def _episode_row(ep: dict, fps: float, full_task: str) -> dict:
 
 
 def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: str) -> None:
+    meta_defaults = load_episode_meta_defaults(root)
     if not episodes:
         total_frames = int(read_json(root / "meta" / "info.json", {}).get("total_frames") or 0)
         if total_frames <= 0:
@@ -293,12 +431,15 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
             }
         ]
 
-    rows = [_episode_row(ep, fps, task) for ep in episodes]
+    rows = [_episode_row(ep, fps, task, meta_defaults) for ep in episodes]
     columns: dict[str, pa.Array] = {}
     for key in rows[0]:
         if key == "tasks":
             continue
         if key == "_duration":
+            continue
+        if key in EPISODE_META_STRING_COLS:
+            columns[key] = pa.array([row[key] for row in rows], type=pa.string())
             continue
         columns[key] = pa.array([row[key] for row in rows], type=pa.float64())
     columns["tasks"] = pa.array([[row["tasks"]] for row in rows], type=pa.list_(pa.string()))
@@ -318,7 +459,13 @@ def main() -> int:
     info = read_json(root / "meta" / "info.json", {})
     live = read_json(root / "live" / "session.json", {})
     fps = float(info.get("fps") or 15)
-    task = str(live.get("task") or "").strip()
+    station_id = root.name
+    task = resolve_task_name(
+        explicit=str(live.get("task") or "").strip() or None,
+        station_id=station_id,
+        session_id=str(live.get("sessionId") or ""),
+        created_at=live.get("startedAt"),
+    )
     total_frames = int(info.get("total_frames") or 0)
     episodes = load_episodes_index(root)
     jsonl_path = root / "data" / "chunk-000" / "file-000.jsonl"
@@ -331,6 +478,7 @@ def main() -> int:
     episodes_key = len(episodes)
 
     write_tasks_jsonl(root, episodes, task)
+    ensure_annotations_skeleton(root)
     write_episodes_parquet(root, episodes, fps, task)
     if meta_only:
         marker_path.parent.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,20 @@ import { createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { unpackFrameBin } from "./frame_bin_codec.mjs";
 import { decompress as fzstdDecompress } from "./vendor/fzstd.mjs";
+import {
+  formatEpisodeDisplayTask,
+  isLegacyPlaceholderTask,
+  resolveTaskName,
+  stationIdFromRoot,
+} from "./task-naming.mjs";
+import {
+  attachEpisodeMetaToIndexEntry,
+  bootstrapDatasetSchema,
+  buildCanonicalFrameRow,
+  mergeEpisodeMeta,
+  parseManifestToEpisodeMeta,
+  prepareSegmentEpisodeMeta,
+} from "./lerobot-converter.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,12 +91,6 @@ const STAGING_EMERGENCY_PURGE_BYTES = Number(
   process.env.STREAM_STAGING_EMERGENCY_BYTES || 512 * 1024 * 1024,
 );
 const STATION_TOKEN_HEADER = "x-station-token";
-/**
- * Natural-language task description (shown in LeRobot episode list, like sample datasets).
- * Dataset title stays "EGO 采集站 · 214" via stream-http-source.js.
- */
-export const DEFAULT_STREAM_TASK =
-  "Perform egocentric manipulation tasks at the laboratory workbench";
 const stationTokensPath =
   process.env.COLLECTION_STATION_TOKENS_JSON ||
   path.join(__dirname, "config", "collection-station-tokens.json");
@@ -545,6 +553,27 @@ function episodesIndexPath(root) {
   return path.join(root, "live", "episodes-index.json");
 }
 
+function episodeMetaPath(root) {
+  return path.join(root, "live", "episode-meta.json");
+}
+
+function readEpisodeMeta(root) {
+  return readJson(episodeMetaPath(root), null);
+}
+
+function writeEpisodeMeta(root, episodeMeta) {
+  if (!episodeMeta) return;
+  writeJsonAtomic(episodeMetaPath(root), episodeMeta);
+}
+
+function resolveEpisodeMeta(root, stationId, incoming) {
+  const prev = readEpisodeMeta(root);
+  const next = incoming || parseManifestToEpisodeMeta(null, stationId);
+  const merged = mergeEpisodeMeta(prev, next);
+  writeEpisodeMeta(root, merged);
+  return merged;
+}
+
 function segmentMetaPath(root, sessionId, segmentId) {
   return path.join(root, "live", "sessions", sessionId, "segments", `${segmentId}.json`);
 }
@@ -561,51 +590,45 @@ function saveEpisodesIndex(root, index) {
   writeJsonAtomic(episodesIndexPath(root), index);
 }
 
-const TASK_SHORT_NAMES = {
-  [DEFAULT_STREAM_TASK.toLowerCase()]: "工作台操作",
-};
-
-const TASK_LABEL_FALLBACK = "未命名任务";
-
-function abbreviateTask(task) {
-  const trimmed = String(task || "").trim();
-  if (!trimmed) return TASK_LABEL_FALLBACK;
-  const key = trimmed.toLowerCase();
-  if (TASK_SHORT_NAMES[key]) return TASK_SHORT_NAMES[key];
-  if (trimmed.length <= 32) return trimmed;
-  return `${trimmed.slice(0, 30)}…`;
+function frameTaskValue(root, stationId, frameTask) {
+  const explicit = String(frameTask || "").trim();
+  if (explicit && !isLegacyPlaceholderTask(explicit)) return explicit;
+  return resolveSessionTask(root, stationId);
 }
 
-function formatCollectedAt(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${mm}-${dd} ${hh}:${mi}`;
-}
-
-/** Full task from session only; empty when not configured. */
-function getStationTask(root) {
+function resolveSessionTask(root, stationId, opts = {}) {
   const live = readJson(path.join(root, "live", "session.json"), {});
-  return String(live.task ?? "").trim();
+  const sid = stationId || stationIdFromRoot(root);
+  let explicit = opts.explicit;
+  if (explicit === undefined && live.task && !isLegacyPlaceholderTask(live.task)) {
+    explicit = live.task;
+  }
+  return resolveTaskName({
+    explicit,
+    stationId: sid,
+    sessionId: opts.sessionId || live.sessionId,
+    createdAt: opts.createdAt || live.startedAt,
+  });
+}
+
+/** Base task label from session metadata (auto-generated when unset). */
+function getStationTask(root, stationId) {
+  return resolveSessionTask(root, stationId);
 }
 
 /** LeRobot sidebar line 3: tasks[0] (lines 1–2 are #index and duration). */
 function formatEpisodeListTask(ep, fullTask) {
-  const short = abbreviateTask(fullTask);
-  const length = Math.max(0, Number(ep.length) || 0);
-  const collected = formatCollectedAt(ep.committed_at);
-  const parts = [short];
-  if (collected) parts.push(collected);
-  if (length > 0) parts.push(`${length}f`);
-  return parts.join(" · ");
+  let length = Math.max(0, Number(ep.length) || 0);
+  if (length <= 0) {
+    const fromIdx = Number(ep.dataset_from_index) || 0;
+    const toIdx = Number(ep.dataset_to_index) || fromIdx;
+    length = Math.max(0, toIdx - fromIdx);
+  }
+  return formatEpisodeDisplayTask(fullTask, length);
 }
 
 function formatEpisodeTitle(root, segmentId, length, source) {
-  const fullTask = getStationTask(root);
+  const fullTask = getStationTask(root, stationIdFromRoot(root));
   return formatEpisodeListTask(
     {
       length,
@@ -632,7 +655,7 @@ function ensureLegacyEpisodeSlot(root, index) {
       legacy.dataset_to_index = total;
     }
     legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
-    legacy.title = formatEpisodeListTask(legacy, getStationTask(root));
+    legacy.title = formatEpisodeListTask(legacy, getStationTask(root, stationIdFromRoot(root)));
     return;
   }
   if (index.episodes.length > 0) return;
@@ -646,7 +669,7 @@ function ensureLegacyEpisodeSlot(root, index) {
     source: "legacy",
     title: formatEpisodeListTask(
       { length: total, source: "legacy", committed_at: new Date().toISOString() },
-      getStationTask(root),
+      getStationTask(root, stationIdFromRoot(root)),
     ),
     committed_at: new Date().toISOString(),
   });
@@ -669,22 +692,26 @@ function registerSegmentEpisode(root, { sessionId, segmentId, fromFrame, toFrame
   if (legacy && fromIdx > legacy.dataset_from_index && fromIdx < legacy.dataset_to_index) {
     legacy.dataset_to_index = fromIdx;
     legacy.length = Math.max(0, legacy.dataset_to_index - legacy.dataset_from_index);
-    legacy.title = formatEpisodeListTask(legacy, getStationTask(root));
+    legacy.title = formatEpisodeListTask(legacy, getStationTask(root, stationIdFromRoot(root)));
   }
 
   const episodeIndex = index.episodes.length;
   const title = formatEpisodeTitle(root, segmentId, length, source || "stream");
-  const entry = {
-    episode_index: episodeIndex,
-    segment_id: segmentId,
-    session_id: sessionId,
-    dataset_from_index: fromIdx,
-    dataset_to_index: toIdx,
-    length,
-    source: source || "stream",
-    title,
-    committed_at: new Date().toISOString(),
-  };
+  const episodeMeta = readEpisodeMeta(root);
+  const entry = attachEpisodeMetaToIndexEntry(
+    {
+      episode_index: episodeIndex,
+      segment_id: segmentId,
+      session_id: sessionId,
+      dataset_from_index: fromIdx,
+      dataset_to_index: toIdx,
+      length,
+      source: source || "stream",
+      title,
+      committed_at: new Date().toISOString(),
+    },
+    episodeMeta,
+  );
   index.episodes.push(entry);
   saveEpisodesIndex(root, index);
   writeJsonAtomic(segmentMetaPath(root, sessionId, segmentId), entry);
@@ -739,7 +766,7 @@ function getSegmentIngestState(stationId) {
 
 function processSegmentIngestJob(stationId, job) {
   const root = stationRoot(stationId);
-  const { sessionId, segmentId, frames, images, shapes, host } = job;
+  const { sessionId, segmentId, frames, images, shapes, host, episodeMeta: jobEpisodeMeta } = job;
   const livePath = path.join(root, "live", "session.json");
   const live = readJson(livePath, {});
 
@@ -749,10 +776,13 @@ function processSegmentIngestJob(stationId, job) {
     return { framesCommitted: 0, duplicate: true };
   }
 
+  const episodeMeta = resolveEpisodeMeta(root, stationId, jobEpisodeMeta || null);
+
   let info = readJson(path.join(root, "meta", "info.json"));
   if (!info) {
-    info = defaultInfo(stationId, shapes || {});
+    info = defaultInfo(stationId, shapes || {}, episodeMeta);
   }
+  bootstrapDatasetSchema(info, episodeMeta);
   for (const [key, shape] of Object.entries(shapes || {})) {
     if (info.features?.[key] && Array.isArray(shape) && shape.length >= 2) {
       info.features[key].shape = [shape[0], shape[1], 3];
@@ -776,15 +806,18 @@ function processSegmentIngestJob(stationId, job) {
       const buf = resolveFrameImage(images, frameIndex, videoKey);
       if (buf) frameImages[videoKey] = buf;
     }
-    const row = {
-      frame_index: frameIndex,
-      timestamp_ns: f.timestampNs ?? f.timestamp_ns ?? 0,
-      task: f.task || DEFAULT_STREAM_TASK,
-      "observation.state": f.observationState || f["observation.state"] || [0, 0, 0, 0, 0, 0],
-      "observation.pose": f.observationPose || f["observation.pose"] || [0, 0, 0, 0, 0, 0, 1],
-      "observation.hands": f.observationHands || f["observation.hands"] || new Array(63).fill(0),
-      action: f.actionVector || f.action || [0],
-    };
+    const row = buildCanonicalFrameRow(
+      {
+        frame_index: frameIndex,
+        timestamp_ns: f.timestampNs ?? f.timestamp_ns ?? 0,
+        task: frameTaskValue(root, stationId, f.task),
+        "observation.state": f.observationState || f["observation.state"] || [0, 0, 0, 0, 0, 0],
+        "observation.pose": f.observationPose || f["observation.pose"] || [0, 0, 0, 0, 0, 0, 1],
+        "observation.hands": f.observationHands || f["observation.hands"] || new Array(63).fill(0),
+        action: f.actionVector || f.action || [0],
+      },
+      info,
+    );
     commitFrameAtomically(root, frameIndex, frameImages, row);
     markFrameCommitted(root, sessionId, frameIndex);
     committed += 1;
@@ -875,7 +908,7 @@ function enqueueSegmentIngest(stationId, job) {
 function writeTasksJsonl(root, task) {
   ensureDir(path.join(root, "meta"));
   const explicit = task !== undefined && task !== null ? String(task).trim() : "";
-  const fullTask = explicit || getStationTask(root);
+  const fullTask = explicit || getStationTask(root, stationIdFromRoot(root));
   const index = loadEpisodesIndex(root);
   const lines =
     index.episodes.length > 0
@@ -885,7 +918,7 @@ function writeTasksJsonl(root, task) {
             task: formatEpisodeListTask(ep, fullTask),
           }),
         )
-      : [JSON.stringify({ task_index: 0, task: abbreviateTask(fullTask) })];
+      : [JSON.stringify({ task_index: 0, task: formatEpisodeDisplayTask(fullTask, 0) })];
   fs.writeFileSync(path.join(root, "meta", "tasks.jsonl"), `${lines.join("\n")}\n`);
 }
 
@@ -955,7 +988,7 @@ function touchHeartbeat(root, stationId, host) {
   markStationLiveCache(stationId, true);
 }
 
-function defaultInfo(stationId, shapes) {
+function defaultInfo(stationId, shapes, episodeMeta = null) {
   const features = {};
   for (const key of VIDEO_KEYS) {
     const [h, w] = shapes[key] || [1200, 1920];
@@ -992,7 +1025,7 @@ function defaultInfo(stationId, shapes) {
   };
   features.action = { dtype: "float32", shape: [1], names: null };
 
-  return {
+  const info = {
     codebase_version: "v3.0",
     robot_type: "oak_4p_ego",
     total_episodes: 1,
@@ -1013,6 +1046,7 @@ function defaultInfo(stationId, shapes) {
       stream_mode: "frame_push",
     },
   };
+  return bootstrapDatasetSchema(info, episodeMeta);
 }
 
 function sessionPath(root, sessionId) {
@@ -1683,13 +1717,14 @@ function markSegmentIngestError(root, sessionId, segmentId, error) {
   });
 }
 
-function buildSegmentBodyFromExtractedDir(extractDir) {
+function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
   const manifestPath = path.join(extractDir, "manifest.json");
   const rowsPath = path.join(extractDir, "rows.jsonl");
   if (!fs.existsSync(manifestPath) || !fs.existsSync(rowsPath)) {
     throw new Error("extracted segment missing manifest.json or rows.jsonl");
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const episodeMeta = prepareSegmentEpisodeMeta(manifest, stationId);
   const rows = fs
     .readFileSync(rowsPath, "utf8")
     .split("\n")
@@ -1712,7 +1747,7 @@ function buildSegmentBodyFromExtractedDir(extractDir) {
     frames.push({
       frameIndex,
       timestampNs: row.timestamp_ns ?? row.timestampNs ?? 0,
-      task: row.task || DEFAULT_STREAM_TASK,
+      task: row.task,
       observationState: row["observation.state"] || row.observationState || [0, 0, 0, 0, 0, 0],
       observationPose: row["observation.pose"] || row.observationPose || [0, 0, 0, 0, 0, 0, 1],
       observationHands: row["observation.hands"] || row.observationHands || new Array(63).fill(0),
@@ -1728,6 +1763,7 @@ function buildSegmentBodyFromExtractedDir(extractDir) {
     frames,
     images,
     host: null,
+    episodeMeta,
   };
 }
 
@@ -1740,7 +1776,7 @@ function ensureSessionForImport(stationId, body) {
   if (live.sessionId === sessionId && fs.existsSync(sessionDir)) {
     return;
   }
-  const task = body.frames[0]?.task || DEFAULT_STREAM_TASK;
+  const task = body.frames[0]?.task;
   const videoShapes = {};
   for (const key of VIDEO_KEYS) {
     videoShapes[key] = [800, 1280];
@@ -1750,6 +1786,7 @@ function ensureSessionForImport(stationId, body) {
     sessionId,
     task,
     videoShapes,
+    episodeMeta: body.episodeMeta,
   });
 }
 
@@ -1778,7 +1815,7 @@ export async function processTarZstFromFile(filePath, stationId, options = {}) {
     }
     onStatus?.("extracting");
     await extractTarZstArchive(archivePath, extractDir);
-    body = buildSegmentBodyFromExtractedDir(extractDir);
+    body = buildSegmentBodyFromExtractedDir(extractDir, stationId);
     if (expectSessionId && body.sessionId !== expectSessionId) {
       throw new Error("manifest session/segment mismatch with upload headers");
     }
@@ -2232,9 +2269,21 @@ export function handleStreamUpload(stationId, body) {
       previousSessionId: prevLive.sessionId || null,
     });
     ensurePeriodicDiskCleanup(stationId);
+    const startedAt = prevLive.startedAt || new Date().toISOString();
+    const task = resolveSessionTask(root, stationId, {
+      explicit: body.task,
+      sessionId,
+      createdAt: startedAt,
+    });
+    let episodeMeta = null;
     if (!isResume) {
-      writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes));
-      writeTasksJsonl(root, body.task || DEFAULT_STREAM_TASK);
+      episodeMeta = resolveEpisodeMeta(
+        root,
+        stationId,
+        body.episodeMeta || parseManifestToEpisodeMeta(null, stationId),
+      );
+      writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes, episodeMeta));
+      writeTasksJsonl(root, task);
       initChunksManifest(root, { resetViewer: true });
       writeViewerInfoSnapshot(root, 0);
       setChunkArtifactStatus(root, "meta/info.json", "finished", 0);
@@ -2261,7 +2310,7 @@ export function handleStreamUpload(stationId, body) {
       sessionId,
       startedAt: prevLive.startedAt || new Date().toISOString(),
       resumedAt: isResume ? new Date().toISOString() : null,
-      task: body.task || prevLive.task || DEFAULT_STREAM_TASK,
+      task,
       episodeIndex: 0,
       lastFrameIndex: prevLive.lastFrameIndex ?? null,
     });
@@ -2326,6 +2375,7 @@ export function handleStreamUpload(stationId, body) {
       shapes,
       host: live.host || null,
       ingestSource: body.ingestSource || "stream",
+      episodeMeta: body.episodeMeta || null,
     });
 
     const optimisticTotal = Math.max(
@@ -2385,7 +2435,7 @@ export function handleStreamUpload(stationId, body) {
     const row = {
       frame_index: frameIndex,
       timestamp_ns: body.timestampNs ?? 0,
-      task: body.task || DEFAULT_STREAM_TASK,
+      task: frameTaskValue(root, stationId, body.task),
       "observation.state": body.observationState || [0, 0, 0, 0, 0, 0],
       "observation.pose": body.observationPose || [0, 0, 0, 0, 0, 0, 1],
       "observation.hands": body.observationHands || new Array(63).fill(0),
@@ -2405,7 +2455,7 @@ export function handleStreamUpload(stationId, body) {
         {
           frameIndex,
           timestampNs: body.timestampNs ?? 0,
-          task: body.task || DEFAULT_STREAM_TASK,
+          task: frameTaskValue(root, stationId, body.task),
           observationState: body.observationState || [0, 0, 0, 0, 0, 0],
           observationPose: body.observationPose || [0, 0, 0, 0, 0, 0, 1],
           observationHands: body.observationHands || new Array(63).fill(0),

@@ -1,5 +1,5 @@
 /**
- * Draw HaMeR 2D hand keypoints (OpenPose 21-joint skeleton) on the inference camera panel.
+ * Draw HaMeR 2D hand keypoints on one or more inference camera panels (v8 QA color fix + compact joints).
  */
 (function () {
   "use strict";
@@ -16,7 +16,6 @@
     [0, 17], [17, 18], [18, 19], [19, 20],
   ];
 
-  // Legacy HaMeR / stream ingest names -> LeRobot v3 panel feature keys.
   var LEGACY_TO_CANONICAL_VIDEO_KEY = {
     "observation.images.camera_head_left": "observation.images.camera_front_left",
     "observation.images.camera_head_right": "observation.images.camera_front_right",
@@ -24,14 +23,34 @@
     "observation.images.camera_02": "observation.images.camera_rear_right",
   };
 
+  // RGB converted from hand_viz_style.HAND_COLORS_BGR (OpenCV BGR → canvas RGB).
+  // left: 豆沙骨线 + 浅桃关节; right: 绿骨线 + 浅蓝关节
+  var RENDER = {
+    LINE_WIDTH: 2,
+    WRIST_RADIUS: 3,
+    JOINT_RADIUS: 1.5,
+    ALPHA_HIGH: 0.95,
+    ALPHA_LOW: 0.45,
+    ALPHA_REPROJ_CAP: 0.55,
+    REPROJ_THRESHOLD: 8.0,
+    QUALITY_LOW: 2,
+  };
+
+  var HAND_COLORS_RGB = {
+    left: { edge: [246, 130, 59], joint: [253, 197, 147] },
+    right: { edge: [94, 197, 34], joint: [21, 204, 250] },
+    unknown: { edge: [247, 85, 168], joint: [254, 180, 216] },
+  };
+
   var state = {
     enabled: true,
     datasetId: null,
     payload: null,
-    lookup: null,
-    activeVideoKey: null,
-    activeEpisode: "0",
-    slot: null,
+    episodeIndex: "0",
+    /** @type {Map<string, {lookup: Map<number, number[]>, payload: object}>} */
+    cameraStates: new Map(),
+    /** @type {Map<string, {video: HTMLVideoElement, wrap: HTMLElement, canvas: HTMLCanvasElement}>} */
+    slots: new Map(),
     rafId: 0,
     observer: null,
     pill: null,
@@ -135,6 +154,26 @@
     return !!(slot && slot.canvas && slot.canvas.isConnected && slot.video && slot.video.isConnected);
   }
 
+  function rgb(c) {
+    return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+  }
+
+  function cameraPayloadFromSub(sub, rootPayload) {
+    return {
+      fps: sub.fps || rootPayload.fps || 20,
+      width: sub.width,
+      height: sub.height,
+      frame_index: sub.frame_index || [],
+      kp2d: sub.kp2d || [],
+      hand_side: sub.hand_side || [],
+      frame_quality: sub.frame_quality || [],
+      reprojection_error: sub.reprojection_error || [],
+      hands_mode: sub.hands_mode || rootPayload.hands_mode || "single",
+      hands: sub.hands || null,
+      sync_mode: sub.sync_mode || rootPayload.sync_mode || "frame_index",
+    };
+  }
+
   function buildLookup(payload) {
     var lookup = new Map();
     var frames = payload.frame_index || [];
@@ -163,35 +202,88 @@
     return "0";
   }
 
-  function resolveEpisodePayload(rootPayload) {
-    if (!rootPayload) return null;
-    if (rootPayload.version === 3 && rootPayload.episodes) {
-      var ep = detectActiveEpisodeIndex();
-      var sub = rootPayload.episodes[ep] || rootPayload.episodes["0"];
-      if (!sub) {
-        var keys = Object.keys(rootPayload.episodes);
-        sub = keys.length ? rootPayload.episodes[keys[0]] : null;
+  function episodeKeyCandidates() {
+    var ep = detectActiveEpisodeIndex();
+    var n = parseInt(ep, 10);
+    if (!Number.isFinite(n)) n = 0;
+    var keys = [String(n), String(ep), String(n).padStart(6, "0")];
+    var seen = {};
+    var out = [];
+    for (var i = 0; i < keys.length; i += 1) {
+      if (!seen[keys[i]]) {
+        seen[keys[i]] = true;
+        out.push(keys[i]);
       }
-      if (!sub) return null;
-      return {
-        fps: sub.fps || rootPayload.fps || 20,
-        video_key: sub.video_key || rootPayload.video_key,
-        frame_index: sub.frame_index || [],
-        kp2d: sub.kp2d || [],
-      };
     }
-    return rootPayload;
+    return out;
   }
 
-  function refreshActiveEpisodeLookup() {
+  function resolveEpisodeMap(rootPayload) {
+    if (!rootPayload || !rootPayload.episodes) return { key: null, map: null };
+    var eps = rootPayload.episodes;
+    var candidates = episodeKeyCandidates();
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (eps[candidates[i]]) {
+        return { key: candidates[i], map: eps[candidates[i]] };
+      }
+    }
+    var keys = Object.keys(eps);
+    if (!keys.length) return { key: null, map: null };
+    return { key: keys[0], map: eps[keys[0]] };
+  }
+
+  function resolveEpisodeCameraPayloads(rootPayload) {
+    if (!rootPayload) return [];
+    var resolved = resolveEpisodeMap(rootPayload);
+    state.episodeIndex = resolved.key || detectActiveEpisodeIndex();
+
+    if (rootPayload.version === 4 && resolved.map) {
+      var epMap = resolved.map;
+      var list4 = [];
+      var vkeys4 = rootPayload.video_keys || Object.keys(epMap);
+      for (var i4 = 0; i4 < vkeys4.length; i4 += 1) {
+        var vk4 = canonicalVideoKey(vkeys4[i4]);
+        var sub4 = epMap[vkeys4[i4]] || epMap[vk4];
+        if (sub4) {
+          list4.push({
+            video_key: vk4,
+            payload: cameraPayloadFromSub(sub4, rootPayload),
+          });
+        }
+      }
+      return list4;
+    }
+
+    if (rootPayload.version === 3 && resolved.map) {
+      var sub3 = resolved.map;
+      if (!sub3) return [];
+      return [
+        {
+          video_key: canonicalVideoKey(sub3.video_key || rootPayload.video_key),
+          payload: cameraPayloadFromSub(sub3, rootPayload),
+        },
+      ];
+    }
+
+    return [
+      {
+        video_key: canonicalVideoKey(rootPayload.video_key || "observation.images.camera_front_left"),
+        payload: rootPayload,
+      },
+    ];
+  }
+
+  function refreshCameraStates() {
+    state.cameraStates = new Map();
     if (!state.payload) return;
-    var epPayload = resolveEpisodePayload(state.payload);
-    if (!epPayload) return;
-    state.lookup = buildLookup(epPayload);
-    state.activeVideoKey = canonicalVideoKey(
-      epPayload.video_key || "observation.images.camera_front_left",
-    );
-    state.activeEpisode = detectActiveEpisodeIndex();
+    var cams = resolveEpisodeCameraPayloads(state.payload);
+    for (var i = 0; i < cams.length; i += 1) {
+      var entry = cams[i];
+      state.cameraStates.set(entry.video_key, {
+        lookup: buildLookup(entry.payload),
+        payload: entry.payload,
+      });
+    }
   }
 
   function fetchHandKp2d(datasetId) {
@@ -212,7 +304,7 @@
       .then(function (payload) {
         state.datasetId = datasetId;
         state.payload = payload;
-        refreshActiveEpisodeLookup();
+        refreshCameraStates();
         state.loading = false;
         state.loadError = null;
         return payload;
@@ -311,9 +403,150 @@
     return Number.isFinite(u) && Number.isFinite(v) && (u > 1 || v > 1);
   }
 
-  function frameIndexForVideo(video, fps) {
+  function frameIndexForVideo(video, payload) {
+    var fps = payload.fps || 20;
     if (!video || !Number.isFinite(fps) || fps <= 0) return 0;
-    return Math.max(0, Math.round((video.currentTime || 0) * fps));
+    var idx = Math.floor((video.currentTime || 0) * fps + 0.5);
+    var frames = payload.frame_index || [];
+    var maxIdx = frames.length ? Number(frames[frames.length - 1]) : idx;
+    return Math.max(0, Math.min(idx, maxIdx));
+  }
+
+  function frameRowIndex(payload, frameIdx) {
+    var frames = payload.frame_index || [];
+    for (var i = 0; i < frames.length; i += 1) {
+      if (Number(frames[i]) === frameIdx) return i;
+    }
+    return -1;
+  }
+
+  function isValidWrist(flat) {
+    return flat && flat.length >= 2 && isValidJoint(flat[0], flat[1]);
+  }
+
+  function blendAlphaForRow(frameQuality, reprojErr) {
+    var alpha = RENDER.ALPHA_HIGH;
+    if (frameQuality !== undefined && Number(frameQuality) >= RENDER.QUALITY_LOW) {
+      alpha = RENDER.ALPHA_LOW;
+    }
+    if (reprojErr !== undefined && Number(reprojErr) > RENDER.REPROJ_THRESHOLD) {
+      alpha = Math.min(alpha, RENDER.ALPHA_REPROJ_CAP);
+    }
+    return alpha;
+  }
+
+  function blendAlpha(payload, frameIdx) {
+    var row = frameRowIndex(payload, frameIdx);
+    if (row < 0) return RENDER.ALPHA_HIGH;
+    var fq = payload.frame_quality;
+    var re = payload.reprojection_error;
+    return blendAlphaForRow(fq ? fq[row] : undefined, re ? re[row] : undefined);
+  }
+
+  function blendAlphaForHand(handPayload, row) {
+    var fq = handPayload.frame_quality;
+    var re = handPayload.reprojection_error;
+    return blendAlphaForRow(fq ? fq[row] : undefined, re ? re[row] : undefined);
+  }
+
+  function ensureOffscreen(canvas) {
+    if (!canvas._datalabOffscreen) {
+      canvas._datalabOffscreen = document.createElement("canvas");
+    }
+    if (canvas._datalabOffscreen.width !== canvas.width || canvas._datalabOffscreen.height !== canvas.height) {
+      canvas._datalabOffscreen.width = canvas.width;
+      canvas._datalabOffscreen.height = canvas.height;
+    }
+    return canvas._datalabOffscreen;
+  }
+
+  function scalePoints(flat, scaleX, scaleY) {
+    var pts = [];
+    for (var j = 0; j < 21; j += 1) {
+      var u = flat[j * 2];
+      var v = flat[j * 2 + 1];
+      pts.push({
+        x: u * scaleX,
+        y: v * scaleY,
+        ok: isValidJoint(u, v),
+      });
+    }
+    return pts;
+  }
+
+  function drawHandLayer(bufCtx, pts, side, scale) {
+    var colors = HAND_COLORS_RGB[side] || HAND_COLORS_RGB.unknown;
+    if (!pts[0] || !pts[0].ok) return;
+    var lw = Math.max(1, RENDER.LINE_WIDTH * scale);
+    var wristR = Math.max(1.2, RENDER.WRIST_RADIUS * scale);
+    var jointR = Math.max(0.8, RENDER.JOINT_RADIUS * scale);
+    bufCtx.lineWidth = lw;
+    bufCtx.lineCap = "round";
+    bufCtx.lineJoin = "round";
+    bufCtx.strokeStyle = rgb(colors.edge);
+    bufCtx.fillStyle = rgb(colors.joint);
+    for (var e = 0; e < HAND_EDGES.length; e += 1) {
+      var a = pts[HAND_EDGES[e][0]];
+      var b = pts[HAND_EDGES[e][1]];
+      if (!a.ok || !b.ok) continue;
+      bufCtx.beginPath();
+      bufCtx.moveTo(a.x, a.y);
+      bufCtx.lineTo(b.x, b.y);
+      bufCtx.stroke();
+    }
+    for (var p = 0; p < pts.length; p += 1) {
+      if (!pts[p].ok) continue;
+      bufCtx.beginPath();
+      bufCtx.arc(pts[p].x, pts[p].y, p === 0 ? wristR : jointR, 0, Math.PI * 2);
+      bufCtx.fill();
+    }
+  }
+
+  function compositeLayer(mainCtx, buffer, alpha) {
+    mainCtx.save();
+    mainCtx.globalAlpha = alpha;
+    mainCtx.drawImage(buffer, 0, 0);
+    mainCtx.restore();
+  }
+
+  function handsToDraw(payload, frameIdx, lookup) {
+    var row = frameRowIndex(payload, frameIdx);
+    var out = [];
+    if (payload.hands_mode === "both" && payload.hands) {
+      ["left", "right"].forEach(function (side) {
+        var h = payload.hands[side];
+        if (!h || !h.kp2d || row < 0) return;
+        var flat = h.kp2d[row];
+        if (!isValidWrist(flat)) return;
+        out.push({ side: side, flat: flat, alpha: blendAlphaForHand(h, row) });
+      });
+      if (out.length) return out;
+    }
+    var flat = lookup.get(frameIdx);
+    if (!isValidWrist(flat)) return [];
+    out.push({
+      side: handSideForFrame(payload, frameIdx),
+      flat: flat,
+      alpha: blendAlpha(payload, frameIdx),
+    });
+    return out;
+  }
+
+  function handSideForFrame(payload, frameIdx) {
+    var row = frameRowIndex(payload, frameIdx);
+    if (row < 0) return "unknown";
+    var hs = payload.hand_side;
+    if (hs && hs[row]) {
+      var s = String(hs[row]).toLowerCase();
+      if (s.indexOf("left") >= 0) return "left";
+      if (s.indexOf("right") >= 0) return "right";
+    }
+    return "unknown";
+  }
+
+  function panelRenderScale(canvas) {
+    var s = Math.min(canvas.width || 1, canvas.height || 1) / 320;
+    return Math.max(0.55, Math.min(1.0, s));
   }
 
   function drawSkeleton(canvas, video, wrap, payload, lookup) {
@@ -326,63 +559,58 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!state.enabled) return;
 
-    var frameIdx = frameIndexForVideo(video, payload.fps || 15);
-    var flat = lookup.get(frameIdx);
-    if (!flat || flat.length < 42) return;
+    var frameIdx = frameIndexForVideo(video, payload);
+    var hands = handsToDraw(payload, frameIdx, lookup);
+    if (!hands.length) return;
 
-    var scale = display.scale || 1;
     var srcW = payload.width || video.videoWidth || 0;
     var srcH = payload.height || video.videoHeight || 0;
-    var scaleX = srcW > 0 ? display.width / srcW : scale;
-    var scaleY = srcH > 0 ? display.height / srcH : scale;
-    var pts = [];
-    for (var j = 0; j < 21; j += 1) {
-      var u = flat[j * 2];
-      var v = flat[j * 2 + 1];
-      pts.push({
-        x: u * scaleX,
-        y: v * scaleY,
-        ok: isValidJoint(u, v),
-      });
-    }
-    if (!pts[0].ok) return;
+    var scaleX = srcW > 0 ? display.width / srcW : display.scale || 1;
+    var scaleY = srcH > 0 ? display.height / srcH : display.scale || 1;
 
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(34, 197, 94, 0.95)";
-    ctx.fillStyle = "rgba(250, 204, 21, 0.95)";
+    var offscreen = ensureOffscreen(canvas);
+    var bufCtx = offscreen.getContext("2d");
+    if (!bufCtx) return;
+    var scale = panelRenderScale(canvas);
 
-    for (var e = 0; e < HAND_EDGES.length; e += 1) {
-      var a = pts[HAND_EDGES[e][0]];
-      var b = pts[HAND_EDGES[e][1]];
-      if (!a.ok || !b.ok) continue;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
+    for (var hi = 0; hi < hands.length; hi += 1) {
+      var hand = hands[hi];
+      bufCtx.clearRect(0, 0, offscreen.width, offscreen.height);
+      var pts = scalePoints(hand.flat, scaleX, scaleY);
+      drawHandLayer(bufCtx, pts, hand.side, scale);
+      compositeLayer(ctx, offscreen, hand.alpha);
     }
+  }
 
-    for (var p = 0; p < pts.length; p += 1) {
-      if (!pts[p].ok) continue;
-      ctx.beginPath();
-      ctx.arc(pts[p].x, pts[p].y, p === 0 ? 4.5 : 3.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  function ensureAllSlots() {
+    state.slots = new Map();
+    state.cameraStates.forEach(function (_camState, videoKey) {
+      var slot = ensureCanvasSlot(videoKey);
+      if (slot) state.slots.set(videoKey, slot);
+    });
   }
 
   function paintLoop() {
     state.rafId = 0;
-    if (!state.payload) return;
-    if (!slotIsLive(state.slot)) {
-      var epPayload = resolveEpisodePayload(state.payload) || state.payload;
-      var vk =
-        state.activeVideoKey ||
-        canonicalVideoKey(epPayload.video_key || "observation.images.camera_front_left");
-      state.slot = ensureCanvasSlot(vk);
+    if (!state.payload || state.cameraStates.size === 0) return;
+
+    var needRefresh = false;
+    state.cameraStates.forEach(function (camState, videoKey) {
+      var slot = state.slots.get(videoKey);
+      if (!slotIsLive(slot)) {
+        needRefresh = true;
+      }
+    });
+    if (needRefresh || state.slots.size !== state.cameraStates.size) {
+      ensureAllSlots();
     }
-    if (state.slot) {
-      var epPayload2 = resolveEpisodePayload(state.payload) || state.payload;
-      drawSkeleton(state.slot.canvas, state.slot.video, state.slot.wrap, epPayload2, state.lookup);
-    }
+
+    state.cameraStates.forEach(function (camState, videoKey) {
+      var slot = state.slots.get(videoKey);
+      if (!slot) return;
+      drawSkeleton(slot.canvas, slot.video, slot.wrap, camState.payload, camState.lookup);
+    });
+
     if (state.enabled) {
       state.rafId = g.requestAnimationFrame(paintLoop);
     }
@@ -413,9 +641,13 @@
       updatePillLabel();
       if (state.enabled) {
         startPaintLoop();
-      } else if (state.slot && state.slot.canvas) {
-        var ctx = state.slot.canvas.getContext("2d");
-        if (ctx) ctx.clearRect(0, 0, state.slot.canvas.width, state.slot.canvas.height);
+      } else {
+        state.slots.forEach(function (slot) {
+          if (slot && slot.canvas) {
+            var ctx = slot.canvas.getContext("2d");
+            if (ctx) ctx.clearRect(0, 0, slot.canvas.width, slot.canvas.height);
+          }
+        });
         stopPaintLoop();
       }
     });
@@ -430,13 +662,22 @@
     var label = state.pill.querySelector(".datalab-hand-kp2d-pill-label");
     if (!label) return;
     var on = state.enabled;
+    var dual = state.cameraStates.size > 1;
     label.textContent = isZh()
       ? on
-        ? "手部 2D 标注"
-        : "手部 2D 标注（关）"
+        ? dual
+          ? "双手 2D（相机视角）"
+          : "手部 2D 标注"
+        : dual
+          ? "双手 2D（关）"
+          : "手部 2D 标注（关）"
       : on
-        ? "Hand 2D overlay"
-        : "Hand 2D overlay (off)";
+        ? dual
+          ? "Hand 2D (cam L/R)"
+          : "Hand 2D overlay"
+        : dual
+          ? "Hand 2D off"
+          : "Hand 2D overlay (off)";
   }
 
   function deactivate() {
@@ -446,10 +687,10 @@
       state.pill.remove();
       state.pill = null;
     }
-    state.slot = null;
+    state.slots = new Map();
+    state.cameraStates = new Map();
     state.datasetId = null;
     state.payload = null;
-    state.lookup = null;
     state.fetchPromise = null;
   }
 
@@ -461,11 +702,9 @@
       }
       document.documentElement.setAttribute("data-datalab-hand-kp2d", "1");
       ensurePill();
-      refreshActiveEpisodeLookup();
-      var vk =
-        state.activeVideoKey ||
-        canonicalVideoKey(payload.video_key || "observation.images.camera_front_left");
-      state.slot = ensureCanvasSlot(vk);
+      refreshCameraStates();
+      ensureAllSlots();
+      updatePillLabel();
       startPaintLoop();
     });
   }
@@ -478,23 +717,17 @@
     }
     if (state.datasetId !== datasetId) {
       state.payload = null;
-      state.lookup = null;
-      state.slot = null;
+      state.cameraStates = new Map();
+      state.slots = new Map();
     }
     activateForDataset(datasetId);
     if (state.payload) {
-      var prevEp = state.activeEpisode;
-      refreshActiveEpisodeLookup();
-      var epChanged = prevEp !== state.activeEpisode;
-      var vk =
-        state.activeVideoKey ||
-        canonicalVideoKey(
-          (resolveEpisodePayload(state.payload) || {}).video_key ||
-            "observation.images.camera_front_left",
-        );
-      if (epChanged || !slotIsLive(state.slot)) {
-        state.slot = ensureCanvasSlot(vk);
+      var prevEp = state.episodeIndex;
+      refreshCameraStates();
+      if (prevEp !== state.episodeIndex) {
+        ensureAllSlots();
       }
+      updatePillLabel();
       if (state.enabled) startPaintLoop();
     }
   }

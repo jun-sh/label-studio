@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "episodes": [
+    {
+      "episode_index": 0,
+      "segment_id": "seg_000001",
+      "session_id": "unitree-g1-teleop-001_20260701_143000",
+      "dataset_from_index": 0,
+      "dataset_to_index": 30,
+      "length": 30,
+      "source": "d4_fake",
+      "title": "Unitree fake · 30f",
+      "committed_at": "2026-07-01T14:17:45.204Z",
+      "episode_meta": {
+        "station_id": "unitree-g1-teleop-001",
+        "embodiment": "robot_teleop_unitree_g1",
+        "task_id": "fold_towel_001",
+        "annotation_status": "raw",
+        "pipeline_version": "1.0.0",
+        "extended_info": "{\"scene_id\":\"lab_table_02\",\"operator_id\":\"teleop_op_03\",\"calibration_id\":\"unitree_g1_calib_20260625\",\"robot_sn\":\"G1-2024-0876\"}",
+        "quality_valid_hand_ratio": null,
+        "quality_mean_jitter": null
+      }
+    }
+  ]
+}

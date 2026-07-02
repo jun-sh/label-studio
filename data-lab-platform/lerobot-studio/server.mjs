@@ -266,7 +266,7 @@ function injectBranding(html, search = "") {
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=55"></script>' +
-    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=8"></script>' +
+    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=9"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=

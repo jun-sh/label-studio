@@ -10,13 +10,34 @@
 
 | 文件 | 说明 |
 |------|------|
-| `ego_web.py` | 单文件 Web 服务（标准库）+ 内嵌移动端页面 |
+| `ego_web.py` | 单文件 Web 服务（标准库）+ 内嵌移动端页面；**仅启停采集** |
+| `export_offline.py` | 离线打包：读 `segments/` → 写 `export/ready/` |
+| `scripts/export-offline.sh` | 一键导出入口（班次末 SSH 执行） |
+| `field-export-and-import.md` | **数据存哪、从哪打包、成品路径**（必读） |
 | `polkit/50-ego-hotspot.rules` | 授权 `server` 用户操作 NM 热点 |
 | `systemd/ecs-ego-web.service` | user 级 systemd 单元 |
 | `deploy.sh` / `rollback.sh` | 一行部署 / 回滚 |
 | `scripts/hotspot-setup.sh` | 一次性热点 + Polkit（需 sudo） |
 
 ---
+
+## 数据落在哪？（简表）
+
+手机 **开始/结束录制** 只控制采集栈，**不打包**。完整说明见 [field-export-and-import.md](./field-export-and-import.md)。
+
+| 阶段 | 214 路径 | 内容 |
+|------|----------|------|
+| 录制中（内存） | `/dev/shm/ego-capture-active/.../seg_*` | 正在写；**短录未收尾时数据可能只在这里** |
+| 结束录制后（原始） | `/home/server/cache/ego-lan-214/segments/.../seg_*` | 须 `closed=true` 才算落盘成功 |
+| 班次末 `export-offline.sh` 后（成品） | `/home/server/export/ego-lan-214/ready/YYYYMMDD/*.tar.zst` | 可拷 U 盘、34 导入 |
+
+不足 45 秒的录制**不需要等满 45 秒**；结束录制应收尾落盘。若硬盘无新段，先查 `/dev/shm/`（详见 [field-export-and-import.md](./field-export-and-import.md) 第 2.6 节）。
+
+```bash
+# 班次末一键导出（采集栈须已 inactive）
+bash /home/server/ego-web/export-offline.sh
+```
+
 
 ## 快速部署（214 上）
 
@@ -52,6 +73,8 @@ bash ~/ego-local-web-src/deploy.sh
 - 实验室有线网：`http://10.10.10.214:8080`
 - 热点网关：`http://192.168.4.1:8080`（热点开启后）
 
+**录制数据存哪、从哪打包、成品路径、U 盘与 34 导入**：见 [field-export-and-import.md](./field-export-and-import.md)（含开始录制→落盘→导出全链路）。
+
 ### 4. 回滚
 
 ```bash
@@ -67,7 +90,7 @@ nmcli connection delete EGO-214-COLLECT 2>/dev/null || true
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | 移动端控制页 |
-| `/api/status` | GET | `{"state":"idle\|recording\|starting\|stopping\|error","duration":0,"storage_free":"12.3 GB","storage_warn":false,"segment_count":0,"msg":"","capture_active":false}` |
+| `/api/status` | GET | `state`: `idle\|starting\|warming\|recording\|stopping\|error`；`duration` 仅在 `recording` 时递增；`frames_writing` 表示是否已开始写帧 |
 | `/api/capture/start` | POST | `{"success":true,"msg":""}` |
 | `/api/capture/stop` | POST | `{"success":true,"msg":""}` |
 | `/api/preview/main.jpg` | GET | JPEG（反代 `127.0.0.1:8765` 主路预览） |
@@ -75,8 +98,9 @@ nmcli connection delete EGO-214-COLLECT 2>/dev/null || true
 `state` 说明：
 
 - `idle` — 采集栈未运行
-- `recording` — 采集中，`duration` 为秒
 - `starting` / `stopping` — 过渡态，按钮锁定
+- `warming` — 采集栈已运行，相机初始化中，**不计时**；可点「结束录制」
+- `recording` — 已开始写帧，`duration` 为有效录制秒数
 - `error` — 最近一次操作失败，`msg` 为白话说明
 
 ---
@@ -86,8 +110,9 @@ nmcli connection delete EGO-214-COLLECT 2>/dev/null || true
 | # | 步骤 | 通过条件 |
 |---|------|----------|
 | 1 | 手机连热点或实验室 WiFi，打开 `http://192.168.4.1:8080` 或 `http://10.10.10.214:8080` | 页面显示灰色「设备待机中」 |
-| 2 | 点击「开始录制」 | **30s 内**状态变绿「正在录制中」，预览区出现画面 |
-| 3 | 点击「结束录制」 | 出现「正在保存数据」，完成后回到待机；`segments/sessions/.../seg_*` 下有关闭段 |
+| 2 | 点击「开始录制」 | 先琥珀色「正在准备录制」，再变绿「正在录制中」；计时仅在变绿后开始 |
+| 3 | 点击「结束录制」 | 出现「正在保存数据」，完成后回到待机；**不出现**打包/导出相关提示 |
+| 3b | 采集已停后执行 `export-offline.sh` | `ready/YYYYMMDD/*.tar.zst` 生成；对应段 `uploaded=true` 且从 `segments/` 删除 |
 | 4 | 断开 34 网络（或阻断心跳 URL） | 启停与落盘仍正常 |
 | 5 | 执行 `rollback.sh` + 删除 polkit/热点 | 无 `ecs-ego-web` 服务、`/home/server/ego-web` 目录 |
 
@@ -141,7 +166,7 @@ curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
         └───────┘
 ```
 
-适合只保留启停、隐藏预览的「阿姨模式」；可在设置开关中切换。
+适合只保留启停、隐藏预览的「简易模式」；可在设置开关中切换。
 
 ### 示例 D：双色分栏（误触更低）
 
@@ -200,19 +225,23 @@ curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
 | `EGO_PREVIEW_URL` | `http://127.0.0.1:8765/preview/front_left/jpg` |
 | `EGO_STORAGE_WARN_GB` | `2` |
 
+离线导出脚本另见 `export-offline.sh` 环境变量（`EGO_EXPORT_ROOT` 等），[field-export-and-import.md](./field-export-and-import.md) 第四节。
+
 ---
 
 ## 与 34 采集页的关系
 
 | | 214 本地页 | 34 `/collection?station=ego-lan-214` |
 |--|-----------|--------------------------------------|
-| 用户 | 现场操作员 | 办公室质检 / 导入 |
+| 用户 | 现场采集员 | 办公室质检 / 导入 |
 | 网络 | 热点 / 局域网直连 214 | 需访问 34 |
 | 功能 | 启停 + 单路预览 | LeRobot 回放、拖传导入 |
+| 数据 | 产生原始段 `segments/` | 消费 `ready/` 拷来的 `.tar.zst` |
 
 ---
 
 ## 相关文档
 
+- **[数据存哪、从哪打包、成品路径、U 盘与 34 导入](./field-export-and-import.md)**（操作必读）
 - [ego-edge-offline-upload-and-deployment.md](../../docs/ego-edge-offline-upload-and-deployment.md)
 - [ego-lan-214-segment-storage-and-upload.md](../../docs/ego-lan-214-segment-storage-and-upload.md)

@@ -227,14 +227,16 @@
         return { key: candidates[i], map: eps[candidates[i]] };
       }
     }
-    var keys = Object.keys(eps);
-    if (!keys.length) return { key: null, map: null };
-    return { key: keys[0], map: eps[keys[0]] };
+    return { key: null, map: null };
   }
 
   function resolveEpisodeCameraPayloads(rootPayload) {
     if (!rootPayload) return [];
     var resolved = resolveEpisodeMap(rootPayload);
+    if (!resolved.map) {
+      state.episodeIndex = detectActiveEpisodeIndex();
+      return [];
+    }
     state.episodeIndex = resolved.key || detectActiveEpisodeIndex();
 
     if (rootPayload.version === 4 && resolved.map) {

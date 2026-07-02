@@ -6,7 +6,7 @@ BUNDLED="${BUNDLED_DATA_ROOT:-/srv/bundled}"
 SAMPLES="${DATALAB_SAMPLES_DIR:-/datalab-samples}"
 COS_BASE="${LEROBOT_SAMPLES_COS:-https://io-lerobot-examples-1328702871.cos.accelerate.myqcloud.com}"
 
-mkdir -p "${BUNDLED}/covers"
+mkdir -p "${BUNDLED}/covers" "${BUNDLED}/overlays"
 
 copy_if_newer() {
   src="$1"
@@ -61,6 +61,7 @@ if [ -d "${SAMPLES}" ]; then
   copy_if_newer "${SAMPLES}/SenseXperience UMI.zip" "${BUNDLED}/sensexperience_umi.zip" || true
   copy_if_newer "${SAMPLES}/DualAirbot Folding.zip" "${BUNDLED}/dualairbot_fold.zip" || true
   copy_if_newer "${SAMPLES}/ego_214_hand_pose.zip" "${BUNDLED}/ego_214_hand_pose.zip" || true
+  copy_if_newer "${SAMPLES}/ego_214_hand_pose_hand_kp2d.json" "${BUNDLED}/overlays/ego_214_hand_pose_hand_kp2d.json" || true
   if [ -f "${SAMPLES}/DualPiper Pulling.zip" ]; then
     copy_if_newer "${SAMPLES}/DualPiper Pulling.zip" "${BUNDLED}/dualpiper_pulling.zip" || true
   elif [ -f "${SAMPLES}/DualPiper Pulling.tar" ]; then

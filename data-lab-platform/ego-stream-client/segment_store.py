@@ -302,7 +302,7 @@ class SegmentCaptureWriter:
         checkpoint_path: str | Path | None = None,
     ) -> SegmentCaptureWriter:
         root = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
-        gb = float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "4"))
+        gb = float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "256"))
         session_id = os.environ.get("EGO_CAPTURE_SESSION_ID") or new_session_id()
         return cls(
             root,

@@ -57,6 +57,8 @@
 
 浏览器拖传**不强制**文件在哪个目录，只要是合法 `.tar.zst` 即可（可来自 U 盘、`export/` 或段内 `.upload/`）。
 
+**现场操作分步说明（手机录制 → U 盘 → 34 导入）**：见 [field-export-and-import.md](../data-lab-platform/ego-local-web/field-export-and-import.md)
+
 ---
 
 ## 三、离线上传 / U 盘工作流
@@ -90,7 +92,7 @@ Episodes 工具栏 **「导入」** → 拖入 `.tar.zst`。API 经 Django 代�
 | 变量 | 网络自动上传模式 | **离线上传优先（推荐）** |
 |------|------------------|--------------------------|
 | `EGO_SEGMENT_DELETE_AFTER_UPLOAD` | `1`（传完删段） | `0`（误触发网络上传也不删本地） |
-| `EGO_SEGMENT_QUOTA_GB` | `4` | `64` 或更大（多留段待导出） |
+| `EGO_SEGMENT_QUOTA_GB` | `256` | 本机 `segments/` 待导出队列上限（GB）；导出成功后源段删除，配额循环使用 |
 | `SEGMENT_AUTO_PURGE_PENDING` | `1` | `0` 或配合更大 `SEGMENT_MAX_PENDING` |
 | `ecs-oak-upload-stack.target` | enabled | **disabled / inactive** |
 

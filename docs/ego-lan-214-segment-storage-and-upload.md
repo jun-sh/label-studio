@@ -4,7 +4,7 @@
 
 适用于站点 `ego-lan-214`。
 
-**存储分层**：214 边缘段缓存（默认 4GB）→ 34 热层 LeRobot 流（默认 100GB / 7 天）→ 34 冷盘 `ego-archive`（长期 tar.gz，见第十一节）。
+**存储分层**：214 边缘段缓存（默认 **256GB** 待导出队列）→ 34 热层 LeRobot 流（默认 100GB / 7 天）→ 34 冷盘 `ego-archive`（长期 tar.gz，见第十一节）。
 
 **离线上传 / 部署 / 默认关自动上传**：见 [ego-edge-offline-upload-and-deployment.md](./ego-edge-offline-upload-and-deployment.md)。
 
@@ -190,11 +190,13 @@ systemd 单元模板：`data-lab-platform/ego-stream-client/systemd/ecs-upload-s
 
 | 参数 | 默认值 | 行为 |
 |------|--------|------|
-| `EGO_SEGMENT_QUOTA_GB` | **4 GB** | 超限时删**最旧**的 closed-unuploaded 段 |
+| `EGO_SEGMENT_QUOTA_GB` | **256 GB** | `segments/` 待导出队列上限；超限时删**最旧**的 closed-unuploaded 段（**不是**生涯总录制量） |
 | `SEGMENT_MAX_PENDING` | **10 段** | 采集时 pending 过多，删最旧 pending 段（backpressure） |
 | `EGO_UPLOAD_KEEP_PENDING_BELOW` | **12 段** | 上传循环 pending 超 12，trim 最旧段 |
 
 **不是覆盖写同一段**，而是**丢弃最旧未上传段**（未上传数据会丢）。
+
+> **配额含义**：`EGO_SEGMENT_QUOTA_GB` 限制的是 `segments/` **待导出队列**占用，不是生涯总录制量。`ego-export` / 网络上传成功后源段删除，配额循环使用。详见 [field-export-and-import.md §3.7](../data-lab-platform/ego-local-web/field-export-and-import.md)。**导出幂等（B 原料 / C 成品）**见 [§3.8](../data-lab-platform/ego-local-web/field-export-and-import.md)。
 
 采集侧 quota 逻辑至少保留 1 段 pending；上传循环在 disk quota 下也至少留 1 段。
 
@@ -272,7 +274,7 @@ flowchart LR
 ## 十、实操要点
 
 - **新一天新 episode**：214 **删 `checkpoint.json`** 再开录
-- **214** 是**段缓存队列**（默认 4GB），**34** 是 **LeRobot v3 成品库**（默认 100GB / 7 天）
+- **214** 是**段缓存队列**（默认 **256GB** 待导出上限），**34** 是 **LeRobot v3 成品库**（默认 100GB / 7 天）
 - **默认推荐**：采集栈开启、上传栈关闭；批量用 U 盘 + 34 采集页「导入」`.tar.zst`（见 [ego-edge-offline-upload-and-deployment.md](./ego-edge-offline-upload-and-deployment.md)）
 - 若开启自动网络上传：传完即删（`EGO_SEGMENT_DELETE_AFTER_UPLOAD=1`）；不能把原始 `segments/` 目录直接拷到 34 当 ingest 完成
 - 上传 URL：`http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload`

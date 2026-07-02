@@ -1,0 +1,16 @@
+{
+  "station_id": "unitree-g1-teleop-001",
+  "embodiment": "robot_teleop_unitree_g1",
+  "task_id": "fold_towel_001",
+  "annotation_status": "raw",
+  "pipeline_version": "1.0.0",
+  "modalities": {
+    "joint_pos": 29,
+    "joint_vel": 29,
+    "ee_pose": true,
+    "ee_target": true
+  },
+  "extended_info": "{\"scene_id\":\"lab_table_02\",\"operator_id\":\"teleop_op_03\",\"calibration_id\":\"unitree_g1_calib_20260625\",\"robot_sn\":\"G1-2024-0876\"}",
+  "quality_valid_hand_ratio": null,
+  "quality_mean_jitter": null
+}

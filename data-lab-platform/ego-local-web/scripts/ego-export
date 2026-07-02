@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# ego-export — 214 边缘站一键导出（幂等，默认安全）
+# 用法: ego-export [--reset]
+set -euo pipefail
+
+RESET=0
+EXTRA=()
+for arg in "$@"; do
+  case "$arg" in
+    --reset) RESET=1 ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-export [--reset]
+
+  默认（无参数）  打包所有「已关段、未导出」的段到 export/ready/当日/
+                  已导出段自动跳过；成功后删除 segments/ 源段（不删 ready/ 成品）
+  --reset         整轮重来：清空 export/，重置段状态后重新全量导出
+
+采集须已停止。手机页点「结束录制」后再执行本命令。
+EOF
+      exit 0
+      ;;
+    *) EXTRA+=("$arg") ;;
+  esac
+done
+
+_resolve_export_sh() {
+  local candidates=(
+    "${EGO_WEB_ROOT:-}/export-offline.sh"
+    "/home/server/ego-web/export-offline.sh"
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/export-offline.sh"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -f "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+EXPORT_SH="$(_resolve_export_sh)" || {
+  echo "❌ 找不到导出脚本 export-offline.sh" >&2
+  echo "   请先部署 ego-local-web：bash deploy.sh" >&2
+  exit 2
+}
+
+if systemctl --user is-active ecs-oak-capture-stack.target >/dev/null 2>&1; then
+  echo "❌ 采集仍在运行，请先手机点「结束录制」或执行：" >&2
+  echo "   systemctl --user stop ecs-oak-capture-stack.target" >&2
+  exit 2
+fi
+
+if [[ "$RESET" -eq 1 ]]; then
+  echo "⚠️  重置模式：将清空 export/ 并把仍留在磁盘上的已关段标为「待导出」。"
+  if [[ "${EGO_EXPORT_RESET_YES:-}" != "1" ]]; then
+    read -r -p "确认继续？[y/N] " ans
+    [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]] || { echo "已取消"; exit 0; }
+  fi
+  EXTRA+=(--reset)
+fi
+
+LOG_DIR="${EGO_EXPORT_LOG_DIR:-/home/server/cache/ego-lan-214/logs}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/ego-export-$(date +%Y%m%d-%H%M%S).log"
+
+echo "▶ 开始导出…（日志: ${LOG_FILE}）"
+set +e
+bash "$EXPORT_SH" "${EXTRA[@]}" 2>&1 | tee "$LOG_FILE"
+rc=${PIPESTATUS[0]}
+set -e
+
+READY_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-lan-214}/ready"
+TODAY="$(date +%Y%m%d)"
+READY_DAY="${READY_ROOT}/${TODAY}"
+
+if [[ "$rc" -ne 0 ]]; then
+  echo "" >&2
+  echo "❌ 导出未完成。请查看日志，修复后重新执行 ego-export。" >&2
+  exit "$rc"
+fi
+
+OK_N="$(grep -E '^summary ok=' "$LOG_FILE" | tail -1 | sed 's/.*ok=\([0-9]*\).*/\1/' || echo 0)"
+FREED="$(grep -E '^freed_bytes=' "$LOG_FILE" | tail -1 | sed 's/.*freed_bytes=\([0-9]*\).*/\1/' || echo 0)"
+
+if [[ "${OK_N:-0}" -eq 0 ]] && grep -q "nothing to export" "$LOG_FILE"; then
+  echo "✅ 没有待导出段（已全部导出或尚未采集）。"
+  exit 0
+fi
+
+echo ""
+echo "✅ 导出完成"
+echo "   成功段数: ${OK_N}"
+if [[ "${FREED:-0}" -gt 0 ]]; then
+  FREED_MB=$((FREED / 1024 / 1024))
+  echo "   释放空间: 约 ${FREED_MB} MB"
+fi
+echo "   成品目录: ${READY_DAY}/"
+if [[ -d "$READY_DAY" ]]; then
+  echo "   文件列表:"
+  ls -lh "$READY_DAY"/*.tar.zst 2>/dev/null | awk '{print "     " $9 " (" $5 ")"}' || true
+fi
+echo ""
+echo "下一步: 将 .tar.zst 拷到 U 盘 → 34 采集页拖传 → 执行 ego-run-pipeline ego-lan-214"

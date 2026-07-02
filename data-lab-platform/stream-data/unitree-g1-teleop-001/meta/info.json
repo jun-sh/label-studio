@@ -1,0 +1,233 @@
+{
+  "codebase_version": "v3.0",
+  "robot_type": "oak_4p_ego",
+  "total_episodes": 1,
+  "total_frames": 30,
+  "total_tasks": 1,
+  "chunks_size": 1000,
+  "data_files_size_in_mb": 100,
+  "video_files_size_in_mb": 200,
+  "fps": 20,
+  "splits": {
+    "train": "0:1"
+  },
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+  "features": {
+    "observation.images.camera_front_left": {
+      "dtype": "video",
+      "shape": [
+        480,
+        640,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "info": {
+        "video.height": 480,
+        "video.width": 640,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": false,
+        "video.fps": 20,
+        "video.channels": 3,
+        "has_audio": false
+      }
+    },
+    "observation.images.camera_front_right": {
+      "dtype": "video",
+      "shape": [
+        1200,
+        1920,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "info": {
+        "video.height": 1200,
+        "video.width": 1920,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": false,
+        "video.fps": 20,
+        "video.channels": 3,
+        "has_audio": false
+      }
+    },
+    "observation.images.camera_rear_left": {
+      "dtype": "video",
+      "shape": [
+        1200,
+        1920,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "info": {
+        "video.height": 1200,
+        "video.width": 1920,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": false,
+        "video.fps": 20,
+        "video.channels": 3,
+        "has_audio": false
+      }
+    },
+    "observation.images.camera_rear_right": {
+      "dtype": "video",
+      "shape": [
+        1200,
+        1920,
+        3
+      ],
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "info": {
+        "video.height": 1200,
+        "video.width": 1920,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": false,
+        "video.fps": 20,
+        "video.channels": 3,
+        "has_audio": false
+      }
+    },
+    "observation.state": {
+      "dtype": "float32",
+      "shape": [
+        6
+      ],
+      "names": [
+        "gx",
+        "gy",
+        "gz",
+        "ax",
+        "ay",
+        "az"
+      ]
+    },
+    "observation.pose": {
+      "dtype": "float32",
+      "shape": [
+        7
+      ],
+      "names": [
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw"
+      ]
+    },
+    "observation.hands": {
+      "dtype": "float32",
+      "shape": [
+        63
+      ],
+      "names": null
+    },
+    "action": {
+      "dtype": "float32",
+      "shape": [
+        1
+      ],
+      "names": null
+    },
+    "observation.ee_pose_left": {
+      "dtype": "float32",
+      "shape": [
+        7
+      ],
+      "names": [
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw"
+      ]
+    },
+    "observation.ee_pose_right": {
+      "dtype": "float32",
+      "shape": [
+        7
+      ],
+      "names": [
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw"
+      ]
+    },
+    "observation.joint_pos": {
+      "dtype": "float32",
+      "shape": [
+        29
+      ],
+      "names": null
+    },
+    "observation.joint_vel": {
+      "dtype": "float32",
+      "shape": [
+        29
+      ],
+      "names": null
+    },
+    "action.ee_target_pose_left": {
+      "dtype": "float32",
+      "shape": [
+        7
+      ],
+      "names": [
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw"
+      ]
+    },
+    "action.ee_target_pose_right": {
+      "dtype": "float32",
+      "shape": [
+        7
+      ],
+      "names": [
+        "x",
+        "y",
+        "z",
+        "qx",
+        "qy",
+        "qz",
+        "qw"
+      ]
+    }
+  },
+  "ego_capture": {
+    "capture_device": "OAK-4P-New (DepthAI)",
+    "camera_layout": "ego_four_cam_front_rear",
+    "stream_station": "unitree-g1-teleop-001",
+    "stream_mode": "frame_push"
+  }
+}

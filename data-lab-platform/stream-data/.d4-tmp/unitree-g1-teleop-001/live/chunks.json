@@ -1,0 +1,41 @@
+{
+  "revision": 0,
+  "viewerTotalFrames": 0,
+  "publish": {
+    "meta/info.json": {
+      "status": "finished",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.277Z"
+    },
+    "data/chunk-000/file-000.parquet": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    },
+    "meta/episodes/chunk-000/file-000.parquet": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    },
+    "videos/observation.images.camera_front_left/chunk-000/file-000.mp4": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    },
+    "videos/observation.images.camera_front_right/chunk-000/file-000.mp4": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    },
+    "videos/observation.images.camera_rear_left/chunk-000/file-000.mp4": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    },
+    "videos/observation.images.camera_rear_right/chunk-000/file-000.mp4": {
+      "status": "writing",
+      "frames": 0,
+      "updatedAt": "2026-07-01T14:39:37.276Z"
+    }
+  }
+}

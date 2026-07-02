@@ -107,3 +107,11 @@ data-lab-platform/embodied-annotate/.venv/
 data-lab-platform/embodied-annotate/**/__pycache__/
 data-lab-platform/embodied-annotate/**/*.pyc
 data-storage/embodied-annotate/
+
+# Baked Label Studio frontend (sync via deploy-label-studio-image.sh; baked into Docker image)
+data-lab-platform/build-context/web-dist/
+
+# Nested repo .git dirs (vendored snapshots live in main tree; keep local clones separate)
+ml-services/sam2/.git/
+ml-services/label-studio-ml-backend/.git/
+**/.git.deploy-backup/

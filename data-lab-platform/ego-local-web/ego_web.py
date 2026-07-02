@@ -24,6 +24,10 @@ from urllib.parse import urlparse
 HOST = os.environ.get("EGO_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EGO_WEB_PORT", "8080"))
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
+CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
+SEGMENT_ACTIVE_ROOT = Path(
+    os.environ.get("EGO_SEGMENT_ACTIVE_ROOT", "/dev/shm/ego-capture-active"),
+)
 SEGMENT_ROOT = Path(
     os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"),
 )
@@ -41,6 +45,116 @@ _busy = False
 _busy_action: str | None = None
 _last_action_mono = 0.0
 _last_error = ""
+_capture_writing_since: float | None = None
+
+
+def _unit_active_since_epoch(unit: str) -> float | None:
+    proc = _systemctl(
+        "show",
+        unit,
+        "--property=ActiveEnterTimestamp",
+        "--value",
+        timeout=5,
+    )
+    raw = proc.stdout.strip()
+    if not raw or raw == "n/a":
+        return None
+    try:
+        epoch = subprocess.run(
+            ["date", "-d", raw, "+%s"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if epoch.returncode == 0 and epoch.stdout.strip().isdigit():
+            return float(epoch.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        dt = datetime.strptime(raw.rsplit(" ", 1)[0], "%a %Y-%m-%d %H:%M:%S")
+        return dt.replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def _manifest_created_epoch(data: dict[str, Any]) -> float | None:
+    raw = data.get("created_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        if raw.endswith("Z"):
+            dt = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        else:
+            dt = datetime.fromisoformat(raw)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except ValueError:
+        return None
+
+
+def _capture_run_since_epoch() -> float | None:
+    since = _unit_active_since_epoch(CAPTURE_RECORD_UNIT)
+    if since is not None:
+        return since
+    return _unit_active_since_epoch(CAPTURE_TARGET)
+
+
+def _shm_open_segment_bin_count(since_epoch: float | None) -> int:
+    """Count frame bins only in open segments started during the current capture run."""
+    sessions = SEGMENT_ACTIVE_ROOT / "sessions"
+    if not sessions.is_dir():
+        return 0
+    best = 0
+    for manifest_path in sessions.glob("*/segments/seg_*/manifest.json"):
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("closed"):
+            continue
+        if since_epoch is not None:
+            created = _manifest_created_epoch(data)
+            # Ignore stale shm dirs left from prior failed stops.
+            if created is None or created < since_epoch - 2.0:
+                continue
+        frames_dir = manifest_path.parent / "frames"
+        if frames_dir.is_dir():
+            best = max(best, sum(1 for _ in frames_dir.glob("*.bin")))
+    return best
+
+
+def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
+    if since_epoch is None:
+        return False
+    since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
+    proc = subprocess.run(
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            CAPTURE_RECORD_UNIT,
+            f"--since={since_local}",
+            "-n",
+            "80",
+            "--no-pager",
+            "-o",
+            "cat",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    return proc.returncode == 0 and "capture-only session=" in proc.stdout
+
+
+def _capture_frames_writing() -> bool:
+    since = _capture_run_since_epoch()
+    if _journal_has_capture_only_since(since):
+        return True
+    return _shm_open_segment_bin_count(since) > 0
 
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, payload: dict[str, Any]) -> None:
@@ -66,37 +180,6 @@ def _systemctl(*args: str, timeout: float = 10) -> subprocess.CompletedProcess[s
 def _capture_active() -> bool:
     proc = _systemctl("is-active", CAPTURE_TARGET, timeout=5)
     return proc.stdout.strip() == "active"
-
-
-def _capture_active_since_epoch() -> float | None:
-    proc = _systemctl(
-        "show",
-        CAPTURE_TARGET,
-        "--property=ActiveEnterTimestamp",
-        "--value",
-        timeout=5,
-    )
-    raw = proc.stdout.strip()
-    if not raw or raw == "n/a":
-        return None
-    # GNU date on Ubuntu parses systemd's locale timestamp reliably.
-    try:
-        epoch = subprocess.run(
-            ["date", "-d", raw, "+%s"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if epoch.returncode == 0 and epoch.stdout.strip().isdigit():
-            return float(epoch.stdout.strip())
-    except (OSError, subprocess.SubprocessError):
-        pass
-    try:
-        dt = datetime.strptime(raw.rsplit(" ", 1)[0], "%a %Y-%m-%d %H:%M:%S")
-        return dt.replace(tzinfo=timezone.utc).timestamp()
-    except ValueError:
-        return None
 
 
 def _format_free_gb(path: Path) -> str:
@@ -134,7 +217,7 @@ def _count_segments(root: Path) -> int:
 
 
 def _build_status() -> dict[str, Any]:
-    global _busy, _busy_action, _last_error
+    global _busy, _busy_action, _last_error, _capture_writing_since
 
     with _lock:
         busy = _busy
@@ -142,11 +225,16 @@ def _build_status() -> dict[str, Any]:
         err = _last_error
 
     active = _capture_active()
+    frames_writing = active and _capture_frames_writing()
+
+    if not active:
+        _capture_writing_since = None
+
     duration = 0
-    if active:
-        since = _capture_active_since_epoch()
-        if since is not None:
-            duration = max(0, int(time.time() - since))
+    if active and frames_writing:
+        if _capture_writing_since is None:
+            _capture_writing_since = time.time()
+        duration = max(0, int(time.time() - _capture_writing_since))
 
     free_bytes = _storage_free_bytes(SEGMENT_ROOT)
     storage_warn = (
@@ -155,16 +243,19 @@ def _build_status() -> dict[str, Any]:
 
     if busy and busy_action == "start":
         state = "starting"
-        msg = "正在启动相机，请稍候…"
+        msg = "正在启动采集服务，请稍候…"
     elif busy and busy_action == "stop":
         state = "stopping"
         msg = "正在保存数据，请勿断电…"
     elif err:
         state = "error"
         msg = err
-    elif active:
+    elif active and frames_writing:
         state = "recording"
         msg = ""
+    elif active:
+        state = "warming"
+        msg = "相机初始化中，开始写入数据后计时"
     else:
         state = "idle"
         msg = ""
@@ -177,6 +268,7 @@ def _build_status() -> dict[str, Any]:
         "segment_count": _count_segments(SEGMENT_ROOT),
         "msg": msg,
         "capture_active": active,
+        "frames_writing": frames_writing,
     }
 
 
@@ -212,19 +304,24 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
 
         if action == "stop":
             if not _capture_active():
-                return True, "采集已停止"
-            proc = _systemctl("stop", CAPTURE_TARGET, timeout=STOP_TIMEOUT_S)
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "停止失败").strip()
-                _last_error = f"无法停止采集：{detail}"
-                return False, _last_error
-            deadline = time.monotonic() + STOP_TIMEOUT_S
-            while time.monotonic() < deadline:
-                if not _capture_active():
-                    return True, ""
-                time.sleep(0.5)
-            _last_error = "停止超时，请稍后刷新页面查看状态"
-            return False, _last_error
+                ok = True
+            else:
+                proc = _systemctl("stop", CAPTURE_TARGET, timeout=STOP_TIMEOUT_S)
+                if proc.returncode != 0:
+                    detail = (proc.stderr or proc.stdout or "停止失败").strip()
+                    _last_error = f"无法停止采集：{detail}"
+                    return False, _last_error
+                deadline = time.monotonic() + STOP_TIMEOUT_S
+                ok = False
+                while time.monotonic() < deadline:
+                    if not _capture_active():
+                        ok = True
+                        break
+                    time.sleep(0.5)
+                if not ok:
+                    _last_error = "停止超时，请稍后刷新页面查看状态"
+                    return False, _last_error
+            return True, ""
 
         return False, "未知操作"
     finally:
@@ -249,14 +346,16 @@ INDEX_HTML = """<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#5c6370" />
+  <meta name="theme-color" content="#EEF4FF" />
   <title>EGO 采集</title>
   <style>
     :root {
       --bg: #f4f3ef;
       --text: #1a1a18;
       --muted: #6b6b66;
-      --idle: #5c6370;
+      --idle-bg: #EEF4FF;
+      --idle-text: #1E3A8A;
+      --idle-border: #BFDBFE;
       --rec: #1f8a4c;
       --err: #c0392b;
       --warn: #b45309;
@@ -279,19 +378,71 @@ INDEX_HTML = """<!DOCTYPE html>
     }
     .status {
       border-radius: var(--radius);
-      padding: 18px 16px;
-      color: #fff;
+      padding: 0 16px;
+      min-height: 96px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       text-align: center;
       box-shadow: var(--shadow);
-      transition: background .25s;
+      transition: background .25s, color .25s;
     }
-    .status[data-state="idle"] { background: var(--idle); }
-    .status[data-state="recording"] { background: var(--rec); }
-    .status[data-state="error"] { background: var(--err); }
+    .status[data-state="idle"] {
+      background: var(--idle-bg);
+      color: var(--idle-text);
+      border: 1px solid var(--idle-border);
+    }
+    .status[data-state="recording"] { background: var(--rec); color: #fff; padding: 18px 16px; }
     .status[data-state="starting"],
-    .status[data-state="stopping"] { background: #b8860b; }
-    .status-title { font-size: 1.25rem; font-weight: 700; letter-spacing: .02em; }
-    .status-sub { margin-top: 6px; font-size: .95rem; opacity: .95; min-height: 1.2em; }
+    .status[data-state="warming"],
+    .status[data-state="stopping"] {
+      background: #b8860b;
+      color: #fff;
+      padding: 18px 16px;
+    }
+    .status[data-state="error"] { background: var(--err); color: #fff; padding: 18px 16px; }
+    .status-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+      line-height: 1.3;
+      width: 100%;
+      margin: 0;
+    }
+    .status[data-state="idle"] .status-title {
+      font-size: 1.6rem;
+      line-height: 1.25;
+      padding: 0;
+    }
+  /* 待机无副文案：主标题在条内垂直正中 */
+    .status[data-state="idle"].status--solo .status-title {
+      min-height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .status-sub {
+      margin: 0;
+      padding: 0 0 14px;
+      font-size: .95rem;
+      width: 100%;
+    }
+    .status-sub:empty {
+      display: none;
+      min-height: 0;
+      padding: 0;
+    }
+    .status[data-state="idle"] .status-sub:not(:empty) {
+      color: #3B5B9A;
+      opacity: .9;
+      padding-bottom: 16px;
+    }
+    .status:not([data-state="idle"]) .status-sub {
+      margin-top: 6px;
+      padding-bottom: 14px;
+      opacity: .95;
+    }
     .spinner {
       display: inline-block; width: 18px; height: 18px;
       border: 2px solid rgba(255,255,255,.35);
@@ -316,7 +467,6 @@ INDEX_HTML = """<!DOCTYPE html>
       color: #aaa; font-size: .95rem; padding: 16px; text-align: center;
     }
 
-    /* 大按钮设计：圆角胶囊 + 全宽 + 按压反馈 */
     .btn-main {
       width: 100%; min-height: 64px;
       border: none; border-radius: 999px;
@@ -332,7 +482,7 @@ INDEX_HTML = """<!DOCTYPE html>
     .btn-main[data-mode="start"] { background: var(--btn-idle); }
     .btn-main[data-mode="stop"] { background: var(--btn-stop); }
 
-  .info {
+    .info {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     }
     .info-card {
@@ -406,20 +556,35 @@ INDEX_HTML = """<!DOCTYPE html>
       statusSub.textContent = data.msg || "";
       mainBtn.textContent = "开始录制";
       mainBtn.setAttribute("data-mode", "start");
+      if (data.msg) {
+        statusBar.classList.remove("status--solo");
+      } else {
+        statusBar.classList.add("status--solo");
+      }
+    } else if (st === "warming") {
+      statusBar.classList.remove("status--solo");
+      statusTitle.innerHTML = '<span class="spinner"></span>正在准备录制';
+      statusSub.textContent = data.msg || "相机初始化中，开始写入后计时";
+      mainBtn.textContent = "结束录制";
+      mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "recording") {
+      statusBar.classList.remove("status--solo");
       statusTitle.textContent = "正在录制中";
       statusSub.textContent = formatDuration(data.duration || 0);
       mainBtn.textContent = "结束录制";
       mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "starting") {
+      statusBar.classList.remove("status--solo");
       statusTitle.innerHTML = '<span class="spinner"></span>正在启动相机';
       statusSub.textContent = data.msg || "请稍候，约需数秒";
       mainBtn.disabled = true;
     } else if (st === "stopping") {
+      statusBar.classList.remove("status--solo");
       statusTitle.innerHTML = '<span class="spinner"></span>正在保存数据';
       statusSub.textContent = data.msg || "请勿断电";
       mainBtn.disabled = true;
     } else if (st === "error") {
+      statusBar.classList.remove("status--solo");
       statusTitle.textContent = "出现问题";
       statusSub.textContent = data.msg || "请稍后重试";
       mainBtn.textContent = data.capture_active ? "结束录制" : "开始录制";
@@ -434,7 +599,7 @@ INDEX_HTML = """<!DOCTYPE html>
     storageFree.className = "info-value" + (data.storage_warn ? " warn" : "");
     segmentCount.textContent = String(data.segment_count != null ? data.segment_count : 0);
 
-    if (st === "recording") {
+    if (st === "recording" || st === "warming") {
       startPreview();
     } else if (st !== "starting") {
       stopPreview();
@@ -505,7 +670,7 @@ INDEX_HTML = """<!DOCTYPE html>
   });
 
   fetchStatus();
-  pollTimer = setInterval(fetchStatus, 2000);
+  pollTimer = setInterval(fetchStatus, 800);
 })();
   </script>
 </body>

@@ -6,8 +6,8 @@ services:
         DEBIAN_USE_MIRROR: ${DEBIAN_USE_MIRROR:-yes}
         DEBIAN_APT_MAIN: ${DEBIAN_APT_MAIN:-http://mirrors.aliyun.com/debian}
         DEBIAN_APT_SECURITY: ${DEBIAN_APT_SECURITY:-http://mirrors.aliyun.com/debian-security}
-        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-mirrors.aliyun.com}
         # ghproxy is unreachable on some networks; opt-in via USE_GITHUB_DOWNLOAD_MIRROR=ghproxy
         USE_GITHUB_DOWNLOAD_MIRROR: ${USE_GITHUB_DOWNLOAD_MIRROR:-off}
     # Local build only — same name as Docker Hub would let `docker-compose pull` overwrite your image.
@@ -45,8 +45,8 @@ services:
         DEBIAN_USE_MIRROR: ${DEBIAN_USE_MIRROR:-yes}
         DEBIAN_APT_MAIN: ${DEBIAN_APT_MAIN:-http://mirrors.aliyun.com/debian}
         DEBIAN_APT_SECURITY: ${DEBIAN_APT_SECURITY:-http://mirrors.aliyun.com/debian-security}
-        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
+        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-mirrors.aliyun.com}
         # ghproxy is unreachable on some networks; opt-in via USE_GITHUB_DOWNLOAD_MIRROR=ghproxy
         USE_GITHUB_DOWNLOAD_MIRROR: ${USE_GITHUB_DOWNLOAD_MIRROR:-off}
     # Local build only — same name as Docker Hub would let `docker-compose pull` overwrite your image.

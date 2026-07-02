@@ -10,7 +10,13 @@ SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$DEST" "$SYSTEMD_USER_DIR"
 
 install -m 0644 "$SCRIPT_DIR/ego_web.py" "$DEST/ego_web.py"
+install -m 0644 "$SCRIPT_DIR/export_offline.py" "$DEST/export_offline.py"
+install -m 0755 "$SCRIPT_DIR/scripts/export-offline.sh" "$DEST/export-offline.sh"
+install -m 0755 "$SCRIPT_DIR/scripts/ego-export" "$DEST/ego-export"
+mkdir -p "${HOME}/.local/bin"
+install -m 0755 "$SCRIPT_DIR/scripts/ego-export" "${HOME}/.local/bin/ego-export"
 install -m 0644 "$SCRIPT_DIR/README.md" "$DEST/README.md"
+install -m 0644 "$SCRIPT_DIR/field-export-and-import.md" "$DEST/field-export-and-import.md"
 if [[ -f /home/server/ego-web/ego-hotspot-up.sh ]]; then
   :
 elif [[ -f "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" ]]; then
@@ -19,8 +25,12 @@ elif [[ -f "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" ]]; then
 fi
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-web.service" "$SYSTEMD_USER_DIR/ecs-ego-web.service"
 
+# Remove legacy auto-export module if present.
+rm -f "$DEST/ego_auto_export.py"
+
 systemctl --user daemon-reload
-systemctl --user enable --now ecs-ego-web.service
+systemctl --user enable ecs-ego-web.service
+systemctl --user restart ecs-ego-web.service
 
 # Ensure user web service starts at boot (no interactive login).
 if command -v loginctl >/dev/null 2>&1; then
@@ -31,5 +41,6 @@ echo "============================================"
 echo "EGO local web deployed to $DEST"
 echo "  Lab LAN:  http://10.10.10.214:8080"
 echo "  Hotspot:  http://192.168.4.1:8080 (after hotspot up)"
+echo "  Export:   ego-export   (或 $DEST/export-offline.sh)"
 echo "  Status:   systemctl --user status ecs-ego-web"
 echo "============================================"

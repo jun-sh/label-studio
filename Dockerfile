@@ -95,9 +95,35 @@ RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
 
 COPY web/ .
 COPY pyproject.toml ../pyproject.toml
+# Optional baked frontend: data-lab-platform/build-context/web-dist/ (see deploy-label-studio-image.sh)
+ARG USE_PREBUILT_FRONTEND=auto
+COPY data-lab-platform/build-context/web-dist /label-studio/build-context/web-dist
 RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
     --mount=type=cache,target=/root/web/.nx,id=nx-cache,sharing=locked \
-    yarn run build
+    set -eux; \
+    use_prebuilt=0; \
+    if [ "${USE_PREBUILT_FRONTEND}" = "yes" ]; then \
+      use_prebuilt=1; \
+    elif [ "${USE_PREBUILT_FRONTEND}" = "auto" ]; then \
+      if [ -f ../build-context/web-dist/apps/labelstudio/main.js ] && \
+         grep -q 'embodied-annotate' ../build-context/web-dist/apps/labelstudio/main.js; then \
+        echo "frontend-builder: using baked web-dist from build-context"; \
+        use_prebuilt=1; \
+      elif [ -f dist/apps/labelstudio/main.js ] && \
+           grep -q 'embodied-annotate' dist/apps/labelstudio/main.js; then \
+        echo "frontend-builder: using prebuilt web/dist from build context"; \
+        use_prebuilt=1; \
+      fi; \
+    fi; \
+    if [ "$use_prebuilt" = "1" ]; then \
+      if [ -f ../build-context/web-dist/apps/labelstudio/main.js ]; then \
+        rm -rf dist && cp -a ../build-context/web-dist dist; \
+      fi; \
+      test -f dist/apps/labelstudio/main.js; \
+      grep -q 'embodied-annotate' dist/apps/labelstudio/main.js; \
+    else \
+      yarn run build; \
+    fi
 
 ################################ Stage: frontend-version-generator
 FROM frontend-builder AS frontend-version-generator
@@ -111,8 +137,8 @@ RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
 FROM python:${PYTHON_VERSION}-slim AS venv-builder
 ARG POETRY_VERSION=2.3.2
 ARG PYTHON_VERSION
-ARG PYPI_INDEX_URL=""
-ARG PIP_TRUSTED_HOST=""
+ARG PYPI_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+ARG PIP_TRUSTED_HOST="mirrors.aliyun.com"
 ARG DEBIAN_USE_MIRROR=""
 ARG DEBIAN_APT_MAIN="http://mirrors.aliyun.com/debian"
 ARG DEBIAN_APT_SECURITY="http://mirrors.aliyun.com/debian-security"
@@ -182,9 +208,6 @@ COPY pyproject.toml poetry.lock README.md ./
 
 # Set a default build argument for including dev dependencies
 ARG INCLUDE_DEV=false
-# Optional: PyPI mirror for faster poetry/pip downloads in CN (e.g. Tsinghua); leave unset for default PyPI.
-ARG PYPI_INDEX_URL=""
-ARG PIP_TRUSTED_HOST=""
 # Optional: rewrite label-studio-sdk GitHub zip URL (IncompleteRead / timeouts to github.com in CN).
 # Build with: --build-arg USE_GITHUB_DOWNLOAD_MIRROR=ghproxy   (or leave empty for direct GitHub).
 ARG USE_GITHUB_DOWNLOAD_MIRROR=""
@@ -197,11 +220,27 @@ RUN set -eux; \
       *) echo "Unsupported USE_GITHUB_DOWNLOAD_MIRROR=${USE_GITHUB_DOWNLOAD_MIRROR} (use ghproxy, off, or empty)" >&2; exit 1 ;; \
     esac
 
+# CN PyPI mirror: pip.conf + poetry primary source in pyproject (build-time lock regen).
+RUN set -eux; \
+    mkdir -p /root/.pip; \
+    printf '[global]\nindex-url = %s\ntrusted-host = %s\ntimeout = 600\nretries = 10\n' \
+      "${PYPI_INDEX_URL}" "${PIP_TRUSTED_HOST}" > /root/.pip/pip.conf; \
+    cp /root/.pip/pip.conf /etc/pip.conf; \
+    export PIP_INDEX_URL="${PYPI_INDEX_URL}"; \
+    export PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}"; \
+    poetry config virtualenvs.in-project true --local; \
+    poetry config installer.max-workers 4 --local; \
+    if ! grep -q 'name = "aliyun"' pyproject.toml; then \
+      printf '\n[[tool.poetry.source]]\nname = "aliyun"\nurl = "%s"\npriority = "primary"\n' \
+        "${PYPI_INDEX_URL}" >> pyproject.toml; \
+    fi; \
+    poetry lock; \
+    poetry check --lock
+
 # Install dependencies (retry for flaky PyPI / GitHub SDK zip). Mirrors via PYPI_INDEX_URL / USE_GITHUB_DOWNLOAD_MIRROR.
 RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-slim,sharing=locked \
-    if [ -n "${PYPI_INDEX_URL}" ]; then export PIP_INDEX_URL="${PYPI_INDEX_URL}"; fi; \
-    if [ -n "${PIP_TRUSTED_HOST}" ]; then export PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}"; fi; \
-    poetry check --lock && \
+    export PIP_INDEX_URL="${PYPI_INDEX_URL}"; \
+    export PIP_TRUSTED_HOST="${PIP_TRUSTED_HOST}"; \
     attempt=1 && max=10 && \
     while [ "$attempt" -le "$max" ]; do \
       if [ "$INCLUDE_DEV" = "true" ]; then \

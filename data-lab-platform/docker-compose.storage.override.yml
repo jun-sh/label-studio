@@ -12,6 +12,7 @@ services:
     volumes:
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
       - ./data-storage/ego-archive:/cold-archive:rw
@@ -43,6 +44,7 @@ services:
   lerobot:
     volumes:
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro

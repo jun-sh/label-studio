@@ -9,7 +9,7 @@ RUN sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories \
   && apk add --no-cache wget ca-certificates unzip ffmpeg python3 py3-pyarrow
 
 WORKDIR /app
-COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs /app/
+COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs /app/
 COPY vendor/ /app/vendor/
 COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
 COPY patches/apply-branding.sh /app/patches/apply-branding.sh

@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# ego-run-pipeline — 34 平台单命令跑完全链路（等待就绪 → 后处理 → 发布 → 部署）
+# 用法: ego-run-pipeline <station> [--reset]
+set -euo pipefail
+
+STATION=""
+RESET=0
+for arg in "$@"; do
+  case "$arg" in
+    --reset) RESET=1 ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-run-pipeline <station> [--reset]
+
+  <station>       采集站 ID，如 ego-lan-214
+  默认（无 --reset）  增量模式：只处理未发布的 session，已完成的步骤自动跳过
+  --reset           整轮重来：全链路清理后从零处理（须确认）
+
+典型流程（99% 场景）：
+  1. 214 手机录制 → ego-export
+  2. 34 采集页拖传 .tar.zst
+  3. ego-run-pipeline ego-lan-214
+EOF
+      exit 0
+      ;;
+    -*)
+      echo "❌ 未知参数: $arg" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$STATION" ]]; then
+        STATION="$arg"
+      else
+        echo "❌ 多余参数: $arg" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+[[ -n "$STATION" ]] || {
+  echo "❌ 请指定采集站，例如: ego-run-pipeline ego-lan-214" >&2
+  exit 2
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
+SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
+WAIT_SH="${SCRIPT_DIR}/ego-lan-214-wait-ready-for-postprocess.sh"
+RESET_SH="${SCRIPT_DIR}/ego-lan-214-reset-for-rerun.sh"
+DEPLOY_SH="${DATALAB_ROOT}/data-lab-platform/deploy-local-datasets.sh"
+POSTPROCESS_SH="${PIPE_ROOT}/scripts/ego-postprocess.sh"
+
+PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
+PLATFORM_HOST="${PLATFORM_HOST%/}"
+
+LOG_DIR="${DATALAB_ROOT}/data-storage/logs"
+mkdir -p "$LOG_DIR"
+RUN_LOG="${LOG_DIR}/ego-run-pipeline-${STATION}-$(date +%Y%m%d-%H%M%S).log"
+
+log() { echo "[pipeline] $*" | tee -a "$RUN_LOG"; }
+die() { echo "❌ $*" | tee -a "$RUN_LOG" >&2; exit 1; }
+
+_py() {
+  python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT"
+}
+
+if [[ "$RESET" -eq 1 ]]; then
+  log "重置模式：将清空 214 + 34 全链路数据后重新处理"
+  if [[ "${EGO_RESET_YES:-}" != "1" ]]; then
+    echo "⚠️  此操作会删除该站所有采集、后处理、Viewer 数据，无法撤销。"
+    read -r -p "确认 --reset？[y/N] " ans
+    [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]] || { echo "已取消"; exit 0; }
+  fi
+  STATION_ID="$STATION" EGO_RESET_YES=1 bash "$RESET_SH" 2>&1 | tee -a "$RUN_LOG"
+  log "重置完成"
+fi
+
+if [[ ! -d "$PIPE_ROOT" ]]; then
+  die "找不到后处理目录 ego-hand-pipeline: $PIPE_ROOT"
+fi
+if [[ ! -x "$POSTPROCESS_SH" ]]; then
+  die "找不到后处理脚本: $POSTPROCESS_SH"
+fi
+
+HAS_DATA=0
+if _py has-data "$STATION"; then HAS_DATA=1; fi
+
+mapfile -t PENDING < <(_py pending "$STATION" 2>/dev/null || true)
+SLUG="$(_py slug "$STATION" 2>/dev/null || echo "ego_214_hand_pose")"
+VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+COLLECTION_URL="${PLATFORM_HOST}/collection?station=${STATION}"
+
+if [[ "$HAS_DATA" -eq 0 && ${#PENDING[@]} -eq 0 ]]; then
+  die "采集页还没有数据。请先在 ${COLLECTION_URL} 导入 .tar.zst 包，再执行本命令。"
+fi
+
+if [[ "$HAS_DATA" -eq 1 ]]; then
+  log "等待流数据合并完成（视频+表格就绪）…"
+  STATION_ID="$STATION" bash "$WAIT_SH" 2>&1 | tee -a "$RUN_LOG"
+fi
+
+PROCESSED=0
+FAILED=0
+if [[ ${#PENDING[@]} -gt 0 ]]; then
+  log "待处理 session: ${PENDING[*]}"
+  for SID in "${PENDING[@]}"; do
+    log ">>> 后处理 ${STATION} / ${SID}"
+    set +e
+    (cd "$PIPE_ROOT" && bash "$POSTPROCESS_SH" "$STATION" "$SID") 2>&1 | tee -a "$RUN_LOG"
+    rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$rc" -ne 0 ]]; then
+      log "session ${SID} 失败 (exit ${rc})"
+      FAILED=$((FAILED + 1))
+      continue
+    fi
+    if [[ -f "${PIPE_ROOT}/outputs/${STATION}/${SID}/.status/publish.done" ]]; then
+      PROCESSED=$((PROCESSED + 1))
+      log "session ${SID} 完成"
+    else
+      FAILED=$((FAILED + 1))
+      log "session ${SID} 未生成 publish.done"
+    fi
+  done
+else
+  log "所有 session 已发布，跳过后处理"
+fi
+
+if [[ "$FAILED" -gt 0 ]]; then
+  die "有 ${FAILED} 个 session 处理失败。修复后重新执行同一条命令即可断点续跑。日志: ${RUN_LOG}"
+fi
+
+SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
+if [[ ! -f "$SAMPLES_ZIP" && "$PROCESSED" -eq 0 ]]; then
+  die "没有可部署的数据集 zip（${SAMPLES_ZIP}）。请先完成上传和后处理。"
+fi
+
+log "部署 Viewer…"
+if [[ -x "$DEPLOY_SH" ]]; then
+  (cd "$DATALAB_ROOT" && bash "$DEPLOY_SH") 2>&1 | tee -a "$RUN_LOG"
+else
+  die "找不到部署脚本: $DEPLOY_SH"
+fi
+
+echo ""
+echo "════════════════════════════════════════"
+echo "✅ 流水线完成"
+echo "   站点的:     ${STATION}"
+echo "   新处理:     ${PROCESSED} 个 session"
+echo "   采集质检:   ${COLLECTION_URL}"
+echo "   数据集:     ${VIEWER_URL}"
+echo "   日志:       ${RUN_LOG}"
+echo "════════════════════════════════════════"

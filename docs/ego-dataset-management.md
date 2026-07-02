@@ -51,6 +51,10 @@ Viewer 手部关键点叠加读取：
 
 对应文件：`data-storage/samples/<slug>_hand_kp2d.json`，由 `step_publish` 从 release/aggregate 的 `offline/` 导出。Prune 发布后会按新 episode 索引重建。
 
+## 全流程操作（采集 → 上传 → 后处理 → Viewer）
+
+傻瓜版逐步手册：[ego-lan-214-pipeline-runbook.md](./ego-lan-214-pipeline-runbook.md)
+
 ## 相关配置
 
 - 样例列表：`data-lab-platform/lerobot-studio/config/datasets.json`

@@ -35,7 +35,7 @@ UPLOAD_URL = os.environ.get(
 SEGMENT_ROOT = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
 QUOTA_BYTES = max(
     256 * 1024**2,
-    int(float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "4")) * 1024**3),
+    int(float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "256")) * 1024**3),
 )
 
 

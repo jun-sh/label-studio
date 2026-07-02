@@ -50,6 +50,7 @@ services:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/import-handlers.mjs:/app/import-handlers.mjs:ro
@@ -101,6 +102,7 @@ services:
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro

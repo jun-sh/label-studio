@@ -27,6 +27,8 @@ Environment=EGO_UPLOAD_POLL_INTERVAL_S=4
 Environment=EGO_UPLOAD_SUBPROC_TIMEOUT_S=360
 Environment=EGO_UPLOAD_FAIL_DEQUEUE=0
 Environment=EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload
+# Optional: override upload-status.json path (default: $XDG_RUNTIME_DIR/ego-upload-status.json)
+# Environment=EGO_UPLOAD_STATUS_PATH=/run/user/%U/ego-upload-status.json
 
 ExecStart=/home/server/workspace/ego-studio/.venv/bin/python /home/server/workspace/ego-studio/src/ego_capture_studio/tools/upload_segments_loop.py
 

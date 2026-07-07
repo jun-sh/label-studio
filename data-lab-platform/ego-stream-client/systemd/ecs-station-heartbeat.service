@@ -1,5 +1,5 @@
 [Unit]
-Description=EGO station heartbeat (low priority, decoupled from capture)
+Description=EGO station heartbeat (low priority, always-on; reports captureState)
 After=network-online.target
 Wants=network-online.target
 
@@ -25,4 +25,4 @@ StandardError=journal
 SyslogIdentifier=ecs-station-heartbeat
 
 [Install]
-WantedBy=ecs-oak-capture-stack.target
+WantedBy=default.target

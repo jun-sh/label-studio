@@ -30,7 +30,7 @@ Environment=PREVIEW_MAX_EDGE=640
 Environment=PREVIEW_JPEG_QUALITY=75
 
 ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
-  --fps 20 --imu-hz 100
+  --fps 30 --imu-hz 200
 
 Restart=always
 RestartSec=5

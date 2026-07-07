@@ -49,6 +49,8 @@ services:
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
     environment:
       - STREAM_DATA_ROOT=/srv/stream
       - STREAM_QUOTA_GB=400

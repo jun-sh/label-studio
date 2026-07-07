@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ego-upload — 214 一键上传到 34；终端内实时刷新进度面板（无需另开 --status）
+set -euo pipefail
+
+STATUS_ONLY=0
+EXTRA=()
+for arg in "$@"; do
+  case "$arg" in
+    --status) STATUS_ONLY=1 ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-upload [选项]
+
+  ego-upload          上传并在当前终端实时显示进度（会话/段数/速度/ETA）
+  ego-upload --status 仅查看进度（未在传输时）
+
+  --source ready|segments|auto
+  --ready-dir export/ready/YYYYMMDD
+  --no-live-ui        关闭实时面板（调试）
+
+默认：segments/ 有待传段则传 segments，否则传 export/ready/ 最新日期。
+详细日志：~/cache/ego-lan-214/logs/ego-upload-*.log
+EOF
+      exit 0
+      ;;
+    *) EXTRA+=("$arg") ;;
+  esac
+done
+
+_resolve_venv_python() {
+  local candidates=(
+    "/home/server/workspace/ego-studio/.venv/bin/python"
+    "${EGO_PYTHON:-}"
+    "$(command -v python3 2>/dev/null || true)"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -n "$c" && -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+PY="$(_resolve_venv_python)" || {
+  echo "❌ 未找到 Python venv（ego-studio）" >&2
+  exit 2
+}
+
+if [[ "$STATUS_ONLY" -eq 1 ]]; then
+  exec "$PY" -m ego_capture_studio.cli.upload_status "${EXTRA[@]}"
+fi
+
+LOG_DIR="${EGO_UPLOAD_LOG_DIR:-/home/server/cache/ego-lan-214/logs}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/ego-upload-$(date +%Y%m%d-%H%M%S).log"
+
+set +e
+"$PY" -m ego_capture_studio.cli.ego_upload "${EXTRA[@]}" 2>>"$LOG_FILE"
+rc=$?
+set -e
+
+if [[ "$rc" -ne 0 ]]; then
+  echo "❌ 上传未完成，详见: ${LOG_FILE}" >&2
+  exit "$rc"
+fi
+
+UPLOADED="$(grep -E '^uploaded_segments=' "$LOG_FILE" | tail -1 | cut -d= -f2 || echo 0)"
+echo "✅ 上传完成（${UPLOADED} 段），查询派生进度：ego-derive-status" >&2

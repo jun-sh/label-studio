@@ -75,8 +75,7 @@ OAK_H264 = os.environ.get("OAK_H264", "0").strip().lower() in ("1", "true", "yes
 OAK_H264_BITRATE_KBPS = int(os.environ.get("OAK_H264_BITRATE_KBPS", "8000"))
 # Phase-2: depth socket capture rate divisor vs RGB (1=every frame, 2=half, etc.)
 OAK_DEPTH_FRAME_DIVISOR = max(1, int(os.environ.get("OAK_DEPTH_FRAME_DIVISOR", "1")))
-EGO_STRICT_20HZ = os.environ.get("EGO_STRICT_20HZ", "0").strip().lower() in ("1", "true", "yes")
-EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "50"))
+EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
 EGO_IMU_INTERPOLATE = os.environ.get("EGO_IMU_INTERPOLATE", "1").strip().lower() in (
     "1",
     "true",
@@ -98,7 +97,7 @@ EGO_STRICT_DEPTH_CAUSAL = os.environ.get("EGO_STRICT_DEPTH_CAUSAL", "1").strip()
     "true",
     "yes",
 )
-# Device timestamp jump / grid misalignment guards for strict 20Hz.
+# Device timestamp jump / grid misalignment guards for strict sync grid.
 STRICT_TS_JUMP_NS = int(os.environ.get("STRICT_TS_JUMP_NS", "100000000"))
 STRICT_MAX_CAM_OFFSET_NS = int(os.environ.get("STRICT_MAX_CAM_OFFSET_NS", "50000000"))
 STRICT_REANCHOR_WARMUP_TICKS = max(0, int(os.environ.get("STRICT_REANCHOR_WARMUP_TICKS", "10")))
@@ -478,7 +477,7 @@ class Oak4pEgoRecorder:
             cam_rings[oak].clear()
         self._strict_grid_epoch_ns = int(epoch_ns)
         if STRICT_REANCHOR_LOG:
-            print(f"strict_20hz_reanchor reason={reason} epoch_ns={epoch_ns}", flush=True)
+            print(f"strict_sync_reanchor reason={reason} epoch_ns={epoch_ns}", flush=True)
         return int(epoch_ns)
 
     def _strict_needs_reanchor(
@@ -914,6 +913,95 @@ class Oak4pEgoRecorder:
         }
         return buf
 
+    def record_episode_probe(
+        self,
+        *,
+        min_s: float = 0.8,
+        max_s: float = 3.0,
+    ) -> tuple[EpisodeBuffers, float]:
+        """Adaptive warmup probe: exit once all cameras warmed after min_s, cap at max_s."""
+        if self._device is None:
+            raise RuntimeError("Call connect() first")
+
+        t_start = time.monotonic()
+        t_min_done = t_start + float(min_s)
+        t_end = t_start + float(max_s)
+
+        buf = EpisodeBuffers()
+        probe_placeholder = np.zeros((2, 2, 3), dtype=np.uint8)
+        last_seen: dict[str, bytes] | dict[str, np.ndarray] = {}
+
+        while time.monotonic() < t_end:
+            self._drain_imu(buf)
+            got_primary = False
+            ts_ns: int | None = None
+
+            for cam_name, queue in self._cam_queues.items():
+                pkt = queue.tryGet()
+                while pkt is not None:
+                    if self._hw_jpeg or self._hw_h264:
+                        jpeg = _jpeg_from_packet(pkt)
+                        if jpeg is not None:
+                            last_seen[cam_name] = jpeg
+                    else:
+                        frame = _frame_from_packet(pkt)
+                        if frame is not None:
+                            last_seen[cam_name] = frame
+                    if cam_name == PRIMARY_OAK_SOCKET:
+                        got_primary = True
+                        ts_ns = _device_ts_ns(pkt.getTimestampDevice())
+                    pkt = queue.tryGet()
+
+            if not got_primary or ts_ns is None:
+                continue
+            if not self._cams_warmed:
+                if not all(name in last_seen for name in self._cam_list):
+                    continue
+                self._cams_warmed = True
+
+            for oak_name in self._cam_list:
+                lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak_name]
+                if self._hw_jpeg or self._hw_h264:
+                    buf.camera_frames[lerobot_key].append(probe_placeholder)
+                else:
+                    buf.camera_frames[lerobot_key].append(last_seen[oak_name])
+            buf.rgb_ts_ns.append(ts_ns)
+
+            if (
+                self._cams_warmed
+                and buf.rgb_ts_ns
+                and time.monotonic() >= t_min_done
+            ):
+                break
+
+        elapsed = time.monotonic() - t_start
+        if not buf.rgb_ts_ns:
+            return buf, elapsed
+
+        cameras_meta: dict[str, Any] = {}
+        cap_h = int(OAK_DEFAULT_FRAME_HEIGHT)
+        cap_w = int(OAK_DEFAULT_FRAME_WIDTH)
+        shapes = {} if self._hw_h264 else buf.video_shapes()
+        for oak_name in self._cam_list:
+            lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak_name]
+            if self._hw_h264:
+                h, w = cap_h, cap_w
+            elif lerobot_key not in shapes:
+                continue
+            else:
+                h, w = shapes[lerobot_key]
+            socket = CAM_SOCKET_OPTS[oak_name]
+            intr = _read_camera_intrinsics(self._calib, socket, w, h)
+            intr["oak_socket"] = oak_name
+            cameras_meta[lerobot_key] = intr
+
+        buf.camera_intrinsics = {
+            "primary_lerobot_key": OAK_SOCKET_TO_LEROBOT_VIDEO[PRIMARY_OAK_SOCKET],
+            "primary_oak_socket": PRIMARY_OAK_SOCKET,
+            "cameras": cameras_meta,
+        }
+        return buf, elapsed
+
     def iter_synced_frames(self, duration_s: float):
         """Yield (timestamp_ns, capture, preview, imu6).
 
@@ -984,7 +1072,7 @@ class Oak4pEgoRecorder:
             imu6 = imu6_at_timestamp(g_ts, g, a_ts, a, ts_ns)
             yield int(ts_ns), capture_out, preview_out, imu6
 
-    def iter_strict_20hz_frames(
+    def iter_strict_sync_frames(
         self,
         duration_s: float,
         *,

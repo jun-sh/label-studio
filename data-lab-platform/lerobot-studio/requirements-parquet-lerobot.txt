@@ -1,0 +1,7 @@
+# Official LeRobot derive (required — no legacy fallback).
+# torch: CPU-only wheels (~200MB). Default PyPI torch pulls CUDA+nvidia (~2GB+) and stalls builds.
+lerobot==0.4.4
+datasets>=4.0.0,<5.0.0
+huggingface_hub>=0.34.0
+numpy>=1.26.0
+Pillow>=10.0.0

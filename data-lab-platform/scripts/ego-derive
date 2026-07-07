@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ego-derive — 独立派生 CLI（商用：上传与派生进程隔离）
+#
+#   ego-derive run [--station ego-lan-214] [--session sess_...] [--mux-only] [--json]
+#   ego-derive watch
+#   ego-derive status [--json|--watch]
+set -euo pipefail
+
+resolve_script_dir() {
+  local src="${1}"
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="${dir}/${src}"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+if [[ -n "${EGO_DATALAB_ROOT:-}" ]]; then
+  ROOT="${EGO_DATALAB_ROOT}"
+else
+  ROOT="$(cd "$(resolve_script_dir "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+
+PLATFORM="${ROOT}/data-lab-platform"
+DERIVE_STATUS="${PLATFORM}/scripts/ego-derive-status"
+INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+STATION="${STATION_ID:-ego-lan-214}"
+
+usage() {
+  sed -n '2,7p' "$0"
+  echo ""
+  echo "  DERIVE_STANDALONE=1 on stream-ingest → upload only writes session.DONE_UPLOAD"
+}
+
+container_node() {
+  local script="$1"
+  shift
+  docker exec \
+    -e STREAM_DATA_ROOT=/srv/stream \
+    -e STATION_ID="${STATION}" \
+    -e EGO_STATION_ID="${STATION}" \
+    -e DERIVE_EXTRACT_BACKEND="${DERIVE_EXTRACT_BACKEND:-python}" \
+    -e EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}" \
+    -e DERIVE_MUX_MODE="${DERIVE_MUX_MODE:-full}" \
+    -e DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-fluent}" \
+    -e DERIVE_VIDEO_EXPORT_BACKEND=lerobot \
+    -e DERIVE_PARQUET_BACKEND=lerobot \
+    "${INGEST_CONTAINER}" \
+    node "${script}" "$@"
+}
+
+CMD="${1:-}"
+if [[ $# -gt 0 ]]; then shift; fi
+
+case "${CMD}" in
+  run)
+    container_node /app/ego-derive-run.mjs run --station "${STATION}" "$@"
+    ;;
+  watch)
+    echo "[ego-derive] watching session.DONE_UPLOAD on ${STATION} (Ctrl+C to stop)" >&2
+    exec container_node /app/ego-derive-watch.mjs
+    ;;
+  status)
+    if [[ "${1:-}" == "--watch" || "${1:-}" == "-w" ]]; then
+      exec bash "${DERIVE_STATUS}" --watch "$@"
+    fi
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${INGEST_CONTAINER}$"; then
+      container_node /app/ego-derive-run.mjs status --station "${STATION}" "$@"
+    else
+      export EGO_DATALAB_ROOT="${ROOT}"
+      exec bash "${DERIVE_STATUS}" "$@"
+    fi
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "unknown command: ${CMD}" >&2
+    usage
+    exit 2
+    ;;
+esac

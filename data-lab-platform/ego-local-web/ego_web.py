@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,11 +26,23 @@ HOST = os.environ.get("EGO_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EGO_WEB_PORT", "8080"))
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
+STANDBY_STACK_TARGET = os.environ.get("EGO_STANDBY_STACK_TARGET", "ecs-oak-standby-stack.target")
 SEGMENT_ACTIVE_ROOT = Path(
     os.environ.get("EGO_SEGMENT_ACTIVE_ROOT", "/dev/shm/ego-capture-active"),
 )
 SEGMENT_ROOT = Path(
     os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"),
+)
+CHECKPOINT_PATH = Path(
+    os.environ.get(
+        "EGO_CAPTURE_CHECKPOINT",
+        "/home/server/cache/ego-lan-214/segments/checkpoint.json",
+    ),
+)
+SEGMENT_STORE_VERSION = 1
+DEFAULT_CAPTURE_TASK = os.environ.get(
+    "EGO_DEFAULT_CAPTURE_TASK",
+    "Perform egocentric manipulation tasks at the laboratory workbench",
 )
 PREVIEW_URL = os.environ.get(
     "EGO_PREVIEW_URL",
@@ -39,6 +52,8 @@ STORAGE_WARN_GB = float(os.environ.get("EGO_STORAGE_WARN_GB", "2"))
 START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "45"))
 STOP_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_STOP_TIMEOUT_S", "120"))
 MIN_ACTION_INTERVAL_S = float(os.environ.get("EGO_MIN_ACTION_INTERVAL_S", "3"))
+JOURNAL_CACHE_TTL_S = float(os.environ.get("EGO_JOURNAL_CACHE_TTL_S", "0.4"))
+STATUS_POLL_MS = int(os.environ.get("EGO_STATUS_POLL_MS", "300"))
 
 _lock = threading.Lock()
 _busy = False
@@ -46,6 +61,7 @@ _busy_action: str | None = None
 _last_action_mono = 0.0
 _last_error = ""
 _capture_writing_since: float | None = None
+_journal_cache: tuple[float, float | None, bool] | None = None
 
 
 def _unit_active_since_epoch(unit: str) -> float | None:
@@ -126,8 +142,16 @@ def _shm_open_segment_bin_count(since_epoch: float | None) -> int:
 
 
 def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
+    global _journal_cache
     if since_epoch is None:
         return False
+    now = time.monotonic()
+    if (
+        _journal_cache is not None
+        and _journal_cache[1] == since_epoch
+        and now - _journal_cache[0] < JOURNAL_CACHE_TTL_S
+    ):
+        return _journal_cache[2]
     since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
     proc = subprocess.run(
         [
@@ -147,14 +171,55 @@ def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
         timeout=5,
         check=False,
     )
-    return proc.returncode == 0 and "capture-only session=" in proc.stdout
+    result = proc.returncode == 0 and "capture-only session=" in proc.stdout
+    _journal_cache = (now, since_epoch, result)
+    return result
 
 
 def _capture_frames_writing() -> bool:
     since = _capture_run_since_epoch()
-    if _journal_has_capture_only_since(since):
+    if _shm_open_segment_bin_count(since) > 0:
         return True
-    return _shm_open_segment_bin_count(since) > 0
+    return _journal_has_capture_only_since(since)
+
+
+def _new_session_id() -> str:
+    return f"sess_{uuid.uuid4().hex}"
+
+
+def _read_checkpoint() -> dict[str, Any]:
+    if not CHECKPOINT_PATH.is_file():
+        return {}
+    try:
+        raw = json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _begin_new_capture_session() -> str:
+    """Each start-recording → fresh sessionId (one episode on 34 after upload)."""
+    prev = _read_checkpoint()
+    task = prev.get("task") or DEFAULT_CAPTURE_TASK
+    session_id = _new_session_id()
+    CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": SEGMENT_STORE_VERSION,
+        "sessionId": session_id,
+        "nextFrameIndex": 0,
+        "segmentSeq": 0,
+        "task": task,
+    }
+    tmp = CHECKPOINT_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+    tmp.replace(CHECKPOINT_PATH)
+    strict_emit = CHECKPOINT_PATH.parent / "strict_emit_ts.json"
+    try:
+        strict_emit.unlink(missing_ok=True)
+    except OSError:
+        pass
+    print(f"capture_session_new session_id={session_id}", flush=True)
+    return session_id
 
 
 def _json_response(handler: BaseHTTPRequestHandler, code: int, payload: dict[str, Any]) -> None:
@@ -180,6 +245,14 @@ def _systemctl(*args: str, timeout: float = 10) -> subprocess.CompletedProcess[s
 def _capture_active() -> bool:
     proc = _systemctl("is-active", CAPTURE_TARGET, timeout=5)
     return proc.stdout.strip() == "active"
+
+
+def _stop_standby_preview() -> None:
+    _systemctl("stop", STANDBY_STACK_TARGET, timeout=45)
+
+
+def _start_standby_preview() -> None:
+    _systemctl("start", STANDBY_STACK_TARGET, timeout=60)
 
 
 def _format_free_gb(path: Path) -> str:
@@ -217,7 +290,7 @@ def _count_segments(root: Path) -> int:
 
 
 def _build_status() -> dict[str, Any]:
-    global _busy, _busy_action, _last_error, _capture_writing_since
+    global _busy, _busy_action, _last_error, _capture_writing_since, _journal_cache
 
     with _lock:
         busy = _busy
@@ -229,6 +302,7 @@ def _build_status() -> dict[str, Any]:
 
     if not active:
         _capture_writing_since = None
+        _journal_cache = None
 
     duration = 0
     if active and frames_writing:
@@ -289,10 +363,13 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
         if action == "start":
             if _capture_active():
                 return True, "采集已在运行"
+            _begin_new_capture_session()
+            _stop_standby_preview()
             proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
                 _last_error = f"无法启动采集：{detail}"
+                _start_standby_preview()
                 return False, _last_error
             deadline = time.monotonic() + START_TIMEOUT_S
             while time.monotonic() < deadline:
@@ -300,6 +377,8 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                     return True, ""
                 time.sleep(0.5)
             _last_error = "相机启动超时，请检查 OAK 设备是否连接"
+            _systemctl("stop", CAPTURE_TARGET, timeout=30)
+            _start_standby_preview()
             return False, _last_error
 
         if action == "stop":
@@ -321,6 +400,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 if not ok:
                     _last_error = "停止超时，请稍后刷新页面查看状态"
                     return False, _last_error
+            _start_standby_preview()
             return True, ""
 
         return False, "未知操作"
@@ -563,8 +643,8 @@ INDEX_HTML = """<!DOCTYPE html>
       }
     } else if (st === "warming") {
       statusBar.classList.remove("status--solo");
-      statusTitle.innerHTML = '<span class="spinner"></span>正在准备录制';
-      statusSub.textContent = data.msg || "相机初始化中，开始写入后计时";
+      statusTitle.innerHTML = '<span class="spinner"></span>相机预热中';
+      statusSub.textContent = data.msg || "四路相机就绪后开始计时";
       mainBtn.textContent = "结束录制";
       mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "recording") {
@@ -670,7 +750,7 @@ INDEX_HTML = """<!DOCTYPE html>
   });
 
   fetchStatus();
-  pollTimer = setInterval(fetchStatus, 800);
+  pollTimer = setInterval(fetchStatus, __STATUS_POLL_MS__);
 })();
   </script>
 </body>
@@ -687,7 +767,7 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
-            body = INDEX_HTML.encode("utf-8")
+            body = INDEX_HTML.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

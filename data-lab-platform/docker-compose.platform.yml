@@ -50,17 +50,51 @@ services:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
       - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/import-handlers.mjs:/app/import-handlers.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-async.mjs:/app/derive-async.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-pipeline.mjs:/app/derive-pipeline.mjs:ro
+      - ./data-lab-platform/lerobot-studio/session-markers.mjs:/app/session-markers.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-lock.mjs:/app/derive-lock.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ego-derive-run.mjs:/app/ego-derive-run.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ego-derive-watch.mjs:/app/ego-derive-watch.mjs:ro
       - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/append-segment-parquet.py:/app/scripts/append-segment-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/extract-tar-zst.py:/app/scripts/extract-tar-zst.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/export-videos-from-parquet.py:/app/scripts/export-videos-from-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/test-mux-inject-env.mjs:/app/scripts/test-mux-inject-env.mjs:ro
     user: "1000:1000"
     environment:
       - INGEST_PORT=7862
       - STREAM_DATA_ROOT=/srv/stream
       - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
+      - DERIVE_ASYNC=${DERIVE_ASYNC:-0}
+      - DERIVE_ASYNC_EGO_LAN_214=${DERIVE_ASYNC_EGO_LAN_214:-1}
+      - DERIVE_DEFER_PUBLISH=${DERIVE_DEFER_PUBLISH:-1}
+      - DERIVE_DEFER_UNTIL_UPLOAD=${DERIVE_DEFER_UNTIL_UPLOAD:-1}
+      - DERIVE_IDLE_SECONDS=${DERIVE_IDLE_SECONDS:-60}
+      - DERIVE_IDLE_CHECK_MS=${DERIVE_IDLE_CHECK_MS:-15000}
+      - DERIVE_IDLE_FALLBACK_SECONDS=${DERIVE_IDLE_FALLBACK_SECONDS:-180}
+      - DERIVE_MAX_RETRIES=${DERIVE_MAX_RETRIES:-3}
+      - DERIVE_AUTO_START_ON_UPLOAD_COMPLETE=${DERIVE_AUTO_START_ON_UPLOAD_COMPLETE:-1}
+      - DERIVE_AUTO_START_DEBOUNCE_MS=${DERIVE_AUTO_START_DEBOUNCE_MS:-3000}
+      - DERIVE_MUX_AUTO_RETRY=${DERIVE_MUX_AUTO_RETRY:-1}
+      - DERIVE_MUX_MAX_RETRIES=${DERIVE_MUX_MAX_RETRIES:-3}
+      - DERIVE_MUX_RETRY_BASE_MS=${DERIVE_MUX_RETRY_BASE_MS:-10000}
+      - DERIVE_API_TWO_PHASE=${DERIVE_API_TWO_PHASE:-1}
+      - DERIVE_API_EXPOSE_INTERNAL=${DERIVE_API_EXPOSE_INTERNAL:-0}
+      - DERIVE_EXTRACT_BACKEND=${DERIVE_EXTRACT_BACKEND:-legacy}
+      - DERIVE_EXTRACT_VERIFY_SHA256=${DERIVE_EXTRACT_VERIFY_SHA256:-1}
+      - DERIVE_MUX_BACKEND=${DERIVE_MUX_BACKEND:-fluent}
+      - DERIVE_MUX_MODE=${DERIVE_MUX_MODE:-full}
+      - DERIVE_VIDEO_EXPORT_BACKEND=lerobot
+      - DERIVE_PARQUET_BACKEND=lerobot
+      - DERIVE_STANDALONE=${DERIVE_STANDALONE:-1}
+      - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
     healthcheck:
       test:
         [
@@ -72,6 +106,52 @@ services:
       retries: 10
       start_period: 30s
 
+  # Standalone derive worker — pairs with DERIVE_STANDALONE=1 on stream-ingest.
+  derive-worker:
+    build:
+      context: ./data-lab-platform/lerobot-studio
+    image: ${LEROBOT_IMAGE:-data-lab-lerobot-studio:local}
+    restart: unless-stopped
+    entrypoint: ["node"]
+    command: ["/app/ego-derive-watch.mjs"]
+    volumes:
+      - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-pipeline.mjs:/app/derive-pipeline.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-async.mjs:/app/derive-async.mjs:ro
+      - ./data-lab-platform/lerobot-studio/session-markers.mjs:/app/session-markers.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-lock.mjs:/app/derive-lock.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ego-derive-run.mjs:/app/ego-derive-run.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ego-derive-watch.mjs:/app/ego-derive-watch.mjs:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
+      - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
+      - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
+      - ./data-lab-platform/lerobot-studio/scripts:/app/scripts:ro
+    user: "1000:1000"
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=${STATION_ID:-ego-lan-214}
+      - DERIVE_WATCH_POLL_MS=${DERIVE_WATCH_POLL_MS:-10000}
+      - DERIVE_EXTRACT_BACKEND=${DERIVE_EXTRACT_BACKEND:-python}
+      - DERIVE_MUX_BACKEND=${DERIVE_MUX_BACKEND:-fluent}
+      - DERIVE_MUX_MODE=${DERIVE_MUX_MODE:-full}
+      - DERIVE_VIDEO_EXPORT_BACKEND=lerobot
+      - DERIVE_PARQUET_BACKEND=lerobot
+      - DERIVE_DEFER_PUBLISH=${DERIVE_DEFER_PUBLISH:-1}
+      - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "tr '\\0' ' ' < /proc/1/cmdline | grep -q ego-derive-watch.mjs",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   stream-parquet-sync:
     build:
       context: ./data-lab-platform/lerobot-studio
@@ -81,10 +161,12 @@ services:
     volumes:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/stream-parquet-sync-loop.sh:/scripts/stream-parquet-sync-loop.sh:ro
     user: "1000:1000"
     environment:
       - STREAM_SYNC_INTERVAL=5
       - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_PARQUET_SYNC_SKIP_STATIONS=${STREAM_PARQUET_SYNC_SKIP_STATIONS:-ego-lan-214}
 
   lerobot:
     build:
@@ -102,14 +184,18 @@ services:
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
       - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
       - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
       - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
       - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
     environment:
       - PORT=7860
       - NODE_ENV=production
+      - COLLECTION_REMOTE_PREVIEW=${COLLECTION_REMOTE_PREVIEW:-0}
       - LEROBOT_STUDIO_ROOT=/srv/lerobot
       - LEROBOT_STUDIO_UPSTREAM=${LEROBOT_STUDIO_UPSTREAM:-https://io-ai.tech}
       - DATALAB_SAMPLES_DIR=/datalab-samples

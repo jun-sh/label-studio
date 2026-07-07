@@ -3,5 +3,5 @@ Description=EGO OAK capture stack (manual: record + heartbeat, no upload)
 Documentation=file:///home/server/workspace/ego-studio/README.md
 After=network-online.target
 Wants=network-online.target
-Wants=ecs-station-heartbeat.service
 Wants=ecs-record-oak-stream.service
+Conflicts=ecs-preview-standby.service ecs-oak-standby-stack.target

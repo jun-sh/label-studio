@@ -26,7 +26,8 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
     segment_file_key,
 )
-from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, sha256_file
+from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
+from ego_capture_studio.capture.upload_status import UploadStatusWriter, live_ui_enabled
 
 STATION_TOKEN_HEADER = "X-Station-Token"
 DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "300"))
@@ -69,6 +70,7 @@ class SegmentUploader:
         self.timeout_s = timeout_s
         self.protocol = (protocol or UPLOAD_PROTOCOL).strip().lower()
         self.station_token = station_token or os.environ.get("STATION_UPLOAD_TOKEN") or None
+        self.session_segment_total: int | None = None
         self._http_session = requests.Session() if requests is not None else None
         if self._http_session and self.station_token:
             self._http_session.headers[STATION_TOKEN_HEADER] = self.station_token
@@ -77,6 +79,9 @@ class SegmentUploader:
         out: dict[str, str] = dict(extra or {})
         if self.station_token:
             out.setdefault(STATION_TOKEN_HEADER, self.station_token)
+        total = int(self.session_segment_total or 0)
+        if total > 0:
+            out.setdefault("X-Session-Segment-Total", str(total))
         return out
 
     def _parse_response(self, raw: str) -> dict[str, Any]:
@@ -161,6 +166,68 @@ class SegmentUploader:
             )
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 return self._parse_response(resp.read().decode("utf-8"))
+
+    def upload_tar_zst_file(
+        self,
+        archive_path: Path,
+        *,
+        session_id: str,
+        segment_id: str,
+        seg_seq: int | None = None,
+        digest: str | None = None,
+    ) -> dict[str, Any]:
+        """POST a pre-built seg_xxx.tar.zst (e.g. from export/ready/)."""
+        archive_path = Path(archive_path).resolve()
+        if not archive_path.is_file():
+            raise FileNotFoundError(f"missing archive: {archive_path}")
+        if seg_seq is None:
+            try:
+                seg_seq = int(segment_id.rsplit("_", 1)[-1])
+            except ValueError:
+                seg_seq = 0
+        file_digest = digest or sha256_file(archive_path)
+        headers = self._headers(
+            {
+                "Content-Type": "application/zstd",
+                "X-Upload-Protocol": "tarzst",
+                "X-Session-Id": session_id,
+                "X-Segment-Id": segment_id,
+                "X-Segment-Seq": str(seg_seq),
+                "X-Content-Sha256": file_digest,
+            }
+        )
+        if self._http_session is not None:
+            with archive_path.open("rb") as body_fp:
+                resp = self._http_session.post(
+                    self.upload_url,
+                    data=body_fp,
+                    headers=headers,
+                    timeout=self.timeout_s,
+                )
+            resp.raise_for_status()
+            return self._parse_response(resp.text)
+
+        with archive_path.open("rb") as body_fp:
+            req = urllib.request.Request(
+                self.upload_url,
+                data=body_fp.read(),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                return self._parse_response(resp.read().decode("utf-8"))
+
+    def kick_derive_start(self) -> dict[str, Any]:
+        """POST derive-start after batch upload (upload/derive isolation)."""
+        derive_url = self.upload_url[: -len("/upload")] + "/derive-start"
+        headers = self._headers()
+        if self._http_session is not None:
+            resp = self._http_session.post(derive_url, headers=headers, timeout=30.0)
+            resp.raise_for_status()
+            return self._parse_response(resp.text)
+        req = urllib.request.Request(derive_url, method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=30.0) as resp:
+            return self._parse_response(resp.read().decode("utf-8"))
 
     def _upload_segment_multipart(self, segment_dir: Path) -> dict[str, Any]:
         manifest = json.loads((segment_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -335,8 +402,24 @@ def _quarantine_orphan_segments(root: Path, session_id: str) -> int:
             encoding="utf-8",
         )
         _log("segment_skip", session_id=session_id, segment_id=child.name, reason="missing_manifest")
+        try:
+            UploadStatusWriter.get_default().record_quarantine_skip(
+                session_id=session_id,
+                segment_id=child.name,
+                reason="missing_manifest",
+            )
+        except Exception:
+            pass
         quarantined += 1
     return quarantined
+
+
+def _segment_archive_bytes(segment_dir: Path) -> int:
+    segment_id = segment_dir.name
+    archive_path = segment_dir / ".upload" / f"{segment_id}.tar.zst"
+    if archive_path.is_file():
+        return archive_path.stat().st_size
+    return 0
 
 
 def _upload_one_segment(
@@ -346,22 +429,41 @@ def _upload_one_segment(
     uploader: SegmentUploader,
 ) -> bool:
     segment_id = segment_dir.name
+    status = UploadStatusWriter.get_default()
     for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         t0 = time.monotonic()
         try:
+            archive_bytes = _segment_archive_bytes(segment_dir)
+            status.set_uploading(
+                session_id=session_id,
+                segment_id=segment_id,
+                bytes_total=archive_bytes or 78 * 1024 * 1024,
+            )
             out = uploader.upload_segment_dir(segment_dir)
+            if archive_bytes <= 0:
+                archive_bytes = _segment_archive_bytes(segment_dir) or 78 * 1024 * 1024
             mark_segment_uploaded(segment_dir, delete=DELETE_AFTER_UPLOAD)
             elapsed = time.monotonic() - t0
+            duplicate = bool(out.get("duplicate"))
             _log(
                 "segment_ok",
                 session_id=session_id,
                 segment_id=segment_id,
                 frames=out.get("framesCommitted"),
                 elapsed_s=round(elapsed, 2),
-                duplicate=bool(out.get("duplicate")),
+                duplicate=duplicate,
                 protocol=uploader.protocol,
                 attempt=attempt,
             )
+            human = status.record_ok(
+                session_id=session_id,
+                segment_id=segment_id,
+                bytes_total=archive_bytes,
+                elapsed_s=elapsed,
+                duplicate=duplicate,
+            )
+            if not live_ui_enabled():
+                print(human, flush=True)
             return True
         except Exception as exc:
             if attempt >= UPLOAD_MAX_RETRIES:
@@ -372,9 +474,256 @@ def _upload_one_segment(
                     err=str(exc)[:200],
                     attempts=attempt,
                 )
+                human = status.record_fail(
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    error=str(exc),
+                )
+                if not live_ui_enabled():
+                    print(human, flush=True)
                 return False
             time.sleep(min(8.0, 2.0 ** (attempt - 1)))
     return False
+
+
+def _segment_id_from_archive_name(path: Path) -> str:
+    _, segment_id = parse_segment_archive_name(path.name)
+    return segment_id
+
+
+def _session_id_from_archive_name(path: Path) -> str:
+    session_id, _ = parse_segment_archive_name(path.name)
+    return session_id
+
+
+def _session_from_ledger_for_archive(ready_dir: Path, archive_path: Path) -> str:
+    ledger = ready_dir / "export-manifest.jsonl"
+    if not ledger.is_file():
+        return ""
+    target_name = archive_path.name
+    target_resolved = str(archive_path.resolve())
+    last_sid = ""
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sid = str(row.get("session_id") or row.get("sessionId") or "")
+        archive = str(row.get("archive") or "")
+        if archive and (archive == target_resolved or archive.endswith(target_name)):
+            return sid if sid.startswith("sess_") else last_sid
+        if sid.startswith("sess_"):
+            last_sid = sid
+    return ""
+
+
+def _resolve_archive_session(ready_dir: Path, archive_path: Path, fallback: str) -> str:
+    sid = _session_id_from_archive_name(archive_path)
+    if sid.startswith("sess_"):
+        return sid
+    sid = _session_from_ledger_for_archive(ready_dir, archive_path)
+    if sid.startswith("sess_"):
+        return sid
+    return fallback.strip()
+
+
+def _resolve_session_id(root: Path, hint: str = "") -> str:
+    if hint.strip():
+        return hint.strip()
+    env_sid = os.environ.get("EGO_CAPTURE_SESSION_ID", "").strip()
+    if env_sid:
+        return env_sid
+    reg_path = root / "registry.json"
+    if reg_path.is_file():
+        reg = json.loads(reg_path.read_text(encoding="utf-8"))
+        sessions = reg.get("sessions") or {}
+        if sessions:
+            return sorted(
+                sessions.keys(),
+                key=lambda s: (sessions[s].get("updatedAt") or ""),
+            )[-1]
+    ck = root / "sessions"
+    if ck.is_dir():
+        subs = sorted([p.name for p in ck.iterdir() if p.is_dir() and p.name.startswith("sess_")])
+        if subs:
+            return subs[-1]
+    return ""
+
+
+def _session_from_export_ledger(ready_dir: Path) -> str:
+    ledger = ready_dir / "export-manifest.jsonl"
+    if not ledger.is_file():
+        return ""
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        sid = str(row.get("session_id") or row.get("sessionId") or "")
+        if sid.startswith("sess_"):
+            return sid
+    return ""
+
+
+def find_latest_ready_dir(export_root: Path) -> Path | None:
+    ready_root = export_root / "ready"
+    if not ready_root.is_dir():
+        return None
+    candidates: list[Path] = []
+    for child in sorted(ready_root.iterdir(), reverse=True):
+        if child.is_dir() and (
+            any(child.glob("seg_*.tar.zst")) or any(child.glob("sess_*__seg_*.tar.zst"))
+        ):
+            candidates.append(child)
+    return candidates[0] if candidates else None
+
+
+def list_ready_archives(ready_dir: Path) -> list[Path]:
+    named = sorted(ready_dir.glob("sess_*__seg_*.tar.zst"), key=lambda p: p.name)
+    legacy = [p for p in sorted(ready_dir.glob("seg_*.tar.zst"), key=lambda p: p.name) if p not in named]
+    return named + legacy
+
+
+def _upload_one_archive(
+    *,
+    archive_path: Path,
+    session_id: str,
+    uploader: SegmentUploader,
+) -> bool:
+    segment_id = _segment_id_from_archive_name(archive_path)
+    status = UploadStatusWriter.get_default()
+    archive_bytes = archive_path.stat().st_size
+    for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
+        t0 = time.monotonic()
+        try:
+            status.set_uploading(
+                session_id=session_id,
+                segment_id=segment_id,
+                bytes_total=archive_bytes,
+            )
+            digest = sha256_file(archive_path)
+            out = uploader.upload_tar_zst_file(
+                archive_path,
+                session_id=session_id,
+                segment_id=segment_id,
+                digest=digest,
+            )
+            elapsed = time.monotonic() - t0
+            duplicate = bool(out.get("duplicate"))
+            _log(
+                "segment_ok",
+                session_id=session_id,
+                segment_id=segment_id,
+                frames=out.get("framesCommitted"),
+                elapsed_s=round(elapsed, 2),
+                duplicate=duplicate,
+                protocol="tarzst",
+                attempt=attempt,
+                source="ready",
+            )
+            human = status.record_ok(
+                session_id=session_id,
+                segment_id=segment_id,
+                bytes_total=archive_bytes,
+                elapsed_s=elapsed,
+                duplicate=duplicate,
+            )
+            if not live_ui_enabled():
+                print(human, flush=True)
+            return True
+        except Exception as exc:
+            if attempt >= UPLOAD_MAX_RETRIES:
+                _log(
+                    "segment_fail",
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    err=str(exc)[:200],
+                    attempts=attempt,
+                    source="ready",
+                )
+                human = status.record_fail(
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    error=str(exc),
+                )
+                if not live_ui_enabled():
+                    print(human, flush=True)
+                return False
+            time.sleep(min(8.0, 2.0 ** (attempt - 1)))
+    return False
+
+
+def kick_derive_after_upload(uploader: SegmentUploader) -> dict[str, Any] | None:
+    """Call 34 derive-start after batch upload; non-fatal on failure."""
+    try:
+        return uploader.kick_derive_start()
+    except Exception as exc:
+        _log("derive_start_fail", err=str(exc)[:200])
+        return None
+
+
+def upload_ready_archives(
+    *,
+    ready_dir: Path,
+    session_id: str,
+    uploader: SegmentUploader,
+    limit: int | None = None,
+    skip_init: bool = False,
+) -> int:
+    archives = list_ready_archives(ready_dir)
+    if limit is not None:
+        archives = archives[:limit]
+    if not archives:
+        return 0
+
+    uploader.session_segment_total = len(archives)
+
+    status = UploadStatusWriter.get_default()
+    if not skip_init:
+        status.reset_session(session_id)
+        status.refresh_queue(
+            session_id=session_id,
+            pending=len(archives),
+            skipped_segments=[],
+            phase="uploading",
+        )
+    import sys
+
+    meta = (
+        f"开始上传 ready/：共 {len(archives)} 段 → {uploader.upload_url}\n"
+        f"状态文件：{status.path}\n"
+    )
+    if live_ui_enabled():
+        sys.stderr.write(meta)
+        sys.stderr.flush()
+    else:
+        print(meta, end="", flush=True)
+
+    uploaded = 0
+    for archive_path in archives:
+        sid = _resolve_archive_session(ready_dir, archive_path, session_id)
+        if _upload_one_archive(
+            archive_path=archive_path,
+            session_id=sid,
+            uploader=uploader,
+        ):
+            uploaded += 1
+    last_sid = session_id
+    if archives:
+        last_sid = _resolve_archive_session(ready_dir, archives[-1], session_id)
+    status.refresh_queue(
+        session_id=last_sid,
+        pending=max(0, len(archives) - uploaded),
+        skipped_segments=[],
+        phase="idle" if uploaded >= len(archives) else "uploading",
+    )
+    return uploaded
 
 
 def upload_pending_segments(

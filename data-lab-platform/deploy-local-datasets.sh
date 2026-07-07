@@ -43,6 +43,18 @@ docker exec data-lab-lerobot-1 sh /app/ingest-bundled-datasets.sh
 echo "==> Restart lerobot + nginx"
 compose restart lerobot nginx
 
+echo "==> Wait for lerobot embed route"
+HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
+for _ in $(seq 1 24); do
+  if curl -fsS --max-time 5 "${HOST}/lerobot/?datalab_embed=1" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
+
+echo "==> Verify /data page (embed manifest + bundled datasets)"
+bash "${ROOT}/data-lab-platform/verify-data-page.sh" || exit 1
+
 echo "==> Live stream parquet helper (optional, during capture):"
 echo "    bash data-lab-platform/scripts/sync-stream-station.sh ego-lan-214"
 

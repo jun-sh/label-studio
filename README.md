@@ -125,7 +125,7 @@ test the behavior with S3 storage on your local system. To start Label Studio in
 docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d
 ````
 If you do not have a static IP address, you must create an entry in your hosts file so that both Label Studio and your 
-browser can access the MinIO server. For more detailed instructions, please refer to [our guide on storing data](docs/source/guide/storedata.md).
+browser can access the MinIO server. For more detailed instructions, please refer to [our guide on storing data](https://labelstud.io/guide/storedata.html).
 
 
 ### Install locally with pip

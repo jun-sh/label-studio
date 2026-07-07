@@ -1,0 +1,31 @@
+[Unit]
+Description=EGO OAK idle preview probe (no disk writes; remote browse only)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Conflicts=ecs-record-oak-stream.service
+PartOf=ecs-oak-standby-stack.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STANDBY_PREVIEW_FPS=8
+Environment=STANDBY_DEVICE_FPS=15
+Environment=PREVIEW_FPS=8
+Environment=PREVIEW_MAX_EDGE=640
+Environment=PREVIEW_JPEG_QUALITY=70
+Environment=OAK_HW_JPEG=1
+Environment=OAK_HW_PREVIEW=0
+Environment=OPENCV_NUM_THREADS=1
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.capture.preview_standby
+Restart=on-failure
+RestartSec=8
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-preview-standby
+
+[Install]
+WantedBy=ecs-oak-standby-stack.target

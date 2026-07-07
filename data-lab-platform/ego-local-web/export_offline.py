@@ -22,7 +22,7 @@ from ego_capture_studio.capture.segment_store import (
     list_closed_pending_segments,
     mark_segment_uploaded,
 )
-from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, sha256_file
+from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, segment_archive_basename, sha256_file
 
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 DELETE_AFTER = os.environ.get("EGO_EXPORT_DELETE_AFTER", "1").strip().lower() in (
@@ -57,7 +57,7 @@ def _list_all_pending(segment_root: Path) -> list[Path]:
             if key not in seen:
                 seen.add(key)
                 pending.append(seg)
-    return sorted(pending, key=lambda p: p.name)
+    return sorted(pending, key=lambda p: (p.parent.parent.name, p.name))
 
 
 def _append_ledger(ledger_path: Path, record: dict[str, object]) -> None:
@@ -79,7 +79,8 @@ def _export_one(
     session_id = ""
 
     if not segment_dir.is_dir():
-        final_guess = ready_dir / f"{segment_id}.tar.zst"
+        candidates = sorted(ready_dir.glob(f"sess_*__{segment_id}.tar.zst"))
+        final_guess = candidates[0] if candidates else ready_dir / f"{segment_id}.tar.zst"
         if final_guess.is_file():
             digest = sha256_file(final_guess)
             _append_ledger(
@@ -104,8 +105,9 @@ def _export_one(
         segment_id = str(manifest.get("segment_id") or segment_id)
         session_id = str(manifest.get("session_id") or "")
 
-    final_path = ready_dir / f"{segment_id}.tar.zst"
-    staging_path = staging_dir / f"{segment_id}.tar.zst.part"
+    final_name = segment_archive_basename(session_id, segment_id) if session_id else f"{segment_id}.tar.zst"
+    final_path = ready_dir / final_name
+    staging_path = staging_dir / f"{final_name}.part"
 
     if final_path.is_file():
         digest = sha256_file(final_path)

@@ -1,0 +1,10 @@
+[Unit]
+Description=EGO OAK standby stack (idle preview probe; no capture)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Wants=ecs-preview-standby.service
+Conflicts=ecs-record-oak-stream.service ecs-oak-capture-stack.target
+
+[Install]
+WantedBy=default.target

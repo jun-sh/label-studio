@@ -28,6 +28,7 @@
 
 ```text
 采集员点「开始录制」
+    → ego_web.py 写入全新 sessionId 到 checkpoint.json（每次启停独立 episode）
     → ego_web.py 执行：systemctl --user start ecs-oak-capture-stack.target
     → 启动 OAK 四路相机 + IMU 采集进程（ego-stream-client，未改动的采集栈）
     → 创建或续写 session，在内存盘开始写第一个 open 段
@@ -164,7 +165,7 @@
 
 ```text
 /home/server/cache/ego-lan-214/segments/sessions/sess_<uuid>/segments/seg_000026/
-├── manifest.json    ← "closed": true, "frame_count": 约 200（10s×20fps）
+├── manifest.json    ← "closed": true, "frame_count": 约 300（10s×30fps）
 ├── rows.jsonl
 └── frames/*.bin
 ```
@@ -300,10 +301,11 @@ bash /home/server/ego-web/export-offline.sh
 │         closed=true, uploaded=false  ← 离线脚本只处理这类                 │
 │         │ export-offline.sh（班次末手动）                                │
 │         ▼                                                               │
-│ C. /home/server/export/ego-lan-214/ready/YYYYMMDD/seg_*.tar.zst        │
-│         │ cp 到 U 盘                                                     │
+│ C. .../ready/YYYYMMDD/seg_*.tar.zst                                     │
+│         │ 有网：214 Agent 批量上传（主通道）                              │
+│         │ 无网：U 盘 → 34 单段应急「导入」补传                           │
 │         ▼                                                               │
-│ U 盘 ego-lan-214/*.tar.zst  →  34 采集页拖传导入  →  LeRobot 可回放      │
+│ 34 ingest → LeRobot 可回放                                              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -479,9 +481,18 @@ EGO_EXPORT_DELETE_AFTER=0 bash .../export-offline.sh       # 打包但不删源�
 
 ---
 
-## 五、U 盘与 34 导入
+## 五、上传到 34
 
-### 5.1 从成品目录拷到 U 盘
+**批量（主通道，有网）**：在 214 上导出到 `ready/` 后：
+
+```bash
+systemctl --user start ecs-oak-upload-stack.target
+journalctl --user -u ecs-upload-segments-loop -f   # pending=0 后 stop
+```
+
+**单段应急（U 盘 / 无 Agent）**：见 5.2。
+
+### 5.1 从成品目录拷到 U 盘（无网搬运）
 
 **只拷路径 C**，不要拷 `segments/` 原始目录：
 
@@ -503,11 +514,13 @@ U 盘内结构：
 └── ...
 ```
 
-### 5.2 34 采集页导入
+### 5.2 34 采集页单段应急补传
+
+> **批量请勿使用浏览器多文件拖传**；W2 及生产批量验收均走 214 Agent。详见 [ego-lan-214-upload-channel-policy.md](../../docs/ego-lan-214-upload-channel-policy.md)。
 
 1. 打开 [http://10.10.10.34:8080/collection?station=ego-lan-214](http://10.10.10.34:8080/collection?station=ego-lan-214)
-2. Episodes → **「导入」** → 拖入 `.tar.zst`
-3. 等待 **「成功」** → 回放质检
+2. Episodes → **「导入」** → 拖入 **单个** `.tar.zst`
+3. 异步模式下显示 **「已上传，后台处理中」**（非「可回放」）；派生完成后刷新 Episodes 回放质检
 
 同一段重复导入会提示「已存在，跳过」。
 
@@ -531,7 +544,7 @@ U 盘内结构：
 |------|--------|--------------|
 | 采集员 | 开始/结束录制 | 间接产生 B（通过采集栈） |
 | 运维 | 班次末 `export-offline.sh`、拷 U 盘 | B → C → U 盘 |
-| 办公室数据员 | 34 导入、回放 | U 盘 → 34 平台 |
+| 办公室数据员 | 34 回放、触发 pipeline | **Agent 上传** 或 U 盘单段补传 |
 
 ---
 
@@ -564,4 +577,4 @@ U 盘内结构：
 | 打包后文件在哪？ | C：`export/ego-lan-214/ready/YYYYMMDD/*.tar.zst` |
 | 打包后原始段还在吗？ | 默认**删除**（`EGO_EXPORT_DELETE_AFTER=1`） |
 | 为什么看不到琥珀色「正在准备录制」？ | 旧版会把 `/dev/shm/` 里**上次失败遗留**的 open 段误判为已写帧，直接变绿。现版已按**本次采集启动时间**过滤；轮询间隔 0.8s |
-| 能直接把 `segments/` 拷到 34 吗？ | **不能**，必须 tar.zst 走采集页导入 |
+| 能直接把 `segments/` 拷到 34 吗？ | **不能**，须 tar.zst 经 Agent 或单段浏览器导入 |

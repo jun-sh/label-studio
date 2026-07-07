@@ -39,9 +39,21 @@ def _session_id() -> str:
     return os.environ.get("EGO_CAPTURE_SESSION_ID", "").strip()
 
 
+try:
+    from ego_capture_studio.capture.capture_state import resolve_capture_state
+except ImportError:
+    from capture_state import resolve_capture_state  # type: ignore[no-redef]
+
+
 def _post_once() -> None:
+    capture_state = resolve_capture_state()
     body = json.dumps(
-        {"action": "heartbeat", "host": CAPTURE_HOST, "sessionId": _session_id() or None},
+        {
+            "action": "heartbeat",
+            "host": CAPTURE_HOST,
+            "sessionId": _session_id() or None,
+            "captureState": capture_state,
+        },
         separators=(",", ":"),
     ).encode("utf-8")
     headers = {"Content-Type": "application/json"}

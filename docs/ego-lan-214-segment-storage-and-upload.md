@@ -228,20 +228,22 @@ systemd 单元模板：`data-lab-platform/ego-stream-client/systemd/ecs-upload-s
 
 ## 八、无网络时 U 盘拷贝能否等效？
 
-**浏览器离线上传（推荐）**：34 采集页 Episodes「导入」支持拖入 `.tar.zst`，ingest 链路与网络 tar.zst 上传一致（见 [ego-edge-offline-upload-and-deployment.md](./ego-edge-offline-upload-and-deployment.md)）。
+**上传通道策略**（W2 起）：**214 `ecs-oak-upload-stack` 为唯一批量主通道**；34 采集页「导入」仅作**单段应急补传**，不具备批量商用可靠性。详见 [ego-lan-214-upload-channel-policy.md](./ego-lan-214-upload-channel-policy.md)。
 
 | 拷贝内容 | 放到 34 哪里 | 能否等效 |
 |----------|-------------|----------|
 | 214 原始 `segments/` 目录 | 任意路径 | **否** — 34 只认 ingest，不认原始段目录 |
-| 214 `.upload/*.tar.zst` | U 盘 → 有网机器浏览器拖传 | **是** — 采集页「导入」 |
-| 214 `.upload/*.tar.zst` | 任意路径，curl POST + token | **是** — 与 `segment_upload.py` 同协议 |
+| 214 `.upload/*.tar.zst` | 有网后 **214 Agent** POST | **是** — **批量推荐**（与 `segment_upload.py` 同协议） |
+| 214 `.upload/*.tar.zst` | U 盘 → 有网机器 **单段**浏览器拖传 | **是** — 仅 1 段应急补传 |
+| 214 `.upload/*.tar.zst` | 任意路径，curl POST + token | **是** — 与 Agent 同协议 |
 | 34 已 ingest 的 `data/meta/videos/` | `data-storage/stream/ego-lan-214/` | **部分等同** — 绕过了 ingest 去重/归档/session 管理 |
 
 **离线可行变通**：
 
-1. U 盘拷 `.tar.zst` → 有网后在 34 采集页拖传导入（默认生产路径）
-2. U 盘拷 214 `segments/sessions/sess_xxx/` → 回 214 原路径 → 有网后 `upload_segments` CLI 或打包后拖传
-3. 从任意机器对 34 发 tar.zst HTTP POST（需 token 和正确 header）
+1. **有网**：214 上 `systemctl --user start ecs-oak-upload-stack.target`（批量主通道）
+2. U 盘拷 `.tar.zst` → 有网后在 34 采集页**单段**拖传（应急，非批量）
+3. U 盘拷 214 `segments/sessions/sess_xxx/` → 回 214 原路径 → 有网后 Agent 或打包后单段补传
+4. 从任意机器对 34 发 tar.zst HTTP POST（需 token 和正确 header）
 
 **注意**：停录时**未闭合的 open 段**（不足 300 帧）可能留在 tmpfs 或未 finalize，U 盘也拷不到；需录满一段或实现 shutdown flush（`SegmentCaptureWriter.close()` 会 flush，但 `systemctl stop` 需确保进程正常退出）。
 
@@ -273,9 +275,10 @@ flowchart LR
 
 ## 十、实操要点
 
-- **新一天新 episode**：214 **删 `checkpoint.json`** 再开录
+- **每次开始录制 = 新 session（= 34 上一个 episode）**：`ego_web.py` 在启动采集栈前自动轮换 `checkpoint.json` 中的 `sessionId`，无需手删 checkpoint
+- **新一天 / 换场景 / 换操作员**：同样通过「开始录制」自动获得新 session；仅当需强制丢弃未导出段时才手动清 `segments/`
 - **214** 是**段缓存队列**（默认 **256GB** 待导出上限），**34** 是 **LeRobot v3 成品库**（默认 100GB / 7 天）
-- **默认推荐**：采集栈开启、上传栈关闭；批量用 U 盘 + 34 采集页「导入」`.tar.zst`（见 [ego-edge-offline-upload-and-deployment.md](./ego-edge-offline-upload-and-deployment.md)）
+- **默认推荐**：采集栈开启；**有网批量**用 `ecs-oak-upload-stack`（Agent）；浏览器「导入」仅单段应急（见 [ego-lan-214-upload-channel-policy.md](./ego-lan-214-upload-channel-policy.md)）
 - 若开启自动网络上传：传完即删（`EGO_SEGMENT_DELETE_AFTER_UPLOAD=1`）；不能把原始 `segments/` 目录直接拷到 34 当 ingest 完成
 - 上传 URL：`http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload`
 - Token：环境变量 `STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1`（请求头 `X-Station-Token`）
@@ -295,7 +298,7 @@ flowchart LR
 | systemd 上传 | `data-lab-platform/ego-stream-client/systemd/ecs-upload-segments-loop.service` |
 | 站点配置 | `data-lab-platform/lerobot-studio/config/collection-stations.json` |
 | 离线上传与部署 | `docs/ego-edge-offline-upload-and-deployment.md` |
-| 浏览器导入 UI | `data-lab-platform/client/import-core.js` |
+| 浏览器导入 UI | `data-lab-platform/client/import-core.js`（单段应急，非批量主通道） |
 
 ---
 
@@ -348,10 +351,13 @@ nginx 上传片段：`data-lab-platform/gateway/nginx/snippets/datalab-stream-in
 
 ## 十四、预览与回放
 
-| 模式 | 数据来源 |
-|------|----------|
-| 实时预览 | 214 `:8765` MJPEG（34 反代） |
-| 数据集回放 | 34 `/srv/stream/ego-lan-214` mux 后 MP4 + jsonl |
+| 模式 | 数据来源 | 策略 |
+|------|----------|------|
+| 远程实时（34） | 214 待机预检 `:8765`（`ecs-preview-standby`） | **仅 `captureState=idle`**；采集中 403 |
+| 本机实时（214 WiFi） | 采集中采集进程内 `:8765` | 操作员本机预览，不经 34 |
+| 数据集回放 | 34 `/srv/stream/ego-lan-214` mux 后 MP4 + jsonl | 与采集状态解耦 |
+
+详见 [ego-lan-214-remote-preview-policy.md](./ego-lan-214-remote-preview-policy.md)。
 
 ---
 

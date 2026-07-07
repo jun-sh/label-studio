@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# ego-rederive — 从 raw/ 重派生（对称 ego-upload / ego-derive-status）
+# 用法:
+#   ego-rederive                    # 清派生层 + 启动队列 + 终端实时进度（默认）
+#   ego-rederive --no-watch         # 启动后只打印一次状态
+#   ego-rederive --prepare-only     # 仅清理，不启动
+#   ego-rederive --start-only       # 仅启动队列（已 prepare 过时用）
+#   ego-rederive --status           # 同 ego-derive-status
+set -euo pipefail
+
+resolve_script_dir() {
+  local src="${1}"
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="${dir}/${src}"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+if [[ -n "${EGO_DATALAB_ROOT:-}" ]]; then
+  ROOT="${EGO_DATALAB_ROOT}"
+else
+  ROOT="$(cd "$(resolve_script_dir "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+
+STATION="${STATION_ID:-ego-lan-214}"
+STREAM_HOST="${ROOT}/data-storage/stream/${STATION}"
+SEG_JSON="${STREAM_HOST}/state/segments.json"
+COMPOSE="docker-compose -f ${ROOT}/docker-compose.yml -f ${ROOT}/data-lab-platform/docker-compose.platform.yml"
+DERIVE_STATUS="${ROOT}/data-lab-platform/scripts/ego-derive-status"
+
+PREPARE_ONLY=0
+START_ONLY=0
+WATCH=1
+SHOW_STATUS=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --prepare-only) PREPARE_ONLY=1 ;;
+    --start-only) START_ONLY=1 ;;
+    --watch|-w) WATCH=1 ;;
+    --no-watch|--once) WATCH=0 ;;
+    --status) SHOW_STATUS=1 ;;
+    -h|--help)
+      sed -n '2,9p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "unknown arg: $arg (try --help)" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$SHOW_STATUS" == "1" ]]; then
+  exec bash "${DERIVE_STATUS}" "$@"
+fi
+
+log() { echo "[ego-rederive] $*"; }
+
+wipe_derived_and_reset_state() {
+  if [[ ! -d "${STREAM_HOST}/raw" ]]; then
+    echo "missing raw/ under ${STREAM_HOST} — upload from 214 first" >&2
+    exit 2
+  fi
+
+  raw_n="$(find "${STREAM_HOST}/raw/segments" -name '*.tar.zst' 2>/dev/null | wc -l | tr -d ' ')"
+  log "raw tar.zst: ${raw_n} (unchanged)"
+
+  log "wiping derived layer (live/data/videos/meta/sessions/staging)…"
+  rm -rf \
+    "${STREAM_HOST}/live" \
+    "${STREAM_HOST}/data" \
+    "${STREAM_HOST}/videos" \
+    "${STREAM_HOST}/meta" \
+    "${STREAM_HOST}/sessions" \
+    "${STREAM_HOST}/_staging" \
+    "${STREAM_HOST}/_staging_tmp" \
+    2>/dev/null || true
+  rm -rf \
+    "${STREAM_HOST}/live/derive" \
+    2>/dev/null || true
+  rm -f \
+    "${STREAM_HOST}/state/session_publish.json" \
+    "${STREAM_HOST}/state/derive_worker.json" \
+    2>/dev/null || true
+  mkdir -p "${STREAM_HOST}/live" "${STREAM_HOST}/data" "${STREAM_HOST}/videos"
+
+  if [[ ! -f "${SEG_JSON}" ]]; then
+    log "no segments.json — will derive from raw on start"
+    return
+  fi
+  python3 - "$SEG_JSON" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+store = json.loads(p.read_text())
+n = 0
+for s in store.get("segments", {}).values():
+    st = s.get("status")
+    if st in ("derived", "failed", "derive_failed", "deriving") or s.get("ready"):
+        s["status"] = "verified"
+        s.pop("derivedAt", None)
+        s["ready"] = False
+        s["inDlq"] = False
+        s["errorMsg"] = None
+        s["failedStage"] = None
+        n += 1
+store["revision"] = int(store.get("revision", 0)) + 1
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps(store, ensure_ascii=False, indent=2) + "\n")
+print(f"reset {n} segments → verified (UPLOADED)")
+PY
+}
+
+start_derive_queue() {
+  log "starting upload + standalone derive worker (DERIVE_STANDALONE=1)…"
+  cd "${ROOT}"
+  export EGO_DATALAB_ROOT="${ROOT}"
+  DERIVE_STANDALONE=1 \
+    DERIVE_ASYNC_EGO_LAN_214=1 \
+    DERIVE_EXTRACT_BACKEND="${DERIVE_EXTRACT_BACKEND:-python}" \
+    DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-fluent}" \
+    ${COMPOSE} up -d stream-ingest derive-worker >/dev/null
+  log "derive-worker watching session.DONE_UPLOAD — kicking ego-derive run…"
+  bash "${ROOT}/data-lab-platform/scripts/ego-derive" run --station "${STATION}" &
+}
+
+run_derive_status() {
+  export EGO_DATALAB_ROOT="${ROOT}"
+  if [[ "$WATCH" == "1" ]]; then
+    exec bash "${DERIVE_STATUS}" --watch
+  fi
+  bash "${DERIVE_STATUS}"
+}
+
+if [[ "$PREPARE_ONLY" == "1" ]]; then
+  wipe_derived_and_reset_state
+  log "prepare done — run: ego-rederive"
+  exit 0
+fi
+
+if [[ "$START_ONLY" == "1" ]]; then
+  start_derive_queue
+else
+  wipe_derived_and_reset_state
+  start_derive_queue
+fi
+
+run_derive_status

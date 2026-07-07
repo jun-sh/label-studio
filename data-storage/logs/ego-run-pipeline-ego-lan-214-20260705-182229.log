@@ -1,0 +1,156 @@
+[pipeline] 等待流数据合并完成（视频+表格就绪）…
+[wait-ready] waiting for parquet + mp4 under /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-lan-214 (timeout 1800s)
+[wait-ready] ready: total_frames=300 sessionId=sess_f2710d2c024e4024b83ef204b256d6eb
+[wait-ready] next: cd ego-hand-pipeline && ./scripts/ego-postprocess.sh ego-lan-214 sess_f2710d2c024e4024b83ef204b256d6eb
+[pipeline] 待处理 session: sess_081a430efe3640739918d5286f44d99e sess_f2710d2c024e4024b83ef204b256d6eb
+[pipeline] >>> 后处理 ego-lan-214 / sess_081a430efe3640739918d5286f44d99e
+[2026-07-05T18:22:30+08:00] === ego-postprocess station=ego-lan-214 session=sess_081a430efe3640739918d5286f44d99e ===
+[2026-07-05T18:22:30+08:00] output=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e
+[2026-07-05T18:22:30+08:00] infer sidecar stale: {
+  "needs_refresh": true,
+  "reasons": [
+    "episode_000000: missing mano_pose.camera_front_left.parquet",
+    "episode_000000: missing mano_pose.camera_front_right.parquet"
+  ]
+}
+[2026-07-05T18:22:30+08:00] auto-refresh: cleared infer + downstream .done markers
+[2026-07-05T18:22:30+08:00] >>> running precheck
+{
+  "source_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-lan-214/archive/sess_081a430efe3640739918d5286f44d99e_2026-07-05T09-16-56-860Z",
+  "source_kind": "archive",
+  "errors": [],
+  "free_gb": 949.02
+}
+[2026-07-05T18:22:30+08:00] ✅ precheck complete
+[2026-07-05T18:22:30+08:00] >>> running undistort
+{
+  "episodes": [
+    {
+      "episode_index": 0,
+      "outputs": {
+        "observation.images.camera_front_left": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/undistort/offline/episode_000000/rectified/camera_front_left_rectified.mp4",
+        "observation.images.camera_front_right": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/undistort/offline/episode_000000/rectified/camera_front_right_rectified.mp4",
+        "observation.images.camera_rear_left": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/undistort/offline/episode_000000/rectified/camera_rear_left_rectified.mp4",
+        "observation.images.camera_rear_right": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/undistort/offline/episode_000000/rectified/camera_rear_right_rectified.mp4"
+      }
+    }
+  ]
+}
+[2026-07-05T18:22:38+08:00] ✅ undistort complete
+[2026-07-05T18:22:38+08:00] >>> running infer
+/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/.venv/lib/python3.11/site-packages/timm/models/layers/__init__.py:49: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frames=300 detect=mediapipe hands=both session_progress=0/600
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 1/300 (0%) | session 1/600 (0%)
+libEGL warning: DRI2: failed to authenticate
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1783246971.634459  614379 gl_context_egl.cc:85] Successfully initialized EGL. Major : 1 Minor: 5
+I0000 00:00:1783246971.646102  614495 gl_context.cc:385] GL version: 3.2 (OpenGL ES 3.2 Mesa 23.2.1-1ubuntu3.1~22.04.4), renderer: llvmpipe (LLVM 15.0.7, 256 bits)
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+W0000 00:00:1783246971.691424  614382 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1783246971.705571  614396 inference_feedback_manager.cc:114] Feedback manager requires a model with a single signature inference. Disabling support for feedback tensors.
+W0000 00:00:1783246971.729747  614389 landmark_projection_calculator.cc:78] Using NORM_RECT without IMAGE_DIMENSIONS is only supported for the square ROI. Provide IMAGE_DIMENSIONS or use PROJECTION_MATRIX.
+/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/third_party/hamer/hamer/utils/geometry.py:61: UserWarning: Using torch.cross without specifying the dim arg is deprecated.
+Please either pass the dim explicitly or simply use torch.linalg.cross.
+The default value of dim will change to agree with that of linalg.cross in a future release. (Triggered internally at /pytorch/aten/src/ATen/native/Cross.cpp:62.)
+  b3 = torch.cross(b1, b2)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 50/300 (16%) | session 50/600 (8%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 100/300 (33%) | session 100/600 (16%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 150/300 (50%) | session 150/600 (25%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 200/300 (66%) | session 200/600 (33%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 250/300 (83%) | session 250/600 (41%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_left frame 300/300 (100%) | session 300/600 (50%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frames=300 detect=mediapipe hands=both session_progress=300/600
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 1/300 (0%) | session 301/600 (50%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 50/300 (16%) | session 350/600 (58%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 100/300 (33%) | session 400/600 (66%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 150/300 (50%) | session 450/600 (75%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 200/300 (66%) | session 500/600 (83%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 250/300 (83%) | session 550/600 (91%)
+[ehp-infer] episode=0 camera=observation.images.camera_front_right frame 300/300 (100%) | session 600/600 (100%)
+WARNING: You are using a MANO model, with only 10 shape coefficients.
+WARNING: You are using a MANO model, with only 10 shape coefficients.
+{
+  "episodes": [
+    {
+      "episode_index": 0,
+      "max_frames": 300,
+      "cameras": {
+        "observation.images.camera_front_left": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/sidecar/offline/episode_000000/mano_pose.camera_front_left.parquet",
+        "observation.images.camera_front_right": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/sidecar/offline/episode_000000/mano_pose.camera_front_right.parquet"
+      }
+    }
+  ],
+  "work_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/work/infer",
+  "session_total_frames": 600,
+  "video_keys": [
+    "observation.images.camera_front_left",
+    "observation.images.camera_front_right"
+  ],
+  "hands_mode": "both"
+}
+[2026-07-05T18:24:47+08:00] ✅ infer complete
+[2026-07-05T18:24:47+08:00] >>> running merge-build
+{
+  "dataset_dir": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/dataset"
+}
+[2026-07-05T18:24:53+08:00] ✅ merge-build complete
+[2026-07-05T18:24:53+08:00] >>> running append
+{
+  "skipped": false,
+  "session_id": "sess_081a430efe3640739918d5286f44d99e",
+  "aggregate_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/dataset/Ego-214-Hand-Pose",
+  "total_episodes": 1,
+  "total_frames": 300
+}
+[2026-07-05T18:24:53+08:00] ✅ append complete
+[2026-07-05T18:24:53+08:00] >>> running publish
+==> docker cp zip -> data-lab-lerobot-1:/srv/bundled/
+==> docker cp hand-kp2d overlay json
+NOTE: /app is read-only in container; branding/server are picked up from image or compose bind mount.
+==> restart lerobot + nginx
+Container data-lab-lerobot-1  Restarting
+Container data-lab-lerobot-1  Started
+Container data-lab-nginx-1  Restarting
+Container data-lab-nginx-1  Started
+Done. Open /data/ego_214_hand_pose or /data and select Ego-214-Hand-Pose
+{
+  "zip": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/samples/ego_214_hand_pose.zip",
+  "aggregate": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/dataset/Ego-214-Hand-Pose",
+  "publish_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/dataset/Ego-214-Hand-Pose",
+  "dataset_slug": "ego_214_hand_pose",
+  "upload": true,
+  "upload_script": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/scripts/platform_upload.sh"
+}
+[2026-07-05T18:25:07+08:00] ✅ publish complete
+[2026-07-05T18:25:07+08:00] === postprocess finished station=ego-lan-214 session=sess_081a430efe3640739918d5286f44d99e ===
+[2026-07-05T18:25:07+08:00] status: /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/.status
+[2026-07-05T18:25:07+08:00] dataset: /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/dataset
+[2026-07-05T18:25:07+08:00] log: /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_081a430efe3640739918d5286f44d99e/postprocess.log
+[pipeline] session sess_081a430efe3640739918d5286f44d99e 完成
+[pipeline] >>> 后处理 ego-lan-214 / sess_f2710d2c024e4024b83ef204b256d6eb
+[2026-07-05T18:25:07+08:00] === ego-postprocess station=ego-lan-214 session=sess_f2710d2c024e4024b83ef204b256d6eb ===
+[2026-07-05T18:25:07+08:00] output=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/ego-hand-pipeline/outputs/ego-lan-214/sess_f2710d2c024e4024b83ef204b256d6eb
+[2026-07-05T18:25:07+08:00] infer sidecar stale: {
+  "needs_refresh": true,
+  "reasons": [
+    "episode_000000: missing mano_pose.camera_front_left.parquet",
+    "episode_000000: missing mano_pose.camera_front_right.parquet",
+    "episode_000001: missing mano_pose.camera_front_left.parquet",
+    "episode_000001: missing mano_pose.camera_front_right.parquet"
+  ]
+}
+[2026-07-05T18:25:07+08:00] auto-refresh: cleared infer + downstream .done markers
+[2026-07-05T18:25:07+08:00] >>> running precheck
+{
+  "source_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-lan-214",
+  "source_kind": "hot",
+  "errors": [],
+  "free_gb": 948.07
+}
+[2026-07-05T18:25:07+08:00] ✅ precheck complete
+[2026-07-05T18:25:07+08:00] >>> running undistort
+ERROR: Unexpected end of video while reading episode frames
+[2026-07-05T18:25:16+08:00] ERROR: undistort failed (no .done written; re-run to resume)
+[pipeline] session sess_f2710d2c024e4024b83ef204b256d6eb 失败 (exit 1)
+❌ 有 1 个 session 处理失败。修复后重新执行同一条命令即可断点续跑。日志: /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/logs/ego-run-pipeline-ego-lan-214-20260705-182229.log

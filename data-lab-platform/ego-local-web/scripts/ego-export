@@ -99,4 +99,4 @@ if [[ -d "$READY_DAY" ]]; then
   ls -lh "$READY_DAY"/*.tar.zst 2>/dev/null | awk '{print "     " $9 " (" $5 ")"}' || true
 fi
 echo ""
-echo "下一步: 将 .tar.zst 拷到 U 盘 → 34 采集页拖传 → 执行 ego-run-pipeline ego-lan-214"
+echo "下一步在本机执行上传：ego-upload"

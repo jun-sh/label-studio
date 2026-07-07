@@ -48,4 +48,7 @@ verify_image_frontend
 echo "==> Recreating app + nginx containers"
 "${COMPOSE[@]}" up -d --force-recreate app nginx
 
+echo "==> Verify /data page (embed manifest + bundled datasets)"
+bash "${ROOT}/data-lab-platform/verify-data-page.sh" || exit 1
+
 echo "==> Done. Frontend is baked into ${LABEL_STUDIO_IMAGE:-data-lab-label-studio:local}."

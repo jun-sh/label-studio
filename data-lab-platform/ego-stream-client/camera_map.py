@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# OAK board socket -> LeRobot observation.images.* (CAM_A stays PRIMARY / 20Hz grid)
+# OAK board socket -> LeRobot observation.images.* (CAM_A stays PRIMARY / 30Hz grid)
 OAK_SOCKET_TO_LEROBOT_VIDEO: dict[str, str] = {
     "CAM_A": "observation.images.camera_front_left",
     "CAM_B": "observation.images.camera_front_right",

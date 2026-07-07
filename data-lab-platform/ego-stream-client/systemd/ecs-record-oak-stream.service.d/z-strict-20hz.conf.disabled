@@ -1,9 +1,0 @@
-# Legacy stub — production config is z-strict-20hz.conf (enabled by default).
-# To disable strict mode: rm ../z-strict-20hz.conf, daemon-reload, restart service.
-[Service]
-Environment=EGO_STRICT_20HZ=1
-Environment=EGO_IMU_INTERPOLATE=1
-Environment=EGO_FRAME_INTERVAL_MS=50
-Environment=OAK_DEVICE_FPS=30
-Environment=SEGMENT_PERSIST_WORKERS=2
-Environment=SEGMENT_PERSIST_QUEUE_MAX=512

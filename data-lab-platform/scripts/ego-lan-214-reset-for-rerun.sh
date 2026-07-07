@@ -52,8 +52,12 @@ echo "214 segments: $(du -sh /home/server/cache/ego-lan-214/segments 2>/dev/null
 REMOTE
 
 log "=== 34: wipe stream (collection page source) ==="
-rm -rf "${STREAM_HOST}"
-mkdir -p "${STREAM_HOST}"
+if ! rm -rf "${STREAM_HOST}" 2>/dev/null; then
+  docker run --rm -v "${ROOT}/data-storage/stream:/srv/stream" alpine \
+    sh -c "rm -rf /srv/stream/${STATION} && mkdir -p /srv/stream/${STATION} && chown 1000:1000 /srv/stream/${STATION}"
+else
+  mkdir -p "${STREAM_HOST}"
+fi
 
 rm -rf "${STREAM_DEV}" 2>/dev/null || true
 rm -rf "${ARCHIVE_HOST}"

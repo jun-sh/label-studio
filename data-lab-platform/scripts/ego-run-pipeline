@@ -18,7 +18,7 @@ for arg in "$@"; do
 
 典型流程（99% 场景）：
   1. 214 手机录制 → ego-export
-  2. 34 采集页拖传 .tar.zst
+  2. 214 Agent 上传（ecs-oak-upload-stack）或单段浏览器应急补传
   3. ego-run-pipeline ego-lan-214
 EOF
       exit 0

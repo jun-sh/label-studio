@@ -139,7 +139,7 @@ class FrameStreamUploader:
         self._ring = EdgeRingStore.from_env()
         self._ring_backfill_stop = threading.Event()
         self._ring_backfill_thread: threading.Thread | None = None
-        self._capture_target_fps = float(os.environ.get("DATALAB_CAPTURE_TARGET_FPS", "20"))
+        self._capture_target_fps = float(os.environ.get("DATALAB_CAPTURE_TARGET_FPS", "30"))
         self._capture_fps_ema = 0.0
         self._http_session = requests.Session() if requests is not None else None
         if self._http_session and self.station_token:
@@ -381,6 +381,42 @@ class FrameStreamUploader:
         self._log("heartbeat_ok", host=self._heartbeat_host or "-")
         self._start_periodic_heartbeat()
 
+    def heartbeat_async(self, *, host: str | None = None) -> None:
+        """Fire initial heartbeat in background; never blocks capture startup."""
+        if host is not None:
+            self._heartbeat_host = host
+
+        def _run() -> None:
+            started = time.monotonic()
+            try:
+                self._post_control_plane(
+                    {"action": "heartbeat", "host": self._heartbeat_host},
+                    event="heartbeat",
+                )
+                self._note_upload_success()
+                self._log("heartbeat_ok", host=self._heartbeat_host or "-", async_mode=1)
+                self._start_periodic_heartbeat()
+            except Exception as exc:
+                elapsed = time.monotonic() - started
+                self._log(
+                    "heartbeat_async_fail",
+                    err=str(exc)[:160],
+                    elapsed_s=round(elapsed, 1),
+                )
+                if elapsed >= 30.0:
+                    self._log(
+                        "heartbeat_async_stall_alert",
+                        host=self._heartbeat_host or "-",
+                        elapsed_s=round(elapsed, 1),
+                        hint="check 34 network or set EGO_HEARTBEAT_ASYNC=0",
+                    )
+
+        threading.Thread(
+            target=_run,
+            name="datalab-heartbeat-async",
+            daemon=True,
+        ).start()
+
     def _start_periodic_heartbeat(self) -> None:
         if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             return
@@ -455,6 +491,7 @@ class FrameStreamUploader:
         task: str = "",
         video_shapes: dict[str, tuple[int, int]],
         session_id: str | None = None,
+        camera_intrinsics: dict[str, Any] | None = None,
     ) -> str:
         self.session_id = session_id or self.session_id or new_session_id()
         shapes_out = {k: [int(h), int(w)] for k, (h, w) in video_shapes.items()}
@@ -465,6 +502,8 @@ class FrameStreamUploader:
         }
         if task:
             body["task"] = task
+        if camera_intrinsics:
+            body["cameraIntrinsics"] = camera_intrinsics
         out = self._post_control_plane(
             body,
             event="session_start",

@@ -29,7 +29,7 @@
   #datalab-station-layer,
   #datalab-stream-loading-layer {
     position: fixed;
-    z-index: 50;
+    z-index: 150;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -118,11 +118,86 @@
     visibility: hidden !important;
     pointer-events: none !important;
   }
+
+  #datalab-station-preview-hint {
+    margin-left: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-neutral-content-subtle, #6b6860);
+    white-space: nowrap;
+  }
+
+  #datalab-station-preview-hint[hidden] {
+    display: none !important;
+  }
+
+  #datalab-derive-progress {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-left: 12px;
+    max-width: min(420px, 42vw);
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--color-neutral-content, #3d3a33);
+  }
+  #datalab-derive-progress[hidden] {
+    display: none !important;
+  }
+  #datalab-derive-progress .datalab-derive-progress__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .datalab-derive-progress__badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .datalab-derive-progress__badge.is-uploaded {
+    background: #e8f1ff;
+    color: #1d4ed8;
+  }
+  .datalab-derive-progress__badge.is-deriving {
+    background: #fff7e6;
+    color: #b45309;
+  }
+  .datalab-derive-progress__badge.is-ready {
+    background: #e8f8ef;
+    color: #15803d;
+  }
+  .datalab-derive-progress__badge.is-failed {
+    background: #fdecec;
+    color: #b91c1c;
+  }
+  .datalab-derive-progress__text {
+    font-weight: 500;
+  }
+  .datalab-derive-progress__failures {
+    margin: 0;
+    font-size: 11px;
+    color: #b91c1c;
+    max-width: 100%;
+  }
+  .datalab-derive-progress__failures ul {
+    margin: 4px 0 0 1.1em;
+    padding: 0;
+  }
+  .datalab-derive-progress__logs {
+    font-size: 11px;
+    color: var(--color-neutral-content-subtle, #6b6860);
+    word-break: break-all;
+  }
 </style>
 {% endblock %}
 
 {% block app-js %}
-<script src="/_datalab/import-core.js?v=4" nonce="{{ request.csp_nonce }}"></script>
+<script src="/_datalab/import-core.js?v=7" nonce="{{ request.csp_nonce }}"></script>
 <script src="/_datalab/import-card.js?v=2" nonce="{{ request.csp_nonce }}"></script>
 <script nonce="{{ request.csp_nonce }}">
   document.body.dataset.datalabCollectionPage = "1";
@@ -143,6 +218,15 @@
     var LABEL_PREVIEW = ZH ? "实时" : "Live";
     var LABEL_DATASET = ZH ? "回放" : "Playback";
     var LABEL_OFFLINE = ZH ? "采集离线" : "Station offline";
+    var LABEL_PREVIEW_CAPTURE_ACTIVE = ZH
+      ? "采集中远程实时已禁用，保护数据采集质量"
+      : "Remote live disabled during capture";
+    var LABEL_PREVIEW_IDLE_ONLY = ZH
+      ? "仅待机时可远程查看，不影响采集"
+      : "Remote browse when idle only";
+    var LABEL_PREVIEW_OPS_HINT = ZH
+      ? LABEL_PREVIEW_IDLE_ONLY
+      : "Remote browse when idle only; capture path is protected";
     var LABEL_THEME_LIGHT = ZH ? "浅色" : "Light";
     var LABEL_THEME_DARK = ZH ? "深色" : "Dark";
     var COLLECTION_MODE_MSG = "datalab-collection-mode";
@@ -150,10 +234,36 @@
     var THEME_SYNC_MSG = "datalab-lerobot-theme-sync";
     var IMPORT_DONE_MSG = "datalab-import-done";
     var LABEL_DATASET_LOADING = ZH ? "正在加载流式数据集…" : "Loading live stream dataset…";
+    var LABEL_DERIVE_UPLOADED = ZH ? "处理中" : "Processing";
+    var LABEL_DERIVE_DERIVING = ZH ? "处理中" : "Processing";
+    var LABEL_DERIVE_READY = ZH ? "已就绪" : "Ready";
+    var LABEL_DERIVE_FAILED = ZH ? "派生失败" : "Failed";
+    var LABEL_DERIVE_PROGRESS = ZH ? "进度" : "Progress";
+    var LABEL_DERIVE_LOGS = ZH ? "查看日志" : "Logs";
+    var DERIVE_POLL_MS = 5000;
 
     var STATION_FETCH_TIMEOUT_MS = 5000;
     var PING_TIMEOUT_MS = 4000;
     var STREAM_INFO_TIMEOUT_MS = 15000;
+    var remotePreviewEnabled = false;
+
+    function applyCollectionUi(data) {
+      if (!data || !data.collectionUi) return;
+      remotePreviewEnabled = Boolean(data.collectionUi.remotePreview);
+    }
+
+    function loadCollectionUi() {
+      return fetchWithTimeout("/lerobot/api/collection/stations", STATION_FETCH_TIMEOUT_MS)
+        .then(function (res) {
+          return res.ok ? res.json() : null;
+        })
+        .then(function (data) {
+          applyCollectionUi(data);
+        })
+        .catch(function () {
+          /* keep default */
+        });
+    }
 
     window.addEventListener("message", function (event) {
       if (event.origin !== window.location.origin) return;
@@ -163,6 +273,152 @@
         g.__datalabCollectionSetDatasetReady(true);
       }
     });
+
+    function humanizeDeriveError(msg) {
+      var raw = String(msg || "");
+      if (!raw) return ZH ? "未知错误" : "unknown";
+      if (/lock timeout|jsonl\.lock/i.test(raw)) {
+        return ZH ? "jsonl 锁超时" : "jsonl lock timeout";
+      }
+      if (/derive validation failed|frames/i.test(raw)) {
+        return raw.length > 100 ? raw.slice(0, 100) + "…" : raw;
+      }
+      return raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+    }
+
+    function updateDeriveProgressUi(stationId, rootEl, mode) {
+      if (!rootEl) return;
+      if (mode === "preview") {
+        rootEl.hidden = true;
+        return;
+      }
+      var badgeEl = rootEl.querySelector(".datalab-derive-progress__badge");
+      var textEl = rootEl.querySelector(".datalab-derive-progress__text");
+      var failEl = rootEl.querySelector(".datalab-derive-progress__failures");
+      var failList = rootEl.querySelector(".datalab-derive-progress__failures ul");
+      var logsEl = rootEl.querySelector(".datalab-derive-progress__logs");
+      fetchWithTimeout(
+        "/lerobot/api/collection/stations/" + encodeURIComponent(stationId) + "/derive-status",
+        STATION_FETCH_TIMEOUT_MS,
+      )
+        .then(function (res) {
+          return res.ok ? res.json() : null;
+        })
+        .then(function (data) {
+          if (!data || !badgeEl || !textEl) return;
+          var phase = String(data.phase || "IDLE");
+          var prog = data.progress || {};
+          var total = Number(prog.total || 0);
+          var markers = Number(prog.markers || 0);
+          var uploaded = Number(prog.uploaded ?? markers ?? 0);
+          var ready = phase === "READY" ? total : 0;
+          if (phase === "IDLE" || total <= 0) {
+            rootEl.hidden = true;
+            return;
+          }
+          rootEl.hidden = false;
+          var badgeClass = "datalab-derive-progress__badge";
+          var badgeLabel = phase;
+          if (phase === "UPLOADED") {
+            badgeClass += " is-uploaded";
+            badgeLabel = LABEL_DERIVE_UPLOADED;
+            var mp4Ok = Boolean(prog.mp4Ok);
+            var parquetReady = Boolean(prog.parquetReady);
+            if (markers > 0 && markers < total) {
+              textEl.textContent =
+                (ZH ? "处理中 " : "Processing ") + markers + "/" + total + (ZH ? " 段" : " segs");
+            } else if (parquetReady && !mp4Ok) {
+              var sub = String(prog.subPhaseLabelZh || prog.subPhase || "");
+              if (markers >= total && total > 0) {
+                textEl.textContent =
+                  markers +
+                  "/" +
+                  total +
+                  (ZH ? " · 视频合成中（MP4 多路编码）" : " · Muxing MP4 (multi-camera)");
+              } else if (sub && ZH) {
+                textEl.textContent = markers + "/" + total + " · " + sub;
+              } else {
+                textEl.textContent = ZH ? "MP4 合成中…" : "Muxing MP4…";
+              }
+            } else if (markers >= total && total > 0) {
+              textEl.textContent =
+                (ZH ? "已上传 " : "Uploaded ") +
+                uploaded +
+                "/" +
+                total +
+                (ZH ? " · 等待派生" : " · derive pending");
+            } else {
+              textEl.textContent =
+                (ZH ? "已上传 " : "Uploaded ") +
+                uploaded +
+                "/" +
+                total +
+                (ZH ? " · 等待处理" : " · pending");
+            }
+          } else if (phase === "DERIVING") {
+            badgeClass += " is-deriving";
+            badgeLabel = LABEL_DERIVE_DERIVING;
+            var eta = Number(data.etaSeconds || 0);
+            var etaTxt = "";
+            if (eta > 0) {
+              etaTxt = ZH ? " · 约 " + Math.max(1, Math.round(eta / 60)) + " 分钟" : " · ~" + Math.max(1, Math.round(eta / 60)) + " min";
+            }
+            textEl.textContent = LABEL_DERIVE_PROGRESS + " " + markers + "/" + total + etaTxt;
+          } else if (phase === "READY") {
+            badgeClass += " is-ready";
+            badgeLabel = LABEL_DERIVE_READY;
+            textEl.textContent = LABEL_DERIVE_READY + " " + total + "/" + total;
+            rootEl.hidden = true;
+          } else {
+            badgeClass += " is-uploaded";
+            badgeLabel = LABEL_DERIVE_UPLOADED;
+            textEl.textContent = LABEL_DERIVE_PROGRESS + " " + markers + "/" + total;
+          }
+          badgeEl.className = badgeClass;
+          badgeEl.textContent = badgeLabel;
+          var failed = data.failedSegments || [];
+          if (failEl && failList) {
+            if (failed.length > 0) {
+              failEl.hidden = false;
+              failList.innerHTML = "";
+              failed.slice(0, 6).forEach(function (item) {
+                var li = document.createElement("li");
+                li.textContent =
+                  (item.segmentId || "?") + ": " + humanizeDeriveError(item.errorMsg);
+                failList.appendChild(li);
+              });
+            } else {
+              failEl.hidden = true;
+              failList.innerHTML = "";
+            }
+          }
+          if (logsEl) {
+            var hint = data.logsHint || {};
+            var cmd = hint.deriveFailFilter || hint.command || "";
+            if (failed.length > 0 && cmd) {
+              logsEl.hidden = false;
+              logsEl.textContent = LABEL_DERIVE_LOGS + ": " + cmd;
+            } else {
+              logsEl.hidden = true;
+              logsEl.textContent = "";
+            }
+          }
+          if (
+            phase === "READY" &&
+            total > 0 &&
+            ready >= total &&
+            typeof g.__datalabCollectionSetDatasetReady === "function"
+          ) {
+            g.__datalabCollectionSetDatasetReady(true);
+          }
+          if (phase === "READY" && typeof g.__datalabCollectionStopDerivePoll === "function") {
+            g.__datalabCollectionStopDerivePoll();
+          }
+        })
+        .catch(function () {
+          /* keep last UI */
+        });
+    }
 
     function fetchWithTimeout(url, timeoutMs) {
       var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -447,6 +703,15 @@
         '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="preview" role="tab"></button>' +
         '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="dataset" role="tab"></button>' +
         "</div>" +
+        '<span id="datalab-station-preview-hint" hidden></span>' +
+        '<div id="datalab-derive-progress" class="datalab-derive-progress" hidden role="status" aria-live="polite">' +
+        '<div class="datalab-derive-progress__row">' +
+        '<span class="datalab-derive-progress__badge"></span>' +
+        '<span class="datalab-derive-progress__text"></span>' +
+        "</div>" +
+        '<details class="datalab-derive-progress__failures" hidden><ul></ul></details>' +
+        '<div class="datalab-derive-progress__logs" hidden></div>' +
+        "</div>" +
         '<div id="datalab-station-theme-pill" role="group" aria-label="' +
         (ZH ? "界面主题" : "Theme") +
         '">' +
@@ -471,6 +736,8 @@
       var modePreviewBtn = layer.querySelector('[data-datalab-station-mode="preview"]');
       var modeDatasetBtn = layer.querySelector('[data-datalab-station-mode="dataset"]');
       var modeStatusEl = layer.querySelector("#datalab-station-mode-status");
+      var previewHintEl = layer.querySelector("#datalab-station-preview-hint");
+      var deriveProgressEl = layer.querySelector("#datalab-derive-progress");
       var themeLightBtn = layer.querySelector('[data-datalab-station-theme="light"]');
       var themeDarkBtn = layer.querySelector('[data-datalab-station-theme="dark"]');
       var stationShellEl = layer.querySelector("#datalab-station-shell");
@@ -484,13 +751,65 @@
       var lerobotMounted = false;
       var vizFrame = null;
       var streamDatasetReady = Boolean(datasetReady);
+      var datasetCheckPending = !streamDatasetReady;
       var currentMode = "dataset";
       var currentTheme = "light";
       var liveOnline = Boolean(stationOnline);
+      var liveCaptureState = "offline";
+      var remotePreviewAllowed = false;
       var offlinePingStreak = 0;
       var OFFLINE_PING_STRIKES = 3;
       var iframeModeListenerBound = false;
       var iframeThemeListenerBound = false;
+
+      function previewModeAllowed() {
+        return remotePreviewEnabled && remotePreviewAllowed;
+      }
+
+      function previewBlockedReason() {
+        if (!remotePreviewEnabled) return "";
+        if (!liveOnline) return LABEL_OFFLINE;
+        if (liveCaptureState !== "idle") return LABEL_PREVIEW_CAPTURE_ACTIVE;
+        return "";
+      }
+
+      function updateParentModeChrome() {
+        if (!modePreviewBtn || !modeDatasetBtn) return;
+        var isPreview = currentMode === "preview";
+        modePreviewBtn.classList.toggle("is-active", isPreview);
+        modeDatasetBtn.classList.toggle("is-active", !isPreview);
+        modePreviewBtn.setAttribute("aria-selected", isPreview ? "true" : "false");
+        modeDatasetBtn.setAttribute("aria-selected", !isPreview ? "true" : "false");
+        modePreviewBtn.hidden = !remotePreviewEnabled;
+        if (remotePreviewEnabled) {
+          var blocked = previewBlockedReason();
+          modePreviewBtn.disabled = !previewModeAllowed();
+          modePreviewBtn.title = blocked;
+        } else {
+          modePreviewBtn.disabled = true;
+          modePreviewBtn.title = LABEL_PREVIEW_CAPTURE_ACTIVE;
+        }
+        if (previewHintEl) {
+          var showHint = remotePreviewEnabled && currentMode === "preview" && previewModeAllowed();
+          previewHintEl.hidden = !showHint;
+          previewHintEl.textContent = showHint ? LABEL_PREVIEW_OPS_HINT : "";
+        }
+        if (modeStatusEl) {
+          var statusMsg = previewBlockedReason();
+          if (statusMsg) {
+            modeStatusEl.hidden = false;
+            modeStatusEl.textContent = statusMsg;
+            modeStatusEl.classList.add("is-offline");
+          } else {
+            modeStatusEl.hidden = true;
+            modeStatusEl.textContent = "";
+            modeStatusEl.classList.remove("is-offline");
+          }
+        }
+        if (deriveProgressEl && currentMode === "preview") {
+          deriveProgressEl.hidden = true;
+        }
+      }
 
       function normalizeTheme(theme) {
         var t = String(theme || "light").toLowerCase();
@@ -564,26 +883,6 @@
         postThemeToIframe(theme);
       }
 
-      function updateParentModeChrome() {
-        if (!modePreviewBtn || !modeDatasetBtn) return;
-        var isPreview = currentMode === "preview";
-        modePreviewBtn.classList.toggle("is-active", isPreview);
-        modeDatasetBtn.classList.toggle("is-active", !isPreview);
-        modePreviewBtn.setAttribute("aria-selected", isPreview ? "true" : "false");
-        modeDatasetBtn.setAttribute("aria-selected", !isPreview ? "true" : "false");
-        if (modeStatusEl) {
-          if (!liveOnline) {
-            modeStatusEl.hidden = false;
-            modeStatusEl.textContent = LABEL_OFFLINE;
-            modeStatusEl.classList.add("is-offline");
-          } else {
-            modeStatusEl.hidden = true;
-            modeStatusEl.textContent = "";
-            modeStatusEl.classList.remove("is-offline");
-          }
-        }
-      }
-
       if (modePreviewBtn) {
         modePreviewBtn.addEventListener("click", function () {
           setMode("preview");
@@ -606,6 +905,7 @@
       }
 
       updateParentThemeChrome();
+      updateParentModeChrome();
 
       function syncOnlineToIframe() {
         postModeToIframe(iframeModeToSend());
@@ -620,6 +920,9 @@
               mode: mode,
               parentChrome: true,
               online: liveOnline,
+              remotePreview: remotePreviewEnabled,
+              captureState: liveCaptureState,
+              remotePreviewAllowed: remotePreviewAllowed,
             },
             window.location.origin,
           );
@@ -640,7 +943,7 @@
       function updateBodyLayout() {
         datasetLoadingEl.classList.toggle(
           "is-visible",
-          currentMode === "dataset" && !streamDatasetReady,
+          currentMode === "dataset" && datasetCheckPending,
         );
         vizSlot.classList.add("is-visible");
       }
@@ -669,13 +972,21 @@
       }
 
       g.__datalabCollectionSetDatasetReady = function (ready) {
+        var becameReady = Boolean(ready) && !streamDatasetReady;
+        datasetCheckPending = false;
         streamDatasetReady = Boolean(ready);
         updateBodyLayout();
-        if (!streamDatasetReady) return;
-        ensureLerobotMounted(true);
+        ensureLerobotMounted(becameReady);
         syncIframeMode();
         syncThemeFromIframe();
         postThemeToIframe(currentTheme);
+      };
+
+      g.__datalabCollectionStopDerivePoll = function () {
+        if (derivePollTimer) {
+          clearInterval(derivePollTimer);
+          derivePollTimer = null;
+        }
       };
 
       g.__datalabCollectionApplyStation = function (patch) {
@@ -685,6 +996,9 @@
           if (patch.online) {
             offlinePingStreak = 0;
             liveOnline = true;
+          } else if (remotePreviewEnabled) {
+            offlinePingStreak = OFFLINE_PING_STRIKES;
+            liveOnline = false;
           } else {
             offlinePingStreak += 1;
             if (offlinePingStreak >= OFFLINE_PING_STRIKES) {
@@ -692,7 +1006,16 @@
             }
           }
         }
-        if (wasLive && !liveOnline && currentMode === "preview") {
+        if (typeof patch.captureState === "string") {
+          liveCaptureState = patch.captureState;
+        }
+        if (typeof patch.remotePreviewAllowed === "boolean") {
+          remotePreviewAllowed = patch.remotePreviewAllowed;
+        } else {
+          remotePreviewAllowed =
+            remotePreviewEnabled && liveOnline && liveCaptureState === "idle";
+        }
+        if ((wasLive && !liveOnline && currentMode === "preview") || (currentMode === "preview" && !previewModeAllowed())) {
           setMode("dataset");
         } else {
           syncOnlineToIframe();
@@ -701,7 +1024,7 @@
       };
 
       function setModeFromIframe(mode) {
-        if (mode === "preview" && !liveOnline && offlinePingStreak >= OFFLINE_PING_STRIKES) {
+        if (mode === "preview" && !previewModeAllowed()) {
           mode = "dataset";
         }
         currentMode = mode;
@@ -737,13 +1060,14 @@
       }
 
       function setMode(mode) {
-        if (mode === "preview" && !liveOnline && offlinePingStreak >= OFFLINE_PING_STRIKES) {
+        if (mode === "preview" && !previewModeAllowed()) {
           mode = "dataset";
         }
         currentMode = mode;
         ensureLerobotMounted(false);
         updateBodyLayout();
         updateParentModeChrome();
+        updateDeriveProgressUi(stationId, deriveProgressEl, mode);
         syncIframeMode();
         syncBounds(VIZ_LAYER, VIZ_FRAME);
       }
@@ -769,37 +1093,88 @@
           })
           .then(function (st) {
             if (!st) return;
-            g.__datalabCollectionApplyStation({ online: Boolean(st.online) });
+            g.__datalabCollectionApplyStation({
+              online: Boolean(st.online),
+              captureState: st.captureState || "unknown",
+              remotePreviewAllowed: Boolean(st.remotePreviewAllowed),
+            });
           })
           .catch(function () {
             /* ignore */
           });
       }, 10000);
 
+      updateDeriveProgressUi(stationId, deriveProgressEl, currentMode);
+      var derivePollTimer = setInterval(function () {
+        if (!derivePollTimer) return;
+        updateDeriveProgressUi(stationId, deriveProgressEl, currentMode);
+      }, DERIVE_POLL_MS);
+
       window.addEventListener("beforeunload", function () {
         clearInterval(pollTimer);
+        clearInterval(derivePollTimer);
       });
+
+      g.__datalabCollectionRefreshUi = function () {
+        updateParentModeChrome();
+        syncOnlineToIframe();
+      };
     }
+
+    var stationPageStarted = false;
 
     function openStationPage(station) {
       if (!station) {
         showList();
         return;
       }
+      if (stationPageStarted) return;
+      stationPageStarted = true;
       var datasetUrl = station.datasetUrl || "stream://" + station.id;
-      mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
-      attachLayoutListeners();
+      loadCollectionUi().then(function () {
+        mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
+        attachLayoutListeners();
 
-      fetchWithTimeout(
-        "/lerobot/api/collection/stations/" + encodeURIComponent(station.id) + "/ping",
-        PING_TIMEOUT_MS,
-      )
+        fetchWithTimeout(
+          "/lerobot/api/collection/stations/" + encodeURIComponent(station.id),
+          STATION_FETCH_TIMEOUT_MS,
+        )
+          .then(function (res) {
+            return res.ok ? res.json() : null;
+          })
+          .then(function (detail) {
+            if (detail) {
+              applyCollectionUi(detail);
+              if (typeof g.__datalabCollectionApplyStation === "function") {
+                g.__datalabCollectionApplyStation({
+                  online: Boolean(detail.online),
+                  captureState: detail.captureState || "unknown",
+                  remotePreviewAllowed: Boolean(detail.remotePreviewAllowed),
+                });
+              }
+              if (typeof g.__datalabCollectionRefreshUi === "function") {
+                g.__datalabCollectionRefreshUi();
+              }
+            }
+          })
+          .catch(function () {
+            /* keep shell */
+          });
+
+        fetchWithTimeout(
+          "/lerobot/api/collection/stations/" + encodeURIComponent(station.id) + "/ping",
+          PING_TIMEOUT_MS,
+        )
         .then(function (res) {
           return res.ok ? res.json() : null;
         })
         .then(function (ping) {
           if (ping && g.__datalabCollectionApplyStation) {
-            g.__datalabCollectionApplyStation({ online: Boolean(ping.online) });
+            g.__datalabCollectionApplyStation({
+              online: Boolean(ping.online),
+              captureState: ping.captureState || "unknown",
+              remotePreviewAllowed: Boolean(ping.remotePreviewAllowed),
+            });
           }
         })
         .catch(function () {
@@ -807,7 +1182,12 @@
         });
 
       var infoUrl = streamInfoUrl(datasetUrl);
-      if (!infoUrl) return;
+      if (!infoUrl) {
+        if (g.__datalabCollectionSetDatasetReady) {
+          g.__datalabCollectionSetDatasetReady(false);
+        }
+        return;
+      }
       fetchWithTimeout(infoUrl, STREAM_INFO_TIMEOUT_MS)
         .then(function (res) {
           if (g.__datalabCollectionSetDatasetReady) {
@@ -815,8 +1195,11 @@
           }
         })
         .catch(function () {
-          /* iframe may still load */
+          if (g.__datalabCollectionSetDatasetReady) {
+            g.__datalabCollectionSetDatasetReady(false);
+          }
         });
+      });
     }
 
     window.addEventListener("message", function (event) {
@@ -846,7 +1229,9 @@
       purgeReactLegacyVizLayer();
     }
 
-    ensureStationShellMounted();
+    loadCollectionUi().finally(function () {
+      ensureStationShellMounted();
+    });
     [120, 400, 1200].forEach(function (ms) {
       setTimeout(ensureStationShellMounted, ms);
     });
@@ -859,7 +1244,12 @@
         return res.ok ? res.json() : null;
       })
       .then(function (station) {
-        if (station && g.__datalabCollectionApplyStation) {
+        if (!station) return;
+        applyCollectionUi(station);
+        if (typeof g.__datalabCollectionRefreshUi === "function") {
+          g.__datalabCollectionRefreshUi();
+        }
+        if (g.__datalabCollectionApplyStation) {
           g.__datalabCollectionApplyStation({ online: Boolean(station.online) });
         }
       })

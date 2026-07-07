@@ -7,7 +7,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  ensureStreamScaffoldAvailable,
   getStreamStatus,
+  getStationCaptureState,
+  isRemotePreviewAllowed,
   isStationLiveCached,
   resolveStreamFile,
   streamDatasetUrl,
@@ -34,6 +37,21 @@ const samplesManifest = JSON.parse(fs.readFileSync(samplesManifestPath, "utf8"))
 const collectionStationsPath =
   process.env.COLLECTION_STATIONS_JSON || path.join(__dirname, "config", "collection-stations.json");
 const collectionStations = JSON.parse(fs.readFileSync(collectionStationsPath, "utf8"));
+
+function isCollectionRemotePreviewEnabled() {
+  const raw = process.env.COLLECTION_REMOTE_PREVIEW ?? "0";
+  return ["1", "true", "yes", "on"].includes(String(raw).trim().toLowerCase());
+}
+
+const COLLECTION_UI = {
+  remotePreview: isCollectionRemotePreviewEnabled(),
+  previewPolicy: "idle_only",
+  previewSnapshotMs: Number(process.env.COLLECTION_REMOTE_PREVIEW_SNAPSHOT_MS || 500),
+};
+
+function collectionUiPayload() {
+  return COLLECTION_UI;
+}
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -220,7 +238,7 @@ function buildHandKp2dV3FromZip(zipPath) {
   if (Object.keys(episodes).length === 1) return first;
   return {
     version: 3,
-    fps: first?.fps || 20,
+    fps: first?.fps || 30,
     video_key: first?.video_key || "observation.images.camera_head_left",
     episodes,
   };
@@ -256,22 +274,39 @@ function isCollectionEmbedSearch(search = "") {
   }
 }
 
+/** /data iframe only — native /lerobot/ must not load manifest-embed-fix.js */
+function isDataLabEmbedSearch(search = "") {
+  try {
+    const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+    return params.get("datalab_embed") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function injectBranding(html, search = "") {
   const collectionEmbed = isCollectionEmbedSearch(search);
-  let inject =
+  const dataLabEmbed = isDataLabEmbedSearch(search);
+  let inject = "";
+  if (dataLabEmbed) {
+    inject +=
+      '<script src="/lerobot/branding/manifest-embed-fix.js?v=1"></script>';
+  }
+  inject +=
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=56"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=65"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=8"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=55"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=65"></script>' +
     '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=9"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=
+      `<script>window.__DATALAB_COLLECTION_UI__=${JSON.stringify(COLLECTION_UI)};</script>` +
       '<link rel="stylesheet" href="/lerobot/branding/overlay-import.css?v=5"/>' +
-      '<script src="/_datalab/import-core.js?v=3"></script>' +
+      '<script src="/_datalab/import-core.js?v=7"></script>' +
       '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
       '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
@@ -336,6 +371,9 @@ const server = http.createServer((req, res) => {
   function enrichStation(station) {
     const heartbeatOnline = station.stream ? isStationLiveCached(station.id) : false;
     const online = heartbeatOnline || Boolean(station.online);
+    const captureState = station.stream ? getStationCaptureState(station.id) : "offline";
+    const remotePreviewAllowed =
+      COLLECTION_UI.remotePreview && isRemotePreviewAllowed(station.id);
     let datasetUrl = station.datasetUrl;
     if (!datasetUrl && online) {
       datasetUrl = station.stream ? streamDatasetUrl(station.id) : "sample://sensexperience_ego";
@@ -344,7 +382,14 @@ const server = http.createServer((req, res) => {
       datasetUrl && String(datasetUrl).startsWith("stream://")
         ? streamHttpDatasetUrl(station.id)
         : null;
-    return { ...station, online, datasetUrl, httpDatasetUrl };
+    return {
+      ...station,
+      online,
+      captureState,
+      remotePreviewAllowed,
+      datasetUrl,
+      httpDatasetUrl,
+    };
   }
 
   if (p === `${BASE}/api/collection/stations/catalog`) {
@@ -361,7 +406,11 @@ const server = http.createServer((req, res) => {
 
   if (p === `${BASE}/api/collection/stations`) {
     const enriched = collectionStations.map(enrichStation);
-    return sendJson(res, 200, { stations: enriched, updatedAt: new Date().toISOString() });
+    return sendJson(res, 200, {
+      stations: enriched,
+      collectionUi: collectionUiPayload(),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   const stationPingMatch = p.match(
@@ -374,7 +423,16 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 404, { error: "station_not_found" });
     }
     const online = station.stream ? isStationLiveCached(stationId) : Boolean(station.online);
-    return sendJson(res, 200, { stationId, online, updatedAt: new Date().toISOString() });
+    const captureState = station.stream ? getStationCaptureState(stationId) : "offline";
+    const remotePreviewAllowed =
+      COLLECTION_UI.remotePreview && isRemotePreviewAllowed(stationId);
+    return sendJson(res, 200, {
+      stationId,
+      online,
+      captureState,
+      remotePreviewAllowed,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   const stationMatch = p.match(new RegExp(`^${BASE}/api/collection/stations/([^/]+)$`));
@@ -383,7 +441,7 @@ const server = http.createServer((req, res) => {
     if (!station) {
       return sendJson(res, 404, { error: "station_not_found" });
     }
-    return sendJson(res, 200, enrichStation(station));
+    return sendJson(res, 200, { ...enrichStation(station), collectionUi: collectionUiPayload() });
   }
 
   const previewMatch = p.match(
@@ -421,14 +479,24 @@ const server = http.createServer((req, res) => {
   if (streamFileMatch && (req.method === "GET" || req.method === "HEAD")) {
     const stationId = decodeURIComponent(streamFileMatch[1]);
     const rel = streamFileMatch[2] || "";
-    const disk =
-      rel === "" || rel.endsWith("/")
-        ? resolveStreamFile(stationId, "meta/info.json")
-        : resolveStreamFile(stationId, rel);
-    if (disk) {
-      return serveFileWithRange(req, res, disk);
+    const needsScaffold = rel === "" || rel.endsWith("/") || rel === "meta/info.json";
+    const serveStreamFile = () => {
+      const disk =
+        rel === "" || rel.endsWith("/")
+          ? resolveStreamFile(stationId, "meta/info.json")
+          : resolveStreamFile(stationId, rel);
+      if (disk) {
+        return serveFileWithRange(req, res, disk);
+      }
+      return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+    };
+    if (needsScaffold) {
+      ensureStreamScaffoldAvailable(stationId)
+        .then(() => serveStreamFile())
+        .catch(() => send(res, 500, "Scaffold failed\n", { "Content-Type": "text/plain" }));
+      return;
     }
-    return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+    return serveStreamFile();
   }
 
   if (p.startsWith(`${BASE}/branding/`)) {

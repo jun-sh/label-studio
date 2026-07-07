@@ -1,0 +1,19 @@
+{
+  "mode": "egoverse_30hz",
+  "status": "production_standard",
+  "station": "ego-lan-214",
+  "capture_fps": 30,
+  "imu_hz": 200,
+  "frame_interval_ms": 33,
+  "resolution": "1280x800",
+  "segment_max_frames": 300,
+  "soak_fps_band": [29.5, 30.5],
+  "soak_min_segments": 100,
+  "soak_pass_rate_pct": 100.0,
+  "production_stack": [
+    "ecs-record-oak-stream.service + z-production-egoverse.conf",
+    "ecs-upload-segments-loop.service",
+    "ecs-station-heartbeat.service"
+  ],
+  "validation_tool": "tools/validate_strict_sync.py --interval-ms 33"
+}

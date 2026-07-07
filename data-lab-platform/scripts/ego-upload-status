@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# ego-upload-status — 查看 214 ecs-upload-loop 上传进度（P0 商用可观测）
+# 用法:
+#   ego-upload-status
+#   ego-upload-status --json
+#   python -m ego_capture_studio.cli.upload_status
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="${EGO_PYTHON:-}"
+
+if [[ -z "$PY" ]]; then
+  for candidate in \
+    "/home/server/workspace/ego-studio/.venv/bin/python" \
+    "${ROOT}/ego-stream-client/.venv/bin/python" \
+    "$(command -v python3 2>/dev/null || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      PY="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$PY" ]]; then
+  echo "❌ 未找到 Python。请设置 EGO_PYTHON 或在 ego-studio venv 下运行。" >&2
+  exit 2
+fi
+
+# 仓库开发：模块在 ego-stream-client/
+export PYTHONPATH="${EGO_CAPTURE_SRC:-${ROOT}/ego-stream-client}${PYTHONPATH:+:$PYTHONPATH}"
+
+exec "$PY" -m ego_capture_studio.cli.upload_status "$@"

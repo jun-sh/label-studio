@@ -5,13 +5,18 @@
   "use strict";
 
   var POLL_MS = 2000;
+  var MAX_CONCURRENT_UPLOADS = 2;
   var API = "/api/collection/stations";
 
   var STRINGS = {
     zh: {
-      title: "离线数据导入",
-      help: "支持 .tar.zst 段包，处理链路与在线上传完全一致",
-      dropHint: "拖拽 .tar.zst 到此处，或点击选择文件",
+      title: "单段应急补传",
+      help: "仅用于补传 1 个 .tar.zst 段包，不具备批量商用可靠性",
+      agentNotice:
+        "批量上传请使用 214 原生 Agent：systemctl --user start ecs-oak-upload-stack.target（pending=0 后 stop）",
+      batchWarn:
+        "已选择多个文件：浏览器不适合批量导入，请改用 214 upload stack；继续仅作应急尝试。",
+      dropHint: "拖拽单个 .tar.zst，或点击选择（批量请用 214 Agent）",
       dropActive: "松开以上传",
       total: "总进度",
       retry: "重试",
@@ -22,17 +27,24 @@
       stages: {
         queued: "等待中",
         uploading: "上传中",
-        validating: "校验中",
-        extracting: "解压中",
-        committing: "写入中",
+        processing: "处理中",
+        validating: "处理中",
+        extracting: "处理中",
+        committing: "处理中",
         done: "成功",
+        doneRawAck: "已上传，后台处理中",
+        skipped: "已存在，跳过",
         failed: "失败",
       },
     },
     en: {
-      title: "Import Offline Segments",
-      help: "Upload .tar.zst segment archives — same ingest path as online upload",
-      dropHint: "Drop .tar.zst files here or click to browse",
+      title: "Single-segment fallback upload",
+      help: "One .tar.zst only — not reliable for batch production use",
+      agentNotice:
+        "For batch upload use 214 Agent: systemctl --user start ecs-oak-upload-stack.target",
+      batchWarn:
+        "Multiple files selected: browser is not for batch import; use 214 upload stack.",
+      dropHint: "Drop one .tar.zst or browse (use 214 Agent for batch)",
       dropActive: "Release to upload",
       total: "Overall",
       retry: "Retry",
@@ -43,10 +55,13 @@
       stages: {
         queued: "Queued",
         uploading: "Uploading",
-        validating: "Validating",
-        extracting: "Extracting",
-        committing: "Committing",
+        processing: "Processing",
+        validating: "Processing",
+        extracting: "Processing",
+        committing: "Processing",
         done: "Done",
+        doneRawAck: "Uploaded, processing in background",
+        skipped: "Already ingested, skipped",
         failed: "Failed",
       },
     },
@@ -75,8 +90,19 @@
     return bucket[key];
   }
 
-  function stageLabel(status) {
+  function stageLabel(status, item) {
     var stages = (STRINGS[pageLang()] || STRINGS.en).stages;
+    if (status === "done" && item && (item.deriveStatus === "verified" || item.rawAck)) {
+      return stages.doneRawAck;
+    }
+    if (
+      status === "validating" ||
+      status === "extracting" ||
+      status === "committing" ||
+      status === "processing"
+    ) {
+      return stages.processing;
+    }
     return stages[status] || status;
   }
 
@@ -91,10 +117,18 @@
     this.items = [];
     this.pollTimer = null;
     this._notifiedDone = Object.create(null);
+    this.batchWarn = null;
   }
 
   ImportController.prototype.enqueueFiles = function (fileList) {
     if (!fileList || !fileList.length) return;
+    var tarCount = 0;
+    for (var i = 0; i < fileList.length; i++) {
+      if (isTarZst(fileList[i])) tarCount += 1;
+    }
+    if (tarCount > 1) {
+      this.batchWarn = t("batchWarn");
+    }
     for (var i = 0; i < fileList.length; i++) {
       var file = fileList[i];
       if (!isTarZst(file)) continue;
@@ -108,6 +142,8 @@
         duplicate: false,
         errorMsg: null,
         framesCommitted: 0,
+        deriveStatus: null,
+        rawAck: false,
       });
     }
     this._emit();
@@ -131,28 +167,37 @@
     var done = this.items.filter(function (it) {
       return it.status === "done";
     }).length;
+    var skipped = this.items.filter(function (it) {
+      return it.status === "skipped";
+    }).length;
     var failed = this.items.filter(function (it) {
       return it.status === "failed";
     }).length;
     var active = this.items.filter(function (it) {
-      return it.status !== "done" && it.status !== "failed" && it.status !== "queued";
+      return (
+        it.status !== "done" &&
+        it.status !== "failed" &&
+        it.status !== "skipped" &&
+        it.status !== "queued"
+      );
     });
-    var pct = total ? Math.round(((done + failed * 0.5) / total) * 100) : 0;
+    var finished = done + skipped + failed;
+    var pct = total ? Math.round(((finished + failed * 0) / total) * 100) : 0;
     if (active.length) {
       var sum = 0;
       active.forEach(function (it) {
         if (it.status === "uploading") sum += it.uploadPct / 100;
         else sum += 0.85;
       });
-      pct = Math.min(99, Math.round(((done + sum) / total) * 100));
+      pct = Math.min(99, Math.round(((done + skipped + sum) / total) * 100));
     }
-    if (done + failed === total && total > 0) pct = 100;
-    var meta = done + " / " + total;
+    if (finished === total && total > 0) pct = 100;
+    var meta = done + skipped + " / " + total;
     if (failed) meta += " (" + failed + " failed)";
-    else if (active.length && done + failed < total) meta += " (" + t("processing") + ")";
+    else if (active.length && finished < total) meta += " (" + t("processing") + ")";
     return {
       total: total,
-      done: done,
+      done: done + skipped,
       failed: failed,
       pct: pct,
       meta: meta,
@@ -181,11 +226,28 @@
     this.onStateChange(this.items, this.getProgress());
   };
 
+  ImportController.prototype._activeUploadCount = function () {
+    return this.items.filter(function (it) {
+      return (
+        it.status === "uploading" ||
+        (it.taskId &&
+          it.status !== "done" &&
+          it.status !== "failed" &&
+          it.status !== "skipped")
+      );
+    }).length;
+  };
+
   ImportController.prototype._kickQueue = function () {
     var self = this;
-    this.items.forEach(function (item) {
-      if (item.status === "queued") self._uploadItem(item);
+    var slots = MAX_CONCURRENT_UPLOADS - this._activeUploadCount();
+    if (slots <= 0) return;
+    var queued = this.items.filter(function (it) {
+      return it.status === "queued";
     });
+    for (var i = 0; i < Math.min(slots, queued.length); i++) {
+      self._uploadItem(queued[i]);
+    }
     this._ensurePoll();
   };
 
@@ -222,6 +284,7 @@
           item.status = "failed";
           item.errorMsg = "invalid response";
           self._emit();
+          self._kickQueue();
         }
         return;
       }
@@ -233,12 +296,14 @@
         item.errorMsg = "upload failed (" + xhr.status + ")";
       }
       self._emit();
+      self._kickQueue();
     };
     xhr.onerror = function () {
       item._xhr = null;
       item.status = "failed";
       item.errorMsg = "network error";
       self._emit();
+      self._kickQueue();
     };
     xhr.send(form);
   };
@@ -255,7 +320,12 @@
   ImportController.prototype._pollActive = function () {
     var self = this;
     var pending = this.items.filter(function (it) {
-      return it.taskId && it.status !== "done" && it.status !== "failed";
+      return (
+        it.taskId &&
+        it.status !== "done" &&
+        it.status !== "failed" &&
+        it.status !== "skipped"
+      );
     });
     if (!pending.length) {
       if (this.pollTimer) {
@@ -292,19 +362,32 @@
           item.status = task.status || item.status;
           item.duplicate = Boolean(task.duplicate);
           item.framesCommitted = Number(task.framesCommitted || 0);
+          item.deriveStatus = task.deriveStatus || null;
+          item.rawAck =
+            item.status === "done" &&
+            (item.deriveStatus === "verified" ||
+              (item.framesCommitted === 0 && !item.duplicate));
           item.errorMsg = task.errorMsg || null;
-          if (task.status === "done" && task.duplicate) {
-            item.status = "done";
+          if (task.status === "skipped") {
+            item.status = "skipped";
+            item.duplicate = true;
           }
-          if (item.status === "done" && prevStatus !== "done" && !self._notifiedDone[item.id]) {
+          if (
+            (item.status === "done" || item.status === "skipped") &&
+            prevStatus !== item.status &&
+            !self._notifiedDone[item.id]
+          ) {
             self._notifiedDone[item.id] = true;
             self.onSuccess({
-              duplicate: item.duplicate,
+              duplicate: item.status === "skipped" || item.duplicate,
               framesCommitted: item.framesCommitted,
               fileName: item.fileName,
             });
           }
           self._emit();
+          if (item.status === "done" || item.status === "failed" || item.status === "skipped") {
+            self._kickQueue();
+          }
         })
         .catch(function () {
           item._pollMiss = (item._pollMiss || 0) + 1;
@@ -360,6 +443,8 @@
     var root = document.createElement("div");
     root.className = "datalab-import-ui";
     root.innerHTML =
+      '<p class="datalab-import-ui__agent-notice" role="note"></p>' +
+      '<p class="datalab-import-ui__batch-warn" hidden role="alert"></p>' +
       '<div class="datalab-import-ui__drop" tabindex="0" role="button">' +
       '<p class="datalab-import-ui__drop-text"></p>' +
       '<input type="file" class="datalab-import-ui__file" accept=".tar.zst,application/zstd" multiple hidden />' +
@@ -371,6 +456,7 @@
       "</div>" +
       '<ul class="datalab-import-ui__list" hidden></ul>';
 
+    root.querySelector(".datalab-import-ui__agent-notice").textContent = t("agentNotice");
     root.querySelector(".datalab-import-ui__drop-text").textContent = t("dropHint");
     root.querySelector(".datalab-import-ui__total-label").textContent = t("total");
 
@@ -380,11 +466,14 @@
     var totalEl = root.querySelector(".datalab-import-ui__total");
     var totalFill = root.querySelector(".datalab-import-ui__bar-fill");
     var totalMeta = root.querySelector(".datalab-import-ui__total-meta");
+    var batchWarnEl = root.querySelector(".datalab-import-ui__batch-warn");
 
     bindDropZone(dropEl, fileInput, controller);
 
     function syncUi() {
       var progress = controller.getProgress();
+      batchWarnEl.hidden = !controller.batchWarn;
+      if (controller.batchWarn) batchWarnEl.textContent = controller.batchWarn;
       totalEl.hidden = !progress.hasItems;
       listEl.hidden = !progress.hasItems;
       totalFill.style.width = progress.pct + "%";
@@ -394,12 +483,12 @@
       controller.items.forEach(function (item) {
         var li = document.createElement("li");
         li.className = "datalab-import-ui__row";
-        var label = stageLabel(item.status);
-        if (item.status === "done" && item.duplicate) label = t("skipped");
+        var label = stageLabel(item.status, item);
+        if (item.status === "skipped") label = t("skipped");
         var rowPct =
           item.status === "uploading"
             ? item.uploadPct
-            : item.status === "done"
+            : item.status === "done" || item.status === "skipped"
               ? 100
               : item.status === "failed"
                 ? 100
@@ -491,6 +580,7 @@
       '<div class="datalab-import-modal__titles">' +
       '<h2 id="datalab-import-title" class="datalab-import-modal__title"></h2>' +
       '<p class="datalab-import-modal__help"></p>' +
+      '<p class="datalab-import-modal__agent-notice" role="note"></p>' +
       "</div>" +
       '<button type="button" class="datalab-import-modal__icon-close" data-datalab-import-close="1" aria-label=""></button>' +
       "</header>" +
@@ -502,6 +592,7 @@
 
     modalEl.querySelector(".datalab-import-modal__title").textContent = labels.title;
     modalEl.querySelector(".datalab-import-modal__help").textContent = labels.help;
+    modalEl.querySelector(".datalab-import-modal__agent-notice").textContent = labels.agentNotice;
     modalEl.querySelector(".datalab-import-modal__icon-close").textContent = "\u00d7";
     modalEl.querySelector(".datalab-import-modal__icon-close").setAttribute("aria-label", labels.close);
     modalEl.querySelector(".datalab-import-modal__close").textContent = labels.close;

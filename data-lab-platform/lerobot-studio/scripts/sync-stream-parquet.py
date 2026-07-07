@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import re
 from datetime import datetime, timezone
 
 PIPELINE_VERSION = "1.0.0"
+VIEWER_SCAFFOLD_FRAMES = 1
 
 EPISODE_META_STRING_COLS = (
     "station_id",
@@ -27,6 +29,18 @@ EPISODE_META_STRING_COLS = (
 EPISODE_META_FLOAT_COLS = (
     "quality_valid_hand_ratio",
     "quality_mean_jitter",
+)
+
+EPISODE_INT_COLS = (
+    "episode_index",
+    "length",
+    "task_index",
+    "dataset_from_index",
+    "dataset_to_index",
+    "data/chunk_index",
+    "data/file_index",
+    "chunk_index",
+    "file_index",
 )
 
 EPISODE_META_DEFAULTS = {
@@ -126,7 +140,10 @@ def format_episode_display_task(base_task: str, length: int) -> str:
 
 
 def format_episode_list_task(ep: dict, full_task: str) -> str:
-    """LeRobot sidebar line 3: {task} · {frames}f"""
+    """LeRobot sidebar line 3: prefer per-episode title from episodes-index."""
+    title = str(ep.get("title") or "").strip()
+    if title:
+        return title
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
     to_idx = int(ep.get("dataset_to_index") or from_idx + length)
@@ -140,6 +157,16 @@ def read_json(path: Path, default=None):
         return json.loads(path.read_text(encoding="utf-8"))
     except OSError:
         return default
+
+
+def lerobot_owns_data(root: Path) -> bool:
+    """Official LeRobot derive owns data/ and meta/episodes/ — sync must not rewrite them."""
+    marker = read_json(root / "live" / "parquet_sync.json", {})
+    if marker.get("lerobot_data_owned") is True:
+        return True
+    data_pq = root / "data" / "chunk-000" / "file-000.parquet"
+    jsonl = root / "data" / "chunk-000" / "file-000.jsonl"
+    return data_pq.is_file() and not jsonl.is_file()
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -157,7 +184,7 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def write_tasks_jsonl(root: Path, episodes: list[dict], full_task: str) -> None:
+def write_tasks_jsonl(root: Path, episodes: list[dict], full_task: str, *, skip_tasks_parquet: bool = False) -> None:
     meta = root / "meta"
     meta.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
@@ -179,6 +206,31 @@ def write_tasks_jsonl(root: Path, episodes: list[dict], full_task: str) -> None:
             )
         )
     (meta / "tasks.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not skip_tasks_parquet:
+        write_tasks_parquet(root, episodes, full_task)
+
+
+def write_tasks_parquet(root: Path, episodes: list[dict], full_task: str) -> None:
+    """LeRobot 0.4.4 loads tasks from meta/tasks.parquet (not jsonl)."""
+    rows: list[dict] = []
+    if episodes:
+        for ep in episodes:
+            idx = int(ep.get("episode_index", len(rows)))
+            rows.append(
+                {
+                    "task_index": idx,
+                    "task": format_episode_list_task(ep, full_task),
+                }
+            )
+    else:
+        rows.append(
+            {
+                "task_index": 0,
+                "task": format_episode_display_task(full_task, 0),
+            }
+        )
+    table = pa.Table.from_pylist(rows)
+    _atomic_parquet_write(table, root / "meta" / "tasks.parquet")
 
 
 def _atomic_parquet_write(table: pa.Table, out: Path) -> None:
@@ -329,19 +381,13 @@ def data_parquet_row_count(path: Path) -> int:
 
 
 def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[dict]) -> None:
-    info = read_json(root / "meta" / "info.json", {})
-    total_frames = int(info.get("total_frames") or 0)
-    if total_frames <= 0 and rows:
-        total_frames = max(int(r.get("frame_index", 0)) for r in rows) + 1
-    if total_frames <= 0:
+    if not rows:
         return
-
+    info = read_json(root / "meta" / "info.json", {})
     scalar_keys = scalar_feature_keys(info)
-    sparse: dict[int, dict] = {}
-    for row in rows:
-        sparse[int(row.get("frame_index", len(sparse)))] = row
+    rows_sorted = sorted(rows, key=lambda r: int(r.get("frame_index", 0)))
+    frame_min = int(rows_sorted[0].get("frame_index", 0))
 
-    last_vectors = {key: default_feature_vector(key, info) for key in scalar_keys}
     frame_index_col: list[int] = []
     episode_index_col: list[int] = []
     index_col: list[int] = []
@@ -349,21 +395,19 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     timestamp_col: list[float] = []
     feature_cols: dict[str, list[list]] = {key: [] for key in scalar_keys}
 
-    for frame in range(total_frames):
-        src = sparse.get(frame)
+    for seq, src in enumerate(rows_sorted):
+        frame = int(src.get("frame_index", seq))
         frame_index_col.append(frame)
-        index_col.append(frame)
+        index_col.append(seq)
         episode_index_col.append(
             episode_index_for_frame(episodes, frame) if episodes else 0
         )
         task_index_col.append(
             episode_index_for_frame(episodes, frame) if episodes else 0
         )
-        timestamp_col.append(float(frame) / fps if fps > 0 else 0.0)
+        timestamp_col.append(float(seq) / fps if fps > 0 else 0.0)
         for key in scalar_keys:
-            if src is not None and key in src:
-                last_vectors[key] = coerce_feature_vector(src[key], key, info)
-            feature_cols[key].append(last_vectors[key][:])
+            feature_cols[key].append(coerce_feature_vector(src.get(key), key, info))
 
     table_cols: dict[str, pa.Array] = {
         "frame_index": pa.array(frame_index_col, type=pa.int64()),
@@ -378,6 +422,12 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     out = root / "data" / "chunk-000" / "file-000.parquet"
     _atomic_parquet_write(pa.table(table_cols), out)
 
+    info["total_frames"] = len(rows_sorted)
+    info["ingest_row_count"] = len(rows_sorted)
+    info["frame_index_min"] = frame_min
+    info["frame_index_max"] = int(rows_sorted[-1].get("frame_index", frame_min))
+    (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+
 
 def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> dict:
     length = int(ep.get("length") or 0)
@@ -390,15 +440,15 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> d
     ep_index = int(ep.get("episode_index", 0))
     ep_meta = episode_meta_for_index_entry(ep, meta_defaults)
     row: dict = {
-        "episode_index": float(ep_index),
-        "length": float(length),
-        "task_index": float(ep_index),
-        "dataset_from_index": float(from_idx),
-        "dataset_to_index": float(to_idx),
-        "data/chunk_index": 0.0,
-        "data/file_index": 0.0,
-        "chunk_index": 0.0,
-        "file_index": 0.0,
+        "episode_index": ep_index,
+        "length": length,
+        "task_index": ep_index,
+        "dataset_from_index": from_idx,
+        "dataset_to_index": to_idx,
+        "data/chunk_index": 0,
+        "data/file_index": 0,
+        "chunk_index": 0,
+        "file_index": 0,
     }
     for key in EPISODE_META_STRING_COLS:
         row[key] = ep_meta.get(key, EPISODE_META_DEFAULTS[key])
@@ -406,13 +456,25 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> d
         val = ep_meta.get(key)
         row[key] = float(val) if val is not None else float("nan")
     for key in VIDEO_KEYS:
-        row[f"videos/{key}/chunk_index"] = 0.0
-        row[f"videos/{key}/file_index"] = 0.0
+        row[f"videos/{key}/chunk_index"] = 0
+        row[f"videos/{key}/file_index"] = 0
         row[f"videos/{key}/from_timestamp"] = float(from_idx) / fps if fps > 0 else 0.0
         row[f"videos/{key}/to_timestamp"] = float(to_idx) / fps if fps > 0 else duration
     row["tasks"] = task
     row["_duration"] = duration
     return row
+
+
+def _episode_column_array(key: str, rows: list[dict]) -> pa.Array:
+    if key in EPISODE_META_STRING_COLS:
+        return pa.array([row[key] for row in rows], type=pa.string())
+    if key in EPISODE_INT_COLS or (
+        key.startswith("videos/") and (key.endswith("/chunk_index") or key.endswith("/file_index"))
+    ):
+        return pa.array([int(row[key]) for row in rows], type=pa.int64())
+    if key in EPISODE_META_FLOAT_COLS:
+        return pa.array([row[key] for row in rows], type=pa.float64())
+    return pa.array([row[key] for row in rows], type=pa.float64())
 
 
 def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: str) -> None:
@@ -438,27 +500,153 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
             continue
         if key == "_duration":
             continue
-        if key in EPISODE_META_STRING_COLS:
-            columns[key] = pa.array([row[key] for row in rows], type=pa.string())
-            continue
-        columns[key] = pa.array([row[key] for row in rows], type=pa.float64())
+        columns[key] = _episode_column_array(key, rows)
     columns["tasks"] = pa.array([[row["tasks"]] for row in rows], type=pa.list_(pa.string()))
     table = pa.table(columns)
     out = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
     _atomic_parquet_write(table, out)
 
 
+def write_empty_episodes_parquet(root: Path, fps: float, task: str) -> None:
+    """Zero-row episodes table — layout-only scaffold (no sidebar #0)."""
+    meta_defaults = load_episode_meta_defaults(root)
+    template = _episode_row(
+        {
+            "episode_index": 0,
+            "length": 0,
+            "dataset_from_index": 0,
+            "dataset_to_index": 0,
+            "title": task,
+        },
+        fps,
+        task,
+        meta_defaults,
+    )
+    columns: dict[str, pa.Array] = {}
+    for key in template:
+        if key in ("tasks", "_duration"):
+            continue
+        columns[key] = _episode_column_array(key, [])
+    columns["tasks"] = pa.array([], type=pa.list_(pa.string()))
+    out = root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_parquet_write(pa.table(columns), out)
+
+
+def write_placeholder_videos(root: Path, info: dict) -> None:
+    fps = float(info.get("fps") or 30)
+    duration = max(1.0 / fps, 0.04)
+    features = info.get("features") or {}
+    for key in VIDEO_KEYS:
+        feat = features.get(key, {})
+        shape = feat.get("shape") or [1200, 1920, 3]
+        h, w = int(shape[0]), int(shape[1])
+        out = root / "videos" / key / "chunk-000" / "file-000.mp4"
+        if out.is_file() and out.stat().st_size > 0:
+            continue
+        out.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s={w}x{h}:d={duration}",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-frames:v",
+                "1",
+                str(out),
+            ],
+            check=False,
+        )
+
+
+def write_viewer_scaffold(root: Path) -> int:
+    """Minimal v3 dataset so LeRobot opens dockview panes before first real ingest."""
+    info_path = root / "meta" / "info.json"
+    if not info_path.is_file():
+        return 1
+    info = read_json(info_path, {})
+    live = read_json(root / "live" / "session.json", {})
+    station_id = root.name
+    task = resolve_task_name(
+        explicit=str(live.get("task") or "").strip() or None,
+        station_id=station_id,
+        session_id=str(live.get("sessionId") or ""),
+        created_at=live.get("startedAt"),
+    )
+    total_frames = max(VIEWER_SCAFFOLD_FRAMES, int(info.get("total_frames") or 0))
+    info["total_frames"] = total_frames
+    info["total_episodes"] = 1
+    info["splits"] = {"train": "0:1"}
+    info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    fps = float(info.get("fps") or 30)
+    write_tasks_jsonl(root, [], task)
+    ensure_annotations_skeleton(root)
+    write_empty_episodes_parquet(root, fps, task)
+    write_data_parquet(root, [], fps, [])
+    write_placeholder_videos(root, info)
+    marker_path = root / "live" / "parquet_sync.json"
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "viewer_scaffold": True,
+                "total_frames": total_frames,
+                "jsonl_mtime": 0,
+                "episodes_tasks_list": True,
+                "episode_display_v4": True,
+                "episodes_count": 0,
+                "data_dense": True,
+                "data_rows": total_frames,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return 0
+
+
+def sync_lerobot_info_frame_counts(root: Path, info: dict, episodes: list[dict]) -> None:
+    """Align info.json totals with official LeRobot data shards (multi-session safe)."""
+    shard_rows = sum(
+        pq.read_metadata(p).num_rows for p in sorted(root.glob("data/**/*.parquet"))
+    )
+    if shard_rows > 0:
+        info["total_frames"] = shard_rows
+        info["ingest_row_count"] = shard_rows
+    if episodes:
+        info["total_episodes"] = len(episodes)
+        info["frame_index_min"] = min(int(ep.get("dataset_from_index") or 0) for ep in episodes)
+        info["frame_index_max"] = max(int(ep.get("dataset_to_index") or 0) for ep in episodes) - 1
+    (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     argv = [a for a in sys.argv[1:] if a]
+    viewer_scaffold = "--viewer-scaffold" in argv
     meta_only = "--meta-only" in argv
-    positional = [a for a in argv if a != "--meta-only"]
+    positional = [a for a in argv if a not in ("--meta-only", "--viewer-scaffold")]
     if len(positional) < 1:
-        print("usage: sync-stream-parquet.py [--meta-only] <station_root>", file=sys.stderr)
+        print(
+            "usage: sync-stream-parquet.py [--meta-only|--viewer-scaffold] <station_root>",
+            file=sys.stderr,
+        )
         return 1
     root = Path(positional[0])
+    if viewer_scaffold:
+        return write_viewer_scaffold(root)
     info = read_json(root / "meta" / "info.json", {})
     live = read_json(root / "live" / "session.json", {})
-    fps = float(info.get("fps") or 15)
+    fps = float(info.get("fps") or 30)
     station_id = root.name
     task = resolve_task_name(
         explicit=str(live.get("task") or "").strip() or None,
@@ -477,9 +665,13 @@ def main() -> int:
     marker = read_json(marker_path, {})
     episodes_key = len(episodes)
 
-    write_tasks_jsonl(root, episodes, task)
+    lerobot_owned = lerobot_owns_data(root)
+    write_tasks_jsonl(root, episodes, task, skip_tasks_parquet=lerobot_owned)
     ensure_annotations_skeleton(root)
-    write_episodes_parquet(root, episodes, fps, task)
+    if not lerobot_owned:
+        write_episodes_parquet(root, episodes, fps, task)
+    if lerobot_owned:
+        sync_lerobot_info_frame_counts(root, info, episodes)
     if meta_only:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_path.write_text(
@@ -490,6 +682,7 @@ def main() -> int:
                     "episodes_tasks_list": True,
                     "episode_display_v4": True,
                     "episodes_count": episodes_key,
+                    "lerobot_data_owned": True,
                 },
                 indent=2,
             )
@@ -498,22 +691,7 @@ def main() -> int:
         )
         return 0
 
-    data_out = root / "data" / "chunk-000" / "file-000.parquet"
-    data_rows = data_parquet_row_count(data_out)
-
-    if (
-        marker.get("total_frames") == total_frames
-        and marker.get("jsonl_mtime") == jsonl_mtime
-        and marker.get("episodes_tasks_list") is True
-        and marker.get("episode_display_v4") is True
-        and marker.get("episodes_count") == episodes_key
-        and marker.get("data_dense") is True
-        and data_rows == total_frames
-        and (root / "meta" / "episodes" / "chunk-000" / "file-000.parquet").is_file()
-    ):
-        return 0
-    rows = read_jsonl(jsonl_path)
-    write_data_parquet(root, rows, fps, episodes)
+    # data/chunk parquet is owned by official LeRobot derive — never rebuild from jsonl.
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(
         json.dumps(
@@ -523,8 +701,7 @@ def main() -> int:
                 "episodes_tasks_list": True,
                 "episode_display_v4": True,
                 "episodes_count": episodes_key,
-                "data_dense": True,
-                "data_rows": total_frames,
+                "lerobot_data_owned": True,
             },
             indent=2,
         )

@@ -15,6 +15,7 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
     segment_store_bytes,
 )
+from ego_capture_studio.capture.upload_status import UploadStatusWriter, read_status, scan_skipped_segments
 
 # Hard cap on closed-unuploaded segments (local queue depth, not archive).
 KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "12")))
@@ -173,19 +174,41 @@ def _trim_for_disk_quota(session_id: str, pending: int) -> int:
     return pending
 
 
+def _foreground_upload_active() -> bool:
+    """True when manual ego-upload owns the status file (do not clobber from loop)."""
+    st = read_status()
+    if not st:
+        return False
+    if (st.get("service") or {}).get("phase") != "uploading":
+        return False
+    prog = st.get("progress") or {}
+    pending = int(prog.get("pending", 0))
+    return pending > 0 or bool(st.get("current"))
+
+
 def main() -> None:
+    writer = UploadStatusWriter.get_default()
     print(
         f"upload_loop start keep_pending_below={KEEP_PENDING_BELOW} "
         f"poll_s={POLL_INTERVAL_S} quota_gb={QUOTA_BYTES / 1024**3:.1f} root={SEGMENT_ROOT}",
         flush=True,
     )
+    print(f"upload_status path={writer.path}", flush=True)
     cached_pending: dict[str, int] = {}
     last_rescan = 0.0
     last_purge = 0.0
+    last_session = ""
     while True:
         session_id = _resolve_session_id(SEGMENT_ROOT)
         if not session_id:
-            print("upload_loop no_session sleep", flush=True)
+            writer.mark_no_session()
+            print("未找到采集会话，等待中…", flush=True)
+            time.sleep(POLL_INTERVAL_S)
+            continue
+        if session_id != last_session:
+            writer.reset_session(session_id)
+            last_session = session_id
+        if _foreground_upload_active():
             time.sleep(POLL_INTERVAL_S)
             continue
         now = time.monotonic()
@@ -198,18 +221,32 @@ def main() -> None:
         n = _trim_over_cap(session_id, n)
         n = _trim_for_disk_quota(session_id, n)
         cached_pending[session_id] = n
+        skipped = scan_skipped_segments(SEGMENT_ROOT, session_id)
+        phase = "uploading" if n > 0 else "idle"
+        writer.refresh_queue(
+            session_id=session_id,
+            pending=n,
+            skipped_segments=skipped,
+            phase=phase,
+        )
         if PURGE_INTERVAL_S > 0 and now - last_purge >= PURGE_INTERVAL_S:
             purged = _purge_uploaded_segments(session_id)
             if purged:
-                print(f"upload_loop purged_uploaded={purged}", flush=True)
+                print(f"已清理本机已上传段目录：{purged} 个", flush=True)
             last_purge = now
         if n > 0:
-            print(f"upload_loop session={session_id} pending={n} upload_batch={UPLOAD_BATCH}", flush=True)
+            prog = writer._state.get("progress") or {}
+            completed = int(prog.get("completed") or 0)
+            total = int(prog.get("total") or (n + completed + len(skipped)))
+            print(
+                f"正在上传：已完成 {completed}/{total} 段，剩余 {n} 段",
+                flush=True,
+            )
             uploaded = _upload_once(session_id, limit=UPLOAD_BATCH)
             if uploaded > 0:
                 cached_pending[session_id] = max(0, n - uploaded)
         else:
-            print(f"upload_loop session={session_id} pending=0 idle", flush=True)
+            print("全部待传段已上传完成（本机队列为空）", flush=True)
         time.sleep(POLL_INTERVAL_S)
 
 

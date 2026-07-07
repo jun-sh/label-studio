@@ -17,17 +17,7 @@ else
   sh /app/prepare-bundled-dataset.sh
 fi
 
-if command -v python3 >/dev/null 2>&1 && [ -f /app/scripts/sync-stream-parquet.py ]; then
-  (
-    while true; do
-      for station_dir in /srv/stream/*/; do
-        [ -d "$station_dir" ] || continue
-        [ -f "$station_dir/data/chunk-000/file-000.jsonl" ] || continue
-        python3 /app/scripts/sync-stream-parquet.py "$station_dir" >/dev/null 2>&1 || true
-      done
-      sleep 4
-    done
-  ) &
-fi
+# Parquet sync runs in stream-parquet-sync (uid 1000). Do not duplicate here as root —
+# root-owned meta/ blocks stream-ingest imports (EACCES on info.json.tmp).
 
 exec node /app/server.mjs

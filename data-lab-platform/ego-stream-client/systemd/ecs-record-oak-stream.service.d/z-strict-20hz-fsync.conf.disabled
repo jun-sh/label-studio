@@ -1,5 +1,0 @@
-# Phase-2 optional: GPIO FSYNC hardware sync (enable by renaming to z-strict-20hz-fsync.conf).
-# Requires board rev >= 6; test on bench before production.
-[Service]
-Environment=OAK_GPIO_FSYNC=1
-Environment=OAK_LOOSE_SYNC=0

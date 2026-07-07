@@ -69,3 +69,29 @@ def _compress_tar_bytes(raw: bytes) -> bytes:
             "pip install zstandard or install zstd package"
         )
     return proc.stdout
+
+
+def segment_archive_basename(session_id: str, segment_id: str) -> str:
+    """Unique ready/ filename: one session may reuse seg_000001 per capture cycle."""
+    sid = str(session_id or "").strip()
+    seg = str(segment_id or "").strip()
+    if not seg.startswith("seg_"):
+        raise ValueError(f"invalid segment_id: {segment_id!r}")
+    if sid.startswith("sess_"):
+        return f"{sid}__{seg}.tar.zst"
+    return f"{seg}.tar.zst"
+
+
+def parse_segment_archive_name(filename: str) -> tuple[str, str]:
+    """Return (session_id, segment_id). session_id empty for legacy seg_*.tar.zst."""
+    name = str(filename or "").strip()
+    if name.endswith(".tar.zst"):
+        name = name[: -len(".tar.zst")]
+    if "__" in name and name.startswith("sess_"):
+        sid, seg = name.split("__", 1)
+        if not seg.startswith("seg_"):
+            raise ValueError(f"not a segment archive name: {filename}")
+        return sid, seg
+    if name.startswith("seg_"):
+        return "", name
+    raise ValueError(f"not a segment archive name: {filename}")

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# ego-derive-status — 214 查询 34 派生进度（对称 ego-upload）
+# 用法: ego-derive-status [--watch] [--json]
+set -euo pipefail
+
+export EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}"
+
+_resolve_venv_python() {
+  local candidates=(
+    "/home/server/workspace/ego-studio/.venv/bin/python"
+    "${EGO_PYTHON:-}"
+    "$(command -v python3 2>/dev/null || true)"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -n "$c" && -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+_resolve_stream_client() {
+  local script_dir candidates c cli
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  candidates=(
+    "${EGO_CAPTURE_SRC:-}"
+    "${script_dir}/../lib/ego-stream-client"
+    "/home/server/ego-web/lib/ego-stream-client"
+    "/home/server/workspace/data-lab/data-lab-platform/ego-stream-client"
+    "$(cd "${script_dir}/../../ego-stream-client" 2>/dev/null && pwd || true)"
+  )
+  for c in "${candidates[@]}"; do
+    [[ -n "$c" && -f "${c}/derive_status.py" && -f "${c}/cli/derive_status_cli.py" ]] && {
+      echo "$c"
+      return 0
+    }
+  done
+  return 1
+}
+
+PY="$(_resolve_venv_python)" || {
+  echo "❌ 未找到 Python venv（ego-studio）" >&2
+  exit 2
+}
+
+if "$PY" -c "import ego_capture_studio.cli.derive_status_cli" 2>/dev/null; then
+  exec "$PY" -m ego_capture_studio.cli.derive_status_cli "$@"
+fi
+
+CAPTURE_SRC="$(_resolve_stream_client)" || {
+  echo "❌ 找不到 derive_status 模块。" >&2
+  echo "   请重新部署 ego-web（含 lib/ego-stream-client），或设置：" >&2
+  echo "   export EGO_CAPTURE_SRC=/path/to/data-lab-platform/ego-stream-client" >&2
+  exit 2
+}
+
+export PYTHONPATH="${CAPTURE_SRC}${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" "${CAPTURE_SRC}/cli/derive_status_cli.py" "$@"

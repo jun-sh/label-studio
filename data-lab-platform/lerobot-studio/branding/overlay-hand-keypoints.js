@@ -32,7 +32,7 @@
     ALPHA_HIGH: 0.95,
     ALPHA_LOW: 0.45,
     ALPHA_REPROJ_CAP: 0.55,
-    REPROJ_THRESHOLD: 8.0,
+    REPROJ_THRESHOLD: 12.0,
     QUALITY_LOW: 2,
   };
 
@@ -160,7 +160,7 @@
 
   function cameraPayloadFromSub(sub, rootPayload) {
     return {
-      fps: sub.fps || rootPayload.fps || 20,
+      fps: sub.fps || rootPayload.fps || 30,
       width: sub.width,
       height: sub.height,
       frame_index: sub.frame_index || [],
@@ -406,7 +406,7 @@
   }
 
   function frameIndexForVideo(video, payload) {
-    var fps = payload.fps || 20;
+    var fps = payload.fps || 30;
     if (!video || !Number.isFinite(fps) || fps <= 0) return 0;
     var idx = Math.floor((video.currentTime || 0) * fps + 0.5);
     var frames = payload.frame_index || [];
@@ -426,12 +426,28 @@
     return flat && flat.length >= 2 && isValidJoint(flat[0], flat[1]);
   }
 
-  function blendAlphaForRow(frameQuality, reprojErr) {
+  function reprojThreshold(payload) {
+    var t = payload && payload.reproj_threshold_px;
+    return Number.isFinite(t) && t > 0 ? t : RENDER.REPROJ_THRESHOLD;
+  }
+
+  function shouldDrawHand(frameQuality, reprojErr, reprojThreshold) {
+    if (frameQuality !== undefined && Number(frameQuality) >= RENDER.QUALITY_LOW) {
+      return false;
+    }
+    if (reprojErr !== undefined && Number(reprojErr) > reprojThreshold) {
+      return false;
+    }
+    return true;
+  }
+
+  function blendAlphaForRow(frameQuality, reprojErr, reprojThreshold) {
     var alpha = RENDER.ALPHA_HIGH;
     if (frameQuality !== undefined && Number(frameQuality) >= RENDER.QUALITY_LOW) {
       alpha = RENDER.ALPHA_LOW;
     }
-    if (reprojErr !== undefined && Number(reprojErr) > RENDER.REPROJ_THRESHOLD) {
+    var threshold = reprojThreshold || RENDER.REPROJ_THRESHOLD;
+    if (reprojErr !== undefined && Number(reprojErr) > threshold) {
       alpha = Math.min(alpha, RENDER.ALPHA_REPROJ_CAP);
     }
     return alpha;
@@ -442,13 +458,21 @@
     if (row < 0) return RENDER.ALPHA_HIGH;
     var fq = payload.frame_quality;
     var re = payload.reprojection_error;
-    return blendAlphaForRow(fq ? fq[row] : undefined, re ? re[row] : undefined);
+    return blendAlphaForRow(
+      fq ? fq[row] : undefined,
+      re ? re[row] : undefined,
+      reprojThreshold(payload)
+    );
   }
 
-  function blendAlphaForHand(handPayload, row) {
+  function blendAlphaForHand(handPayload, row, reprojThreshold) {
     var fq = handPayload.frame_quality;
     var re = handPayload.reprojection_error;
-    return blendAlphaForRow(fq ? fq[row] : undefined, re ? re[row] : undefined);
+    return blendAlphaForRow(
+      fq ? fq[row] : undefined,
+      re ? re[row] : undefined,
+      reprojThreshold
+    );
   }
 
   function ensureOffscreen(canvas) {
@@ -513,19 +537,26 @@
 
   function handsToDraw(payload, frameIdx, lookup) {
     var row = frameRowIndex(payload, frameIdx);
+    var threshold = reprojThreshold(payload);
     var out = [];
     if (payload.hands_mode === "both" && payload.hands) {
       ["left", "right"].forEach(function (side) {
         var h = payload.hands[side];
         if (!h || !h.kp2d || row < 0) return;
+        var fq = h.frame_quality ? h.frame_quality[row] : undefined;
+        var re = h.reprojection_error ? h.reprojection_error[row] : undefined;
+        if (!shouldDrawHand(fq, re, threshold)) return;
         var flat = h.kp2d[row];
         if (!isValidWrist(flat)) return;
-        out.push({ side: side, flat: flat, alpha: blendAlphaForHand(h, row) });
+        out.push({ side: side, flat: flat, alpha: blendAlphaForHand(h, row, threshold) });
       });
       if (out.length) return out;
     }
     var flat = lookup.get(frameIdx);
     if (!isValidWrist(flat)) return [];
+    var fqLegacy = payload.frame_quality ? payload.frame_quality[row] : undefined;
+    var reLegacy = payload.reprojection_error ? payload.reprojection_error[row] : undefined;
+    if (!shouldDrawHand(fqLegacy, reLegacy, threshold)) return [];
     out.push({
       side: handSideForFrame(payload, frameIdx),
       flat: flat,

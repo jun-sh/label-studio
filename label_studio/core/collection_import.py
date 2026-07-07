@@ -1,4 +1,4 @@
-"""Proxy browser offline segment import to stream-ingest (injects station token server-side)."""
+"""Proxy single-segment browser fallback upload to stream-ingest (not batch production path)."""
 from __future__ import annotations
 
 import json

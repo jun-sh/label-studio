@@ -12,7 +12,7 @@
 |----|------|--------|
 | 1 | 214 手机 | 连热点 → 网页 **开始 / 结束录制** |
 | 2 | 214 终端 | `ego-export` → 拷 `ready/当日/` 下 `.tar.zst` |
-| 3 | 34 | 采集页 **拖传** → `ego-run-pipeline ego-lan-214` → 打开 Viewer |
+| 3 | 34 | **214 Agent 上传**（`ecs-oak-upload-stack`）→ `ego-run-pipeline ego-lan-214` → Viewer |
 
 **整轮 demo 重来**：第 2 步用 `ego-export --reset`，第 3 步用 `ego-run-pipeline ego-lan-214 --reset`。
 
@@ -89,7 +89,7 @@ bash ~/ego-local-web-src/deploy.sh
 
 ```text
 原始数据 1   214 segments/          → ego-export
-原始数据 2   34 stream/           → 采集页拖传
+原始数据 2   34 stream/           → 214 Agent 上传（批量主通道）
 处理数据 3   samples/*.zip        → ego-run-pipeline 内部 publish + deploy
 ```
 
@@ -123,7 +123,7 @@ bash ~/ego-local-web-src/deploy.sh
 | `ego-export` 报采集仍在运行 | 手机点「结束录制」 |
 | `ego-export` 一段失败但 `ready/` 里已有该 tar | 见 [field-export-and-import.md §3.8](../data-lab-platform/ego-local-web/field-export-and-import.md)；更新 `export_offline.py` 后重跑 |
 | `ego-export` 出现 `skipped stale` | 列表过期项，通常可忽略；见 §3.8 |
-| `ego-run-pipeline` 报没有数据 | 先在采集页导入 `.tar.zst` |
+| `ego-run-pipeline` 报没有数据 | 先用 214 Agent 上传；单段可浏览器「导入」补传 |
 | 后处理报缺 mp4 | 等几分钟再重跑同一条命令 |
 | 任意步骤失败 | **原样重跑同一条命令**（幂等续跑） |
 
@@ -152,6 +152,6 @@ ego-run-pipeline ego-lan-214 --reset
 # === 214：采集后 ===
 ego-export --reset   # 或默认 ego-export
 
-# === 34：拖传后 ===
+# === 34：214 Agent 上传后 ===
 ego-run-pipeline ego-lan-214
 ```

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# ego-derive-status — 查看 34 派生队列进度（与 ego-upload-status 对称）
+# 用法:
+#   ego-derive-status
+#   ego-derive-status --watch
+#   ego-derive-status --json
+#   EGO_DATALAB_BASE_URL=http://10.10.10.34:8080 ego-derive-status   # 214 上查询 34
+set -euo pipefail
+
+resolve_script_dir() {
+  local src="${1}"
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="${dir}/${src}"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script_dir "${BASH_SOURCE[0]}")"
+CLI_IN_REPO="${SCRIPT_DIR}/../ego-stream-client/cli/derive_status_cli.py"
+
+if [[ -f "${CLI_IN_REPO}" ]]; then
+  PLATFORM_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  export EGO_DATALAB_ROOT="${EGO_DATALAB_ROOT:-$(cd "${PLATFORM_ROOT}/.." && pwd)}"
+elif [[ -n "${EGO_DATALAB_ROOT:-}" ]]; then
+  PLATFORM_ROOT="${EGO_DATALAB_ROOT}/data-lab-platform"
+else
+  echo "❌ 找不到 derive_status_cli.py。" >&2
+  echo "   请设置 EGO_DATALAB_ROOT 指向 data-lab 仓库根目录，例如：" >&2
+  echo "   export EGO_DATALAB_ROOT=/path/to/data-lab" >&2
+  echo "   或：bash data-lab-platform/scripts/ego-derive-status --watch" >&2
+  exit 2
+fi
+
+CLI="${PLATFORM_ROOT}/ego-stream-client/cli/derive_status_cli.py"
+if [[ ! -f "${CLI}" ]]; then
+  echo "❌ 缺少 ${CLI}" >&2
+  exit 2
+fi
+
+PY="${EGO_PYTHON:-}"
+if [[ -z "$PY" ]]; then
+  for candidate in \
+    "/home/server/workspace/ego-studio/.venv/bin/python" \
+    "${PLATFORM_ROOT}/ego-stream-client/.venv/bin/python" \
+    "$(command -v python3 2>/dev/null || true)"; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      PY="$candidate"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$PY" ]]; then
+  echo "❌ 未找到 Python。请设置 EGO_PYTHON。" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${EGO_CAPTURE_SRC:-${PLATFORM_ROOT}/ego-stream-client}${PYTHONPATH:+:$PYTHONPATH}"
+
+if "$PY" -c "import ego_capture_studio.cli.derive_status_cli" 2>/dev/null; then
+  exec "$PY" -m ego_capture_studio.cli.derive_status_cli "$@"
+fi
+exec "$PY" "${CLI}" "$@"

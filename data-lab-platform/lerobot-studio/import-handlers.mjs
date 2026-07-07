@@ -5,11 +5,20 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  beginStationImport,
+  endStationImport,
+  isStationSegmentCommitted,
   processTarZstFromFile,
   refreshStreamEpisodesCatalog,
   stationRoot,
   verifyStationUploadToken,
 } from "./stream-ingest.mjs";
+import {
+  acceptRawTarZstUpload,
+  enqueueDeriveJob,
+  isDeriveAsyncEnabled,
+  maybeEnqueueDeriveAfterUpload,
+} from "./derive-async.mjs";
 
 const TASK_TTL_MS = 10 * 60 * 1000;
 
@@ -44,6 +53,7 @@ function writeTaskToDisk(task) {
     sessionId: task.sessionId,
     framesCommitted: task.framesCommitted,
     duplicate: task.duplicate,
+    deriveStatus: task.deriveStatus || null,
     errorMsg: task.errorMsg,
     updatedAt: task.updatedAt,
   };
@@ -166,7 +176,7 @@ class ImportTaskManager {
     if (!task) return null;
     Object.assign(task, patch, { updatedAt: new Date().toISOString() });
     writeTaskToDisk(task);
-    if (task.status === "done" || task.status === "failed") {
+    if (task.status === "done" || task.status === "failed" || task.status === "skipped") {
       this.scheduleCleanup(taskId);
     }
     return task;
@@ -195,6 +205,7 @@ class ImportTaskManager {
       sessionId: task.sessionId,
       framesCommitted: task.framesCommitted,
       duplicate: task.duplicate,
+      deriveStatus: task.deriveStatus || null,
       errorMsg: task.errorMsg,
       updatedAt: task.updatedAt,
     };
@@ -203,17 +214,124 @@ class ImportTaskManager {
 
 export const importTaskManager = new ImportTaskManager();
 
-async function runImportTask(taskId, stationId, archivePath) {
-  const onStatus = (status) => importTaskManager.update(taskId, { status });
+/** One tar.zst at a time per station — parallel imports block the Node event loop and cause 504s. */
+const importRunQueues = new Map();
+
+function getImportRunQueue(stationId) {
+  if (!importRunQueues.has(stationId)) {
+    importRunQueues.set(stationId, { running: false, rawRunning: false, pending: [] });
+  }
+  return importRunQueues.get(stationId);
+}
+
+function enqueueImportTask(taskId, stationId, archivePath, fileName) {
+  const q = getImportRunQueue(stationId);
+  if (isDeriveAsyncEnabled(stationId)) {
+    q.pending.push({ taskId, stationId, archivePath, fileName, rawAsync: true });
+    drainRawImportQueue(stationId);
+    return;
+  }
+  q.pending.push({ taskId, stationId, archivePath });
+  drainImportQueue(stationId);
+}
+
+async function drainRawImportQueue(stationId) {
+  const q = getImportRunQueue(stationId);
+  if (q.rawRunning) return;
+  q.rawRunning = true;
+  while (q.pending.length) {
+    const job = q.pending.shift();
+    if (!job?.rawAsync) continue;
+    await runRawImportTask(job.taskId, job.stationId, job.archivePath, job.fileName);
+  }
+  q.rawRunning = false;
+}
+
+async function runRawImportTask(taskId, stationId, archivePath, fileName) {
   try {
-    const { body, out } = await processTarZstFromFile(archivePath, stationId, { onStatus });
-    importTaskManager.update(taskId, {
-      status: "done",
-      sessionId: body.sessionId,
-      segmentId: body.segmentId,
-      framesCommitted: Number(out.framesCommitted ?? body.frames.length),
-      duplicate: Boolean(out.duplicate),
+    importTaskManager.update(taskId, { status: "validating" });
+    const ack = await acceptRawTarZstUpload(stationId, {
+      archivePath,
+      fileName,
+      source: "browser",
     });
+    if (ack.job) maybeEnqueueDeriveAfterUpload(stationId, ack);
+    if (ack.duplicate) {
+      importTaskManager.update(taskId, {
+        status: "skipped",
+        sessionId: ack.sessionId,
+        segmentId: ack.segmentId,
+        framesCommitted: 0,
+        duplicate: true,
+      });
+    } else {
+      importTaskManager.update(taskId, {
+        status: "done",
+        sessionId: ack.sessionId,
+        segmentId: ack.segmentId,
+        framesCommitted: 0,
+        duplicate: false,
+        deriveStatus: "verified",
+      });
+    }
+  } catch (err) {
+    importTaskManager.update(taskId, {
+      status: "failed",
+      errorMsg: String(err?.message || err).slice(0, 500),
+    });
+    try {
+      if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function drainImportQueue(stationId) {
+  const q = getImportRunQueue(stationId);
+  if (q.running || !q.pending.length) return;
+  q.running = true;
+  const job = q.pending.shift();
+  try {
+    await runImportTask(job.taskId, job.stationId, job.archivePath);
+  } finally {
+    q.running = false;
+    if (q.pending.length) drainImportQueue(stationId);
+  }
+}
+
+async function runImportTask(taskId, stationId, archivePath) {
+  const onStatus = (status) => {
+    const mapped =
+      status === "validating" || status === "extracting" || status === "committing"
+        ? "processing"
+        : status;
+    importTaskManager.update(taskId, { status: mapped });
+  };
+  beginStationImport(stationId);
+  try {
+    importTaskManager.update(taskId, { status: "processing" });
+    const { body, out } = await processTarZstFromFile(archivePath, stationId, { onStatus });
+    if (out.duplicate) {
+      importTaskManager.update(taskId, {
+        status: "skipped",
+        sessionId: body.sessionId,
+        segmentId: body.segmentId,
+        framesCommitted: 0,
+        duplicate: true,
+      });
+    } else {
+      if (!isStationSegmentCommitted(stationId, body.sessionId, body.segmentId)) {
+        throw new Error(`segment commit incomplete: ${body.segmentId}`);
+      }
+      importTaskManager.update(taskId, {
+        status: "done",
+        sessionId: body.sessionId,
+        segmentId: body.segmentId,
+        framesCommitted: Number(out.framesCommitted ?? 0),
+        duplicate: false,
+      });
+    }
     refreshStreamEpisodesCatalog(stationId);
   } catch (err) {
     importTaskManager.update(taskId, {
@@ -221,6 +339,7 @@ async function runImportTask(taskId, stationId, archivePath) {
       errorMsg: String(err?.message || err).slice(0, 500),
     });
   } finally {
+    await endStationImport(stationId);
     try {
       fs.rmSync(archivePath, { force: true });
     } catch {
@@ -250,6 +369,7 @@ export async function handleImportUpload(stationId, req) {
       throw new Error("only .tar.zst segment archives are supported");
     }
     importTaskManager.update(task.taskId, { fileName, status: "validating" });
+    task.fileName = fileName;
   } catch (err) {
     importTaskManager.update(task.taskId, {
       status: "failed",
@@ -264,10 +384,10 @@ export async function handleImportUpload(stationId, req) {
   }
 
   setImmediate(() => {
-    runImportTask(task.taskId, stationId, archivePath);
+    enqueueImportTask(task.taskId, stationId, archivePath, task.fileName);
   });
 
-  return { taskId: task.taskId };
+  return { taskId: task.taskId, queued: true };
 }
 
 export function handleImportTaskGet(stationId, taskId) {

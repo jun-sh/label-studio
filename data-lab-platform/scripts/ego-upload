@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Wrapper: invoke 214 ego-upload if local, else print hint.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EGO_UPLOAD="${EGO_UPLOAD_SCRIPT:-/home/server/ego-web/ego-upload}"
+if [[ -x "$EGO_UPLOAD" ]]; then
+  exec "$EGO_UPLOAD" "$@"
+fi
+if [[ -x "${ROOT}/ego-local-web/scripts/ego-upload" ]]; then
+  export EGO_PYTHON="${EGO_PYTHON:-}"
+  export PYTHONPATH="${EGO_CAPTURE_SRC:-${ROOT}/ego-stream-client}${PYTHONPATH:+:$PYTHONPATH}"
+  exec "${ROOT}/ego-local-web/scripts/ego-upload" "$@"
+fi
+echo "Run on 214: ego-upload   (deploy ego-local-web/scripts/ego-upload to /home/server/ego-web/)" >&2
+exit 2

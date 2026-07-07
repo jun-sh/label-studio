@@ -19,6 +19,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
     INTRINSICS_REL_PATH,
     write_camera_intrinsics_json,
 )
+from ego_capture_studio.capture.intrinsics_store import write_session_intrinsics
 from ego_capture_studio.capture.ego_spec import OBS_HANDS_DIM, OBS_POSE_DIM, OBS_STATE_DIM
 from ego_capture_studio.capture.lerobot_episode import identity_pose_xyzw
 
@@ -320,9 +321,7 @@ class SegmentCaptureWriter:
 
     def write_session_camera_intrinsics(self, document: dict[str, Any]) -> Path:
         """Persist EEPROM intrinsics once per session (uploaded via session_start)."""
-        path = self.session_camera_intrinsics_path()
-        write_camera_intrinsics_json(path, document)
-        return path
+        return write_session_intrinsics(self.root, self.session_id, document)
 
     def _segments_dir(self) -> Path:
         return self._session_dir() / "segments"
@@ -495,9 +494,10 @@ class SegmentCaptureWriter:
 
     def _manifest_dict(self, manifest: SegmentManifest) -> dict[str, Any]:
         payload = manifest.to_dict()
-        if os.environ.get("EGO_STRICT_20HZ", "0").strip().lower() in ("1", "true", "yes"):
-            payload["sync_mode"] = "strict_20hz"
-            payload["frame_interval_ms"] = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "50"))
+        payload["sync_mode"] = "egoverse_30hz"
+        payload["frame_interval_ms"] = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
+        payload["capture_fps"] = int(os.environ.get("EGO_CAPTURE_FPS", "30"))
+        payload["imu_hz"] = int(os.environ.get("EGO_CAPTURE_IMU_HZ", "200"))
         return payload
 
     def _write_manifest(self, segment_dir: Path, manifest: SegmentManifest) -> None:

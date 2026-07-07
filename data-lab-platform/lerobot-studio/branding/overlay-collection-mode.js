@@ -44,6 +44,8 @@
   var collectionModeUi = {
     mode: "dataset",
     online: true,
+    captureState: "unknown",
+    remotePreviewAllowed: false,
     stationId: null,
     chromeRoot: null,
     pillRoot: null,
@@ -69,7 +71,13 @@
 
   var collectionPreviewSlots = new Map();
   var previewSnapshotTimer = null;
-  var PREVIEW_SNAPSHOT_MS = 250;
+  var previewStaggerTimer = null;
+  var previewPollActive = false;
+  var replayTransportSuspended = false;
+  var collectionUiConfig = g.__DATALAB_COLLECTION_UI__ || {};
+  var remotePreviewEnabled = Boolean(collectionUiConfig.remotePreview);
+  var PREVIEW_SNAPSHOT_MS = Number(collectionUiConfig.previewSnapshotMs) || 500;
+  var PREVIEW_STAGGER_MS = Number(collectionUiConfig.previewStaggerMs) || 100;
 
   function isParentChromeMode() {
     return document.documentElement.getAttribute("data-datalab-parent-chrome") === "1";
@@ -116,9 +124,15 @@
       })
       .then(function (station) {
         collectionModeUi.online = station ? Boolean(station.online) : true;
+        collectionModeUi.captureState = station ? String(station.captureState || "unknown") : "unknown";
+        collectionModeUi.remotePreviewAllowed = station
+          ? Boolean(station.remotePreviewAllowed)
+          : false;
       })
       .catch(function () {
         collectionModeUi.online = true;
+        collectionModeUi.captureState = "unknown";
+        collectionModeUi.remotePreviewAllowed = false;
       })
       .finally(function () {
         collectionOnlineSyncInFlight = false;
@@ -141,90 +155,677 @@
   var PREVIEW_JPG_MAX_RETRIES = 6;
   var PREVIEW_JPG_RETRY_MS = 400;
 
-  function bindPreviewOverlaySource(slot, stationId, cam) {
+  function revokePreviewObjectUrl(overlay) {
+    var state = overlay && overlay._datalabPreviewBind;
+    if (!state || !state.objectUrl) return;
+    try {
+      URL.revokeObjectURL(state.objectUrl);
+    } catch (e0) {
+      /* ignore */
+    }
+    state.objectUrl = null;
+  }
+
+  function loadPreviewJpg(slot, stationId, cam) {
     var overlay = slot.overlay;
+    if (!overlay) return;
     if (!overlay._datalabPreviewBind) {
-      overlay._datalabPreviewBind = { retries: 0, loading: false };
+      overlay._datalabPreviewBind = { retries: 0, loading: false, objectUrl: null };
     }
     var state = overlay._datalabPreviewBind;
-    function loadJpg() {
-      if (state.loading) return;
-      state.loading = true;
-      overlay.src = collectionPreviewSnapshotUrl(stationId, cam);
-    }
-    overlay.onload = function () {
-      state.loading = false;
-      state.retries = 0;
-    };
-    overlay.onerror = function () {
-      state.loading = false;
-      state.retries += 1;
-      if (state.retries > PREVIEW_JPG_MAX_RETRIES) {
-        return;
-      }
-      g.setTimeout(loadJpg, PREVIEW_JPG_RETRY_MS);
-    };
-    loadJpg();
+    if (state.loading) return;
+    state.loading = true;
+    fetch(collectionPreviewSnapshotUrl(stationId, cam), {
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("preview_http_" + res.status);
+        return res.blob();
+      })
+      .then(function (blob) {
+        if (!blob || !blob.size) throw new Error("preview_empty");
+        var nextUrl = URL.createObjectURL(blob);
+        overlay.src = nextUrl;
+        if (state.objectUrl) {
+          try {
+            URL.revokeObjectURL(state.objectUrl);
+          } catch (e1) {
+            /* ignore */
+          }
+        }
+        state.objectUrl = nextUrl;
+        state.retries = 0;
+        syncPreviewOverlayToVideo(slot);
+      })
+      .catch(function () {
+        state.retries += 1;
+        /* Keep last good frame on src — do not clear overlay.src on error. */
+      })
+      .finally(function () {
+        state.loading = false;
+        if (state.retries > 0 && state.retries <= PREVIEW_JPG_MAX_RETRIES) {
+          g.setTimeout(function () {
+            if (collectionModeUi.mode === "preview" && previewModeAllowed()) {
+              loadPreviewJpg(slot, stationId, cam);
+            }
+          }, PREVIEW_JPG_RETRY_MS);
+        }
+      });
   }
 
-  function suspendReplayVideosForPreview() {
-    if (!isParentChromeMode()) return;
-    var videos = document.querySelectorAll("video");
-    for (var i = 0; i < videos.length; i++) {
-      var video = videos[i];
-      if (video._datalabPreviewSuspended) continue;
-      video._datalabPreviewSuspended = true;
-      video._datalabWasPaused = video.paused;
-      try {
-        video.pause();
-      } catch (e1) {
-        /* ignore */
-      }
-      video._datalabPrevSrcObject = video.srcObject;
-      video._datalabPrevSrc = video.getAttribute("src") || "";
-      try {
-        video.removeAttribute("src");
-        video.srcObject = null;
-        video.load();
-      } catch (e2) {
-        /* ignore */
-      }
-      video.style.visibility = "hidden";
-      video.style.pointerEvents = "none";
-      video.style.position = "absolute";
-      video.style.width = "0";
-      video.style.height = "0";
-      video.style.margin = "0";
-      video.style.padding = "0";
-      video.style.overflow = "hidden";
+  function ensureAllPreviewSlots() {
+    var usedVideos = new Set();
+    COLLECTION_PREVIEW_FEATURES.forEach(function (entry, index) {
+      var slot = ensurePreviewSlot(entry.feature, entry.cam, index);
+      if (!slot || usedVideos.has(slot.video)) return;
+      usedVideos.add(slot.video);
+    });
+    markNullReplayPanelsForPreview();
+  }
+
+  function isReplayChromeGroupview(groupview) {
+    if (!groupview) return false;
+    if (groupview.querySelector("[data-datalab-preview-panel]")) return false;
+    if (groupview.querySelector("video")) return false;
+    return true;
+  }
+
+  function markNullReplayPanelsForPreview() {
+    clearReplayChromeMarks();
+    var groupviews = document.querySelectorAll(".dv-groupview");
+    for (var gi = 0; gi < groupviews.length; gi++) {
+      var gv = groupviews[gi];
+      if (!isReplayChromeGroupview(gv)) continue;
+      gv.setAttribute("data-datalab-replay-chrome", "1");
     }
   }
 
-  function resumeReplayVideosAfterPreview() {
-    var videos = document.querySelectorAll("video");
-    for (var i = 0; i < videos.length; i++) {
-      var video = videos[i];
-      if (!video._datalabPreviewSuspended) continue;
-      video._datalabPreviewSuspended = false;
-      video.style.visibility = "";
-      video.style.pointerEvents = "";
-      video.style.position = "";
-      video.style.width = "";
-      video.style.height = "";
-      video.style.margin = "";
-      video.style.padding = "";
-      video.style.overflow = "";
-      if (video._datalabPrevSrc) video.setAttribute("src", video._datalabPrevSrc);
-      if (video._datalabPrevSrcObject) video.srcObject = video._datalabPrevSrcObject;
-      if (!video._datalabWasPaused) {
+  function clearReplayChromeMarks() {
+    document.querySelectorAll("[data-datalab-replay-chrome]").forEach(function (node) {
+      node.removeAttribute("data-datalab-replay-chrome");
+    });
+  }
+
+  function runPreviewSnapshotCycle() {
+    if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+    var stationId = collectionModeUi.stationId || stationIdFromContext();
+    if (!stationId) return;
+    suspendReplayTransportForPreview();
+    dismissScalarSplitView();
+    ensureAllPreviewSlots();
+    collectionPreviewSlots.forEach(function (slot) {
+      syncPreviewOverlayToVideo(slot);
+    });
+    var tasks = [];
+    var usedVideos = new Set();
+    COLLECTION_PREVIEW_FEATURES.forEach(function (entry, index) {
+      var slot = ensurePreviewSlot(entry.feature, entry.cam, index);
+      if (!slot || usedVideos.has(slot.video)) return;
+      usedVideos.add(slot.video);
+      tasks.push({ slot: slot, cam: entry.cam });
+    });
+    var ti = 0;
+    function nextStagger() {
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+      if (ti >= tasks.length) return;
+      var task = tasks[ti];
+      ti += 1;
+      loadPreviewJpg(task.slot, stationId, task.cam);
+      previewStaggerTimer = g.setTimeout(nextStagger, PREVIEW_STAGGER_MS);
+    }
+    if (previewStaggerTimer) {
+      g.clearTimeout(previewStaggerTimer);
+      previewStaggerTimer = null;
+    }
+    nextStagger();
+  }
+
+  function startPreviewPollLoop() {
+    if (previewPollActive) return;
+    previewPollActive = true;
+    runPreviewSnapshotCycle();
+    previewSnapshotTimer = g.setInterval(runPreviewSnapshotCycle, PREVIEW_SNAPSHOT_MS);
+  }
+
+  function stopPreviewPollLoop() {
+    previewPollActive = false;
+    if (previewSnapshotTimer) {
+      g.clearInterval(previewSnapshotTimer);
+      previewSnapshotTimer = null;
+    }
+    if (previewStaggerTimer) {
+      g.clearTimeout(previewStaggerTimer);
+      previewStaggerTimer = null;
+    }
+  }
+
+  function isTransportPlayPauseButton(btn) {
+    if (!btn || btn.closest("[data-datalab-collection-mode-root]")) return false;
+    var aria = (btn.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+    var title = (btn.getAttribute("title") || "").replace(/\s+/g, " ").trim();
+    var text = (btn.textContent || "").replace(/\s+/g, " ").trim();
+    var label = aria || title || text;
+    if (!label) return false;
+    var lower = label.toLowerCase();
+    if (/拆分|侧栏|joint|自动刷新|auto.?refresh|split/i.test(label)) return false;
+    if (/^(play\/pause|播放\/暂停)$/i.test(label)) return true;
+    if (/^(play|pause|播放|暂停)$/i.test(aria)) return true;
+    if (/^(play|pause|播放|暂停)$/i.test(title)) return true;
+    if (/^(play|pause)$/i.test(lower)) return true;
+    return false;
+  }
+
+  function findTransportPlayPauseButton() {
+    var buttons = document.querySelectorAll("button");
+    for (var bi = 0; bi < buttons.length; bi++) {
+      if (isTransportPlayPauseButton(buttons[bi])) return buttons[bi];
+    }
+    return null;
+  }
+
+  function transportButtonShowsPauseIcon(btn) {
+    var svg = btn && btn.querySelector("svg");
+    var cls = (svg && svg.getAttribute("class")) || "";
+    return cls.indexOf("lucide-pause") >= 0;
+  }
+
+  function clickTransportPlayPause() {
+    var btn = findTransportPlayPauseButton();
+    if (!btn) return;
+    try {
+      btn.click();
+    } catch (e1) {
+      /* ignore */
+    }
+  }
+
+  function dismissScalarSplitView() {
+    var hasJointsSidebar = false;
+    document.querySelectorAll("div.fixed.z-50").forEach(function (node) {
+      var blob = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (/全部\s*joints|all\s*joints|拆分/i.test(blob)) {
+        hasJointsSidebar = true;
+      }
+    });
+    if (!hasJointsSidebar) return false;
+    document.querySelectorAll("div.fixed.z-50").forEach(function (node) {
+      var closeBtn = node.querySelector("button");
+      if (closeBtn) {
         try {
-          video.play();
-        } catch (e3) {
+          closeBtn.click();
+        } catch (e0) {
           /* ignore */
         }
       }
-      video._datalabPrevSrc = "";
-      video._datalabPrevSrcObject = null;
+      node.remove();
+    });
+    return true;
+  }
+
+  function findTransportBar() {
+    return document.querySelector(".h-16.border-t.bg-background");
+  }
+
+  function findTransportSlider(bar) {
+    if (!bar) bar = findTransportBar();
+    if (!bar) return null;
+    return bar.querySelector('[role="slider"][aria-valuemin="0"]');
+  }
+
+  function dismissAutoplayDialog() {
+    var buttons = document.querySelectorAll("button");
+    for (var bi = 0; bi < buttons.length; bi++) {
+      var text = (buttons[bi].textContent || "").replace(/\s+/g, " ").trim();
+      if (text === "知道了" || text === "Got it") {
+        try {
+          buttons[bi].click();
+        } catch (e0) {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  function isReplayTransportPlaying() {
+    return transportButtonShowsPauseIcon(findTransportPlayPauseButton());
+  }
+
+  function sendTransportPauseKeys() {
+    var target = findTransportBar() || document.body;
+    if (!target) return;
+    ["keydown", "keyup"].forEach(function (type) {
+      target.dispatchEvent(
+        new KeyboardEvent(type, { key: " ", code: "Space", bubbles: true, cancelable: true }),
+      );
+      target.dispatchEvent(
+        new KeyboardEvent(type, { key: "k", code: "KeyK", bubbles: true, cancelable: true }),
+      );
+    });
+  }
+
+  function ensureTransportPaused() {
+    var videos = document.querySelectorAll("video");
+    for (var vi = 0; vi < videos.length; vi++) {
+      try {
+        videos[vi].pause();
+      } catch (e0) {
+        /* ignore */
+      }
+    }
+    var btn = findTransportPlayPauseButton();
+    if (btn && btn.disabled && btn.getAttribute("data-datalab-live-play-blocked") === "1") {
+      btn.disabled = false;
+      btn.removeAttribute("aria-disabled");
+    }
+    var attempts = 0;
+    while (isReplayTransportPlaying() && attempts < 4) {
+      clickTransportPlayPause();
+      sendTransportPauseKeys();
+      attempts += 1;
+    }
+  }
+
+  var liveTransportObserver = null;
+  var patchTransportScheduled = false;
+  var liveSeekBurstTimer = null;
+  var liveRawSnapshotObserver = null;
+  var applyingLiveFrameSnapshot = false;
+  var livePauseGuardTimer = null;
+
+  function clickAllFeaturesTab() {
+    var buttons = document.querySelectorAll("button");
+    for (var bi = 0; bi < buttons.length; bi++) {
+      var label = (buttons[bi].textContent || "").replace(/\s+/g, " ").trim();
+      if (!/^全部\s*Features$/i.test(label)) continue;
+      try {
+        buttons[bi].click();
+      } catch (e0) {
+        /* ignore */
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function rawViewportHasFeaturesLayout(viewport) {
+    if (!viewport) return false;
+    return viewport.querySelector(".flex") !== null;
+  }
+
+  function ensureLiveRawSnapshotObserver() {
+    if (liveRawSnapshotObserver) return;
+    var viewport = findRawMessageViewport();
+    if (!viewport) return;
+    liveRawSnapshotObserver = new MutationObserver(function () {
+      if (applyingLiveFrameSnapshot) return;
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+      applyLiveFrameZeroSnapshot();
+    });
+    liveRawSnapshotObserver.observe(viewport, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  function stopLiveRawSnapshotObserver() {
+    if (!liveRawSnapshotObserver) return;
+    liveRawSnapshotObserver.disconnect();
+    liveRawSnapshotObserver = null;
+  }
+
+  function schedulePatchLiveTransportBar() {
+    if (patchTransportScheduled) return;
+    patchTransportScheduled = true;
+    g.requestAnimationFrame(function () {
+      patchTransportScheduled = false;
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+      patchLiveTransportBar();
+    });
+  }
+
+  function ensureLiveTransportObserver() {
+    if (liveTransportObserver) return;
+    var bar = findTransportBar();
+    if (!bar) return;
+    liveTransportObserver = new MutationObserver(function () {
+      schedulePatchLiveTransportBar();
+    });
+    liveTransportObserver.observe(bar, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  }
+
+  function stopLiveTransportObserver() {
+    if (!liveTransportObserver) return;
+    liveTransportObserver.disconnect();
+    liveTransportObserver = null;
+  }
+
+  function findRawMessageViewport() {
+    var groupviews = document.querySelectorAll(".dv-groupview");
+    for (var gi = 0; gi < groupviews.length; gi++) {
+      var gv = groupviews[gi];
+      if ((gv.textContent || "").indexOf("原始消息") < 0) continue;
+      return gv.querySelector("[data-radix-scroll-area-viewport]");
+    }
+    return null;
+  }
+
+  function captureLiveFrameZeroSnapshot() {
+    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
+    var viewport = findRawMessageViewport();
+    if (!viewport) return;
+    var text = (viewport.textContent || "").trim();
+    if (text.indexOf("frame_index") < 0) return;
+    if (!/"frame_index":\s*0\b/.test(text)) return;
+    if (!rawViewportHasFeaturesLayout(viewport)) return;
+    g.__DATALAB_LIVE_FRAME_ZERO_HTML__ = viewport.innerHTML;
+  }
+
+  function applyLiveFrameZeroSnapshot() {
+    var html = g.__DATALAB_LIVE_FRAME_ZERO_HTML__;
+    if (!html) return false;
+    var viewport = findRawMessageViewport();
+    if (!viewport) return false;
+    if (viewport.innerHTML === html) return true;
+    applyingLiveFrameSnapshot = true;
+    viewport.innerHTML = html;
+    applyingLiveFrameSnapshot = false;
+    return true;
+  }
+
+  function bootstrapLiveFrameZeroHtmlSnapshot(attempt) {
+    if (typeof attempt !== "number") attempt = 0;
+    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
+    dismissAutoplayDialog();
+    ensureTransportPaused();
+    if (attempt === 0) {
+      seekReplayTransportToStart();
+    }
+    patchLiveTransportBar();
+    clickAllFeaturesTab();
+    captureLiveFrameZeroSnapshot();
+    applyLiveFrameZeroSnapshot();
+    patchLiveTransportBar();
+    ensureTransportPaused();
+    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
+    if (attempt >= 24) return;
+    g.setTimeout(function () {
+      bootstrapLiveFrameZeroHtmlSnapshot(attempt + 1);
+    }, 100);
+  }
+
+  function pointerSeekSlider(slider, clientX, clientY) {
+    var track = slider && slider.parentElement;
+    var target = track || slider;
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (type) {
+      var Cls = type.indexOf("pointer") === 0 ? PointerEvent : MouseEvent;
+      target.dispatchEvent(
+        new Cls(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clientX: clientX,
+          clientY: clientY,
+          view: g,
+          pointerId: 1,
+          pointerType: "mouse",
+          buttons: 1,
+        }),
+      );
+    });
+  }
+
+  function seekReplayTransportToStart() {
+    if (
+      collectionModeUi.mode === "preview" &&
+      previewModeAllowed() &&
+      g.__DATALAB_LIVE_FRAME_ZERO_HTML__
+    ) {
+      applyLiveFrameZeroSnapshot();
+      return;
+    }
+    var slider = findTransportSlider();
+    if (!slider) return;
+    ensureTransportPaused();
+    var frameNow = Number(slider.getAttribute("aria-valuenow") || 0);
+    if (frameNow > 0) {
+      nudgeSliderToStart(slider);
+      ensureTransportPaused();
+    }
+    applyLiveFrameZeroSnapshot();
+  }
+
+  function stashTransportLabel(el, nextText) {
+    if (!el.dataset.datalabTransportOrig) {
+      el.dataset.datalabTransportOrig = el.textContent;
+    }
+    if (el.textContent !== nextText) {
+      el.textContent = nextText;
+    }
+  }
+
+  function patchLiveTransportBar() {
+    var bar = findTransportBar();
+    if (!bar) return;
+    bar.setAttribute("data-datalab-live-transport", "1");
+    var groups = bar.querySelectorAll(".flex.items-baseline");
+    for (var gi = 0; gi < groups.length; gi++) {
+      var group = groups[gi];
+      var blob = (group.textContent || "").replace(/\s+/g, " ");
+      var isTimeGroup = /\d+:\d+\.\d+/.test(blob);
+      var isFrameGroup = /\d+\s*\/\s*\d+/.test(blob) && !/\d+:\d+/.test(blob);
+      var leaves = group.querySelectorAll("*");
+      for (var lj = 0; lj < leaves.length; lj++) {
+        var node = leaves[lj];
+        if (node.children.length > 0) continue;
+        var txt = (node.textContent || "").trim();
+        if (isTimeGroup) {
+          if (/^\d+:\d+\.\d+$/.test(txt)) stashTransportLabel(node, "0:00.00");
+          if (/^\/\s*\d+:\d+\.\d+$/.test(txt)) stashTransportLabel(node, "/ 0:00.00");
+        }
+        if (isFrameGroup) {
+          if (/^\d+$/.test(txt)) stashTransportLabel(node, "0");
+          if (/^\/\s*\d+$/.test(txt)) stashTransportLabel(node, "/ 0");
+        }
+      }
+    }
+    var slider = findTransportSlider(bar);
+    if (slider) {
+      slider.setAttribute("aria-disabled", "true");
+      slider.setAttribute("aria-valuenow", "0");
+      slider.setAttribute("aria-valuetext", "0:00.00 / 0:00.00, 帧 0/0");
+      slider.style.pointerEvents = "none";
+    }
+    var playBtn = findTransportPlayPauseButton();
+    if (playBtn) {
+      var playSvg = playBtn.querySelector("svg");
+      if (playSvg) {
+        playSvg.setAttribute("class", "lucide lucide-play h-4 w-4");
+      }
+    }
+    bar.querySelectorAll("*").forEach(function (node) {
+      if (node.children.length > 0) return;
+      var flat = (node.textContent || "").trim();
+      if (/^\d+:\d+\.\d+$/.test(flat)) stashTransportLabel(node, "0:00.00");
+      if (/^\/\s*\d+:\d+\.\d+$/.test(flat)) stashTransportLabel(node, "/ 0:00.00");
+    });
+  }
+
+  function clearLiveTransportFreeze() {
+    stopLiveSeekBurst();
+    stopLivePauseGuard();
+    stopLiveTransportObserver();
+    stopLiveRawSnapshotObserver();
+    unlockLiveTransportPlayButton();
+    var bar = document.querySelector("[data-datalab-live-transport]");
+    if (!bar) return;
+    bar.removeAttribute("data-datalab-live-transport");
+    bar.querySelectorAll("[data-datalab-transport-orig]").forEach(function (el) {
+      el.textContent = el.dataset.datalabTransportOrig;
+      delete el.dataset.datalabTransportOrig;
+    });
+    var slider = findTransportSlider(bar);
+    if (slider) {
+      slider.removeAttribute("aria-disabled");
+      slider.style.pointerEvents = "";
+    }
+  }
+
+  function nudgeSliderToStart(slider) {
+    var start = Number(slider.getAttribute("aria-valuenow") || 0);
+    var steps = Math.min(700, Math.max(80, start + 60));
+    for (var step = 0; step < steps; step += 1) {
+      var frameNow = Number(slider.getAttribute("aria-valuenow") || 0);
+      if (frameNow <= 0) break;
+      slider.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", code: "ArrowLeft", bubbles: true }),
+      );
+    }
+  }
+
+  function lockLiveTransportPlayButton() {
+    var btn = findTransportPlayPauseButton();
+    if (!btn) return;
+    if (isReplayTransportPlaying()) return;
+    btn.setAttribute("data-datalab-live-play-blocked", "1");
+    btn.disabled = true;
+    btn.setAttribute("aria-disabled", "true");
+    btn.tabIndex = -1;
+  }
+
+  function unlockLiveTransportPlayButton() {
+    document.querySelectorAll('button[data-datalab-live-play-blocked="1"]').forEach(function (btn) {
+      btn.removeAttribute("data-datalab-live-play-blocked");
+      btn.disabled = false;
+      btn.removeAttribute("aria-disabled");
+      btn.tabIndex = 0;
+    });
+  }
+
+  function freezeTransportSliderPosition(slider) {
+    if (!slider) return;
+    if (Number(slider.getAttribute("aria-valuenow") || 0) !== 0) {
+      slider.setAttribute("aria-valuenow", "0");
+    }
+  }
+
+  function startLivePauseGuard() {
+    if (livePauseGuardTimer) return;
+    livePauseGuardTimer = g.setInterval(function () {
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
+        stopLivePauseGuard();
+        return;
+      }
+      dismissAutoplayDialog();
+      ensureTransportPaused();
+      freezeTransportSliderPosition(findTransportSlider());
+      patchLiveTransportBar();
+      lockLiveTransportPlayButton();
+    }, 150);
+  }
+
+  function stopLivePauseGuard() {
+    if (!livePauseGuardTimer) return;
+    g.clearInterval(livePauseGuardTimer);
+    livePauseGuardTimer = null;
+  }
+
+  function startLiveSeekBurst() {
+    if (liveSeekBurstTimer) return;
+    var ticks = 0;
+    liveSeekBurstTimer = g.setInterval(function () {
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
+        stopLiveSeekBurst();
+        return;
+      }
+      dismissAutoplayDialog();
+      captureLiveFrameZeroSnapshot();
+      ensureTransportPaused();
+      applyLiveFrameZeroSnapshot();
+      patchLiveTransportBar();
+      ticks += 1;
+      if (ticks >= 5) {
+        stopLiveSeekBurst();
+        startLivePauseGuard();
+      }
+    }, 100);
+  }
+
+  function stopLiveSeekBurst() {
+    if (!liveSeekBurstTimer) return;
+    g.clearInterval(liveSeekBurstTimer);
+    liveSeekBurstTimer = null;
+  }
+
+  function applyLiveReplayFreeze() {
+    if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+    dismissAutoplayDialog();
+    captureLiveFrameZeroSnapshot();
+    ensureTransportPaused();
+    if (!g.__DATALAB_LIVE_FRAME_ZERO_HTML__) {
+      seekReplayTransportToStart();
+    }
+    ensureTransportPaused();
+    clickAllFeaturesTab();
+    bootstrapLiveFrameZeroHtmlSnapshot(0);
+    applyLiveFrameZeroSnapshot();
+    lockLiveTransportPlayButton();
+    freezeTransportSliderPosition(findTransportSlider());
+    patchLiveTransportBar();
+    ensureLiveTransportObserver();
+    ensureLiveRawSnapshotObserver();
+    startLivePauseGuard();
+  }
+
+  function installLiveTransportPlayBlock() {
+    if (g.__DATALAB_LIVE_TRANSPORT_PLAY_BLOCK__) return;
+    g.__DATALAB_LIVE_TRANSPORT_PLAY_BLOCK__ = true;
+    document.addEventListener(
+      "click",
+      function (event) {
+        if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+        var target = event.target;
+        var btn = target && target.closest ? target.closest("button") : null;
+        if (!btn || !isTransportPlayPauseButton(btn)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        ensureTransportPaused();
+        patchLiveTransportBar();
+      },
+      true,
+    );
+  }
+
+  function suspendReplayTransportForPreview() {
+    if (!replayTransportSuspended) replayTransportSuspended = true;
+    var ranges = document.querySelectorAll('input[type="range"]');
+    for (var ri = 0; ri < ranges.length; ri++) {
+      var inp = ranges[ri];
+      if (inp._datalabPreviewDisabled) continue;
+      inp._datalabPreviewDisabled = true;
+      inp._datalabWasDisabled = inp.disabled;
+      inp.disabled = true;
+    }
+    applyLiveReplayFreeze();
+    dismissScalarSplitView();
+  }
+
+  function resumeReplayTransportForPreview() {
+    if (!replayTransportSuspended) return;
+    replayTransportSuspended = false;
+    clearLiveTransportFreeze();
+    var ranges = document.querySelectorAll('input[type="range"]');
+    for (var ri = 0; ri < ranges.length; ri++) {
+      var inp = ranges[ri];
+      if (!inp._datalabPreviewDisabled) continue;
+      inp.disabled = Boolean(inp._datalabWasDisabled);
+      inp._datalabPreviewDisabled = false;
+      inp._datalabWasDisabled = false;
     }
   }
 
@@ -268,6 +869,11 @@
     return null;
   }
 
+  /** Flex wrapper that centers the replay <video> (same box live JPG should use). */
+  function findPreviewOverlayWrap(video) {
+    return (video && video.parentElement) || null;
+  }
+
   /** Dockview panel body (.dv-content-container), not the tight <video> wrapper. */
   function findPreviewPanelWrap(video) {
     var node = video.parentElement;
@@ -278,6 +884,23 @@
       node = node.parentElement;
     }
     return video.parentElement;
+  }
+
+  function syncPreviewOverlayToVideo(slot) {
+    if (!slot || !slot.video || !slot.overlay) return;
+    var video = slot.video;
+    var overlay = slot.overlay;
+    var left = video.offsetLeft;
+    var top = video.offsetTop;
+    var width = video.offsetWidth;
+    var height = video.offsetHeight;
+    if (!width || !height) return;
+    overlay.style.left = left + "px";
+    overlay.style.top = top + "px";
+    overlay.style.width = width + "px";
+    overlay.style.height = height + "px";
+    overlay.style.right = "auto";
+    overlay.style.bottom = "auto";
   }
 
   function ensurePreviewSlot(featureKey, cam, slotIndex) {
@@ -292,52 +915,44 @@
         ? findFeatureVideoSlotByIndex(slotIndex, skipVideos) || findFeatureVideoSlot(featureKey, skipVideos)
         : findFeatureVideoSlot(featureKey, skipVideos);
     if (!found || !found.wrap) return null;
-    var wrap = findPreviewPanelWrap(found.video) || found.wrap;
-    wrap.setAttribute("data-datalab-preview-panel", "1");
-    var style = g.getComputedStyle(wrap);
-    if (style.position === "static") wrap.style.position = "relative";
-    var overlay = wrap.querySelector('[data-datalab-preview-overlay="' + cam + '"]');
+    var panelWrap = findPreviewPanelWrap(found.video) || found.wrap;
+    var overlayWrap = findPreviewOverlayWrap(found.video) || found.wrap;
+    panelWrap.setAttribute("data-datalab-preview-panel", "1");
+    var overlayStyle = g.getComputedStyle(overlayWrap);
+    if (overlayStyle.position === "static") overlayWrap.style.position = "relative";
+    var overlay = overlayWrap.querySelector('[data-datalab-preview-overlay="' + cam + '"]');
     if (!overlay) {
       overlay = document.createElement("img");
       overlay.setAttribute("data-datalab-preview-overlay", cam);
       overlay.className = "datalab-collection-preview-overlay";
       overlay.alt = cam;
-      wrap.appendChild(overlay);
-    } else if (overlay.parentElement !== wrap) {
-      wrap.appendChild(overlay);
+      overlayWrap.appendChild(overlay);
+    } else if (overlay.parentElement !== overlayWrap) {
+      overlayWrap.appendChild(overlay);
     }
-    hit = { video: found.video, wrap: wrap, overlay: overlay };
+    syncPreviewOverlayToVideo({ video: found.video, overlay: overlay });
+    hit = { video: found.video, wrap: panelWrap, overlayWrap: overlayWrap, overlay: overlay };
     collectionPreviewSlots.set(featureKey, hit);
     return hit;
   }
 
-  function refreshCollectionPreviewSnapshots() {
-    var stationId = collectionModeUi.stationId || stationIdFromContext();
-    if (!stationId) return;
-    var usedVideos = new Set();
-    COLLECTION_PREVIEW_FEATURES.forEach(function (entry, index) {
-      var slot = ensurePreviewSlot(entry.feature, entry.cam, index);
-      if (!slot) return;
-      if (usedVideos.has(slot.video)) return;
-      usedVideos.add(slot.video);
-      bindPreviewOverlaySource(slot, stationId, entry.cam);
-    });
-  }
-
   function connectCollectionPreviewStreams() {
-    suspendReplayVideosForPreview();
-    refreshCollectionPreviewSnapshots();
-    if (previewSnapshotTimer) return;
-    previewSnapshotTimer = g.setInterval(refreshCollectionPreviewSnapshots, PREVIEW_SNAPSHOT_MS);
+    suspendReplayTransportForPreview();
+    dismissScalarSplitView();
+    ensureAllPreviewSlots();
+    dismissScalarSplitView();
+    startLiveSeekBurst();
+    startPreviewPollLoop();
   }
 
   function disconnectCollectionPreviewStreams() {
-    if (previewSnapshotTimer) {
-      g.clearInterval(previewSnapshotTimer);
-      previewSnapshotTimer = null;
-    }
+    stopLiveSeekBurst();
+    stopLivePauseGuard();
+    dismissScalarSplitView();
+    stopPreviewPollLoop();
     collectionPreviewSlots.forEach(function (slot) {
       if (slot.overlay) {
+        revokePreviewObjectUrl(slot.overlay);
         slot.overlay.onload = null;
         slot.overlay.onerror = null;
         slot.overlay.removeAttribute("src");
@@ -351,12 +966,14 @@
     });
     collectionPreviewSlots.clear();
     document.querySelectorAll("[data-datalab-preview-overlay]").forEach(function (node) {
+      revokePreviewObjectUrl(node);
       node.remove();
     });
     document.querySelectorAll("[data-datalab-preview-panel]").forEach(function (node) {
       node.removeAttribute("data-datalab-preview-panel");
     });
-    resumeReplayVideosAfterPreview();
+    clearReplayChromeMarks();
+    resumeReplayTransportForPreview();
   }
 
   function syncCollectionPreviewOverlay() {
@@ -364,8 +981,8 @@
       "data-datalab-collection-preview",
       collectionModeUi.mode === "preview" ? "1" : "0",
     );
-    // Keep live preview while capture runs even if ingest heartbeat is stale (Scheme A).
-    if (collectionModeUi.mode === "preview") {
+    // Poll 214 preview only when remote preview is enabled and station heartbeat is online.
+    if (collectionModeUi.mode === "preview" && previewModeAllowed()) {
       connectCollectionPreviewStreams();
     } else {
       disconnectCollectionPreviewStreams();
@@ -378,6 +995,9 @@
       preview: zh ? "实时" : "Live",
       dataset: zh ? "回放" : "Replay",
       offline: zh ? "采集离线" : "Offline",
+      captureActive: zh
+        ? "采集中远程实时已禁用，保护数据采集质量"
+        : "Remote live disabled during capture",
     };
   }
 
@@ -398,37 +1018,54 @@
     }
   }
 
+  function previewModeAllowed() {
+    return remotePreviewEnabled && collectionModeUi.remotePreviewAllowed;
+  }
+
+  function previewBlockedLabel() {
+    var labels = collectionModeLabels();
+    if (!remotePreviewEnabled) return "";
+    if (!collectionModeUi.online) return labels.offline;
+    if (collectionModeUi.captureState !== "idle") return labels.captureActive;
+    return "";
+  }
+
   function applyCollectionModeChromeVisual() {
     var labels = collectionModeLabels();
     var segPreview = collectionModeUi.segPreview;
     var segDataset = collectionModeUi.segDataset;
     var statusEl = collectionModeUi.statusEl;
     if (!segPreview || !segDataset) return;
+    if (isParentChromeMode() && collectionModeUi.chromeRoot) {
+      collectionModeUi.chromeRoot.hidden = true;
+      return;
+    }
     var isPreview = collectionModeUi.mode === "preview";
     segPreview.classList.toggle("is-active", isPreview);
     segDataset.classList.toggle("is-active", !isPreview);
     segPreview.setAttribute("aria-selected", isPreview ? "true" : "false");
     segDataset.setAttribute("aria-selected", !isPreview ? "true" : "false");
-  // Scheme A: preview uses 214 MJPEG proxy; do not block Live tab on ingest heartbeat alone.
-    segPreview.disabled = false;
-    segPreview.title = collectionModeUi.online ? "" : labels.offline;
+    segPreview.hidden = !remotePreviewEnabled;
+    segPreview.disabled = !previewModeAllowed();
+    segPreview.title = previewModeAllowed() ? "" : previewBlockedLabel();
     segDataset.disabled = false;
     segDataset.title = "";
     if (statusEl) {
-      if (collectionModeUi.online) {
+      var blocked = previewBlockedLabel();
+      if (blocked) {
+        statusEl.hidden = false;
+        statusEl.textContent = blocked;
+        statusEl.classList.add("is-offline");
+      } else {
         statusEl.hidden = true;
         statusEl.classList.remove("is-offline");
-      } else {
-        statusEl.hidden = false;
-        statusEl.textContent = labels.offline;
-        statusEl.classList.add("is-offline");
       }
     }
   }
 
   function selectCollectionMode(mode, options) {
     options = options || {};
-    if (mode === "preview" && !collectionModeUi.online && options.forceOffline) mode = "dataset";
+    if (mode === "preview" && !previewModeAllowed()) mode = "dataset";
     collectionModeUi.mode = mode;
     applyCollectionModeChromeVisual();
     syncCollectionPreviewOverlay();
@@ -445,8 +1082,20 @@
     var data = event.data;
     if (!data || typeof data !== "object" || data.type !== "datalab-collection-mode") return;
     if (data.parentChrome) applyParentCollectionChrome();
+    if (typeof data.remotePreview === "boolean") {
+      remotePreviewEnabled = data.remotePreview;
+    }
     if (typeof data.online === "boolean") {
       collectionModeUi.online = data.online;
+    }
+    if (typeof data.captureState === "string") {
+      collectionModeUi.captureState = data.captureState;
+    }
+    if (typeof data.remotePreviewAllowed === "boolean") {
+      collectionModeUi.remotePreviewAllowed = data.remotePreviewAllowed;
+    } else if (typeof data.online === "boolean" || typeof data.captureState === "string") {
+      collectionModeUi.remotePreviewAllowed =
+        remotePreviewEnabled && collectionModeUi.online && collectionModeUi.captureState === "idle";
     }
     if (data.mode === "preview" || data.mode === "dataset") {
       selectCollectionMode(data.mode, { fromParent: true });
@@ -609,10 +1258,11 @@
     if (!collectionModeUi.stationId) {
       collectionModeUi.stationId = stationIdFromContext();
     }
+    captureLiveFrameZeroSnapshot();
     if (!pillInstalled) {
       installCollectionModeSwitcher();
     }
-    if (collectionModeUi.mode === "preview") {
+    if (collectionModeUi.mode === "preview" && previewModeAllowed()) {
       connectCollectionPreviewStreams();
     }
   }
@@ -628,7 +1278,31 @@
     }, TICK_DEBOUNCE_MS);
   }
 
+  function scheduleEarlyFrameZeroCapture() {
+    if (g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__) return;
+    var attempts = 0;
+    g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__ = g.setInterval(function () {
+      if (attempts === 0) {
+        dismissAutoplayDialog();
+        ensureTransportPaused();
+      }
+      captureLiveFrameZeroSnapshot();
+      if (!g.__DATALAB_LIVE_FRAME_ZERO_HTML__ && attempts % 8 === 4) {
+        clickAllFeaturesTab();
+        g.setTimeout(captureLiveFrameZeroSnapshot, 150);
+      }
+      attempts += 1;
+      if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__ || attempts >= 200) {
+        g.clearInterval(g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__);
+        g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__ = null;
+      }
+    }, 50);
+  }
+
   function schedule() {
+    installLiveTransportPlayBlock();
+    dismissAutoplayDialog();
+    scheduleEarlyFrameZeroCapture();
     syncCollectionStationOnline(true);
     tick();
     setTimeout(tick, 500);
@@ -642,7 +1316,6 @@
     if (!g.__DATALAB_COLLECTION_MODE_OBSERVER__ && document.body) {
       g.__DATALAB_COLLECTION_MODE_OBSERVER__ = new MutationObserver(function () {
         if (!pillInstalled) scheduleTick();
-        else if (collectionModeUi.mode === "preview") scheduleTick();
       });
       g.__DATALAB_COLLECTION_MODE_OBSERVER__.observe(document.body, {
         childList: true,

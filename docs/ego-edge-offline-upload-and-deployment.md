@@ -1,6 +1,8 @@
 # EGO 边缘站：离线上传、存储路径与部署说明
 
-本文档说明 **214 等 EGO 采集边缘机** 的默认工作模式（**本地录制 + U 盘/浏览器离线上传**）、存储路径约定、工程仓库与 systemd 部署方式。
+本文档说明 **214 等 EGO 采集边缘机** 的工作模式：**本地录制 + 214 Agent 批量上传**（主通道），以及 **U 盘/浏览器单段应急补传**、存储路径约定、工程仓库与 systemd 部署方式。
+
+**通道策略**：[ego-lan-214-upload-channel-policy.md](./ego-lan-214-upload-channel-policy.md)
 
 与数据流、ingest 细节互补的文档：[ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md)。
 
@@ -13,8 +15,8 @@
 | 能力 | 默认状态 | 说明 |
 |------|----------|------|
 | OAK 采集（`ecs-oak-capture-stack`） | **开启** | 段落本地 `segments/`，不关网也可录 |
-| 自动网络上传（`ecs-oak-upload-stack`） | **关闭（inactive）** | 不自动 POST 到 34 |
-| 批量/补传 | **U 盘 + 浏览器拖传** | 在 34 采集页「导入」拖入 `.tar.zst` |
+| **批量上传（`ecs-oak-upload-stack`）** | **有网时启用** | **唯一批量主通道**，POST 到 34 |
+| 单段应急补传 | 34 采集页「导入」 | **仅 1 段**，不具备批量商用可靠性 |
 | 去重 | 服务端 `(sessionId, segmentId)` | 重复导入显示「已存在，跳过」 |
 
 采集栈与上传栈在 systemd 中**独立**：只 enable 采集栈即可实现「只录不传」。
@@ -55,7 +57,7 @@
                     └── seg_000010.tar.zst
 ```
 
-浏览器拖传**不强制**文件在哪个目录，只要是合法 `.tar.zst` 即可（可来自 U 盘、`export/` 或段内 `.upload/`）。
+浏览器拖传**不强制**文件在哪个目录，只要是合法 `.tar.zst` 即可（可来自 U 盘、`export/` 或段内 `.upload/`）。**批量场景请用 214 Agent，勿依赖浏览器多文件拖传。**
 
 **现场操作分步说明（手机录制 → U 盘 → 34 导入）**：见 [field-export-and-import.md](../data-lab-platform/ego-local-web/field-export-and-import.md)
 
@@ -65,21 +67,25 @@
 
 ```text
 OAK 录制
-  → segments/（仅采集栈，上传栈 inactive）
+  → segments/（采集栈）
   → 关段（closed=true, uploaded=false）
-  → 可选：pack 为 .upload/*.tar.zst
-  → cp/rsync 到 export/ 或 U 盘
-  → 有网：浏览器打开 34 采集页 → Episodes「导入」→ 拖入 .tar.zst
-  → 34 ingest（与在线 tar.zst 同链路）→ LeRobot v3 数据集
+  → 可选：pack 为 .upload/*.tar.zst 或 ego-export → ready/
+  → 有网：**214 Agent**（ecs-oak-upload-stack）批量 POST 到 34
+  → 或：U 盘单段 → 34 采集页「导入」应急补传（非批量）
+  → 34 ingest → LeRobot v3 数据集
 ```
 
-### 3.1 34 侧导入入口
+### 3.1 34 侧入口
+
+**批量（主通道）**：214 `systemctl --user start ecs-oak-upload-stack.target` → `POST .../upload`
+
+**单段应急**：采集页
 
 ```text
 http://10.10.10.34:8080/collection?station=ego-lan-214
 ```
 
-Episodes 工具栏 **「导入」** → 拖入 `.tar.zst`。API 经 Django 代理到 `stream-ingest`，与边缘 `segment_upload.py` 网络上传共用 `processTarZstFromFile`。
+Episodes 工具栏 **「导入」** → 拖入 **单个** `.tar.zst`。API 经 Django 代理到 `stream-ingest`，与 Agent 网络上传共用 ingest 链路。
 
 ### 3.2 重复导入
 
@@ -89,12 +95,12 @@ Episodes 工具栏 **「导入」** → 拖入 `.tar.zst`。API 经 Django 代�
 
 ### 3.3 离线上传优先时的环境变量（214）
 
-| 变量 | 网络自动上传模式 | **离线上传优先（推荐）** |
-|------|------------------|--------------------------|
+| 变量 | 网络自动上传模式（**批量主通道**） | 仅录制、稍后手动上传 |
+|------|-----------------------------------|----------------------|
 | `EGO_SEGMENT_DELETE_AFTER_UPLOAD` | `1`（传完删段） | `0`（误触发网络上传也不删本地） |
-| `EGO_SEGMENT_QUOTA_GB` | `256` | 本机 `segments/` 待导出队列上限（GB）；导出成功后源段删除，配额循环使用 |
+| `EGO_SEGMENT_QUOTA_GB` | `256` | 本机 `segments/` 待导出队列上限（GB） |
 | `SEGMENT_AUTO_PURGE_PENDING` | `1` | `0` 或配合更大 `SEGMENT_MAX_PENDING` |
-| `ecs-oak-upload-stack.target` | enabled | **disabled / inactive** |
+| `ecs-oak-upload-stack.target` | **有网时 start** | inactive（仅录不传） |
 
 ---
 
@@ -110,7 +116,7 @@ Episodes 工具栏 **「导入」** → 拖入 `.tar.zst`。API 经 Django 代�
 
 ```bash
 # 采集
-python -m ego_capture_studio.cli.record_oak_stream --fps 20 --imu-hz 100
+python -m ego_capture_studio.cli.record_oak_stream --fps 30 --imu-hz 200
 
 # 手动网络上传（可选，非默认）
 python -m ego_capture_studio.cli.upload_segments \
@@ -125,7 +131,7 @@ data-lab-platform/ego-stream-client/
 ├── segment_store.py, segment_tar_zst.py, segment_upload.py
 ├── oak_4p_capture.py, record_oak_stream.py
 ├── systemd/ecs-*.service / ecs-oak-*.target
-└── config/strict20hz_production.env
+└── config/egoverse_30hz_production.env
 ```
 
 `ego-stream-client` 是 data-lab 侧维护的**边缘采集源码 + systemd 模板**；214 上的 `ego-studio`（`ego-capture-studio`）是**打包安装后的运行时**。新机器部署应以 `ego-studio` 安装包为准，单元文件从 `ego-stream-client/systemd/` 拷贝并按站点改环境变量。
@@ -134,7 +140,7 @@ data-lab-platform/ego-stream-client/
 
 | 组件 | 路径 |
 |------|------|
-| 浏览器导入 UI | `data-lab-platform/client/import-core.js`、`import-modal.css` |
+| 浏览器导入 UI | `data-lab-platform/client/import-core.js`（单段应急）、`import-modal.css` |
 | Django 代理 | `label_studio/core/collection_import.py` |
 | Ingest | `data-lab-platform/lerobot-studio/stream-ingest.mjs`、`import-handlers.mjs` |
 
@@ -193,13 +199,13 @@ print('packed:', '$OUT')
 "
 ```
 
-拷到 U 盘或 `export/` 后，在 34 采集页拖传 `OUT` 即可。
+拷到 U 盘或 `export/` 后：**有网优先 214 Agent 批量上传**；仅单段应急时在 34 采集页拖传 `OUT`。
 
 ---
 
 ## 七、与旧文档的差异说明
 
-[ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md) 第八节曾写「无开箱即用离线导入」——**现已支持** 34 采集页浏览器导入 `.tar.zst`（与 HTTP ingest 同链路）。U 盘场景仍为：**拷 tar.zst 到有浏览器的机器上拖传**，不能直接把原始 `segments/` 目录拷到 34 磁盘代替 ingest。
+[ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md) 第八节曾写「无开箱即用离线导入」——**现已支持** 34 采集页浏览器**单段**导入 `.tar.zst`（与 HTTP ingest 同链路）。**批量主通道**为 214 `ecs-oak-upload-stack`（见 [ego-lan-214-upload-channel-policy.md](./ego-lan-214-upload-channel-policy.md)）。不能直接把原始 `segments/` 目录拷到 34 磁盘代替 ingest。
 
 ---
 
@@ -211,7 +217,8 @@ print('packed:', '$OUT')
 | tar.zst 打包 | `data-lab-platform/ego-stream-client/segment_tar_zst.py` |
 | 网络上传客户端 | `data-lab-platform/ego-stream-client/segment_upload.py` |
 | 采集 systemd | `data-lab-platform/ego-stream-client/systemd/ecs-record-oak-stream.service` |
-| 上传 systemd（默认不开） | `data-lab-platform/ego-stream-client/systemd/ecs-upload-segments-loop.service` |
+| 上传 systemd（批量主通道） | `data-lab-platform/ego-stream-client/systemd/ecs-upload-segments-loop.service` |
 | 采集/上传 target | `ecs-oak-capture-stack.target` / `ecs-oak-upload-stack.target` |
-| 浏览器导入前端 | `data-lab-platform/client/import-core.js` |
+| 浏览器单段应急 UI | `data-lab-platform/client/import-core.js` |
+| 上传通道策略 | `docs/ego-lan-214-upload-channel-policy.md` |
 | 完整数据流文档 | `docs/ego-lan-214-segment-storage-and-upload.md` |

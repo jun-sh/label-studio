@@ -4,12 +4,26 @@
  */
 import http from "node:http";
 import {
+  cleanupOrphanIncomingArchives,
   ensurePeriodicDiskCleanupForAllStations,
+  ensureStreamViewerScaffoldForAllStations,
+  handleStreamScaffoldRequest,
   handleStreamUploadRequest,
   resumePendingStreamMuxForAllStations,
   runDiskCleanupForAllStations,
+  stationRoot,
+  verifyStationUploadToken,
 } from "./stream-ingest.mjs";
 import { handleImportTaskGet, handleImportUpload } from "./import-handlers.mjs";
+import {
+  getDeriveQueueStats,
+  getDeriveStatusSummary,
+  handleDeriveRetry,
+  handleDeriveStart,
+  listSegmentStates,
+  resumeDeriveQueuesForAllStations,
+  ensureIdleDeriveWatcher,
+} from "./derive-async.mjs";
 
 const PORT = Number(process.env.INGEST_PORT || process.env.PORT || 7862);
 const BASE = "/lerobot";
@@ -76,6 +90,90 @@ const server = http.createServer((req, res) => {
       .catch((err) => handleIngestError(res, err));
   }
 
+  const deriveStatusMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/derive-status$`),
+  );
+  if (deriveStatusMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(deriveStatusMatch[1]);
+    const sessionFilter = url.searchParams.get("session") || undefined;
+    return sendJson(res, 200, getDeriveStatusSummary(stationId, { sessionId: sessionFilter }));
+  }
+
+  const segmentsListMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/segments$`),
+  );
+  if (segmentsListMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(segmentsListMatch[1]);
+    const sessionFilter = url.searchParams.get("session") || undefined;
+    const statusFilter = url.searchParams.get("status") || undefined;
+    const items = listSegmentStates(stationRoot(stationId), {
+      sessionId: sessionFilter,
+      status: statusFilter,
+    });
+    return sendJson(res, 200, {
+      stationId,
+      segments: items,
+      deriveQueue: getDeriveQueueStats(stationId),
+      sla: {
+        UPLOADED: "Raw verified on disk (tar.zst)",
+        DERIVING: "Background derive in progress",
+        READY: "Parquet + MP4 validated on disk",
+      },
+    });
+  }
+
+  const deriveRetryMatch = p.match(
+    new RegExp(
+      `^${BASE}/api/collection/stations/([^/]+)/segments/([^/]+)/([^/]+)/derive-retry$`,
+    ),
+  );
+  if (deriveRetryMatch && req.method === "POST") {
+    const stationId = decodeURIComponent(deriveRetryMatch[1]);
+    const sessionId = decodeURIComponent(deriveRetryMatch[2]);
+    const segmentId = decodeURIComponent(deriveRetryMatch[3]);
+    try {
+      const auth = verifyStationUploadToken(stationId, req);
+      if (!auth.ok) {
+        const err = new Error("unauthorized");
+        err.statusCode = 401;
+        err.reason = auth.reason;
+        throw err;
+      }
+      return sendJson(res, 202, handleDeriveRetry(stationId, sessionId, segmentId));
+    } catch (err) {
+      return handleIngestError(res, err);
+    }
+  }
+
+  const deriveStartMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/derive-start$`),
+  );
+  if (deriveStartMatch && req.method === "POST") {
+    const stationId = decodeURIComponent(deriveStartMatch[1]);
+    try {
+      const auth = verifyStationUploadToken(stationId, req);
+      if (!auth.ok) {
+        const err = new Error("unauthorized");
+        err.statusCode = 401;
+        err.reason = auth.reason;
+        throw err;
+      }
+      return sendJson(res, 202, handleDeriveStart(stationId));
+    } catch (err) {
+      return handleIngestError(res, err);
+    }
+  }
+
+  const scaffoldMatch = p.match(new RegExp(`^${BASE}/api/stream/([^/]+)/scaffold$`));
+  if (scaffoldMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(scaffoldMatch[1]);
+    try {
+      return sendJson(res, 200, handleStreamScaffoldRequest(stationId));
+    } catch (err) {
+      return handleIngestError(res, err);
+    }
+  }
+
   const uploadMatch = p.match(
     new RegExp(`^${BASE}/api/collection/stations/([^/]+)/upload$`),
   );
@@ -105,8 +203,12 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`Stream ingest on :${PORT} (upload ${BASE}/api/collection/stations/*/upload)`);
   setImmediate(() => {
     console.log("[stream-ingest] running startup disk cleanup for all stations…");
+    cleanupOrphanIncomingArchives();
     runDiskCleanupForAllStations();
     ensurePeriodicDiskCleanupForAllStations();
     resumePendingStreamMuxForAllStations();
+    resumeDeriveQueuesForAllStations();
+    ensureIdleDeriveWatcher();
+    ensureStreamViewerScaffoldForAllStations();
   });
 });

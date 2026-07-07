@@ -98,6 +98,28 @@ async function collectState(page) {
 
     const rawViewport = rawGv?.querySelector("[data-radix-scroll-area-viewport]");
 
+    const chartGv2 = chartGv;
+    const chartCanvas = chartGv2?.querySelector("canvas");
+    let chartCanvasHash = null;
+    if (chartCanvas && chartCanvas.width > 0 && chartCanvas.height > 0) {
+      const ctx = chartCanvas.getContext("2d");
+      if (ctx) {
+        const d = ctx.getImageData(0, 0, Math.min(32, chartCanvas.width), Math.min(32, chartCanvas.height))
+          .data;
+        let s = 0;
+        for (let i = 0; i < d.length; i += 41) s += d[i];
+        chartCanvasHash = s;
+      }
+    }
+
+    const numericLeaves = rawViewport
+      ? [...rawViewport.querySelectorAll("*")]
+          .filter((el) => !el.children.length)
+          .map((el) => (el.textContent || "").trim())
+          .filter((t) => /^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(t))
+      : [];
+    const featuresNonZero = numericLeaves.filter((t) => t !== "0" && t !== "0.0").length;
+
     return {
       fixedOverlays: document.querySelectorAll("div.fixed.z-50").length,
       previewMode: document.documentElement.getAttribute("data-datalab-collection-preview"),
@@ -110,9 +132,12 @@ async function collectState(page) {
         : null,
       featuresFlexRows: rawViewport?.querySelectorAll(".flex").length || 0,
       featuresHasTree: Boolean(rawViewport?.querySelector(".font-mono")),
+      featuresNonZero,
       jointRows: chartGv
         ? chartGv.querySelectorAll("[data-joint], [role=row]").length
         : 0,
+      jointsFrozen: Boolean(chartGv?.querySelector("[data-datalab-live-joints-frozen]")),
+      chartCanvasHash,
       transportLeaves,
       jointsLabelVisible: [...document.querySelectorAll("span, button")]
         .filter((el) => (el.textContent || "").trim() === "全部 joints")
@@ -180,9 +205,22 @@ async function main() {
   });
   await sleep(1500);
 
+  await page.evaluate(() => {
+    for (const b of document.querySelectorAll("button")) {
+      const svg = b.querySelector("svg");
+      if (svg?.getAttribute("class")?.includes("lucide-play")) {
+        b.click();
+        break;
+      }
+    }
+  });
+  await sleep(2000);
+
   const replay = await collectState(page);
   await switchLive(page);
-  await sleep(12000);
+  await sleep(3000);
+  const liveMid = await collectState(page);
+  await sleep(3000);
   const live = await collectState(page);
 
   await page.screenshot({
@@ -255,6 +293,24 @@ async function main() {
         live.rawChrome?.bodyVisible === true &&
         live.rawFrameIndex === "0",
       detail: `frame_index=${live.rawFrameIndex} chrome=${JSON.stringify(live.rawChrome)}`,
+    },
+    {
+      id: "features-zero-values-live",
+      pass: live.featuresNonZero === 0,
+      detail: `nonZeroNumericLeaves=${live.featuresNonZero}`,
+    },
+    {
+      id: "joints-chart-frozen",
+      pass: live.jointsFrozen === true,
+      detail: `jointsFrozen=${live.jointsFrozen}`,
+    },
+    {
+      id: "joints-canvas-stable",
+      pass:
+        live.chartCanvasHash !== null &&
+        live.chartCanvasHash !== 0 &&
+        liveMid.chartCanvasHash === live.chartCanvasHash,
+      detail: `hash mid=${liveMid.chartCanvasHash} late=${live.chartCanvasHash}`,
     },
     {
       id: "transport-zero-labels",

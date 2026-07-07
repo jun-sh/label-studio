@@ -430,8 +430,9 @@
   var patchTransportScheduled = false;
   var liveSeekBurstTimer = null;
   var liveRawSnapshotObserver = null;
-  var applyingLiveFrameSnapshot = false;
+  var applyingLiveFeaturesPlaceholder = false;
   var livePauseGuardTimer = null;
+  var liveJointsFreezeTimer = null;
 
   function clickAllFeaturesTab() {
     var buttons = document.querySelectorAll("button");
@@ -458,9 +459,9 @@
     var viewport = findRawMessageViewport();
     if (!viewport) return;
     liveRawSnapshotObserver = new MutationObserver(function () {
-      if (applyingLiveFrameSnapshot) return;
+      if (applyingLiveFeaturesPlaceholder) return;
       if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
-      applyLiveFrameZeroSnapshot();
+      applyLiveFeaturesPlaceholder();
     });
     liveRawSnapshotObserver.observe(viewport, {
       childList: true,
@@ -515,48 +516,213 @@
     return null;
   }
 
-  function captureLiveFrameZeroSnapshot() {
-    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
-    var viewport = findRawMessageViewport();
-    if (!viewport) return;
-    var text = (viewport.textContent || "").trim();
-    if (text.indexOf("frame_index") < 0) return;
-    if (!/"frame_index":\s*0\b/.test(text)) return;
-    if (!rawViewportHasFeaturesLayout(viewport)) return;
-    g.__DATALAB_LIVE_FRAME_ZERO_HTML__ = viewport.innerHTML;
+  function findJointsChartGroupview() {
+    var groupviews = document.querySelectorAll(".dv-groupview");
+    for (var gi = 0; gi < groupviews.length; gi++) {
+      var gv = groupviews[gi];
+      if ((gv.textContent || "").indexOf("折线图") >= 0) return gv;
+    }
+    return null;
   }
 
-  function applyLiveFrameZeroSnapshot() {
-    var html = g.__DATALAB_LIVE_FRAME_ZERO_HTML__;
-    if (!html) return false;
-    var viewport = findRawMessageViewport();
-    if (!viewport) return false;
-    if (viewport.innerHTML === html) return true;
-    applyingLiveFrameSnapshot = true;
-    viewport.innerHTML = html;
-    applyingLiveFrameSnapshot = false;
-    return true;
+  function jointsChartSnapshotsReady() {
+    var gv = findJointsChartGroupview();
+    if (!gv) return false;
+    var canvases = gv.querySelectorAll("canvas");
+    for (var ci = 0; ci < canvases.length; ci++) {
+      if (canvases[ci]._datalabLiveJointsSnapshot) return true;
+    }
+    return false;
   }
 
-  function bootstrapLiveFrameZeroHtmlSnapshot(attempt) {
+  function imageDataHasChartInk(imageData) {
+    if (!imageData || !imageData.data) return false;
+    var d = imageData.data;
+    for (var i = 3; i < d.length; i += 64) {
+      if (d[i] > 0 && d[i - 1] + d[i - 2] + d[i - 3] > 0) return true;
+    }
+    return false;
+  }
+
+  /** Capture grid/axes paint at current frame (call after seek-to-0 + pause). */
+  function captureJointsChartSnapshots() {
+    var gv = findJointsChartGroupview();
+    if (!gv) return false;
+    var captured = false;
+    var canvases = gv.querySelectorAll("canvas");
+    for (var ci = 0; ci < canvases.length; ci++) {
+      var canvas = canvases[ci];
+      if (canvas.width <= 0 || canvas.height <= 0) continue;
+      var ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      try {
+        var snap = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        if (!imageDataHasChartInk(snap)) continue;
+        canvas._datalabLiveJointsSnapshot = snap;
+        captured = true;
+      } catch (e0) {
+        /* ignore */
+      }
+    }
+    return captured;
+  }
+
+  /** Restore frozen grid/axes snapshot; overwrites LeRobot per-frame curve redraws. */
+  function restoreJointsChartSnapshots() {
+    var gv = findJointsChartGroupview();
+    if (!gv) return;
+    gv.setAttribute("data-datalab-live-joints-frozen", "1");
+    var canvases = gv.querySelectorAll("canvas");
+    for (var ci = 0; ci < canvases.length; ci++) {
+      var canvas = canvases[ci];
+      var snap = canvas._datalabLiveJointsSnapshot;
+      if (!snap || canvas.width <= 0 || canvas.height <= 0) continue;
+      if (snap.width !== canvas.width || snap.height !== canvas.height) continue;
+      var ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      try {
+        ctx.putImageData(snap, 0, 0);
+      } catch (e1) {
+        /* ignore */
+      }
+    }
+  }
+
+  function clearJointsChartSnapshots() {
+    var gv = findJointsChartGroupview();
+    if (gv) {
+      gv.querySelectorAll("canvas").forEach(function (canvas) {
+        delete canvas._datalabLiveJointsSnapshot;
+      });
+    }
+    delete g.__DATALAB_LIVE_JOINTS_CAPTURED__;
+  }
+
+  function bootstrapJointsChartSnapshot(attempt) {
     if (typeof attempt !== "number") attempt = 0;
-    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
-    dismissAutoplayDialog();
+    if (jointsChartSnapshotsReady()) {
+      restoreJointsChartSnapshots();
+      g.__DATALAB_LIVE_JOINTS_CAPTURED__ = true;
+      return;
+    }
     ensureTransportPaused();
     if (attempt === 0) {
       seekReplayTransportToStart();
     }
+    if (captureJointsChartSnapshots()) {
+      g.__DATALAB_LIVE_JOINTS_CAPTURED__ = true;
+      restoreJointsChartSnapshots();
+      return;
+    }
+    if (attempt >= 30) return;
+    g.setTimeout(function () {
+      bootstrapJointsChartSnapshot(attempt + 1);
+    }, 100);
+  }
+
+  function clearJointsChartFreezeMark() {
+    document.querySelectorAll("[data-datalab-live-joints-frozen]").forEach(function (node) {
+      node.removeAttribute("data-datalab-live-joints-frozen");
+    });
+  }
+
+  function startLiveJointsFreeze() {
+    bootstrapJointsChartSnapshot(0);
+    restoreJointsChartSnapshots();
+    if (liveJointsFreezeTimer) return;
+    liveJointsFreezeTimer = g.setInterval(function () {
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
+        stopLiveJointsFreeze();
+        return;
+      }
+      if (!jointsChartSnapshotsReady()) {
+        bootstrapJointsChartSnapshot(1);
+      }
+      restoreJointsChartSnapshots();
+    }, 100);
+  }
+
+  function stopLiveJointsFreeze() {
+    if (liveJointsFreezeTimer) {
+      g.clearInterval(liveJointsFreezeTimer);
+      liveJointsFreezeTimer = null;
+    }
+    clearJointsChartSnapshots();
+    clearJointsChartFreezeMark();
+  }
+
+  function buildZeroedFeaturesHtml(html) {
+    var tmp = document.createElement("div");
+    tmp.innerHTML = String(html || "");
+    tmp.querySelectorAll("*").forEach(function (el) {
+      if (el.children.length > 0) return;
+      var t = (el.textContent || "").trim();
+      if (/^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(t)) {
+        el.textContent = "0";
+      }
+    });
+    return String(tmp.innerHTML)
+      .replace(/"frame_index"\s*:\s*\d+/g, '"frame_index": 0')
+      .replace(/"timestamp"\s*:\s*[\d.eE+-]+/g, '"timestamp": 0');
+  }
+
+  function liveFeaturesPlaceholderHtml() {
+    return g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_HTML__ || g.__DATALAB_LIVE_FRAME_ZERO_HTML__ || "";
+  }
+
+  function captureLiveFeaturesPlaceholder() {
+    if (liveFeaturesPlaceholderHtml()) return true;
+    var viewport = findRawMessageViewport();
+    if (!viewport || !rawViewportHasFeaturesLayout(viewport)) return false;
+    var html = buildZeroedFeaturesHtml(viewport.innerHTML);
+    g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_HTML__ = html;
+    return true;
+  }
+
+  function applyLiveFeaturesPlaceholder() {
+    var html = liveFeaturesPlaceholderHtml();
+    if (!html) return false;
+    var viewport = findRawMessageViewport();
+    if (!viewport) return false;
+    if (viewport.innerHTML === html) return true;
+    applyingLiveFeaturesPlaceholder = true;
+    viewport.innerHTML = html;
+    applyingLiveFeaturesPlaceholder = false;
+    return true;
+  }
+
+  function bootstrapLiveFeaturesPlaceholder(attempt) {
+    if (typeof attempt !== "number") attempt = 0;
+    if (liveFeaturesPlaceholderHtml()) {
+      applyLiveFeaturesPlaceholder();
+      return;
+    }
+    dismissAutoplayDialog();
+    ensureTransportPaused();
     patchLiveTransportBar();
     clickAllFeaturesTab();
-    captureLiveFrameZeroSnapshot();
-    applyLiveFrameZeroSnapshot();
+    captureLiveFeaturesPlaceholder();
+    applyLiveFeaturesPlaceholder();
     patchLiveTransportBar();
     ensureTransportPaused();
-    if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__) return;
+    if (liveFeaturesPlaceholderHtml()) return;
     if (attempt >= 24) return;
     g.setTimeout(function () {
-      bootstrapLiveFrameZeroHtmlSnapshot(attempt + 1);
+      bootstrapLiveFeaturesPlaceholder(attempt + 1);
     }, 100);
+  }
+
+  function pauseReplayBeforeLiveSwitch() {
+    dismissAutoplayDialog();
+    ensureTransportPaused();
+    var videos = document.querySelectorAll("video");
+    for (var vi = 0; vi < videos.length; vi++) {
+      try {
+        videos[vi].pause();
+      } catch (e0) {
+        /* ignore */
+      }
+    }
   }
 
   function pointerSeekSlider(slider, clientX, clientY) {
@@ -584,9 +750,9 @@
     if (
       collectionModeUi.mode === "preview" &&
       previewModeAllowed() &&
-      g.__DATALAB_LIVE_FRAME_ZERO_HTML__
+      liveFeaturesPlaceholderHtml()
     ) {
-      applyLiveFrameZeroSnapshot();
+      applyLiveFeaturesPlaceholder();
       return;
     }
     var slider = findTransportSlider();
@@ -597,7 +763,7 @@
       nudgeSliderToStart(slider);
       ensureTransportPaused();
     }
-    applyLiveFrameZeroSnapshot();
+    applyLiveFeaturesPlaceholder();
   }
 
   function stashTransportLabel(el, nextText) {
@@ -659,6 +825,7 @@
   function clearLiveTransportFreeze() {
     stopLiveSeekBurst();
     stopLivePauseGuard();
+    stopLiveJointsFreeze();
     stopLiveTransportObserver();
     stopLiveRawSnapshotObserver();
     unlockLiveTransportPlayButton();
@@ -723,6 +890,9 @@
       }
       dismissAutoplayDialog();
       ensureTransportPaused();
+      restoreJointsChartSnapshots();
+      captureLiveFeaturesPlaceholder();
+      applyLiveFeaturesPlaceholder();
       freezeTransportSliderPosition(findTransportSlider());
       patchLiveTransportBar();
       lockLiveTransportPlayButton();
@@ -744,9 +914,10 @@
         return;
       }
       dismissAutoplayDialog();
-      captureLiveFrameZeroSnapshot();
+      captureLiveFeaturesPlaceholder();
       ensureTransportPaused();
-      applyLiveFrameZeroSnapshot();
+      applyLiveFeaturesPlaceholder();
+      restoreJointsChartSnapshots();
       patchLiveTransportBar();
       ticks += 1;
       if (ticks >= 5) {
@@ -765,15 +936,12 @@
   function applyLiveReplayFreeze() {
     if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
     dismissAutoplayDialog();
-    captureLiveFrameZeroSnapshot();
     ensureTransportPaused();
-    if (!g.__DATALAB_LIVE_FRAME_ZERO_HTML__) {
-      seekReplayTransportToStart();
-    }
-    ensureTransportPaused();
+    captureLiveFeaturesPlaceholder();
     clickAllFeaturesTab();
-    bootstrapLiveFrameZeroHtmlSnapshot(0);
-    applyLiveFrameZeroSnapshot();
+    bootstrapLiveFeaturesPlaceholder(0);
+    applyLiveFeaturesPlaceholder();
+    startLiveJointsFreeze();
     lockLiveTransportPlayButton();
     freezeTransportSliderPosition(findTransportSlider());
     patchLiveTransportBar();
@@ -1066,6 +1234,9 @@
   function selectCollectionMode(mode, options) {
     options = options || {};
     if (mode === "preview" && !previewModeAllowed()) mode = "dataset";
+    if (mode === "preview" && previewModeAllowed()) {
+      pauseReplayBeforeLiveSwitch();
+    }
     collectionModeUi.mode = mode;
     applyCollectionModeChromeVisual();
     syncCollectionPreviewOverlay();
@@ -1080,7 +1251,12 @@
     if (event.source !== g.parent) return;
     if (event.origin !== g.location.origin) return;
     var data = event.data;
-    if (!data || typeof data !== "object" || data.type !== "datalab-collection-mode") return;
+    if (!data || typeof data !== "object" || data.type !== "datalab-collection-mode") {
+      if (data && data.type === "datalab-collection-pause-replay") {
+        pauseReplayBeforeLiveSwitch();
+      }
+      return;
+    }
     if (data.parentChrome) applyParentCollectionChrome();
     if (typeof data.remotePreview === "boolean") {
       remotePreviewEnabled = data.remotePreview;
@@ -1098,6 +1274,9 @@
         remotePreviewEnabled && collectionModeUi.online && collectionModeUi.captureState === "idle";
     }
     if (data.mode === "preview" || data.mode === "dataset") {
+      if (data.mode === "preview" && previewModeAllowed()) {
+        pauseReplayBeforeLiveSwitch();
+      }
       selectCollectionMode(data.mode, { fromParent: true });
       if (typeof g.__datalabBootstrapStreamOpen === "function") {
         g.__datalabBootstrapStreamOpen();
@@ -1258,7 +1437,7 @@
     if (!collectionModeUi.stationId) {
       collectionModeUi.stationId = stationIdFromContext();
     }
-    captureLiveFrameZeroSnapshot();
+    captureLiveFeaturesPlaceholder();
     if (!pillInstalled) {
       installCollectionModeSwitcher();
     }
@@ -1278,23 +1457,23 @@
     }, TICK_DEBOUNCE_MS);
   }
 
-  function scheduleEarlyFrameZeroCapture() {
-    if (g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__) return;
+  function scheduleEarlyFeaturesPlaceholderCapture() {
+    if (g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_CAPTURE_TIMER__) return;
     var attempts = 0;
-    g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__ = g.setInterval(function () {
+    g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_CAPTURE_TIMER__ = g.setInterval(function () {
       if (attempts === 0) {
         dismissAutoplayDialog();
         ensureTransportPaused();
       }
-      captureLiveFrameZeroSnapshot();
-      if (!g.__DATALAB_LIVE_FRAME_ZERO_HTML__ && attempts % 8 === 4) {
+      captureLiveFeaturesPlaceholder();
+      if (!liveFeaturesPlaceholderHtml() && attempts % 8 === 4) {
         clickAllFeaturesTab();
-        g.setTimeout(captureLiveFrameZeroSnapshot, 150);
+        g.setTimeout(captureLiveFeaturesPlaceholder, 150);
       }
       attempts += 1;
-      if (g.__DATALAB_LIVE_FRAME_ZERO_HTML__ || attempts >= 200) {
-        g.clearInterval(g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__);
-        g.__DATALAB_LIVE_FRAME_ZERO_CAPTURE_TIMER__ = null;
+      if (liveFeaturesPlaceholderHtml() || attempts >= 200) {
+        g.clearInterval(g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_CAPTURE_TIMER__);
+        g.__DATALAB_LIVE_FEATURES_PLACEHOLDER_CAPTURE_TIMER__ = null;
       }
     }, 50);
   }
@@ -1302,7 +1481,7 @@
   function schedule() {
     installLiveTransportPlayBlock();
     dismissAutoplayDialog();
-    scheduleEarlyFrameZeroCapture();
+    scheduleEarlyFeaturesPlaceholderCapture();
     syncCollectionStationOnline(true);
     tick();
     setTimeout(tick, 500);

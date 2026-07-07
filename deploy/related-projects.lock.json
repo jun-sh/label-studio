@@ -1,6 +1,6 @@
 {
   "tag": "deploy-release-v0.0.6",
-  "snapshotted_at": "2026-07-07T09:10:25+08:00",
+  "snapshotted_at": "2026-07-07T09:41:27+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
     {
@@ -13,7 +13,7 @@
       "path": "ml-services/label-studio-ml-backend",
       "remote": "https://github.com/HumanSignal/label-studio-ml-backend.git",
       "commit": "231a16455c7cbfb27768e3d1400f5356c3bc1a35",
-      "uncommitted_files": 2
+      "uncommitted_files": 1
     },
     {
       "path": "data-lab-platform/embodied-annotate",

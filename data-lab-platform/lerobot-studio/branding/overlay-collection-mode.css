@@ -97,6 +97,13 @@ html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
   pointer-events: none !important;
 }
 
+/* Live: freeze Joints chart — restore grid/axes snapshot; block pointer hit-testing. */
+html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
+  .dv-groupview[data-datalab-live-joints-frozen]
+  canvas {
+  pointer-events: none !important;
+}
+
 html[data-datalab-parent-chrome="1"] [data-datalab-collection-mode-root] {
   display: none !important;
 }

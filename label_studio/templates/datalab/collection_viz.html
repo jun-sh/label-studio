@@ -230,6 +230,7 @@
     var LABEL_THEME_LIGHT = ZH ? "浅色" : "Light";
     var LABEL_THEME_DARK = ZH ? "深色" : "Dark";
     var COLLECTION_MODE_MSG = "datalab-collection-mode";
+    var COLLECTION_PAUSE_REPLAY_MSG = "datalab-collection-pause-replay";
     var THEME_MSG = "datalab-lerobot-theme";
     var THEME_SYNC_MSG = "datalab-lerobot-theme-sync";
     var IMPORT_DONE_MSG = "datalab-import-done";
@@ -911,6 +912,18 @@
         postModeToIframe(iframeModeToSend());
       }
 
+      function postPauseReplayToIframe() {
+        if (!vizFrame || !vizFrame.contentWindow) return;
+        try {
+          vizFrame.contentWindow.postMessage(
+            { type: COLLECTION_PAUSE_REPLAY_MSG, source: "parent-ui" },
+            window.location.origin,
+          );
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
       function postModeToIframe(mode) {
         if (!vizFrame || !vizFrame.contentWindow) return;
         try {
@@ -1062,6 +1075,9 @@
       function setMode(mode) {
         if (mode === "preview" && !previewModeAllowed()) {
           mode = "dataset";
+        }
+        if (mode === "preview" && previewModeAllowed()) {
+          postPauseReplayToIframe();
         }
         currentMode = mode;
         ensureLerobotMounted(false);

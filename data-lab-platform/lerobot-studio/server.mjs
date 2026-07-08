@@ -193,6 +193,14 @@ function handKp2dOverlayPath(datasetId) {
   return path.join(BUNDLED, "overlays", `${datasetId}_hand_kp2d.json`);
 }
 
+function depthPreviewOverlayPath(datasetId) {
+  return path.join(BUNDLED, "overlays", `${datasetId}_depth_preview.json`);
+}
+
+function depthPreviewFramesRoot(datasetId) {
+  return path.join(BUNDLED, "overlays", `${datasetId}_depth_preview_frames`);
+}
+
 function readHandKp2dFromZip(zipPath, innerPath) {
   try {
     const raw = execFileSync("unzip", ["-p", zipPath, innerPath], {
@@ -266,6 +274,36 @@ function resolveHandKp2dPayload(datasetId) {
   );
 }
 
+function resolveDepthPreviewPayload(datasetId) {
+  const overlayPath = depthPreviewOverlayPath(datasetId);
+  if (fs.existsSync(overlayPath)) {
+    return JSON.parse(fs.readFileSync(overlayPath, "utf8"));
+  }
+  const localPath = path.join(
+    process.env.DATALAB_SAMPLES_DIR || "/datalab-samples",
+    `${datasetId}_depth_preview.json`,
+  );
+  if (fs.existsSync(localPath)) {
+    return JSON.parse(fs.readFileSync(localPath, "utf8"));
+  }
+  return null;
+}
+
+function resolveDepthPreviewFramePath(datasetId, episodeKey, frameName) {
+  const roots = [
+    depthPreviewFramesRoot(datasetId),
+    path.join(process.env.DATALAB_SAMPLES_DIR || "/datalab-samples", `${datasetId}_depth_preview_frames`),
+  ];
+  const safeEpisode = String(episodeKey || "").replace(/[^0-9]/g, "").padStart(6, "0");
+  const safeFrame = path.basename(String(frameName || ""));
+  if (!/^frame_\d{6}\.png$/.test(safeFrame)) return null;
+  for (const root of roots) {
+    const candidate = path.join(root, safeEpisode, safeFrame);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function isCollectionEmbedSearch(search = "") {
   try {
     const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
@@ -297,11 +335,13 @@ function injectBranding(html, search = "") {
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=67"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=8"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=2"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=67"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=20"></script>' +
+    '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=2"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=
@@ -367,6 +407,43 @@ const server = http.createServer((req, res) => {
         message: e instanceof Error ? e.message : String(e),
       });
     }
+  }
+
+  const depthPreviewMatch = p.match(
+    new RegExp(`^${BASE}/api/sample/([^/]+)/depth-preview\\.json$`),
+  );
+  if (depthPreviewMatch && req.method === "GET") {
+    const datasetId = decodeURIComponent(depthPreviewMatch[1]);
+    try {
+      const payload = resolveDepthPreviewPayload(datasetId);
+      if (!payload) {
+        return sendJson(res, 404, { error: "depth_preview_not_found", datasetId });
+      }
+      return sendJson(res, 200, payload);
+    } catch (e) {
+      return sendJson(res, 500, {
+        error: "depth_preview_read_failed",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  const depthFrameMatch = p.match(
+    new RegExp(`^${BASE}/api/sample/([^/]+)/depth-preview/([^/]+)/(frame_\\d{6}\\.png)$`),
+  );
+  if (depthFrameMatch && req.method === "GET") {
+    const datasetId = decodeURIComponent(depthFrameMatch[1]);
+    const episodeKey = decodeURIComponent(depthFrameMatch[2]);
+    const frameName = depthFrameMatch[3];
+    const framePath = resolveDepthPreviewFramePath(datasetId, episodeKey, frameName);
+    if (!framePath) {
+      return sendJson(res, 404, { error: "depth_frame_not_found", datasetId, episodeKey, frameName });
+    }
+    res.writeHead(200, {
+      "Content-Type": "image/png",
+      "Cache-Control": "public, max-age=3600",
+    });
+    return fs.createReadStream(framePath).pipe(res);
   }
 
   function enrichStation(station) {

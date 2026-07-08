@@ -25,16 +25,16 @@ LeRobot Studio 上游实现的**浏览器会话级软删除**：
 | 步骤 | 工具 | 产出 |
 |------|------|------|
 | 采集 | `ego-stream-client` / stream-ingest | `data-storage/stream/<station>/` |
-| 后处理 | `ego-hand-pipeline/scripts/ego-postprocess.sh` | session dataset → append 到 aggregate |
+| 后处理（默认） | `ego-run-pipeline`（oak） | `data-storage/pipeline/` → append 到 `corpus/` |
+| 后处理（回滚） | `ego-hand-pipeline/scripts/ego-postprocess.sh` | session dataset → append 到 aggregate |
 | 可选裁剪发布 | `publish --prune-remove 0,1` | `*-release-*` 目录 + `samples/<slug>.zip` |
 | 平台展示 | `deploy-local-datasets.sh` | Viewer `/data/ego_214_hand_pose` |
 
 ## 发布到本机 Viewer 示例
 
-在 ego-hand-pipeline 完成 postprocess 后：
+`ego-run-pipeline` 完成后 publish 已写入 `data-lab/data-storage/samples/ego_214_hand_pose.zip`；若仅重部署 Viewer：
 
 ```bash
-# publish 已写入 data-lab/data-storage/samples/ego_214_hand_pose.zip
 cd data-lab
 bash data-lab-platform/deploy-local-datasets.sh
 ```

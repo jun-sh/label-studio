@@ -62,6 +62,16 @@ if [ -d "${SAMPLES}" ]; then
   copy_if_newer "${SAMPLES}/DualAirbot Folding.zip" "${BUNDLED}/dualairbot_fold.zip" || true
   copy_if_newer "${SAMPLES}/ego_214_hand_pose.zip" "${BUNDLED}/ego_214_hand_pose.zip" || true
   copy_if_newer "${SAMPLES}/ego_214_hand_pose_hand_kp2d.json" "${BUNDLED}/overlays/ego_214_hand_pose_hand_kp2d.json" || true
+  copy_if_newer "${SAMPLES}/ego_214_hand_pose_depth_preview.json" "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview.json" || true
+  if [ -d "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" ]; then
+    mkdir -p "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/ego_214_hand_pose_depth_preview_frames/" "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames/" || true
+    else
+      rm -rf "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames"
+      cp -a "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" "${BUNDLED}/overlays/" || true
+    fi
+  fi
   if [ -f "${SAMPLES}/DualPiper Pulling.zip" ]; then
     copy_if_newer "${SAMPLES}/DualPiper Pulling.zip" "${BUNDLED}/dualpiper_pulling.zip" || true
   elif [ -f "${SAMPLES}/DualPiper Pulling.tar" ]; then

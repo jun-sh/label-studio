@@ -38,13 +38,21 @@ ego-run-pipeline ego-lan-214          # 默认：增量处理未发布 session +
 ego-run-pipeline ego-lan-214 --reset  # 整轮重来：全链路清理后从零跑
 ```
 
-**自动处理：**
+**自动处理（默认 oak 管线）：**
 
-1. 发现待处理 session（无 `publish.done` 的）
+1. 发现待处理 session（无 `finalize.done` 的）
 2. 轮询等待 mp4 + parquet 就绪
-3. `ego-postprocess.sh`（`.done` 标记断点续跑）
+3. `ego_platform` oak convert（rectify → track → language → hands → corpus append）
 4. 发布 zip 到 `data-storage/samples/`
 5. `deploy-local-datasets.sh` 更新 Viewer
+
+**回滚旧管线：**
+
+```bash
+EGO_PIPELINE_BACKEND=legacy ego-run-pipeline ego-lan-214
+```
+
+（legacy 以 `ego-hand-pipeline/outputs/.../.status/publish.done` 为完成标记。）
 
 **验收地址：**
 
@@ -89,11 +97,11 @@ bash ~/ego-local-web-src/deploy.sh
 
 ```text
 原始数据 1   214 segments/          → ego-export
-原始数据 2   34 stream/           → 214 Agent 上传（批量主通道）
-处理数据 3   samples/*.zip        → ego-run-pipeline 内部 publish + deploy
+原始数据 2   34 stream/             → 214 Agent 上传（批量主通道）
+处理数据 3   samples/*.zip          → ego-run-pipeline（oak）内部 publish + deploy
 ```
 
-中间层 `ego-hand-pipeline/outputs/` 由流水线自动管理，操作人员无需直接接触。
+中间层 `data-storage/pipeline/<station>/<session>/` 由 oak 管线自动管理；legacy 回滚时仍写 `ego-hand-pipeline/outputs/`。
 
 ---
 
@@ -116,7 +124,8 @@ bash ~/ego-local-web-src/deploy.sh
 |------|------|
 | 214 `.../ego-lan-214/logs/ego-export-*.log` | 导出摘要 |
 | 34 `data-storage/logs/ego-run-pipeline-*.log` | 全链路日志 |
-| `ego-hand-pipeline/outputs/.../postprocess.log` | 后处理细节 |
+| `data-storage/pipeline/.../.status/*.json` | oak 各步骤状态 |
+| `ego-hand-pipeline/outputs/.../postprocess.log` | legacy 回滚时后处理细节 |
 
 | 现象 | 处理 |
 |------|------|
@@ -135,11 +144,12 @@ bash ~/ego-local-web-src/deploy.sh
 |------|------|
 | 全链路清场 | `data-lab-platform/scripts/ego-lan-214-reset-for-rerun.sh` |
 | 等待 mux 就绪 | `ego-lan-214-wait-ready-for-postprocess.sh` |
-| 单 session 后处理 | `ego-hand-pipeline/scripts/ego-postprocess.sh` |
+| 单 session oak convert | `ego-oak-convert --station ego-lan-214 --session sess_...` |
+| 单 session legacy 后处理 | `ego-hand-pipeline/scripts/ego-postprocess.sh` |
 | 仅部署 Viewer | `data-lab-platform/deploy-local-datasets.sh` |
 | 214 底层导出 | `export-offline.sh` / `export_offline.py` |
 
-技术细节：[field-export-and-import.md](../data-lab-platform/ego-local-web/field-export-and-import.md) · [ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md) · [ego-dataset-management.md](./ego-dataset-management.md)
+技术细节：[field-export-and-import.md](../data-lab-platform/ego-local-web/field-export-and-import.md) · [ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md) · [ego-dataset-management.md](./ego-dataset-management.md) · [ego-platform-release-2026-07-08.md](./ego-platform-release-2026-07-08.md)
 
 ---
 

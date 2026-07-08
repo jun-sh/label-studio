@@ -81,12 +81,15 @@ def oak_finalize_marker(datalab_root: Path, station: str, session_id: str) -> Pa
     )
 
 
+DEFAULT_PIPELINE_BACKEND = "oak"
+
+
 def pending_sessions(
     stream_root: Path,
     pipe_root: Path,
     station: str,
     *,
-    backend: str = "legacy",
+    backend: str = DEFAULT_PIPELINE_BACKEND,
     datalab_root: Path | None = None,
 ) -> list[str]:
     pending: list[str] = []
@@ -134,14 +137,16 @@ def main() -> int:
         "--backend",
         choices=["legacy", "oak"],
         default=None,
-        help="pipeline backend (default: env EGO_PIPELINE_BACKEND or legacy)",
+        help=f"pipeline backend (default: env EGO_PIPELINE_BACKEND or {DEFAULT_PIPELINE_BACKEND})",
     )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     datalab = (args.datalab_root or script_dir.parent.parent).resolve()
     pipe = (args.pipe_root or datalab.parent / "ego-hand-pipeline").resolve()
-    backend = args.backend or __import__("os").environ.get("EGO_PIPELINE_BACKEND", "legacy")
+    backend = args.backend or __import__("os").environ.get(
+        "EGO_PIPELINE_BACKEND", DEFAULT_PIPELINE_BACKEND
+    )
     stream = stream_root_for(datalab, args.station)
 
     if args.command == "has-data":

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "fps": 30.0,
+  "sync_mode": "frame_index",
+  "depth_kind": "relative",
+  "colormap": "turbo",
+  "source_video_key": "observation.images.camera_front_left",
+  "display_video_key": "observation.images.camera_front_right",
+  "preview_dirname": "depth_preview_front_left",
+  "frame_url_template": "/lerobot/api/sample/ego_214_hand_pose/depth-preview/{episode}/frame_{frame:06d}.png",
+  "episode_meta": {
+    "000000": {
+      "episode_index": 0,
+      "session_id": "sess_081a430efe3640739918d5286f44d99e",
+      "session_fingerprint": "081a430e",
+      "task": "EGO-214 · 081a430e · 07-05"
+    },
+    "000001": {
+      "episode_index": 1,
+      "session_id": "sess_f2710d2c024e4024b83ef204b256d6eb",
+      "session_fingerprint": "f2710d2c",
+      "task": "EGO-214 · f2710d2c · 07-07 · 300f"
+    }
+  },
+  "episodes": {
+    "000000": {
+      "frames": 300,
+      "width": 1280,
+      "height": 800,
+      "backend": "depth_anything_v2",
+      "model_id": "depth-anything/Depth-Anything-V2-Small-hf",
+      "episode_index": 0,
+      "session_id": "sess_081a430efe3640739918d5286f44d99e",
+      "session_fingerprint": "081a430e",
+      "task": "EGO-214 · 081a430e · 07-05"
+    },
+    "000001": {
+      "frames": 300,
+      "width": 1280,
+      "height": 800,
+      "backend": "depth_anything_v2",
+      "model_id": "depth-anything/Depth-Anything-V2-Small-hf",
+      "episode_index": 1,
+      "session_id": "sess_f2710d2c024e4024b83ef204b256d6eb",
+      "session_fingerprint": "f2710d2c",
+      "task": "EGO-214 · f2710d2c · 07-07 · 300f"
+    }
+  }
+}

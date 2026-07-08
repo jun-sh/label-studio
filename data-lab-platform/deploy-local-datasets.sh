@@ -19,22 +19,26 @@ fi
 echo "==> Recreate lerobot with samples mount: ${SAMPLES_DIR}"
 compose up -d lerobot
 
-echo "==> Sync studio configs + branding into container"
-docker cp data-lab-platform/lerobot-studio/config/sample-datasets.manifest.json data-lab-lerobot-1:/app/config/sample-datasets.manifest.json
-docker cp data-lab-platform/lerobot-studio/config/datasets.json data-lab-lerobot-1:/app/config/datasets.json
-docker cp data-lab-platform/lerobot-studio/config/collection-stations.json data-lab-lerobot-1:/app/config/collection-stations.json
-docker cp data-lab-platform/lerobot-studio/branding data-lab-lerobot-1:/app/
-docker cp data-lab-platform/lerobot-studio/server.mjs data-lab-lerobot-1:/app/server.mjs
-docker cp data-lab-platform/lerobot-studio/stream-ingest.mjs data-lab-lerobot-1:/app/stream-ingest.mjs
-docker cp data-lab-platform/lerobot-studio/task-naming.mjs data-lab-lerobot-1:/app/task-naming.mjs
-docker cp data-lab-platform/lerobot-studio/ingest-server.mjs data-lab-lerobot-1:/app/ingest-server.mjs 2>/dev/null || true
-docker cp data-lab-platform/lerobot-studio/server.mjs data-lab-lerobot-1:/app/server.mjs
-docker cp data-lab-platform/lerobot-studio/scripts data-lab-lerobot-1:/app/scripts
-docker cp data-lab-platform/lerobot-studio/patches/apply-branding.sh data-lab-lerobot-1:/app/patches/apply-branding.sh
-docker cp data-lab-platform/lerobot-studio/patches/patch-dockview-scalar-chart.sh data-lab-lerobot-1:/app/patches/patch-dockview-scalar-chart.sh
-docker exec data-lab-lerobot-1 chmod +x /app/patches/patch-dockview-scalar-chart.sh
-docker cp data-lab-platform/lerobot-studio/ingest-bundled-datasets.sh data-lab-lerobot-1:/app/ingest-bundled-datasets.sh
-docker exec data-lab-lerobot-1 chmod +x /app/ingest-bundled-datasets.sh
+echo "==> Sync studio configs into container (bind-mounted studio files skip docker cp)"
+docker_cp_if_needed() {
+  local src="$1"
+  local dest="$2"
+  if docker exec data-lab-lerobot-1 test -e "$dest" 2>/dev/null; then
+    local host_path
+    host_path="$(docker inspect data-lab-lerobot-1 --format '{{range .Mounts}}{{if eq .Destination "'"${dest}"'"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+    if [[ -n "$host_path" && "$host_path" == "$(readlink -f "$src" 2>/dev/null || realpath "$src")" ]]; then
+      echo "    skip bind mount: $dest"
+      return 0
+    fi
+  fi
+  docker cp "$src" "data-lab-lerobot-1:$dest"
+}
+docker_cp_if_needed data-lab-platform/lerobot-studio/config/sample-datasets.manifest.json /app/config/sample-datasets.manifest.json
+docker_cp_if_needed data-lab-platform/lerobot-studio/config/datasets.json /app/config/datasets.json
+docker_cp_if_needed data-lab-platform/lerobot-studio/config/collection-stations.json /app/config/collection-stations.json
+docker_cp_if_needed data-lab-platform/lerobot-studio/ingest-server.mjs /app/ingest-server.mjs 2>/dev/null || true
+docker_cp_if_needed data-lab-platform/lerobot-studio/ingest-bundled-datasets.sh /app/ingest-bundled-datasets.sh
+docker exec data-lab-lerobot-1 chmod +x /app/ingest-bundled-datasets.sh 2>/dev/null || true
 docker exec data-lab-lerobot-1 sh /app/patches/apply-branding.sh /srv/lerobot
 
 echo "==> Ingest datasets (may take a few minutes for DualPiper tar)..."

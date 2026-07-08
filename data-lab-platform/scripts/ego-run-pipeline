@@ -20,12 +20,13 @@ for arg in "$@"; do
   1. 214 手机录制 → ego-export
   2. 214 Agent 上传（ecs-oak-upload-stack）或单段浏览器应急补传
   3. ego-run-pipeline ego-lan-214
+     （默认 oak：hands + VIO track + language_annotate）
 
-新管线灰度（B0 骨架，passthrough）：
-  EGO_PIPELINE_BACKEND=oak ego-run-pipeline ego-lan-214
+回滚旧管线（legacy ego-hand-pipeline）：
+  EGO_PIPELINE_BACKEND=legacy ego-run-pipeline ego-lan-214
 
-Oak hands 模式（B3）：
-  EGO_PIPELINE_BACKEND=oak EGO_OAK_MODE=hands ego-run-pipeline ego-lan-214
+覆盖 oak 子模块默认（一般无需设置）：
+  EGO_OAK_MODE=hands EGO_OAK_TRACK_MODE=vio EGO_OAK_LANGUAGE_MODE=auto
   EGO_HANDS_FORCE=1  # 强制重跑 kp2d（忽略已有 sidecar）
 EOF
       exit 0
@@ -54,12 +55,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
 PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
-PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-legacy}"
-OAK_MODE="${EGO_OAK_MODE:-passthrough}"
+PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-oak}"
+OAK_MODE="${EGO_OAK_MODE:-hands}"
+export EGO_OAK_TRACK_MODE="${EGO_OAK_TRACK_MODE:-vio}"
+export EGO_OAK_LANGUAGE_MODE="${EGO_OAK_LANGUAGE_MODE:-auto}"
+export EGO_OAK_DEPTH_BACKEND="${EGO_OAK_DEPTH_BACKEND:-depth_anything_v2}"
+export EGO_DEPTH_ANYTHING_MODEL="${EGO_DEPTH_ANYTHING_MODEL:-depth-anything/Depth-Anything-V2-Small-hf}"
 EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-stub}"
 PLATFORM_PYTHON="python3"
-if [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_HAMER_BACKEND" == "geopavlakos" && -x "$PIPE_ROOT/.venv/bin/python3" ]]; then
-  PLATFORM_PYTHON="$PIPE_ROOT/.venv/bin/python3"
+_venv_py="$PIPE_ROOT/.venv/bin/python3"
+if [[ -x "$_venv_py" ]]; then
+  if [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_HAMER_BACKEND" == "geopavlakos" ]]; then
+    PLATFORM_PYTHON="$_venv_py"
+  elif [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_OAK_DEPTH_BACKEND" == "depth_anything_v2" ]] \
+    && "$_venv_py" -c "import transformers" 2>/dev/null; then
+    PLATFORM_PYTHON="$_venv_py"
+  fi
 fi
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 WAIT_SH="${SCRIPT_DIR}/ego-lan-214-wait-ready-for-postprocess.sh"
@@ -122,7 +133,7 @@ fi
 PROCESSED=0
 FAILED=0
 if [[ ${#PENDING[@]} -gt 0 ]]; then
-  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND})"
+  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE})"
   for SID in "${PENDING[@]}"; do
     log ">>> 后处理 ${STATION} / ${SID}"
     set +e

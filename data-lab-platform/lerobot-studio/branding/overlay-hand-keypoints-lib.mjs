@@ -36,6 +36,12 @@ export const FRONT_CAMERA_SHORTS = [
   "camera_rear_right",
 ];
 
+/** Scheme A: skeleton only on front_left; front_right reserved for depth preview. */
+export const HAND_OVERLAY_EXCLUDE_VIDEO_KEYS = new Set([
+  "observation.images.camera_front_right",
+  "observation.images.camera_head_right",
+]);
+
 export function cameraShortName(featureKey) {
   return (featureKey || "").split(".").pop() || "";
 }
@@ -412,6 +418,7 @@ export function resolveEpisodeCameraPayloads(rootPayload, activeEpisodeIndex) {
     const vkeys = rootPayload.video_keys || Object.keys(epMap);
     for (const vkRaw of vkeys) {
       const vk = canonicalVideoKey(vkRaw);
+      if (HAND_OVERLAY_EXCLUDE_VIDEO_KEYS.has(vk)) continue;
       const sub = epMap[vkRaw] || epMap[vk];
       if (!sub) continue;
       if (

@@ -1,0 +1,45 @@
+---
+description: Hand 2D overlay invariants for LeRobot Viewer (dual-hand, episode switch, reproj thresholds)
+globs:
+  - data-lab-platform/lerobot-studio/branding/overlay-hand-keypoints*
+  - ego-platform/src/ego_platform/lerobot/overlay.py
+  - ego-platform/src/ego_platform/oak/hands/kp2d.py
+alwaysApply: false
+---
+
+# Hand overlay invariants (DO NOT REGRESS)
+
+## Dual-hand display
+
+1. **Layered reproj thresholds must reach the overlay client**
+   - Export: `reproj_threshold_px_left=96`, `reproj_threshold_px_right=12` in each camera sidecar AND v4 root payload
+   - `cameraPayloadFromSub()` MUST copy both thresholds; never let left hand fall back to 12px
+
+2. **Per-hand metrics only in `hands_mode=both`**
+   - `metricForHand()` must NOT fall back to camera-level `reprojection_error` / `frame_quality` for left hand
+
+3. **Colors**
+   - Left: orange `[246,130,59]` edges
+   - Right: green `[94,197,34]` edges
+   - Never draw both hands as `unknown` pink in dual-hand mode
+
+## Episode switching (multi-session corpus)
+
+1. Episode detection priority: `URL ?episode=` > **session fingerprint** (`081a430e` / `f2710d2c` from title) > scored main header `# N` > scored `aria-current` > user click > last known
+2. Export must include `episode_meta` with `session_fingerprint` per episode (from corpus `publish_history`)
+2. Never default to episode `0` when `lastEpisodeIndex` is known
+3. Overlay JSON keys: `000000`, `000001`, … — resolve via `episodeKeyCandidates()` + `episode_index` field validation
+4. On episode change: clear all canvases before redraw
+5. Pill label shows current `ep{N}` for debugging
+
+## Tests (run before merge)
+
+```bash
+data-lab-platform/scripts/test-hand-overlay.sh
+```
+
+## Files
+
+- Pure logic: `branding/overlay-hand-keypoints-lib.mjs`
+- DOM entry: `branding/overlay-hand-keypoints.mjs` (loaded as `type=module`)
+- Export: `ego_platform/lerobot/overlay.py` → `data-storage/samples/*_hand_kp2d.json`

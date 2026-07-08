@@ -20,6 +20,13 @@ for arg in "$@"; do
   1. 214 手机录制 → ego-export
   2. 214 Agent 上传（ecs-oak-upload-stack）或单段浏览器应急补传
   3. ego-run-pipeline ego-lan-214
+
+新管线灰度（B0 骨架，passthrough）：
+  EGO_PIPELINE_BACKEND=oak ego-run-pipeline ego-lan-214
+
+Oak hands 模式（B3）：
+  EGO_PIPELINE_BACKEND=oak EGO_OAK_MODE=hands ego-run-pipeline ego-lan-214
+  EGO_HANDS_FORCE=1  # 强制重跑 kp2d（忽略已有 sidecar）
 EOF
       exit 0
       ;;
@@ -46,6 +53,14 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
+PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
+PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-legacy}"
+OAK_MODE="${EGO_OAK_MODE:-passthrough}"
+EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-stub}"
+PLATFORM_PYTHON="python3"
+if [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_HAMER_BACKEND" == "geopavlakos" && -x "$PIPE_ROOT/.venv/bin/python3" ]]; then
+  PLATFORM_PYTHON="$PIPE_ROOT/.venv/bin/python3"
+fi
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 WAIT_SH="${SCRIPT_DIR}/ego-lan-214-wait-ready-for-postprocess.sh"
 RESET_SH="${SCRIPT_DIR}/ego-lan-214-reset-for-rerun.sh"
@@ -63,7 +78,7 @@ log() { echo "[pipeline] $*" | tee -a "$RUN_LOG"; }
 die() { echo "❌ $*" | tee -a "$RUN_LOG" >&2; exit 1; }
 
 _py() {
-  python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT"
+  python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT" --backend "$PIPELINE_BACKEND"
 }
 
 if [[ "$RESET" -eq 1 ]]; then
@@ -77,10 +92,13 @@ if [[ "$RESET" -eq 1 ]]; then
   log "重置完成"
 fi
 
-if [[ ! -d "$PIPE_ROOT" ]]; then
+if [[ ! -d "$PIPE_ROOT" && "$PIPELINE_BACKEND" == "legacy" ]]; then
   die "找不到后处理目录 ego-hand-pipeline: $PIPE_ROOT"
 fi
-if [[ ! -x "$POSTPROCESS_SH" ]]; then
+if [[ "$PIPELINE_BACKEND" == "oak" && ! -d "$PLATFORM_ROOT" ]]; then
+  die "找不到 ego-platform: $PLATFORM_ROOT"
+fi
+if [[ "$PIPELINE_BACKEND" == "legacy" && ! -x "$POSTPROCESS_SH" ]]; then
   die "找不到后处理脚本: $POSTPROCESS_SH"
 fi
 
@@ -104,24 +122,40 @@ fi
 PROCESSED=0
 FAILED=0
 if [[ ${#PENDING[@]} -gt 0 ]]; then
-  log "待处理 session: ${PENDING[*]}"
+  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND})"
   for SID in "${PENDING[@]}"; do
     log ">>> 后处理 ${STATION} / ${SID}"
     set +e
-    (cd "$PIPE_ROOT" && bash "$POSTPROCESS_SH" "$STATION" "$SID") 2>&1 | tee -a "$RUN_LOG"
-    rc=${PIPESTATUS[0]}
+    if [[ "$PIPELINE_BACKEND" == "oak" ]]; then
+      (
+        cd "$PLATFORM_ROOT" && \
+        PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+        "$PLATFORM_PYTHON" -m ego_platform.cli.convert \
+          --station "$STATION" \
+          --session "$SID" \
+          --datalab-root "$DATALAB_ROOT" \
+          --corpus-slug "$SLUG" \
+          --mode "$OAK_MODE"
+      ) 2>&1 | tee -a "$RUN_LOG"
+      rc=${PIPESTATUS[0]}
+      DONE_MARKER="${DATALAB_ROOT}/data-storage/pipeline/${STATION}/${SID}/.status/finalize.done"
+    else
+      (cd "$PIPE_ROOT" && bash "$POSTPROCESS_SH" "$STATION" "$SID") 2>&1 | tee -a "$RUN_LOG"
+      rc=${PIPESTATUS[0]}
+      DONE_MARKER="${PIPE_ROOT}/outputs/${STATION}/${SID}/.status/publish.done"
+    fi
     set -e
     if [[ "$rc" -ne 0 ]]; then
       log "session ${SID} 失败 (exit ${rc})"
       FAILED=$((FAILED + 1))
       continue
     fi
-    if [[ -f "${PIPE_ROOT}/outputs/${STATION}/${SID}/.status/publish.done" ]]; then
+    if [[ -f "$DONE_MARKER" ]]; then
       PROCESSED=$((PROCESSED + 1))
       log "session ${SID} 完成"
     else
       FAILED=$((FAILED + 1))
-      log "session ${SID} 未生成 publish.done"
+      log "session ${SID} 未完成 (缺少 ${DONE_MARKER})"
     fi
   done
 else

@@ -69,11 +69,36 @@ def publish_marker(pipe_root: Path, station: str, session_id: str) -> Path:
     return pipe_root / "outputs" / station / session_id / ".status" / "publish.done"
 
 
-def pending_sessions(stream_root: Path, pipe_root: Path, station: str) -> list[str]:
+def oak_finalize_marker(datalab_root: Path, station: str, session_id: str) -> Path:
+    return (
+        datalab_root
+        / "data-storage"
+        / "pipeline"
+        / station
+        / session_id
+        / ".status"
+        / "finalize.done"
+    )
+
+
+def pending_sessions(
+    stream_root: Path,
+    pipe_root: Path,
+    station: str,
+    *,
+    backend: str = "legacy",
+    datalab_root: Path | None = None,
+) -> list[str]:
     pending: list[str] = []
     for sid in list_stream_sessions(stream_root):
-        if not publish_marker(pipe_root, station, sid).is_file():
-            pending.append(sid)
+        if backend == "oak":
+            if datalab_root is None:
+                raise ValueError("datalab_root required for oak backend")
+            if oak_finalize_marker(datalab_root, station, sid).is_file():
+                continue
+        elif publish_marker(pipe_root, station, sid).is_file():
+            continue
+        pending.append(sid)
     return pending
 
 
@@ -105,11 +130,18 @@ def main() -> int:
     parser.add_argument("station")
     parser.add_argument("--datalab-root", type=Path, default=None)
     parser.add_argument("--pipe-root", type=Path, default=None)
+    parser.add_argument(
+        "--backend",
+        choices=["legacy", "oak"],
+        default=None,
+        help="pipeline backend (default: env EGO_PIPELINE_BACKEND or legacy)",
+    )
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     datalab = (args.datalab_root or script_dir.parent.parent).resolve()
     pipe = (args.pipe_root or datalab.parent / "ego-hand-pipeline").resolve()
+    backend = args.backend or __import__("os").environ.get("EGO_PIPELINE_BACKEND", "legacy")
     stream = stream_root_for(datalab, args.station)
 
     if args.command == "has-data":
@@ -122,7 +154,7 @@ def main() -> int:
             print(sid)
         return 0
     if args.command == "pending":
-        for sid in pending_sessions(stream, pipe, args.station):
+        for sid in pending_sessions(stream, pipe, args.station, backend=backend, datalab_root=datalab):
             print(sid)
         return 0
     return 2

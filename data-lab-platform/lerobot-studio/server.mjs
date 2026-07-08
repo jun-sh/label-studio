@@ -56,6 +56,7 @@ function collectionUiPayload() {
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".wasm": "application/wasm",
@@ -300,7 +301,7 @@ function injectBranding(html, search = "") {
     '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=67"></script>' +
-    '<script defer src="/lerobot/branding/overlay-hand-keypoints.js?v=9"></script>' +
+    '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=20"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=

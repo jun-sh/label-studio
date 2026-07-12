@@ -34,24 +34,32 @@
               <option value="local">Local directory</option>
             </select>
           </label>
+          <label id="collectionLabel">
+            Collection
+            <select id="collectionSelect"></select>
+          </label>
+          <label id="packageLabel">
+            Package
+            <select id="packageSelect"></select>
+          </label>
           <label id="repoLabel">
             Repo ID
             <input id="repoInput" type="text" placeholder="lerobot/pusht" />
           </label>
           <label id="localLabel" class="ls-grow">
             Dataset directory
-            <input id="localInput" type="text" placeholder="/absolute/path/to/lerobot-dataset" />
+            <input id="localInput" type="text" placeholder="/absolute/path/to/lerobot-dataset" readonly />
           </label>
           <label id="revisionLabel">
             Revision
             <input id="revisionInput" type="text" placeholder="main" />
           </label>
-          <label id="videoKeyLabel">
-            Video key
-            <select id="videoKeySelect"></select>
-          </label>
           <button type="submit" class="ls-btn ls-btn-primary">Load</button>
         </div>
+        <p class="ls-package-meta ls-helper" id="packageMeta" hidden></p>
+        <p class="ls-helper">
+          <button type="button" class="ls-link-btn" id="toggleAdvancedPath" hidden>Advanced path</button>
+        </p>
         <p class="ls-helper" id="connectHelper"></p>
       </form>
     </section>
@@ -83,6 +91,10 @@
         </div>
 
         <div class="ls-video-block">
+          <div class="ls-video-toolbar" id="videoKeyToolbar" hidden>
+            <span class="ls-video-toolbar-label" id="videoKeyToolbarLabel">Camera view</span>
+            <div class="ls-video-toolbar-buttons" id="videoKeyToolbarButtons" role="tablist" aria-label="Camera view"></div>
+          </div>
           <video id="episodeVideo" controls preload="metadata"></video>
         </div>
 
@@ -123,6 +135,7 @@
           </div>
 
           <div class="ls-save-bar">
+            <div id="episodeFieldsGroup" class="ls-episode-fields" hidden></div>
             <div id="outcomeGroup" class="ls-outcome-group" role="radiogroup" aria-label="Episode outcome">
               <span class="ls-outcome-label">Outcome</span>
               <label class="ls-outcome-option ls-outcome-success">

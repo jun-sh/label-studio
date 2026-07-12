@@ -224,10 +224,13 @@ services:
       - ./data-storage/embodied-annotate/cache:/data/cache
       - ./data-storage/embodied-annotate/exports:/data/exports
       - ./data-storage/embodied-annotate/datasets:/data/datasets
+      - ./data-lab-platform/embodied-annotate/backend:/app/backend:ro
       - ./data-storage/samples:/datalab-samples:ro
     environment:
       - LEROBOT_ANNOTATE_CACHE=/data/cache
       - LEROBOT_ANNOTATE_EXPORT=/data/exports
+      - LEROBOT_ANNOTATE_DATASETS=/data/datasets
+      - PYTHONPATH=/app:/app/backend
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7861/ >/dev/null || exit 1"]
       interval: 15s

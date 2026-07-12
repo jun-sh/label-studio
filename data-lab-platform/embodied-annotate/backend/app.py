@@ -19,6 +19,8 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from pydantic import BaseModel, Field
 
 import ego_parquet
+from annotation_schema import resolve_annotation_schema, schema_ref, validate_episode_fields
+from dataset_catalog import datasets_root, get_collection, list_collections, resolve_package_path
 from ego_parquet import (
     episode_meta_public,
     episode_row,
@@ -151,6 +153,7 @@ class EpisodeAnnotationsPayload(BaseModel):
     subtasks: list[SegmentSubtask] = []
     high_levels: list[SegmentHighLevel] = []
     outcome: str | None = None
+    fields: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass
@@ -158,6 +161,7 @@ class EpisodeAnnotations:
     subtasks: list[dict[str, Any]] = field(default_factory=list)
     high_levels: list[dict[str, Any]] = field(default_factory=list)
     outcome: str | None = None
+    fields: dict[str, Any] = field(default_factory=dict)
 
 
 class DataManager:
@@ -172,6 +176,8 @@ class DataManager:
         self.tasks_map: dict[int, str] = {}
         self.annotations: dict[int, EpisodeAnnotations] = {}
         self.annotations_path: Path | None = None
+        self.annotation_schema: dict[str, Any] = {}
+        self.schema_ref: str | None = None
 
     def load_dataset(self, req: DatasetLoadRequest) -> dict[str, Any]:
         if req.source not in {"hf", "local"}:
@@ -218,6 +224,8 @@ class DataManager:
             )
 
         self.annotations_path = self.dataset_root / "meta" / "lerobot_annotations.json"
+        self.annotation_schema = resolve_annotation_schema(self.dataset_root)
+        self.schema_ref = schema_ref(self.annotation_schema)
         self._load_existing_annotations()
         return self._build_summary()
 
@@ -317,6 +325,7 @@ class DataManager:
                     subtasks=payload.get("subtasks", []),
                     high_levels=payload.get("high_levels", []),
                     outcome=payload.get("outcome"),
+                    fields=payload.get("fields") or {},
                 )
             return
 
@@ -337,17 +346,23 @@ class DataManager:
     def _save_annotations(self) -> None:
         if not self.annotations_path:
             return
-        payload = {
-            "version": 1,
-            "episodes": {
-                str(ep_idx): {
-                    "subtasks": ann.subtasks,
-                    "high_levels": ann.high_levels,
-                    **({"outcome": ann.outcome} if ann.outcome else {}),
-                }
-                for ep_idx, ann in self.annotations.items()
-            },
+        file_version = 2 if self.schema_ref or any(ann.fields for ann in self.annotations.values()) else 1
+        payload: dict[str, Any] = {
+            "version": file_version,
+            "episodes": {},
         }
+        if self.schema_ref:
+            payload["schema_ref"] = self.schema_ref
+        for ep_idx, ann in self.annotations.items():
+            ep_payload: dict[str, Any] = {
+                "subtasks": ann.subtasks,
+                "high_levels": ann.high_levels,
+            }
+            if ann.outcome:
+                ep_payload["outcome"] = ann.outcome
+            if ann.fields:
+                ep_payload["fields"] = ann.fields
+            payload["episodes"][str(ep_idx)] = ep_payload
         self.annotations_path.parent.mkdir(parents=True, exist_ok=True)
         self.annotations_path.write_text(json.dumps(payload, indent=2))
 
@@ -389,6 +404,8 @@ class DataManager:
             "fps": fps,
             "video_keys": self._get_video_keys(),
             "selected_video_key": self.video_key,
+            "annotation_schema": self.annotation_schema,
+            "schema_ref": self.schema_ref,
             "episodes": episodes,
         }
 
@@ -483,10 +500,12 @@ class DataManager:
                 status_code=400,
                 detail=f"outcome must be one of {sorted(VALID_OUTCOMES)} or null",
             )
+        validate_episode_fields(self.annotation_schema, payload.fields)
         self.annotations[payload.episode_index] = EpisodeAnnotations(
             subtasks=[seg.dict() for seg in payload.subtasks],
             high_levels=[seg.dict() for seg in payload.high_levels],
             outcome=payload.outcome,
+            fields=dict(payload.fields or {}),
         )
         self._save_annotations()
 
@@ -703,6 +722,33 @@ def root() -> HTMLResponse:
     return HTMLResponse(index_path.read_text())
 
 
+@app.get("/api/datasets/collections")
+def api_list_collections() -> JSONResponse:
+    collections = list_collections()
+    summaries = [
+        {
+            "id": c.get("id"),
+            "title": c.get("title"),
+            "description": c.get("description"),
+            "robot_type": c.get("robot_type"),
+            "task_family": c.get("task_family"),
+            "package_count": c.get("package_count", len(c.get("packages") or [])),
+            "kind": c.get("kind", "collection"),
+        }
+        for c in collections
+    ]
+    return JSONResponse({"collections": summaries, "datasets_root": str(datasets_root())})
+
+
+@app.get("/api/datasets/collections/{collection_id}")
+def api_get_collection(collection_id: str) -> JSONResponse:
+    try:
+        collection = get_collection(collection_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Collection not found: {collection_id}") from exc
+    return JSONResponse(collection)
+
+
 @app.post("/api/dataset/load")
 def load_dataset(req: DatasetLoadRequest) -> JSONResponse:
     summary = manager.load_dataset(req)
@@ -724,6 +770,7 @@ def get_annotations(episode_index: int) -> JSONResponse:
         "subtasks": ann.subtasks,
         "high_levels": ann.high_levels,
         "outcome": ann.outcome,
+        "fields": ann.fields,
     })
 
 

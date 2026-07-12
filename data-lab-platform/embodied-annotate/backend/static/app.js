@@ -7,20 +7,85 @@ const laI18n = window.LA_I18N || {
 };
 const t = (...args) => laI18n.t(...args);
 
-const SUBTASK_LABELS = [
-  { id: 'idle', order: 0, color: '#9CA3AF', hint: '空闲/等待，手未参与任务' },
-  { id: 'reach', order: 1, color: '#34D399', hint: '接近目标，尚未接触' },
-  { id: 'pre_grasp', order: 2, color: '#6EE7B7', hint: '对准、张开，准备抓取' },
-  { id: 'contact', order: 3, color: '#FB923C', hint: '刚触碰物体至抓稳前' },
-  { id: 'lift', order: 4, color: '#60A5FA', hint: '物体离开支撑面' },
-  { id: 'transport', order: 5, color: '#3B82F6', hint: '拿着物体水平移动' },
-  { id: 'place', order: 6, color: '#A78BFA', hint: '朝放置位下降' },
-  { id: 'release', order: 7, color: '#F472B6', hint: '松手，物体脱离' },
-];
+const DEFAULT_ANNOTATION_SCHEMA = {
+  schema_id: 'default_manipulation_v1',
+  schema_version: 1,
+  subtask_labels: [
+    { id: 'idle', order: 0, color: '#9CA3AF', label_zh: '空闲', hint_zh: '空闲/等待，手未参与任务' },
+    { id: 'reach', order: 1, color: '#34D399', label_zh: '接近', hint_zh: '接近目标，尚未接触' },
+    { id: 'pre_grasp', order: 2, color: '#6EE7B7', label_zh: '预抓取', hint_zh: '对准、张开，准备抓取' },
+    { id: 'contact', order: 3, color: '#FB923C', label_zh: '接触', hint_zh: '刚触碰物体至抓稳前' },
+    { id: 'lift', order: 4, color: '#60A5FA', label_zh: '抬起', hint_zh: '物体离开支撑面' },
+    { id: 'transport', order: 5, color: '#3B82F6', label_zh: '搬运', hint_zh: '拿着物体水平移动' },
+    { id: 'place', order: 6, color: '#A78BFA', label_zh: '放置', hint_zh: '朝放置位下降' },
+    { id: 'release', order: 7, color: '#F472B6', label_zh: '释放', hint_zh: '松手，物体脱离' },
+  ],
+  episode_fields: [],
+  validation: { gap_warn_frames: 10 },
+  timeline: {
+    snap_adjacent_frames: 1,
+    resize_handle_px: 6,
+    enable_move: true,
+    enable_resize: true,
+    create_on_empty_track_only: true,
+  },
+};
 
-const LABEL_MAP = Object.fromEntries(SUBTASK_LABELS.map((l) => [l.id, l]));
+function getAnnotationSchema() {
+  return state.annotationSchema || DEFAULT_ANNOTATION_SCHEMA;
+}
 
-const GAP_WARN_FRAMES = 10;
+function getSubtaskLabels() {
+  return [...(getAnnotationSchema().subtask_labels || [])].sort((a, b) => a.order - b.order);
+}
+
+function getLabelMap() {
+  return Object.fromEntries(getSubtaskLabels().map((l) => [l.id, l]));
+}
+
+function getGapWarnFrames() {
+  return getAnnotationSchema().validation?.gap_warn_frames ?? 10;
+}
+
+function getTimelineUX() {
+  const timeline = getAnnotationSchema().timeline || {};
+  return {
+    snap_adjacent_frames: timeline.snap_adjacent_frames ?? 1,
+    resize_handle_px: timeline.resize_handle_px ?? 6,
+    enable_move: timeline.enable_move !== false,
+    enable_resize: timeline.enable_resize !== false,
+    create_on_empty_track_only: timeline.create_on_empty_track_only !== false,
+  };
+}
+
+function schemaDisplayLocale() {
+  const schemaLocale = getAnnotationSchema().display_locale;
+  if (schemaLocale === 'en' || schemaLocale === 'zh-Hans') return schemaLocale;
+  return laI18n.getLocale?.() === 'zh-Hans' ? 'zh-Hans' : 'en';
+}
+
+function schemaLabelText(lbl) {
+  if (!lbl) return '';
+  const useZh = schemaDisplayLocale() === 'zh-Hans';
+  return (useZh ? lbl.label_zh : lbl.label_en) || lbl.label_en || lbl.label_zh || lbl.id;
+}
+
+function schemaHintText(lbl) {
+  if (!lbl) return '';
+  const useZh = schemaDisplayLocale() === 'zh-Hans';
+  return (useZh ? lbl.hint_zh : lbl.hint_en) || lbl.hint_en || lbl.hint_zh || lbl.hint || '';
+}
+
+function applyAnnotationSchema(schema) {
+  state.annotationSchema = schema || null;
+  const labels = getSubtaskLabels();
+  if (!labels.some((l) => l.id === state.selectedLabel)) {
+    state.selectedLabel = labels[0]?.id || 'idle';
+  }
+  renderLabelPalette();
+  renderEpisodeFields();
+  updateLabelHintForSelection(state.selectedLabel);
+}
 
 // ---------------------------------------------------------------------------
 // Push to Hub (unchanged backend contract)
@@ -118,10 +183,18 @@ const sourceSelect = document.getElementById('sourceSelect');
 const repoInput = document.getElementById('repoInput');
 const localInput = document.getElementById('localInput');
 const revisionInput = document.getElementById('revisionInput');
-const videoKeySelect = document.getElementById('videoKeySelect');
+const videoKeyToolbar = document.getElementById('videoKeyToolbar');
+const videoKeyToolbarLabel = document.getElementById('videoKeyToolbarLabel');
+const videoKeyToolbarButtons = document.getElementById('videoKeyToolbarButtons');
 const connectHelper = document.getElementById('connectHelper');
 const repoLabel = document.getElementById('repoLabel');
 const localLabel = document.getElementById('localLabel');
+const collectionLabel = document.getElementById('collectionLabel');
+const packageLabel = document.getElementById('packageLabel');
+const collectionSelect = document.getElementById('collectionSelect');
+const packageSelect = document.getElementById('packageSelect');
+const packageMeta = document.getElementById('packageMeta');
+const toggleAdvancedPath = document.getElementById('toggleAdvancedPath');
 
 const workspace = document.getElementById('workspace');
 const episodeList = document.getElementById('episodeList');
@@ -136,6 +209,7 @@ const frameReadout = document.getElementById('frameReadout');
 const saveEpisodeBottom = document.getElementById('saveEpisodeBottom');
 const saveStatusText = document.getElementById('saveStatusText');
 const outcomeGroup = document.getElementById('outcomeGroup');
+const episodeFieldsGroup = document.getElementById('episodeFieldsGroup');
 const outcomeRadios = outcomeGroup
   ? Array.from(outcomeGroup.querySelectorAll('input[type="radio"]'))
   : [];
@@ -184,7 +258,8 @@ const state = {
   currentEpisode: null,
   currentEpisodeData: null,
   annotations: {},
-  selectedLabel: SUBTASK_LABELS[0].id,
+  selectedLabel: DEFAULT_ANNOTATION_SCHEMA.subtask_labels[0].id,
+  annotationSchema: null,
   selectedRegionIdx: null,
   drag: null,
   dirty: false,
@@ -197,6 +272,14 @@ const state = {
   egoFeatures: [],
   egoHandPoses: null,
   egoHandPosesByFrame: new Map(),
+  catalog: {
+    loaded: false,
+    collections: [],
+    byId: new Map(),
+    selectedCollectionId: null,
+    selectedPackageId: null,
+    advancedPath: false,
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -255,8 +338,16 @@ function parseEgoUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const ego = params.get('ego') === '1' || params.has('datasetPath');
   const datasetPath = params.get('datasetPath');
+  const collection = params.get('collection');
+  const packageId = params.get('package');
   const episodeIndex = Number(params.get('episodeIndex') || '0');
-  return { ego, datasetPath, episodeIndex: Number.isFinite(episodeIndex) ? episodeIndex : 0 };
+  return {
+    ego,
+    datasetPath,
+    collection,
+    packageId,
+    episodeIndex: Number.isFinite(episodeIndex) ? episodeIndex : 0,
+  };
 }
 
 function egoSegmentsToTimelineSubtasks(segments) {
@@ -421,7 +512,7 @@ function getEpisodeDuration() {
 
 function getEpisodeAnnotations(epIdx) {
   if (!state.annotations[epIdx]) {
-    state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null };
+    state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
   }
   return state.annotations[epIdx];
 }
@@ -429,7 +520,7 @@ function getEpisodeAnnotations(epIdx) {
 function getAnnotationsSnapshot(epIdx) {
   const ann = getEpisodeAnnotations(epIdx);
   const sorted = [...ann.subtasks].sort((a, b) => a.start - b.start);
-  return JSON.stringify({ subtasks: sorted, outcome: ann.outcome ?? null });
+  return JSON.stringify({ subtasks: sorted, outcome: ann.outcome ?? null, fields: ann.fields ?? {} });
 }
 
 function getSubtasksSnapshot(epIdx) {
@@ -473,6 +564,114 @@ function setOutcomeUI(outcome) {
   outcomeRadios.forEach((radio) => {
     radio.checked = outcome === radio.value;
   });
+}
+
+function fieldLabelText(spec) {
+  const zh = laI18n.getLocale?.() === 'zh-Hans';
+  return (zh ? spec.label_zh : spec.label_en) || spec.label_zh || spec.label_en || spec.id;
+}
+
+function fieldHintText(spec) {
+  const zh = laI18n.getLocale?.() === 'zh-Hans';
+  return (zh ? spec.hint_zh : spec.hint_en) || spec.hint_zh || spec.hint_en || '';
+}
+
+function readEpisodeFieldsFromUI() {
+  if (!episodeFieldsGroup || state.currentEpisode == null) return {};
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const specs = getAnnotationSchema().episode_fields || [];
+  const fields = {};
+  specs.forEach((spec) => {
+    const el = episodeFieldsGroup.querySelector(`[data-field-id="${spec.id}"]`);
+    if (!el) return;
+    if (spec.type === 'int') {
+      const raw = el.value.trim();
+      if (raw !== '') fields[spec.id] = Number.parseInt(raw, 10);
+    } else if (spec.type === 'float') {
+      const raw = el.value.trim();
+      if (raw !== '') fields[spec.id] = Number.parseFloat(raw);
+    } else if (spec.type === 'bool') {
+      fields[spec.id] = el.checked;
+    } else {
+      const raw = el.value.trim();
+      if (raw !== '') fields[spec.id] = raw;
+    }
+  });
+  ann.fields = fields;
+  return fields;
+}
+
+function setEpisodeFieldsUI(fields) {
+  if (!episodeFieldsGroup) return;
+  const specs = getAnnotationSchema().episode_fields || [];
+  specs.forEach((spec) => {
+    const el = episodeFieldsGroup.querySelector(`[data-field-id="${spec.id}"]`);
+    if (!el) return;
+    const value = fields?.[spec.id];
+    if (spec.type === 'bool') {
+      el.checked = Boolean(value);
+    } else {
+      el.value = value == null ? '' : String(value);
+    }
+  });
+}
+
+function renderEpisodeFields() {
+  if (!episodeFieldsGroup) return;
+  episodeFieldsGroup.innerHTML = '';
+  const specs = getAnnotationSchema().episode_fields || [];
+  if (!specs.length) {
+    episodeFieldsGroup.hidden = true;
+    return;
+  }
+  episodeFieldsGroup.hidden = false;
+  specs.forEach((spec) => {
+    const label = document.createElement('label');
+    label.className = 'ls-episode-field';
+    const title = document.createElement('span');
+    title.className = 'ls-episode-field-label';
+    title.textContent = fieldLabelText(spec);
+    label.appendChild(title);
+
+    let input;
+    if (spec.type === 'text') {
+      input = document.createElement('input');
+      input.type = 'text';
+      if (spec.max_length) input.maxLength = spec.max_length;
+    } else if (spec.type === 'int' || spec.type === 'float') {
+      input = document.createElement('input');
+      input.type = 'number';
+      if (spec.min != null) input.min = String(spec.min);
+      if (spec.max != null) input.max = String(spec.max);
+      if (spec.type === 'int') input.step = '1';
+    } else if (spec.type === 'bool') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+    }
+    input.dataset.fieldId = spec.id;
+    const hint = fieldHintText(spec);
+    if (hint) {
+      input.title = hint;
+      label.title = hint;
+    }
+    if (spec.required) input.required = true;
+    input.addEventListener('input', () => {
+      readEpisodeFieldsFromUI();
+      markDirty();
+    });
+    input.addEventListener('change', () => {
+      readEpisodeFieldsFromUI();
+      markDirty();
+    });
+    label.appendChild(input);
+    episodeFieldsGroup.appendChild(label);
+  });
+  if (state.currentEpisode != null) {
+    setEpisodeFieldsUI(getEpisodeAnnotations(state.currentEpisode).fields);
+  }
 }
 
 function bindOutcomeRadios() {
@@ -581,10 +780,10 @@ function validateRegions(epIdx) {
 
   for (let i = 0; i < sorted.length - 1; i += 1) {
     const gap = sorted[i + 1].startFrame - sorted[i].endFrame - 1;
-    if (gap > GAP_WARN_FRAMES) {
+    if (gap > getGapWarnFrames()) {
       warnings.push({
         code: 'V-04',
-        message: `帧 ${sorted[i].endFrame + 1}–${sorted[i + 1].startFrame - 1} 连续空隙 ${gap} 帧（超过 ${GAP_WARN_FRAMES} 帧）`,
+        message: `帧 ${sorted[i].endFrame + 1}–${sorted[i + 1].startFrame - 1} 连续空隙 ${gap} 帧（超过 ${getGapWarnFrames()} 帧）`,
       });
     }
   }
@@ -660,8 +859,79 @@ function renderValidationPanel(result) {
 }
 
 function wouldOverlapNewSegment(startFrame, endFrame, subtasks) {
+  return wouldOverlapSegment(startFrame, endFrame, subtasks, null);
+}
+
+function wouldOverlapSegment(startFrame, endFrame, subtasks, excludeIdx = null) {
   const candidate = { startFrame, endFrame };
-  return subtasks.some((seg) => segmentsOverlap(candidate, segToFrames(seg)));
+  return subtasks.some((seg, idx) => {
+    if (idx === excludeIdx) return false;
+    return segmentsOverlap(candidate, segToFrames(seg));
+  });
+}
+
+function snapFrame(frame, candidates, snapRadius) {
+  let snapped = frame;
+  let bestDist = snapRadius + 1;
+  candidates.forEach((candidate) => {
+    const dist = Math.abs(frame - candidate);
+    if (dist <= snapRadius && dist < bestDist) {
+      bestDist = dist;
+      snapped = candidate;
+    }
+  });
+  return snapped;
+}
+
+function getSnapCandidatesForEdge(segIdx, edge) {
+  const maxFrame = Math.max(0, getTotalFrames() - 1);
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const candidates = new Set([0, maxFrame]);
+  ann.subtasks.forEach((seg, idx) => {
+    if (idx === segIdx) return;
+    const { startFrame, endFrame } = segToFrames(seg);
+    if (edge === 'start') {
+      candidates.add(endFrame + 1);
+      candidates.add(startFrame);
+    } else {
+      candidates.add(startFrame - 1);
+      candidates.add(endFrame);
+    }
+  });
+  return [...candidates].filter((f) => f >= 0 && f <= maxFrame);
+}
+
+function clampSegmentMove(origStart, origEnd, delta, maxFrame) {
+  let start = origStart + delta;
+  let end = origEnd + delta;
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+  if (end > maxFrame) {
+    start -= end - maxFrame;
+    end = maxFrame;
+  }
+  return { start: Math.max(0, start), end: Math.min(maxFrame, end) };
+}
+
+function regionBarHitMode(bar, clientX) {
+  const ux = getTimelineUX();
+  const rect = bar.getBoundingClientRect();
+  const x = clientX - rect.left;
+  if (ux.enable_resize && x <= ux.resize_handle_px) return 'resize-start';
+  if (ux.enable_resize && x >= rect.width - ux.resize_handle_px) return 'resize-end';
+  if (ux.enable_move) return 'move';
+  return 'select';
+}
+
+function segmentBarTitle(seg, startFrame, endFrame) {
+  const lbl = getLabelMap()[seg.label];
+  const name = schemaLabelText(lbl) || seg.label;
+  const hint = schemaHintText(lbl);
+  return hint
+    ? `${name}（${hint}）: f${startFrame}–f${endFrame}`
+    : `${name}: f${startFrame}–f${endFrame}`;
 }
 
 async function runValidationAndSave() {
@@ -703,14 +973,14 @@ function trackXToPercent(clientX) {
 // ---------------------------------------------------------------------------
 
 function isStandardLabel(label) {
-  return Boolean(LABEL_MAP[label]);
+  return Boolean(getLabelMap()[label]);
 }
 
 function updateLabelHintForSelection(labelId) {
   if (!labelHint) return;
-  const lbl = LABEL_MAP[labelId];
+  const lbl = getLabelMap()[labelId];
   labelHint.textContent = lbl
-    ? t('label_hint_selected', { id: lbl.id, hint: lbl.hint })
+    ? t('label_hint_selected', { id: schemaLabelText(lbl), hint: schemaHintText(lbl) })
     : t('label_hint_default');
   labelHint.classList.remove('error');
 }
@@ -718,17 +988,18 @@ function updateLabelHintForSelection(labelId) {
 function renderLabelPalette() {
   if (!labelPalette) return;
   labelPalette.innerHTML = '';
-  if (labelCount) labelCount.textContent = t('label_count', { n: SUBTASK_LABELS.length });
+  const labels = getSubtaskLabels();
+  if (labelCount) labelCount.textContent = t('label_count', { n: labels.length });
 
-  [...SUBTASK_LABELS].sort((a, b) => a.order - b.order).forEach((lbl) => {
+  labels.forEach((lbl) => {
     const tag = document.createElement('span');
     tag.className = 'ls-label-tag';
-    tag.textContent = lbl.id;
+    tag.textContent = schemaLabelText(lbl);
     tag.dataset.label = lbl.id;
     tag.style.backgroundColor = lbl.color;
-    tag.title = lbl.hint;
+    tag.title = schemaHintText(lbl);
     tag.setAttribute('role', 'option');
-    tag.setAttribute('aria-label', `${lbl.id}: ${lbl.hint}`);
+    tag.setAttribute('aria-label', `${schemaLabelText(lbl)}: ${schemaHintText(lbl)}`);
     tag.setAttribute('aria-selected', lbl.id === state.selectedLabel ? 'true' : 'false');
     tag.tabIndex = 0;
     if (lbl.id === state.selectedLabel) tag.classList.add('selected');
@@ -784,24 +1055,33 @@ function renderTimelineRegions() {
     const { startFrame, endFrame } = segToFrames(seg);
     const bar = document.createElement('div');
     bar.className = 'ls-region-bar';
-    const color = LABEL_MAP[seg.label]?.color || '#576cc9';
+    bar.dataset.segIdx = String(idx);
+    const color = getLabelMap()[seg.label]?.color || '#576cc9';
     bar.style.setProperty('--region-color', color);
     bar.style.left = `${frameToPercent(startFrame)}%`;
     bar.style.width = `${Math.max(frameToPercent(endFrame + 1) - frameToPercent(startFrame), 0.5)}%`;
-    bar.textContent = seg.label;
-    const hint = LABEL_MAP[seg.label]?.hint;
-    bar.title = hint
-      ? `${seg.label}（${hint}）: f${startFrame}–f${endFrame}`
-      : `${seg.label}: f${startFrame}–f${endFrame}`;
+    bar.title = segmentBarTitle(seg, startFrame, endFrame);
+    bar.setAttribute('aria-label', bar.title);
     if (!isStandardLabel(seg.label)) bar.classList.add('nonstandard');
     if (state.selectedRegionIdx === idx) bar.classList.add('selected');
     if (state.conflictIndices.has(idx)) bar.classList.add('conflict');
-    bar.addEventListener('click', (e) => {
-      e.stopPropagation();
-      state.selectedRegionIdx = idx;
-      renderTimelineRegions();
-      renderRegionList();
-    });
+
+    const handleStart = document.createElement('span');
+    handleStart.className = 'ls-region-handle ls-region-handle-start';
+    handleStart.title = t('timeline_resize_start');
+
+    const body = document.createElement('span');
+    body.className = 'ls-region-body';
+
+    const handleEnd = document.createElement('span');
+    handleEnd.className = 'ls-region-handle ls-region-handle-end';
+    handleEnd.title = t('timeline_resize_end');
+
+    bar.appendChild(handleStart);
+    bar.appendChild(body);
+    bar.appendChild(handleEnd);
+
+    bar.addEventListener('mousedown', (e) => onRegionBarMouseDown(e, idx));
     timelineRegions.appendChild(bar);
   });
 }
@@ -845,7 +1125,7 @@ function renderRegionList() {
 
     const swatch = document.createElement('span');
     swatch.className = 'ls-region-swatch';
-    swatch.style.background = LABEL_MAP[seg.label]?.color || '#576cc9';
+    swatch.style.background = getLabelMap()[seg.label]?.color || '#576cc9';
 
     const startInput = document.createElement('input');
     startInput.type = 'number';
@@ -879,7 +1159,7 @@ function renderRegionList() {
 
     const labelSpan = document.createElement('span');
     labelSpan.className = 'ls-region-label';
-    labelSpan.textContent = seg.label;
+    labelSpan.textContent = schemaLabelText(getLabelMap()[seg.label]) || seg.label;
     if (!isStandardLabel(seg.label)) {
       const warn = document.createElement('span');
       warn.className = 'ls-label-nonstandard';
@@ -916,7 +1196,7 @@ function renderRegionList() {
 function showDragPreview(startPct, endPct) {
   const left = Math.min(startPct, endPct) * 100;
   const width = Math.abs(endPct - startPct) * 100;
-  const dragColor = LABEL_MAP[state.selectedLabel]?.color || '#576cc9';
+  const dragColor = getLabelMap()[state.selectedLabel]?.color || '#576cc9';
   dragPreview.hidden = false;
   dragPreview.style.left = `${left}%`;
   dragPreview.style.width = `${width}%`;
@@ -927,62 +1207,164 @@ function hideDragPreview() {
   dragPreview.hidden = true;
 }
 
+function onRegionBarMouseDown(e, segIdx) {
+  if (state.currentEpisode == null || e.button !== 0) return;
+  e.stopPropagation();
+  const bar = e.currentTarget;
+  let mode = 'select';
+  if (e.target.classList.contains('ls-region-handle-start')) mode = 'resize-start';
+  else if (e.target.classList.contains('ls-region-handle-end')) mode = 'resize-end';
+  else mode = regionBarHitMode(bar, e.clientX);
+
+  state.selectedRegionIdx = segIdx;
+  renderRegionList();
+
+  const ux = getTimelineUX();
+  if (mode === 'resize-start' && !ux.enable_resize) mode = 'select';
+  if (mode === 'resize-end' && !ux.enable_resize) mode = 'select';
+  if (mode === 'move' && !ux.enable_move) mode = 'select';
+
+  if (mode === 'select') {
+    renderTimelineRegions();
+    return;
+  }
+
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const { startFrame, endFrame } = segToFrames(ann.subtasks[segIdx]);
+  state.drag = {
+    mode,
+    segIdx,
+    pointerStartFrame: percentToFrame(trackXToPercent(e.clientX)),
+    origStart: startFrame,
+    origEnd: endFrame,
+    moved: false,
+  };
+  document.body.classList.add('ls-timeline-dragging');
+  e.preventDefault();
+}
+
+function applySegmentEditDrag(clientX) {
+  const drag = state.drag;
+  if (!drag || drag.mode === 'create') return false;
+  if (!['move', 'resize-start', 'resize-end'].includes(drag.mode)) return false;
+
+  const ux = getTimelineUX();
+  const maxFrame = Math.max(0, getTotalFrames() - 1);
+  const frame = percentToFrame(trackXToPercent(clientX));
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const seg = ann.subtasks[drag.segIdx];
+  let startFrame = drag.origStart;
+  let endFrame = drag.origEnd;
+
+  if (drag.mode === 'resize-start') {
+    startFrame = snapFrame(
+      frame,
+      getSnapCandidatesForEdge(drag.segIdx, 'start'),
+      ux.snap_adjacent_frames,
+    );
+    startFrame = Math.min(startFrame, endFrame);
+  } else if (drag.mode === 'resize-end') {
+    endFrame = snapFrame(
+      frame,
+      getSnapCandidatesForEdge(drag.segIdx, 'end'),
+      ux.snap_adjacent_frames,
+    );
+    endFrame = Math.max(endFrame, startFrame);
+  } else if (drag.mode === 'move') {
+    const delta = frame - drag.pointerStartFrame;
+    const clamped = clampSegmentMove(drag.origStart, drag.origEnd, delta, maxFrame);
+    startFrame = clamped.start;
+    endFrame = clamped.end;
+  }
+
+  if (startFrame > endFrame) return false;
+  if (wouldOverlapSegment(startFrame, endFrame, ann.subtasks, drag.segIdx)) return false;
+
+  Object.assign(seg, framesToSeg(startFrame, endFrame, seg.label));
+  drag.moved = true;
+  return true;
+}
+
 function onTimelineMouseDown(e) {
   if (state.currentEpisode == null || e.button !== 0) return;
+  if (e.target !== timelineTrack && e.target !== timelineRegions) return;
   if (!state.selectedLabel || !isStandardLabel(state.selectedLabel)) {
     labelHint.textContent = t('label_hint_pick');
     labelHint.classList.add('error');
     return;
   }
   const pct = trackXToPercent(e.clientX);
-  state.drag = { startPct: pct, currentPct: pct, moved: false };
+  state.drag = {
+    mode: 'create',
+    startPct: pct,
+    currentPct: pct,
+    moved: false,
+  };
   showDragPreview(pct, pct);
+  document.body.classList.add('ls-timeline-dragging');
   e.preventDefault();
 }
 
 function onTimelineMouseMove(e) {
   if (!state.drag) return;
-  const pct = trackXToPercent(e.clientX);
-  if (Math.abs(pct - state.drag.startPct) > 0.005) {
-    state.drag.moved = true;
+  if (state.drag.mode === 'create') {
+    const pct = trackXToPercent(e.clientX);
+    if (Math.abs(pct - state.drag.startPct) > 0.005) {
+      state.drag.moved = true;
+    }
+    state.drag.currentPct = pct;
+    showDragPreview(state.drag.startPct, pct);
+    return;
   }
-  state.drag.currentPct = pct;
-  showDragPreview(state.drag.startPct, pct);
+  if (applySegmentEditDrag(e.clientX)) {
+    renderAllTimeline();
+  }
 }
 
 function onTimelineMouseUp(e) {
   if (!state.drag) return;
-  const { startPct, currentPct, moved } = state.drag;
+  const drag = state.drag;
   state.drag = null;
+  document.body.classList.remove('ls-timeline-dragging');
   hideDragPreview();
 
-  if (!moved) {
-    const frame = percentToFrame(startPct);
-    episodeVideo.currentTime = startFrameToSeconds(frame);
-    updatePlayhead();
+  if (drag.mode === 'create') {
+    const { startPct, currentPct, moved } = drag;
+    if (!moved) {
+      const frame = percentToFrame(startPct);
+      episodeVideo.currentTime = startFrameToSeconds(frame);
+      updatePlayhead();
+      return;
+    }
+
+    const f0 = percentToFrame(Math.min(startPct, currentPct));
+    const f1 = percentToFrame(Math.max(startPct, currentPct));
+    if (f1 <= f0) return;
+
+    const ann = getEpisodeAnnotations(state.currentEpisode);
+    if (wouldOverlapNewSegment(f0, f1, ann.subtasks)) {
+      labelHint.textContent = t('label_hint_overlap');
+      labelHint.classList.add('error');
+      return;
+    }
+    labelHint.classList.remove('error');
+
+    ann.subtasks.push(framesToSeg(f0, f1, state.selectedLabel));
+    state.selectedRegionIdx = ann.subtasks.length - 1;
+    markDirty();
+    renderAllTimeline();
     return;
   }
 
-  const f0 = percentToFrame(Math.min(startPct, currentPct));
-  const f1 = percentToFrame(Math.max(startPct, currentPct));
-  if (f1 <= f0) return;
-
-  const ann = getEpisodeAnnotations(state.currentEpisode);
-  if (wouldOverlapNewSegment(f0, f1, ann.subtasks)) {
-    labelHint.textContent = t('label_hint_overlap');
-    labelHint.classList.add('error');
-    return;
+  if (drag.moved) {
+    markDirty();
+    renderAllTimeline();
   }
-  labelHint.classList.remove('error');
-
-  ann.subtasks.push(framesToSeg(f0, f1, state.selectedLabel));
-  state.selectedRegionIdx = ann.subtasks.length - 1;
-  markDirty();
-  renderAllTimeline();
 }
 
 function bindTimelineEvents() {
   timelineTrack.addEventListener('mousedown', onTimelineMouseDown);
+  timelineRegions.addEventListener('mousedown', onTimelineMouseDown);
   window.addEventListener('mousemove', onTimelineMouseMove);
   window.addEventListener('mouseup', onTimelineMouseUp);
 }
@@ -1088,14 +1470,15 @@ async function selectEpisode(epIdx) {
     try {
       const egoData = await loadEgoContext(epIdx);
       const subtasks = egoSegmentsToTimelineSubtasks(egoData?.segments || []);
-      state.annotations[epIdx] = {
-        subtasks,
-        high_levels: [],
-        outcome: null,
-      };
+    state.annotations[epIdx] = {
+      subtasks,
+      high_levels: [],
+      outcome: null,
+      fields: {},
+    };
     } catch (err) {
       setHelper(connectHelper, err.message);
-      state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null };
+      state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
     }
   } else {
     const res = await fetch(`/api/episodes/${epIdx}/annotations`);
@@ -1104,9 +1487,11 @@ async function selectEpisode(epIdx) {
       subtasks: data.subtasks || [],
       high_levels: data.high_levels || [],
       outcome: data.outcome ?? null,
+      fields: data.fields || {},
     };
   }
   setOutcomeUI(state.annotations[epIdx].outcome);
+  setEpisodeFieldsUI(state.annotations[epIdx].fields);
 
   const videoUrl = `/api/video/${epIdx}?video_key=${encodeURIComponent(state.dataset.selected_video_key)}`;
   episodeVideo.src = videoUrl;
@@ -1154,10 +1539,12 @@ async function saveEpisode() {
     return;
   }
 
+  readEpisodeFieldsFromUI();
   const payload = {
     episode_index: state.currentEpisode,
     subtasks: ann.subtasks,
     high_levels: ann.high_levels,
+    fields: ann.fields || {},
   };
   if (ann.outcome) {
     payload.outcome = ann.outcome;
@@ -1188,37 +1575,243 @@ async function saveEpisode() {
 }
 
 // ---------------------------------------------------------------------------
+// Video camera toolbar (above player)
+// ---------------------------------------------------------------------------
+
+function formatVideoKeyLabel(key) {
+  const short = (key || '').split('.').pop() || key;
+  const map = {
+    head_camera: t('camera_head'),
+    camera1: t('camera_1'),
+    camera2: t('camera_2'),
+    image: t('camera_main'),
+  };
+  return map[short] || short;
+}
+
+function renderVideoKeyToolbar(keys, selected) {
+  if (!videoKeyToolbar || !videoKeyToolbarButtons) return;
+  const list = Array.isArray(keys) ? keys : [];
+  if (list.length <= 1) {
+    videoKeyToolbar.hidden = true;
+    videoKeyToolbarButtons.innerHTML = '';
+    return;
+  }
+  videoKeyToolbar.hidden = false;
+  if (videoKeyToolbarLabel) {
+    videoKeyToolbarLabel.textContent = t('label_camera_view');
+  }
+  videoKeyToolbarButtons.innerHTML = '';
+  list.forEach((key) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `ls-video-view-btn${key === selected ? ' is-active' : ''}`;
+    btn.textContent = formatVideoKeyLabel(key);
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', key === selected ? 'true' : 'false');
+    btn.title = key;
+    btn.addEventListener('click', () => switchVideoKey(key));
+    videoKeyToolbarButtons.appendChild(btn);
+  });
+}
+
+async function switchVideoKey(newKey) {
+  if (!state.dataset || !newKey || newKey === state.dataset.selected_video_key) return;
+  state.dataset.selected_video_key = newKey;
+  renderVideoKeyToolbar(state.dataset.video_keys, newKey);
+  if (state.currentEpisode == null) return;
+  const epIdx = state.currentEpisode;
+  episodeVideo.src = `/api/video/${epIdx}?video_key=${encodeURIComponent(newKey)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Dataset catalog (Collection → Package)
+// ---------------------------------------------------------------------------
+
+function formatPackageOption(pkg) {
+  const parts = [pkg.display_name || pkg.id];
+  if (pkg.episodes != null) parts.push(`${pkg.episodes} ep`);
+  return parts.join(' · ');
+}
+
+function formatCollectionOption(col) {
+  const title = col.title || col.id;
+  const count = col.package_count ?? 0;
+  return t('catalog_collection_option', { title, count });
+}
+
+function updatePackageMeta(pkg) {
+  if (!packageMeta) return;
+  if (!pkg) {
+    packageMeta.hidden = true;
+    packageMeta.textContent = '';
+    return;
+  }
+  const bits = [];
+  if (pkg.robot_type) bits.push(pkg.robot_type);
+  if (pkg.episodes != null) bits.push(`${pkg.episodes} episodes`);
+  if (pkg.fps != null) bits.push(`${pkg.fps} fps`);
+  if (Array.isArray(pkg.video_keys) && pkg.video_keys.length) bits.push(pkg.video_keys.join(', '));
+  if (pkg.task_preview) bits.push(pkg.task_preview);
+  packageMeta.textContent = bits.join(' | ');
+  packageMeta.hidden = bits.length === 0;
+}
+
+function setAdvancedPathMode(enabled) {
+  state.catalog.advancedPath = enabled;
+  if (!localInput) return;
+  localInput.readOnly = !enabled && state.catalog.selectedPackageId != null;
+  if (toggleAdvancedPath) {
+    toggleAdvancedPath.hidden = sourceSelect?.value !== 'local' || !state.catalog.loaded;
+    toggleAdvancedPath.textContent = enabled ? t('catalog_hide_advanced') : t('catalog_advanced_path');
+  }
+}
+
+function applyPackageSelection(pkg) {
+  if (!pkg || !localInput) return;
+  state.catalog.selectedPackageId = pkg.id;
+  localInput.value = pkg.local_path || '';
+  updatePackageMeta(pkg);
+  setAdvancedPathMode(state.catalog.advancedPath);
+}
+
+function populatePackageSelect(collectionId, preferredPackageId) {
+  if (!packageSelect) return;
+  packageSelect.innerHTML = '';
+  const collection = state.catalog.byId.get(collectionId);
+  const packages = collection?.packages || [];
+  packages.forEach((pkg) => {
+    const option = document.createElement('option');
+    option.value = pkg.id;
+    option.textContent = formatPackageOption(pkg);
+    if (pkg.id === preferredPackageId) option.selected = true;
+    packageSelect.appendChild(option);
+  });
+  const selected = packages.find((p) => p.id === preferredPackageId) || packages[0];
+  if (selected) applyPackageSelection(selected);
+  else updatePackageMeta(null);
+}
+
+function populateCollectionSelect(preferredCollectionId, preferredPackageId) {
+  if (!collectionSelect) return;
+  collectionSelect.innerHTML = '';
+  state.catalog.collections.forEach((col) => {
+    const option = document.createElement('option');
+    option.value = col.id;
+    option.textContent = formatCollectionOption(col);
+    if (col.id === preferredCollectionId) option.selected = true;
+    collectionSelect.appendChild(option);
+  });
+  const selectedId = preferredCollectionId || state.catalog.collections[0]?.id;
+  state.catalog.selectedCollectionId = selectedId || null;
+  if (selectedId) populatePackageSelect(selectedId, preferredPackageId);
+}
+
+async function fetchCatalog() {
+  try {
+    const res = await fetch('/api/datasets/collections');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to load catalog');
+    state.catalog.collections = data.collections || [];
+    state.catalog.byId = new Map();
+    for (const summary of state.catalog.collections) {
+      const detailRes = await fetch(`/api/datasets/collections/${encodeURIComponent(summary.id)}`);
+      const detail = await detailRes.json();
+      if (detailRes.ok) state.catalog.byId.set(summary.id, detail);
+    }
+    state.catalog.loaded = state.catalog.collections.length > 0;
+  } catch (err) {
+    console.warn('catalog fetch failed', err);
+    state.catalog.loaded = false;
+  }
+}
+
+function pickDefaultCatalogSelection() {
+  const params = parseEgoUrlParams();
+  if (params.collection && state.catalog.byId.has(params.collection)) {
+    return {
+      collectionId: params.collection,
+      packageId: params.packageId || state.catalog.byId.get(params.collection)?.packages?.[0]?.id,
+    };
+  }
+  if (state.catalog.byId.has('limx_box_transport')) {
+    const pkgs = state.catalog.byId.get('limx_box_transport')?.packages || [];
+    return { collectionId: 'limx_box_transport', packageId: pkgs[0]?.id };
+  }
+  if (state.catalog.byId.has('pusht')) {
+    return { collectionId: 'pusht', packageId: 'pusht' };
+  }
+  const first = state.catalog.collections[0];
+  const firstPkg = state.catalog.byId.get(first?.id)?.packages?.[0];
+  return { collectionId: first?.id, packageId: firstPkg?.id };
+}
+
+async function initCatalogUi() {
+  await fetchCatalog();
+  const defaults = pickDefaultCatalogSelection();
+  populateCollectionSelect(defaults.collectionId, defaults.packageId);
+  const params = parseEgoUrlParams();
+  if (params.datasetPath && localInput) {
+    localInput.value = params.datasetPath;
+    state.catalog.advancedPath = true;
+    setAdvancedPathMode(true);
+  }
+  updateConnectFields();
+}
+
+// ---------------------------------------------------------------------------
 // Connect / load
 // ---------------------------------------------------------------------------
 
 function updateConnectFields() {
   const isLocal = sourceSelect.value === 'local';
+  const showCatalog = isLocal && state.catalog.loaded;
   if (repoLabel) repoLabel.style.display = isLocal ? 'none' : 'flex';
   if (localLabel) localLabel.style.display = isLocal ? 'flex' : 'none';
+  if (collectionLabel) collectionLabel.style.display = showCatalog ? 'flex' : 'none';
+  if (packageLabel) packageLabel.style.display = showCatalog ? 'flex' : 'none';
+  if (packageMeta) packageMeta.hidden = !showCatalog || !packageMeta.textContent;
   const revisionLabel = document.getElementById('revisionLabel');
   if (revisionLabel) revisionLabel.style.display = isLocal ? 'none' : 'flex';
-  if (isLocal && localInput && !localInput.value.trim()) {
+  if (isLocal && localInput && !localInput.value.trim() && !state.catalog.loaded) {
     localInput.value = DEMO_LOCAL_DATASET;
   }
+  setAdvancedPathMode(state.catalog.advancedPath);
   setHelper(
     connectHelper,
-    isLocal ? t('connect_helper_local') : t('connect_helper_hf'),
+    isLocal
+      ? (showCatalog ? t('connect_helper_catalog') : t('connect_helper_local'))
+      : t('connect_helper_hf'),
   );
 }
 
 function populateVideoKeys(keys, selected) {
-  videoKeySelect.innerHTML = '';
-  if (!keys) return;
-  keys.forEach((key) => {
-    const option = document.createElement('option');
-    option.value = key;
-    option.textContent = key;
-    if (key === selected) option.selected = true;
-    videoKeySelect.appendChild(option);
-  });
+  renderVideoKeyToolbar(keys, selected);
 }
 
 sourceSelect.addEventListener('change', updateConnectFields);
+
+if (collectionSelect) {
+  collectionSelect.addEventListener('change', () => {
+    state.catalog.selectedCollectionId = collectionSelect.value;
+    populatePackageSelect(collectionSelect.value, null);
+    updateConnectFields();
+  });
+}
+
+if (packageSelect) {
+  packageSelect.addEventListener('change', () => {
+    const collection = state.catalog.byId.get(state.catalog.selectedCollectionId);
+    const pkg = (collection?.packages || []).find((p) => p.id === packageSelect.value);
+    if (pkg) applyPackageSelection(pkg);
+  });
+}
+
+if (toggleAdvancedPath) {
+  toggleAdvancedPath.addEventListener('click', () => {
+    setAdvancedPathMode(!state.catalog.advancedPath);
+  });
+}
 
 connectForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1234,7 +1827,7 @@ connectForm.addEventListener('submit', async (event) => {
     repo_id: isLocal ? null : repoInput.value.trim() || null,
     revision: revisionInput.value.trim() || null,
     local_path: isLocal ? localPath : null,
-    video_key: videoKeySelect.value || null,
+    video_key: null,
   };
 
   setHelper(connectHelper, t('connect_loading'));
@@ -1264,6 +1857,7 @@ connectForm.addEventListener('submit', async (event) => {
     if (connectToggle) connectToggle.setAttribute('aria-expanded', 'false');
 
     populateVideoKeys(data.video_keys, data.selected_video_key);
+    applyAnnotationSchema(data.annotation_schema);
     renderEpisodes();
     if (state.episodes.length > 0) {
       const startEp = state.egoMode ? (parseEgoUrlParams().episodeIndex || state.episodes[0].episode_index) : state.episodes[0].episode_index;
@@ -1340,7 +1934,8 @@ if (validationForceSave) {
 
 resetEpisodeBtn.addEventListener('click', () => {
   if (state.currentEpisode == null) return;
-  state.annotations[state.currentEpisode] = { subtasks: [], high_levels: [], outcome: null };
+  state.annotations[state.currentEpisode] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
+  setEpisodeFieldsUI({});
   state.selectedRegionIdx = null;
   setOutcomeUI(null);
   markDirty();
@@ -1414,7 +2009,14 @@ window.__laOnLocaleChange = () => {
   if (validationForceSave) validationForceSave.textContent = t('validation_force_save');
   if (saveEpisodeBottom) saveEpisodeBottom.setAttribute('aria-label', t('save_button'));
   updateConnectFields();
-  renderLabelPalette();
+  if (state.dataset?.video_keys) {
+    renderVideoKeyToolbar(state.dataset.video_keys, state.dataset.selected_video_key);
+  }
+  if (state.annotationSchema) {
+    renderLabelPalette();
+    renderEpisodeFields();
+    updateLabelHintForSelection(state.selectedLabel);
+  }
   updateLabelHintForSelection(state.selectedLabel);
   updateSaveUI();
 };
@@ -1425,14 +2027,17 @@ workspace.style.display = 'none';
 renderLabelPalette();
 updateLabelHintForSelection(state.selectedLabel);
 bindTimelineEvents();
-updateConnectFields();
 updateSaveUI();
 
-(() => {
+initCatalogUi().then(() => {
   const egoParams = parseEgoUrlParams();
   if (egoParams.datasetPath && localInput) {
     localInput.value = egoParams.datasetPath;
     if (sourceSelect) sourceSelect.value = 'local';
-    updateConnectFields();
+    state.catalog.advancedPath = true;
+    setAdvancedPathMode(true);
+  } else if (sourceSelect) {
+    sourceSelect.value = 'local';
   }
-})();
+  updateConnectFields();
+});

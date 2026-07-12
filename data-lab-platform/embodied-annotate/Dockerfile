@@ -18,9 +18,10 @@ RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" \
 # 应用代码（业务逻辑原样 COPY，不做 patch）
 COPY backend/ /app/backend/
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/backend
 ENV LEROBOT_ANNOTATE_CACHE=/data/cache
 ENV LEROBOT_ANNOTATE_EXPORT=/data/exports
+ENV LEROBOT_ANNOTATE_DATASETS=/data/datasets
 
 EXPOSE 7861
 

@@ -21,11 +21,21 @@
       source_hf: 'Hugging Face Hub',
       label_repo: 'Repo ID',
       label_local_path: 'Dataset directory',
+      label_collection: 'Collection',
+      label_package: 'Package',
       label_revision: 'Revision',
-      label_video_key: 'Video key',
+      label_camera_view: 'Camera view',
+      camera_head: 'Head cam',
+      camera_1: 'Camera 1',
+      camera_2: 'Camera 2',
+      camera_main: 'Main view',
       btn_load: 'Load',
       connect_helper_local: 'Local: enter the dataset directory below, then Load.',
+      connect_helper_catalog: 'Select a collection and package, then Load.',
       connect_helper_hf: 'Hub: enter repo id, e.g. lerobot/pusht',
+      catalog_advanced_path: 'Advanced path',
+      catalog_hide_advanced: 'Use catalog path',
+      catalog_collection_option: '{title} · {count} subsets',
       connect_local_required: 'Dataset directory is required.',
       connect_loading: 'Loading dataset...',
       connect_loaded: 'Loaded {count} episodes.',
@@ -38,10 +48,12 @@
       task_label: 'Task',
       timeline_labels: 'Timeline labels',
       label_count: 'Labels ({n})',
-      label_hint_default: 'Select a label, then drag on the timeline; segments should not overlap.',
+      label_hint_default: 'Select a label, then drag on empty timeline to create; drag segment edges to resize or the middle to move.',
       label_hint_selected: '{id}: {hint}',
       label_hint_pick: 'Select one of the 8 fixed labels first',
       label_hint_overlap: 'Overlaps an existing segment — adjust start/end frames',
+      timeline_resize_start: 'Drag to adjust start frame',
+      timeline_resize_end: 'Drag to adjust end frame',
       regions_title: 'Regions',
       outcome_label: 'Outcome',
       save_button: 'Save segment annotations',
@@ -89,11 +101,21 @@
       source_hf: 'Hugging Face Hub',
       label_repo: '仓库 ID',
       label_local_path: '数据集目录',
+      label_collection: '数据集集合',
+      label_package: '子数据集',
       label_revision: '版本',
-      label_video_key: '视频键',
+      label_camera_view: '相机视角',
+      camera_head: '头摄',
+      camera_1: '相机 1',
+      camera_2: '相机 2',
+      camera_main: '主视角',
       btn_load: '加载',
       connect_helper_local: '本地模式：填写下方数据集目录后点击「加载」。',
+      connect_helper_catalog: '选择数据集集合与子包，然后点击「加载」。',
       connect_helper_hf: 'Hub：填写仓库 ID，例如 lerobot/pusht',
+      catalog_advanced_path: '高级路径',
+      catalog_hide_advanced: '使用目录选择',
+      catalog_collection_option: '{title} · {count} 个子集',
       connect_local_required: '请填写数据集目录。',
       connect_loading: '正在加载数据集...',
       connect_loaded: '已加载 {count} 个 episode。',
@@ -106,10 +128,12 @@
       task_label: '任务',
       timeline_labels: '时间轴标签',
       label_count: '标签（{n}）',
-      label_hint_default: '先选标签，再在时间轴拖拽；相邻分段不重叠，尽量覆盖全片',
+      label_hint_default: '先选标签，在时间轴空白处拖拽新建；拖色块左右边调整起止，拖中间可平移',
       label_hint_selected: '{id}: {hint}',
       label_hint_pick: '请先从 8 类固定标签中选择一项',
       label_hint_overlap: '与已有分段重叠，请调整起止帧',
+      timeline_resize_start: '拖动调整起始帧',
+      timeline_resize_end: '拖动调整结束帧',
       regions_title: 'Regions',
       outcome_label: '结果',
       save_button: '保存当前片段标注',
@@ -211,9 +235,13 @@
     if (hfOpt) hfOpt.textContent = t('source_hf');
 
     setLabelText(document.getElementById('repoLabel'), t('label_repo'));
+    setLabelText(document.getElementById('collectionLabel'), t('label_collection'));
+    setLabelText(document.getElementById('packageLabel'), t('label_package'));
     setLabelText(document.getElementById('localLabel'), t('label_local_path'));
     setLabelText(document.getElementById('revisionLabel'), t('label_revision'));
-    setLabelText(document.getElementById('videoKeyLabel'), t('label_video_key'));
+
+    const cameraToolbarLabel = document.getElementById('videoKeyToolbarLabel');
+    if (cameraToolbarLabel) cameraToolbarLabel.textContent = t('label_camera_view');
 
     const loadBtn = document.querySelector('#connectForm button[type="submit"]');
     if (loadBtn) loadBtn.textContent = t('btn_load');

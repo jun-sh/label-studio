@@ -27,11 +27,27 @@ Embedded in Data Lab: **http://10.10.10.34:8080/projects/:id/embodied** (`datala
 | Source | HuggingFace `lerobot/pusht` (subset) |
 | FPS | 10 |
 
-In the UI: **Connect dataset** → source **local** → path:
+In the UI: **Connect dataset** → source **local** → pick **Collection** / **Package**, or enter path:
 
 ```
 /data/datasets/pusht
 ```
+
+## Dataset catalog (Phase 2)
+
+Collections live under `data-storage/embodied-annotate/datasets/`. Each collection is either:
+
+- a **leaf** LeRobot v3 root (e.g. `pusht/`), or
+- a **multi-package** folder with `collection.manifest.json` (e.g. `limx_box_transport/`).
+
+| API | Purpose |
+|-----|---------|
+| `GET /api/datasets/collections` | List collections |
+| `GET /api/datasets/collections/{id}` | Packages + resolved `local_path` |
+
+Environment: `LEROBOT_ANNOTATE_DATASETS=/data/datasets` (set in Compose).
+
+Example collection manifest: `data-storage/embodied-annotate/datasets/limx_box_transport/collection.manifest.json`
 
 ## Workflow
 

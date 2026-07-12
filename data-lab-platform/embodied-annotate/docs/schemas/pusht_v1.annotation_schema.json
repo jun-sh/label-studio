@@ -1,0 +1,53 @@
+{
+  "schema_id": "pusht_v1",
+  "schema_version": 1,
+  "subtask_labels": [
+    {
+      "id": "idle",
+      "order": 0,
+      "color": "#9CA3AF",
+      "label_zh": "空闲",
+      "label_en": "Idle",
+      "hint_zh": "未推动滑块",
+      "hint_en": "Not pushing"
+    },
+    {
+      "id": "reach",
+      "order": 1,
+      "color": "#34D399",
+      "label_zh": "接近",
+      "label_en": "Reach",
+      "hint_zh": "移向滑块或目标位置",
+      "hint_en": "Moving toward puck or target"
+    },
+    {
+      "id": "push",
+      "order": 2,
+      "color": "#3B82F6",
+      "label_zh": "推动",
+      "label_en": "Push",
+      "hint_zh": "接触并推动滑块",
+      "hint_en": "Contact and push"
+    },
+    {
+      "id": "reposition",
+      "order": 3,
+      "color": "#A78BFA",
+      "label_zh": "调整",
+      "label_en": "Reposition",
+      "hint_zh": "微调末端或准备下一次推动",
+      "hint_en": "Fine adjustment before next push"
+    }
+  ],
+  "episode_fields": [],
+  "validation": {
+    "segments_must_not_overlap": true,
+    "gap_warn_frames": 10
+  },
+  "timeline": {
+    "snap_adjacent_frames": 1,
+    "enable_move": true,
+    "enable_resize": true,
+    "create_on_empty_track_only": true
+  }
+}

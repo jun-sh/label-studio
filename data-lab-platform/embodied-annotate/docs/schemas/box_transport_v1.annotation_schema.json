@@ -1,0 +1,93 @@
+{
+  "schema_id": "box_transport_v1",
+  "schema_version": 1,
+  "subtask_labels": [
+    {
+      "id": "idle",
+      "order": 0,
+      "color": "#9CA3AF",
+      "label_zh": "空闲",
+      "label_en": "Idle",
+      "hint_zh": "等待，未参与搬箱",
+      "hint_en": "Waiting, not manipulating"
+    },
+    {
+      "id": "reach",
+      "order": 1,
+      "color": "#34D399",
+      "label_zh": "接近",
+      "label_en": "Reach",
+      "hint_zh": "朝目标箱子移动，尚未接触",
+      "hint_en": "Moving toward box without contact"
+    },
+    {
+      "id": "pre_grasp",
+      "order": 2,
+      "color": "#6EE7B7",
+      "label_zh": "预抓取",
+      "label_en": "Pre-grasp",
+      "hint_zh": "对准、张开、准备抓",
+      "hint_en": "Aligning and opening gripper"
+    },
+    {
+      "id": "contact",
+      "order": 3,
+      "color": "#FB923C",
+      "label_zh": "接触",
+      "label_en": "Contact",
+      "hint_zh": "碰到箱子至抓稳前",
+      "hint_en": "First touch until stable grasp"
+    },
+    {
+      "id": "lift",
+      "order": 4,
+      "color": "#60A5FA",
+      "label_zh": "抬起",
+      "label_en": "Lift",
+      "hint_zh": "箱子离开支撑面",
+      "hint_en": "Box leaves support surface"
+    },
+    {
+      "id": "transport",
+      "order": 5,
+      "color": "#3B82F6",
+      "label_zh": "搬运",
+      "label_en": "Transport",
+      "hint_zh": "持箱移向传送带",
+      "hint_en": "Carrying box toward conveyor"
+    },
+    {
+      "id": "place",
+      "order": 6,
+      "color": "#A78BFA",
+      "label_zh": "放置",
+      "label_en": "Place",
+      "hint_zh": "朝传送带下降，未松手",
+      "hint_en": "Lowering onto conveyor, not released"
+    },
+    {
+      "id": "release",
+      "order": 7,
+      "color": "#F472B6",
+      "label_zh": "释放",
+      "label_en": "Release",
+      "hint_zh": "松手，箱脱离",
+      "hint_en": "Gripper opens, box detached"
+    }
+  ],
+  "display_locale": "en",
+  "episode_fields": [],
+  "validation": {
+    "segments_must_not_overlap": true,
+    "gap_warn_frames": 10,
+    "require_full_coverage": false,
+    "min_segment_frames": 1
+  },
+  "timeline": {
+    "snap_adjacent_frames": 1,
+    "resize_handle_px": 6,
+    "enable_move": true,
+    "enable_resize": true,
+    "create_on_empty_track_only": true
+  }
+}

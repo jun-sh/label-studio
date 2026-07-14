@@ -75,8 +75,102 @@
       "hint_en": "Gripper opens, box detached"
     }
   ],
-  "display_locale": "en",
-  "episode_fields": [],
+  "skill_labels": [
+    {
+      "id": "approach_skill",
+      "order": 0,
+      "color": "#10B981",
+      "label_zh": "接近技能",
+      "label_en": "Approach",
+      "hint_zh": "行走趋近至箱体可操作范围",
+      "subgoal_en": "move close to the target box and prepare for grasping",
+      "subgoal_zh": "趋近目标箱体并准备抓取"
+    },
+    {
+      "id": "grasp_skill",
+      "order": 1,
+      "color": "#F59E0B",
+      "label_zh": "抓取技能",
+      "label_en": "Grasp",
+      "hint_zh": "预抓 → 接触 → 抬升离地",
+      "subgoal_en": "pre-align, contact and lift the box stably",
+      "subgoal_zh": "预对位、接触并稳定抬升箱体"
+    },
+    {
+      "id": "place_skill",
+      "order": 2,
+      "color": "#8B5CF6",
+      "label_zh": "放置技能",
+      "label_en": "Place",
+      "hint_zh": "持箱搬运 → 对位 → 放置 → 松手",
+      "subgoal_en": "transport the box and place it on the conveyor belt",
+      "subgoal_zh": "搬运箱体并放置到传送带上"
+    }
+  ],
+  "skill_derivation": {
+    "enabled": true,
+    "cycle_start_labels": ["reach"],
+    "skills": {
+      "approach_skill": {
+        "from_label": "reach",
+        "until_label": "pre_grasp",
+        "until_exclusive": true
+      },
+      "grasp_skill": {
+        "from_label": "pre_grasp",
+        "until_label": "lift",
+        "until_inclusive": true
+      },
+      "place_skill": {
+        "from_label": "transport",
+        "until_label": "release",
+        "until_inclusive": true
+      }
+    }
+  },
+  "episode_fields": [
+    {
+      "id": "box_cycle",
+      "type": "int",
+      "required": true,
+      "label_zh": "成功搬箱数",
+      "label_en": "Box cycles",
+      "hint_zh": "由逐箱结果自动汇总（只读）",
+      "hint_en": "Auto-summed from per-box results (read-only)",
+      "min": 0,
+      "max": 20,
+      "ui": { "tier": "advanced", "read_only": true }
+    },
+    {
+      "id": "skill_review",
+      "type": "enum",
+      "required": false,
+      "values": ["pending", "approved", "rejected"],
+      "default": "pending",
+      "label_zh": "技能推导复核",
+      "label_en": "Skill derivation review",
+      "hint_zh": "组长抽检 L1 自动推导；标注员保持「待复核」",
+      "hint_en": "QC only — annotators leave as pending",
+      "ui": { "tier": "advanced", "role": "qc" }
+    }
+  ],
+  "cycle_fields": [
+    {
+      "id": "success",
+      "type": "bool",
+      "label_zh": "成功上带",
+      "label_en": "On conveyor",
+      "hint_zh": "该箱是否成功放到传送带并松手"
+    },
+    {
+      "id": "fail_reason",
+      "type": "enum",
+      "required": false,
+      "values": ["none", "slip_grasp", "drop_mid_transport", "place_offset", "incomplete", "other"],
+      "label_zh": "失败原因",
+      "label_en": "Fail reason"
+    }
+  ],
   "validation": {
     "segments_must_not_overlap": true,
     "gap_warn_frames": 10,

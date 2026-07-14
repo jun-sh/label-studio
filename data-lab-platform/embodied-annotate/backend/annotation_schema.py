@@ -37,8 +37,10 @@ def _deep_merge_schema(base: dict[str, Any], override: dict[str, Any] | None) ->
         return deepcopy(base)
     merged = deepcopy(base)
     for key, value in override.items():
-        if key in ("subtask_labels", "episode_fields", "timeline") and value:
+        if key in ("subtask_labels", "episode_fields", "timeline", "skill_labels", "cycle_fields") and value:
             merged[key] = deepcopy(value)
+        elif key == "skill_derivation" and isinstance(value, dict):
+            merged["skill_derivation"] = deepcopy(value)
         elif key == "validation" and isinstance(value, dict):
             merged["validation"] = {**(merged.get("validation") or {}), **value}
         else:
@@ -83,11 +85,126 @@ def resolve_annotation_schema(dataset_root: Path) -> dict[str, Any]:
     schema["validation"].setdefault("gap_warn_frames", 10)
     schema["validation"].setdefault("segments_must_not_overlap", True)
     schema.setdefault("episode_fields", [])
+    schema.setdefault("cycle_fields", [])
     return schema
+
+
+def cycle_field_specs(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    return list(schema.get("cycle_fields") or [])
+
+
+def validate_skill_cycles(schema: dict[str, Any], cycles: list[dict[str, Any]] | None) -> None:
+    from fastapi import HTTPException
+
+    if not cycles:
+        return
+    specs = {str(spec["id"]): spec for spec in cycle_field_specs(schema) if spec.get("id")}
+    if not specs:
+        return
+
+    for cycle in cycles:
+        cid = cycle.get("cycle_id")
+        for field_id, spec in specs.items():
+            if field_id not in cycle:
+                continue
+            value = cycle.get(field_id)
+            if value is None or value == "":
+                continue
+            field_type = spec.get("type", "text")
+            if field_type == "bool" and not isinstance(value, bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cycle {cid} field '{field_id}' must be a boolean",
+                )
+            if field_type == "enum":
+                values = spec.get("values") or []
+                if str(value) not in values:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cycle {cid} field '{field_id}' must be one of {values}",
+                    )
+            if field_type == "text" and spec.get("max_length"):
+                if len(str(value)) > int(spec["max_length"]):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cycle {cid} field '{field_id}' exceeds max length",
+                    )
 
 
 def allowed_label_ids(schema: dict[str, Any]) -> set[str]:
     return {str(lbl["id"]) for lbl in schema.get("subtask_labels") or [] if lbl.get("id")}
+
+
+def allowed_skill_ids(schema: dict[str, Any]) -> set[str]:
+    return {str(lbl["id"]) for lbl in schema.get("skill_labels") or [] if lbl.get("id")}
+
+
+def _seg_to_frames(seg: dict[str, Any], fps: float) -> tuple[int, int]:
+    start = max(0, round(float(seg.get("start", 0)) * fps))
+    end = max(0, int(float(seg.get("end", 0)) * fps + 0.999999) - 1)
+    return start, end
+
+
+def validate_subtasks(
+    schema: dict[str, Any],
+    subtasks: list[dict[str, Any]],
+    *,
+    fps: float = 30.0,
+    max_frame: int | None = None,
+) -> None:
+    """Hard validation aligned with frontend V-01..V-03."""
+    from fastapi import HTTPException
+
+    allowed = allowed_label_ids(schema)
+    must_not_overlap = bool((schema.get("validation") or {}).get("segments_must_not_overlap", True))
+    frames_list: list[tuple[int, str, int, int]] = []
+
+    for index, seg in enumerate(subtasks):
+        label = str(seg.get("label") or "")
+        if allowed and label and label not in allowed:
+            raise HTTPException(status_code=400, detail=f"Unknown subtask label '{label}'")
+        start_f, end_f = _seg_to_frames(seg, fps)
+        if start_f > end_f:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Subtask '{label}' start frame {start_f} is after end frame {end_f}",
+            )
+        if max_frame is not None and (start_f < 0 or end_f > max_frame):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Subtask '{label}' frame range [{start_f}, {end_f}] "
+                    f"is outside [0, {max_frame}]"
+                ),
+            )
+        frames_list.append((index, label, start_f, end_f))
+
+    if not must_not_overlap:
+        return
+
+    for i in range(len(frames_list)):
+        for j in range(i + 1, len(frames_list)):
+            _, label_a, start_a, end_a = frames_list[i]
+            _, label_b, start_b, end_b = frames_list[j]
+            if start_a <= end_b and start_b <= end_a:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Overlapping subtasks: {label_a} f{start_a}-f{end_a} "
+                        f"and {label_b} f{start_b}-f{end_b}"
+                    ),
+                )
+
+
+def skill_derivation_enabled(schema: dict[str, Any]) -> bool:
+    cfg = schema.get("skill_derivation")
+    return bool(cfg and cfg.get("enabled"))
+
+
+def filter_episode_fields(schema: dict[str, Any], fields: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only fields declared in schema (drops deprecated keys like legacy notes)."""
+    allowed = {str(spec["id"]) for spec in schema.get("episode_fields") or [] if spec.get("id")}
+    return {key: value for key, value in (fields or {}).items() if key in allowed}
 
 
 def validate_episode_fields(schema: dict[str, Any], fields: dict[str, Any] | None) -> None:

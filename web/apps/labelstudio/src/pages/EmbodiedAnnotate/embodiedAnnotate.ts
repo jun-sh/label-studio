@@ -46,8 +46,22 @@ export function ensureEmbodiedMarkerInDescription(userDescription?: string | nul
   return buildEmbodiedProjectDescription(userDescription);
 }
 
-export function buildEmbodiedAnnotateEmbedSrc(): string {
+const EMBED_QUERY_KEYS = ["collection", "package", "episode", "episodeIndex"] as const;
+
+/** Params forwarded from the Label Studio URL into the annotate iframe. */
+export function readEmbodiedEmbedQueryParams(search?: string): URLSearchParams {
+  const raw = search ?? (typeof window !== "undefined" ? window.location.search : "");
+  return new URLSearchParams(raw);
+}
+
+export function buildEmbodiedAnnotateEmbedSrc(search?: string): string {
   const params = new URLSearchParams({ datalab_embed: "1" });
+  const parentParams = readEmbodiedEmbedQueryParams(search);
+
+  EMBED_QUERY_KEYS.forEach((key) => {
+    const value = parentParams.get(key);
+    if (value) params.set(key, value);
+  });
 
   if (typeof window !== "undefined") {
     const raw =

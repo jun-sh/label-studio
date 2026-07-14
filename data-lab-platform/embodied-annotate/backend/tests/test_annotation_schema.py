@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from annotation_schema import (
+    filter_episode_fields,
     resolve_annotation_schema,
     schema_ref,
     validate_episode_fields,
@@ -81,3 +82,11 @@ def test_validate_episode_fields_required() -> None:
         validate_episode_fields(schema, {})
     with pytest.raises(HTTPException):
         validate_episode_fields(schema, {"box_cycle": -1})
+
+
+def test_filter_episode_fields_drops_legacy_notes() -> None:
+    schema = {
+        "episode_fields": [{"id": "box_cycle", "type": "int", "required": True}],
+    }
+    filtered = filter_episode_fields(schema, {"box_cycle": 2, "notes": "随便写的中文"})
+    assert filtered == {"box_cycle": 2}

@@ -19,8 +19,23 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from pydantic import BaseModel, Field
 
 import ego_parquet
-from annotation_schema import resolve_annotation_schema, schema_ref, validate_episode_fields
+from annotation_schema import (
+    resolve_annotation_schema,
+    schema_ref,
+    skill_derivation_enabled,
+    filter_episode_fields,
+    validate_episode_fields,
+    validate_skill_cycles,
+    validate_subtasks,
+)
 from dataset_catalog import datasets_root, get_collection, list_collections, resolve_package_path
+from episode_progress import (
+    build_annotation_progress,
+    episode_annotation_status,
+    soft_validate_episode,
+)
+from export_builders import build_skill_cycles_dataframe, build_skill_segments_dataframe
+from skill_derivation import apply_skill_derivation, sync_box_cycle_from_cycles
 from ego_parquet import (
     episode_meta_public,
     episode_row,
@@ -152,6 +167,7 @@ class EpisodeAnnotationsPayload(BaseModel):
     episode_index: int
     subtasks: list[SegmentSubtask] = []
     high_levels: list[SegmentHighLevel] = []
+    skill_cycles: list[dict[str, Any]] = Field(default_factory=list)
     outcome: str | None = None
     fields: dict[str, Any] = Field(default_factory=dict)
 
@@ -160,6 +176,9 @@ class EpisodeAnnotationsPayload(BaseModel):
 class EpisodeAnnotations:
     subtasks: list[dict[str, Any]] = field(default_factory=list)
     high_levels: list[dict[str, Any]] = field(default_factory=list)
+    skill_segments: list[dict[str, Any]] = field(default_factory=list)
+    skill_cycles: list[dict[str, Any]] = field(default_factory=list)
+    skill_derivation_warnings: list[str] = field(default_factory=list)
     outcome: str | None = None
     fields: dict[str, Any] = field(default_factory=dict)
 
@@ -311,6 +330,62 @@ class DataManager:
 
         return None, task_index
 
+    def _episode_payload_from_storage(self, payload: dict[str, Any]) -> EpisodeAnnotations:
+        return EpisodeAnnotations(
+            subtasks=payload.get("subtasks", []),
+            high_levels=payload.get("high_levels", []),
+            skill_segments=payload.get("skill_segments", []),
+            skill_cycles=payload.get("skill_cycles", []),
+            skill_derivation_warnings=payload.get("skill_derivation_warnings", []),
+            outcome=payload.get("outcome"),
+            fields=payload.get("fields") or {},
+        )
+
+    def _refresh_skill_derivation(self, ann: EpisodeAnnotations) -> None:
+        if not skill_derivation_enabled(self.annotation_schema):
+            return
+        previous_cycles = list(ann.skill_cycles)
+        segments, cycles, warnings = apply_skill_derivation(
+            ann.subtasks,
+            self.annotation_schema,
+            previous_cycles=previous_cycles,
+        )
+        ann.skill_segments = segments
+        ann.skill_cycles = cycles
+        ann.skill_derivation_warnings = warnings
+        ann.fields = sync_box_cycle_from_cycles(ann.skill_cycles, ann.fields)
+
+    def _maybe_reset_skill_review(self, old: EpisodeAnnotations | None, new_subtasks: list[dict[str, Any]], fields: dict[str, Any]) -> dict[str, Any]:
+        fields = dict(fields or {})
+        if not skill_derivation_enabled(self.annotation_schema):
+            return fields
+        if old and old.subtasks != new_subtasks and fields.get("skill_review") == "approved":
+            fields["skill_review"] = "pending"
+        if "skill_review" not in fields or fields.get("skill_review") in (None, ""):
+            fields.setdefault("skill_review", "pending")
+        return fields
+
+    def _episode_status(self, ann: EpisodeAnnotations) -> str:
+        return episode_annotation_status(
+            ann.subtasks,
+            ann.outcome,
+            ann.fields,
+            self.annotation_schema,
+        )
+
+    def _annotation_response(self, episode_index: int, ann: EpisodeAnnotations) -> dict[str, Any]:
+        return {
+            "episode_index": episode_index,
+            "subtasks": ann.subtasks,
+            "high_levels": ann.high_levels,
+            "skill_segments": ann.skill_segments,
+            "skill_cycles": ann.skill_cycles,
+            "skill_derivation_warnings": ann.skill_derivation_warnings,
+            "outcome": ann.outcome,
+            "fields": ann.fields,
+            "annotation_status": self._episode_status(ann),
+        }
+
     def _get_video_keys(self) -> list[str]:
         features = self.info.get("features", {}) if self.info else {}
         return sorted([key for key, meta in features.items() if meta.get("dtype") == "video"])
@@ -321,12 +396,9 @@ class DataManager:
             data = json.loads(self.annotations_path.read_text())
             for ep_str, payload in data.get("episodes", {}).items():
                 ep_idx = int(ep_str)
-                self.annotations[ep_idx] = EpisodeAnnotations(
-                    subtasks=payload.get("subtasks", []),
-                    high_levels=payload.get("high_levels", []),
-                    outcome=payload.get("outcome"),
-                    fields=payload.get("fields") or {},
-                )
+                ann = self._episode_payload_from_storage(payload)
+                self._refresh_skill_derivation(ann)
+                self.annotations[ep_idx] = ann
             return
 
         # Fall back to skills.json if present
@@ -346,7 +418,9 @@ class DataManager:
     def _save_annotations(self) -> None:
         if not self.annotations_path:
             return
-        file_version = 2 if self.schema_ref or any(ann.fields for ann in self.annotations.values()) else 1
+        file_version = 3 if skill_derivation_enabled(self.annotation_schema) else (
+            2 if self.schema_ref or any(ann.fields for ann in self.annotations.values()) else 1
+        )
         payload: dict[str, Any] = {
             "version": file_version,
             "episodes": {},
@@ -358,6 +432,12 @@ class DataManager:
                 "subtasks": ann.subtasks,
                 "high_levels": ann.high_levels,
             }
+            if ann.skill_segments:
+                ep_payload["skill_segments"] = ann.skill_segments
+            if ann.skill_cycles:
+                ep_payload["skill_cycles"] = ann.skill_cycles
+            if ann.skill_derivation_warnings:
+                ep_payload["skill_derivation_warnings"] = ann.skill_derivation_warnings
             if ann.outcome:
                 ep_payload["outcome"] = ann.outcome
             if ann.fields:
@@ -395,7 +475,18 @@ class DataManager:
                 episode_entry["task_text"] = task_text
             if task_index is not None:
                 episode_entry["task_index"] = task_index
+            ann = self.annotations.get(ep_idx)
+            episode_entry["annotation_status"] = (
+                self._episode_status(ann) if ann is not None else "none"
+            )
             episodes.append(episode_entry)
+
+        episode_indices = [int(ep["episode_index"]) for ep in episodes]
+        progress = build_annotation_progress(
+            self.annotations,
+            episode_indices,
+            self.annotation_schema,
+        )
         return {
             "source": self.source,
             "repo_id": self.repo_id,
@@ -406,6 +497,7 @@ class DataManager:
             "selected_video_key": self.video_key,
             "annotation_schema": self.annotation_schema,
             "schema_ref": self.schema_ref,
+            "annotation_progress": progress,
             "episodes": episodes,
         }
 
@@ -492,22 +584,66 @@ class DataManager:
     def get_episode_annotations(self, episode_index: int) -> EpisodeAnnotations:
         if episode_index not in self.annotations:
             self.annotations[episode_index] = EpisodeAnnotations()
-        return self.annotations[episode_index]
+        ann = self.annotations[episode_index]
+        self._refresh_skill_derivation(ann)
+        return ann
 
-    def set_episode_annotations(self, payload: EpisodeAnnotationsPayload) -> None:
+    def _episode_frame_bounds(self, episode_index: int) -> tuple[float, int | None]:
+        if self.info is None or self.episodes_df is None:
+            return 30.0, None
+        fps = float(self.info.get("fps", 30))
+        row = self.episodes_df[self.episodes_df["episode_index"] == episode_index]
+        if row.empty or "length" not in row.columns:
+            return fps, None
+        length = int(row.iloc[0]["length"])
+        return fps, max(0, length - 1)
+
+    def set_episode_annotations(
+        self, payload: EpisodeAnnotationsPayload
+    ) -> tuple[EpisodeAnnotations, dict[str, Any]]:
         if payload.outcome is not None and payload.outcome not in VALID_OUTCOMES:
             raise HTTPException(
                 status_code=400,
                 detail=f"outcome must be one of {sorted(VALID_OUTCOMES)} or null",
             )
-        validate_episode_fields(self.annotation_schema, payload.fields)
-        self.annotations[payload.episode_index] = EpisodeAnnotations(
-            subtasks=[seg.dict() for seg in payload.subtasks],
-            high_levels=[seg.dict() for seg in payload.high_levels],
-            outcome=payload.outcome,
-            fields=dict(payload.fields or {}),
+        subtasks_dicts = [seg.dict() for seg in payload.subtasks]
+        fps, max_frame = self._episode_frame_bounds(payload.episode_index)
+        validate_subtasks(
+            self.annotation_schema,
+            subtasks_dicts,
+            fps=fps,
+            max_frame=max_frame,
         )
+        old = self.annotations.get(payload.episode_index)
+        fields = filter_episode_fields(
+            self.annotation_schema,
+            self._maybe_reset_skill_review(
+                old,
+                subtasks_dicts,
+                dict(payload.fields or {}),
+            ),
+        )
+        validate_episode_fields(self.annotation_schema, fields)
+        ann = EpisodeAnnotations(
+            subtasks=subtasks_dicts,
+            high_levels=[seg.dict() for seg in payload.high_levels],
+            skill_cycles=list(payload.skill_cycles or []),
+            outcome=payload.outcome,
+            fields=fields,
+        )
+        self._refresh_skill_derivation(ann)
+        validate_skill_cycles(self.annotation_schema, ann.skill_cycles)
+        self.annotations[payload.episode_index] = ann
         self._save_annotations()
+        response = self._annotation_response(payload.episode_index, ann)
+        response["soft_warnings"] = soft_validate_episode(
+            subtasks=ann.subtasks,
+            outcome=ann.outcome,
+            fields=ann.fields,
+            skill_cycles=ann.skill_cycles,
+            schema=self.annotation_schema,
+        )
+        return ann, response
 
     def export_dataset(self, output_dir: str | None = None, copy_videos: bool = False) -> dict[str, Any]:
         if self.dataset_root is None or self.info is None:
@@ -530,10 +666,16 @@ class DataManager:
         shutil.copytree(src_meta, dst_meta)
 
         subtasks_df, subtask_map = build_subtasks_dataframe(self.annotations)
+        skills_df, skill_map = build_skill_segments_dataframe(self.annotations, self.annotation_schema)
+        cycles_df = build_skill_cycles_dataframe(self.annotations)
         tasks_df, task_map = build_high_level_dataframe(self.annotations)
 
         if not subtasks_df.empty:
             subtasks_df.to_parquet(dst_meta / "subtasks.parquet", engine="pyarrow", compression="snappy")
+        if not skills_df.empty:
+            skills_df.to_parquet(dst_meta / "skills.parquet", engine="pyarrow", compression="snappy")
+        if not cycles_df.empty:
+            cycles_df.to_parquet(dst_meta / "skill_cycles.parquet", engine="pyarrow", compression="snappy")
         if not tasks_df.empty:
             tasks_df.to_parquet(dst_meta / "tasks_high_level.parquet", engine="pyarrow", compression="snappy")
 
@@ -547,6 +689,10 @@ class DataManager:
         )
         info["features"].setdefault(
             "task_index_high_level",
+            {"dtype": "int64", "shape": [1], "names": None},
+        )
+        info["features"].setdefault(
+            "skill_index",
             {"dtype": "int64", "shape": [1], "names": None},
         )
         info_path.write_text(json.dumps(info, indent=2))
@@ -567,6 +713,7 @@ class DataManager:
             df = pd.read_parquet(src_path)
             df["subtask_index"] = -1
             df["task_index_high_level"] = -1
+            df["skill_index"] = -1
 
             for ep_idx in df["episode_index"].unique():
                 ann = self.annotations.get(int(ep_idx))
@@ -582,7 +729,15 @@ class DataManager:
                         label_key="label",
                     )
 
-                if ann.high_levels and task_map:
+                if ann.skill_segments and skill_map:
+                    df.loc[ep_mask, "skill_index"] = assign_indices_by_segments(
+                        df.loc[ep_mask, "timestamp"],
+                        ann.skill_segments,
+                        skill_map,
+                        label_key="skill",
+                    )
+                    df.loc[ep_mask, "task_index_high_level"] = df.loc[ep_mask, "skill_index"]
+                elif ann.high_levels and task_map:
                     df.loc[ep_mask, "task_index_high_level"] = assign_indices_by_segments(
                         df.loc[ep_mask, "timestamp"],
                         ann.high_levels,
@@ -599,19 +754,23 @@ class DataManager:
         src_videos = self.dataset_root / "videos"
         dst_videos = out_root / "videos"
         if src_videos.exists():
-            if dst_videos.exists():
+            if dst_videos.is_symlink():
+                dst_videos.unlink()
+            elif dst_videos.exists():
                 shutil.rmtree(dst_videos)
             if copy_videos:
                 shutil.copytree(src_videos, dst_videos)
             else:
                 try:
-                    os.symlink(src_videos, dst_videos)
+                    os.symlink(src_videos, dst_videos, target_is_directory=True)
                 except OSError:
                     shutil.copytree(src_videos, dst_videos)
 
         return {
             "output_dir": str(out_root),
             "subtasks": len(subtasks_df),
+            "skills": len(skills_df),
+            "skill_cycles": len(cycles_df),
             "tasks_high_level": len(tasks_df),
         }
 
@@ -765,21 +924,15 @@ def dataset_info() -> JSONResponse:
 @app.get("/api/episodes/{episode_index}/annotations")
 def get_annotations(episode_index: int) -> JSONResponse:
     ann = manager.get_episode_annotations(episode_index)
-    return JSONResponse({
-        "episode_index": episode_index,
-        "subtasks": ann.subtasks,
-        "high_levels": ann.high_levels,
-        "outcome": ann.outcome,
-        "fields": ann.fields,
-    })
+    return JSONResponse(manager._annotation_response(episode_index, ann))
 
 
 @app.post("/api/episodes/{episode_index}/annotations")
 def set_annotations(episode_index: int, payload: EpisodeAnnotationsPayload) -> JSONResponse:
     if episode_index != payload.episode_index:
         raise HTTPException(status_code=400, detail="Episode index mismatch")
-    manager.set_episode_annotations(payload)
-    return JSONResponse({"ok": True})
+    ann, response = manager.set_episode_annotations(payload)
+    return JSONResponse({"ok": True, **response})
 
 
 @app.post("/api/export")

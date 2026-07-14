@@ -184,9 +184,16 @@ docker restart data-lab-nginx-1
 
 ---
 
-## 前端构建后热更新（不改镜像时）
+## 前端构建后热更新（不改镜像时 · **日常推荐**）
 
-在 `node` 容器或本机 build 后拷贝进运行中的容器：
+全量 `deploy-label-studio-image.sh` 容易因 yarn lockfile / 权限失败；**改 React 前端请用热部署**：
+
+```bash
+# 一键：Node 容器内编译 + docker cp 进 app/nginx（推荐）
+bash data-lab-platform/deploy-label-studio-frontend-hot.sh
+```
+
+或手动：
 
 ```bash
 # docker exec -it data-lab-node-1 bash  # 若有 node 容器
@@ -195,6 +202,12 @@ docker restart data-lab-nginx-1
 docker cp web/dist/. data-lab-nginx-1:/label-studio/web/dist/
 docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
 ```
+
+| 改动类型 | 部署方式 |
+|----------|----------|
+| `web/` React 前端（具身 embed 等） | **热部署脚本** 或 `docker cp` |
+| `embodied-annotate/backend` Python/静态 | 卷挂载已 ro，**`docker restart data-lab-embodied-annotate-1`** |
+| 镜像 / Python 依赖大改 | 才用 `deploy-label-studio-image.sh`（易失败，非日常） |
 
 ---
 

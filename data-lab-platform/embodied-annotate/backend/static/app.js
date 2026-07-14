@@ -58,22 +58,15 @@ function getTimelineUX() {
   };
 }
 
-function schemaDisplayLocale() {
-  const schemaLocale = getAnnotationSchema().display_locale;
-  if (schemaLocale === 'en' || schemaLocale === 'zh-Hans') return schemaLocale;
-  return laI18n.getLocale?.() === 'zh-Hans' ? 'zh-Hans' : 'en';
-}
-
 function schemaLabelText(lbl) {
   if (!lbl) return '';
-  const useZh = schemaDisplayLocale() === 'zh-Hans';
-  return (useZh ? lbl.label_zh : lbl.label_en) || lbl.label_en || lbl.label_zh || lbl.id;
+  return lbl.id;
 }
 
 function schemaHintText(lbl) {
   if (!lbl) return '';
-  const useZh = schemaDisplayLocale() === 'zh-Hans';
-  return (useZh ? lbl.hint_zh : lbl.hint_en) || lbl.hint_en || lbl.hint_zh || lbl.hint || '';
+  const zh = laI18n.getLocale?.() === 'zh-Hans';
+  return (zh ? lbl.hint_zh : lbl.hint_en) || lbl.hint_zh || lbl.hint_en || lbl.hint || '';
 }
 
 function applyAnnotationSchema(schema) {
@@ -85,6 +78,7 @@ function applyAnnotationSchema(schema) {
   renderLabelPalette();
   renderEpisodeFields();
   updateLabelHintForSelection(state.selectedLabel);
+  updateSkillDerivationMap();
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +193,8 @@ const toggleAdvancedPath = document.getElementById('toggleAdvancedPath');
 const workspace = document.getElementById('workspace');
 const episodeList = document.getElementById('episodeList');
 const episodeSearch = document.getElementById('episodeSearch');
+const episodeStatusFilter = document.getElementById('episodeStatusFilter');
+const episodeProgressEl = document.getElementById('episodeProgress');
 const episodeTitle = document.getElementById('episodeTitle');
 const episodeMeta = document.getElementById('episodeMeta');
 const episodeTaskPanel = document.getElementById('episodeTaskPanel');
@@ -280,6 +276,8 @@ const state = {
     selectedPackageId: null,
     advancedPath: false,
   },
+  annotationProgress: null,
+  episodeStatusFilter: 'all',
 };
 
 // ---------------------------------------------------------------------------
@@ -340,7 +338,8 @@ function parseEgoUrlParams() {
   const datasetPath = params.get('datasetPath');
   const collection = params.get('collection');
   const packageId = params.get('package');
-  const episodeIndex = Number(params.get('episodeIndex') || '0');
+  const episodeRaw = params.get('episodeIndex') ?? params.get('episode');
+  const episodeIndex = Number(episodeRaw || '0');
   return {
     ego,
     datasetPath,
@@ -498,6 +497,14 @@ function formatDuration(seconds) {
   return `${mins}m ${secs}s`;
 }
 
+function formatEpisodeMeta(ep) {
+  return t('episode_meta', {
+    frames: ep.length,
+    fps: getFps(),
+    duration: formatDuration(ep.duration),
+  });
+}
+
 function currentTime() {
   return Number(episodeVideo.currentTime.toFixed(3));
 }
@@ -512,7 +519,15 @@ function getEpisodeDuration() {
 
 function getEpisodeAnnotations(epIdx) {
   if (!state.annotations[epIdx]) {
-    state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
+    state.annotations[epIdx] = {
+      subtasks: [],
+      high_levels: [],
+      skill_segments: [],
+      skill_cycles: [],
+      skill_derivation_warnings: [],
+      outcome: null,
+      fields: {},
+    };
   }
   return state.annotations[epIdx];
 }
@@ -576,12 +591,71 @@ function fieldHintText(spec) {
   return (zh ? spec.hint_zh : spec.hint_en) || spec.hint_zh || spec.hint_en || '';
 }
 
+function enumOptionLabel(_fieldId, value) {
+  return value;
+}
+
+function skillDerivationEnabled() {
+  const cfg = getAnnotationSchema().skill_derivation;
+  return Boolean(cfg && cfg.enabled);
+}
+
+function updateSkillDerivationMap() {
+  const el = document.getElementById('skillDerivationMap');
+  if (!el) return;
+  if (!skillDerivationEnabled() || typeof SkillDerivation === 'undefined') {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  const line = SkillDerivation.skillDerivationMapLine(getAnnotationSchema());
+  if (!line) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.textContent = line;
+  el.hidden = false;
+}
+
+function skillLabelMeta(skillId) {
+  const labels = getAnnotationSchema().skill_labels || [];
+  return labels.find((l) => l.id === skillId) || { id: skillId, color: '#9CA3AF', label_zh: skillId };
+}
+
+function skillLabelText(skillId) {
+  return skillId;
+}
+
+function episodeFieldUi(spec) {
+  return spec.ui || {};
+}
+
+function isAdvancedEpisodeField(spec) {
+  const tier = episodeFieldUi(spec).tier;
+  return tier === 'advanced' || tier === 'archive';
+}
+
+function isReadOnlyEpisodeField(spec) {
+  return Boolean(episodeFieldUi(spec).read_only);
+}
+
+function filterAllowedEpisodeFields(fields) {
+  const allowed = new Set((getAnnotationSchema().episode_fields || []).map((s) => s.id));
+  const out = {};
+  Object.entries(fields || {}).forEach(([key, value]) => {
+    if (allowed.has(key)) out[key] = value;
+  });
+  return out;
+}
+
 function readEpisodeFieldsFromUI() {
   if (!episodeFieldsGroup || state.currentEpisode == null) return {};
   const ann = getEpisodeAnnotations(state.currentEpisode);
   const specs = getAnnotationSchema().episode_fields || [];
-  const fields = {};
+  const fields = filterAllowedEpisodeFields(ann.fields || {});
   specs.forEach((spec) => {
+    if (isReadOnlyEpisodeField(spec)) return;
     const el = episodeFieldsGroup.querySelector(`[data-field-id="${spec.id}"]`);
     if (!el) return;
     if (spec.type === 'int') {
@@ -592,6 +666,8 @@ function readEpisodeFieldsFromUI() {
       if (raw !== '') fields[spec.id] = Number.parseFloat(raw);
     } else if (spec.type === 'bool') {
       fields[spec.id] = el.checked;
+    } else if (spec.type === 'enum') {
+      fields[spec.id] = el.value;
     } else {
       const raw = el.value.trim();
       if (raw !== '') fields[spec.id] = raw;
@@ -605,11 +681,19 @@ function setEpisodeFieldsUI(fields) {
   if (!episodeFieldsGroup) return;
   const specs = getAnnotationSchema().episode_fields || [];
   specs.forEach((spec) => {
+    if (!isAdvancedEpisodeField(spec)) return;
     const el = episodeFieldsGroup.querySelector(`[data-field-id="${spec.id}"]`);
     if (!el) return;
     const value = fields?.[spec.id];
+    if (isReadOnlyEpisodeField(spec)) {
+      const suffix = t('episode_field_auto_suffix');
+      el.textContent = value == null || value === '' ? '—' : `${value} ${suffix}`;
+      return;
+    }
     if (spec.type === 'bool') {
       el.checked = Boolean(value);
+    } else if (spec.type === 'enum') {
+      el.value = value == null || value === '' ? (spec.default || spec.values?.[0] || '') : String(value);
     } else {
       el.value = value == null ? '' : String(value);
     }
@@ -619,11 +703,14 @@ function setEpisodeFieldsUI(fields) {
 function renderEpisodeFields() {
   if (!episodeFieldsGroup) return;
   episodeFieldsGroup.innerHTML = '';
-  const specs = getAnnotationSchema().episode_fields || [];
+  const specs = (getAnnotationSchema().episode_fields || []).filter(isAdvancedEpisodeField);
+  const archivePanel = document.getElementById('episodeAdvancedPanel');
   if (!specs.length) {
     episodeFieldsGroup.hidden = true;
+    if (archivePanel) archivePanel.hidden = true;
     return;
   }
+  if (archivePanel) archivePanel.hidden = false;
   episodeFieldsGroup.hidden = false;
   specs.forEach((spec) => {
     const label = document.createElement('label');
@@ -634,7 +721,11 @@ function renderEpisodeFields() {
     label.appendChild(title);
 
     let input;
-    if (spec.type === 'text') {
+    if (isReadOnlyEpisodeField(spec)) {
+      input = document.createElement('span');
+      input.className = 'ls-episode-readonly';
+      input.dataset.fieldId = spec.id;
+    } else if (spec.type === 'text') {
       input = document.createElement('input');
       input.type = 'text';
       if (spec.max_length) input.maxLength = spec.max_length;
@@ -647,6 +738,14 @@ function renderEpisodeFields() {
     } else if (spec.type === 'bool') {
       input = document.createElement('input');
       input.type = 'checkbox';
+    } else if (spec.type === 'enum' && Array.isArray(spec.values) && spec.values.length) {
+      input = document.createElement('select');
+      spec.values.forEach((val) => {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = enumOptionLabel(spec.id, val);
+        input.appendChild(opt);
+      });
     } else {
       input = document.createElement('input');
       input.type = 'text';
@@ -654,18 +753,20 @@ function renderEpisodeFields() {
     input.dataset.fieldId = spec.id;
     const hint = fieldHintText(spec);
     if (hint) {
-      input.title = hint;
+      if (input.title !== undefined) input.title = hint;
       label.title = hint;
     }
-    if (spec.required) input.required = true;
-    input.addEventListener('input', () => {
-      readEpisodeFieldsFromUI();
-      markDirty();
-    });
-    input.addEventListener('change', () => {
-      readEpisodeFieldsFromUI();
-      markDirty();
-    });
+    if (spec.required && input.required !== undefined) input.required = true;
+    if (!isReadOnlyEpisodeField(spec)) {
+      input.addEventListener('input', () => {
+        readEpisodeFieldsFromUI();
+        markDirty();
+      });
+      input.addEventListener('change', () => {
+        readEpisodeFieldsFromUI();
+        markDirty();
+      });
+    }
     label.appendChild(input);
     episodeFieldsGroup.appendChild(label);
   });
@@ -807,6 +908,122 @@ function validateRegions(epIdx) {
   return { errors, warnings };
 }
 
+function softWarningMessage(code) {
+  const key = `soft_warn_${String(code).replace(/-/g, '_')}`;
+  const translated = t(key);
+  return translated !== key ? translated : code;
+}
+
+function validateEpisodeMetadata(epIdx) {
+  const warnings = [];
+  const ann = getEpisodeAnnotations(epIdx);
+  readEpisodeFieldsFromUI();
+  const fields = ann.fields || {};
+  const outcome = ann.outcome;
+  const cycles = ann.skill_cycles || [];
+
+  const hasBoxCycle = (getAnnotationSchema().episode_fields || []).some((s) => s.id === 'box_cycle');
+  if (!hasBoxCycle) {
+    if (!outcome && (ann.subtasks?.length || Object.keys(fields).length)) {
+      warnings.push({ code: 'W-EP-06', message: softWarningMessage('W-EP-06') });
+    }
+    return warnings;
+  }
+
+  const boxCycle = fields.box_cycle != null && fields.box_cycle !== ''
+    ? Number(fields.box_cycle)
+    : null;
+
+  if (!outcome && (ann.subtasks?.length || boxCycle != null)) {
+    warnings.push({ code: 'W-EP-06', message: softWarningMessage('W-EP-06') });
+  }
+
+  if (boxCycle == null || Number.isNaN(boxCycle)) {
+    return warnings;
+  }
+
+  if (outcome === 'fail' && boxCycle > 0) {
+    warnings.push({ code: 'W-EP-01', message: softWarningMessage('W-EP-01') });
+  }
+  if (outcome === 'success' && boxCycle === 0) {
+    warnings.push({ code: 'W-EP-02', message: softWarningMessage('W-EP-02') });
+  }
+
+  const explicit = cycles.filter((c) => c.success !== null && c.success !== undefined);
+  if (explicit.length) {
+    const successCount = cycles.filter((c) => c.success === true).length;
+    if (boxCycle !== successCount) {
+      warnings.push({ code: 'W-EP-05', message: softWarningMessage('W-EP-05') });
+    }
+    if (outcome === 'fail' && cycles.some((c) => c.success === true)) {
+      warnings.push({ code: 'W-EP-03', message: softWarningMessage('W-EP-03') });
+    }
+    if (outcome === 'success' && cycles.some((c) => c.success === false)) {
+      warnings.push({ code: 'W-EP-04', message: softWarningMessage('W-EP-04') });
+    }
+  }
+
+  if (outcome && cycles.length && cycles.some((c) => c.success == null)) {
+    warnings.push({ code: 'W-EP-07', message: softWarningMessage('W-EP-07') });
+  }
+
+  return warnings;
+}
+
+function validateEpisode(epIdx) {
+  const regionResult = validateRegions(epIdx);
+  const metaWarnings = validateEpisodeMetadata(epIdx);
+  return {
+    errors: regionResult.errors,
+    warnings: [...regionResult.warnings, ...metaWarnings],
+  };
+}
+
+function episodeStatusLabel(status) {
+  if (status === 'complete') return t('episode_status_complete');
+  if (status === 'partial') return t('episode_status_partial');
+  return t('episode_status_none');
+}
+
+function renderAnnotationProgressSummary() {
+  if (!episodeProgressEl) return;
+  const progress = state.annotationProgress;
+  if (!progress || !progress.total) {
+    episodeProgressEl.hidden = true;
+    episodeProgressEl.textContent = '';
+    return;
+  }
+  episodeProgressEl.hidden = false;
+  episodeProgressEl.textContent = t('episode_progress_summary', {
+    complete: progress.complete ?? 0,
+    total: progress.total,
+    partial: progress.partial ?? 0,
+  });
+}
+
+function recomputeAnnotationProgress() {
+  const total = state.episodes.length;
+  const counts = { complete: 0, partial: 0, none: 0 };
+  state.episodes.forEach((ep) => {
+    const status = ep.annotation_status || 'none';
+    if (counts[status] != null) counts[status] += 1;
+  });
+  state.annotationProgress = {
+    total,
+    complete: counts.complete,
+    partial: counts.partial,
+    none: counts.none,
+    annotated: counts.complete + counts.partial,
+  };
+  renderAnnotationProgressSummary();
+}
+
+function updateEpisodeAnnotationStatus(epIdx, status) {
+  const ep = state.episodes.find((e) => e.episode_index === epIdx);
+  if (ep) ep.annotation_status = status;
+  recomputeAnnotationProgress();
+}
+
 function getConflictIndices(result) {
   const indices = new Set();
   result.errors.forEach((issue) => {
@@ -937,7 +1154,8 @@ function segmentBarTitle(seg, startFrame, endFrame) {
 async function runValidationAndSave() {
   if (state.currentEpisode == null) return;
 
-  const result = validateRegions(state.currentEpisode);
+  readEpisodeFieldsFromUI();
+  const result = validateEpisode(state.currentEpisode);
   state.validationResult = result;
   state.conflictIndices = getConflictIndices(result);
   renderValidationPanel(result);
@@ -1097,16 +1315,72 @@ function updatePlayhead() {
   frameReadout.textContent = t('frame_readout', { cur: frame, max: total - 1 });
 }
 
+function getCycleFieldSpecs() {
+  return getAnnotationSchema().cycle_fields || [];
+}
+
+function syncBoxCycleFromCycles() {
+  if (state.currentEpisode == null || typeof SkillDerivation === 'undefined') return;
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const counted = SkillDerivation.countSuccessfulCycles(ann.skill_cycles);
+  if (counted == null) return;
+  ann.fields = ann.fields || {};
+  ann.fields.box_cycle = counted;
+  setEpisodeFieldsUI(ann.fields);
+  setEpisodeFieldsUI(ann.fields);
+}
+
+function refreshSkillDerivationPreview() {
+  if (state.currentEpisode == null || !skillDerivationEnabled()) return;
+  if (typeof SkillDerivation === 'undefined') return;
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const result = SkillDerivation.deriveSkillSegments(
+    ann.subtasks,
+    getAnnotationSchema(),
+    ann.skill_cycles,
+  );
+  ann.skill_segments = result.skill_segments;
+  ann.skill_cycles = result.cycles;
+  ann.skill_derivation_warnings = result.warnings;
+  syncBoxCycleFromCycles();
+  renderSkillSegments();
+  renderCycleFieldsPanel();
+}
+
 function renderAllTimeline() {
   renderRuler();
   renderTimelineRegions();
   updatePlayhead();
   renderRegionList();
+  refreshSkillDerivationPreview();
 }
 
 // ---------------------------------------------------------------------------
 // Region list (frame-based editing)
 // ---------------------------------------------------------------------------
+
+function isTypingTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return !!target.closest('input, textarea, select, [contenteditable="true"]');
+}
+
+function deleteRegionAtIndex(idx) {
+  if (state.currentEpisode == null) return false;
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  if (idx == null || idx < 0 || idx >= ann.subtasks.length) return false;
+  ann.subtasks.splice(idx, 1);
+  state.selectedRegionIdx = null;
+  markDirty();
+  renderAllTimeline();
+  return true;
+}
+
+function deleteSelectedRegion() {
+  return deleteRegionAtIndex(state.selectedRegionIdx);
+}
 
 function renderRegionList() {
   regionList.innerHTML = '';
@@ -1174,10 +1448,7 @@ function renderRegionList() {
     deleteBtn.textContent = '×';
     deleteBtn.title = 'Delete region';
     deleteBtn.addEventListener('click', () => {
-      ann.subtasks.splice(idx, 1);
-      state.selectedRegionIdx = null;
-      markDirty();
-      renderAllTimeline();
+      deleteRegionAtIndex(idx);
     });
 
     row.appendChild(swatch);
@@ -1376,17 +1647,44 @@ function bindTimelineEvents() {
 function renderEpisodes() {
   episodeList.innerHTML = '';
   const query = episodeSearch.value.trim();
-  const filtered = state.episodes.filter((ep) => ep.episode_index.toString().includes(query));
+  const statusFilter = episodeStatusFilter?.value || state.episodeStatusFilter || 'all';
+  const filtered = state.episodes.filter((ep) => {
+    if (!ep.episode_index.toString().includes(query)) return false;
+    if (statusFilter === 'all') return true;
+    return (ep.annotation_status || 'none') === statusFilter;
+  });
   filtered.forEach((ep) => {
     const li = document.createElement('li');
-    li.textContent = `Episode ${ep.episode_index}`;
-    const span = document.createElement('span');
-    span.textContent = formatDuration(ep.duration);
-    li.appendChild(span);
+    li.dataset.status = ep.annotation_status || 'none';
+
+    const title = document.createElement('span');
+    title.className = 'ls-episode-title';
+    title.textContent = t('episode_title', { idx: ep.episode_index });
+
+    const meta = document.createElement('span');
+    meta.className = 'ls-episode-meta';
+
+    const badge = document.createElement('span');
+    badge.className = `ls-episode-status ls-episode-status-${ep.annotation_status || 'none'}`;
+    badge.textContent = episodeStatusLabel(ep.annotation_status || 'none');
+    badge.title = episodeStatusLabel(ep.annotation_status || 'none');
+
+    const dur = document.createElement('span');
+    dur.className = 'ls-episode-duration';
+    dur.textContent = formatDuration(ep.duration);
+
+    meta.appendChild(badge);
+    meta.appendChild(dur);
+    li.appendChild(title);
+    li.appendChild(meta);
     if (state.currentEpisode === ep.episode_index) li.classList.add('active');
     li.addEventListener('click', () => requestSelectEpisode(ep.episode_index));
     episodeList.appendChild(li);
   });
+  const activeItem = episodeList.querySelector('li.active');
+  if (activeItem) {
+    activeItem.scrollIntoView({ block: 'nearest' });
+  }
 }
 
 function renderHighLevels() {
@@ -1414,19 +1712,19 @@ function renderHighLevels() {
     const promptInput = document.createElement('input');
     promptInput.type = 'text';
     promptInput.value = seg.user_prompt;
-    promptInput.placeholder = 'User prompt';
+    promptInput.placeholder = t('hl_user');
     promptInput.addEventListener('change', () => { seg.user_prompt = promptInput.value; });
 
     const robotInput = document.createElement('input');
     robotInput.type = 'text';
     robotInput.value = seg.robot_utterance;
-    robotInput.placeholder = 'Robot response';
+    robotInput.placeholder = t('hl_robot');
     robotInput.addEventListener('change', () => { seg.robot_utterance = robotInput.value; });
 
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'ls-btn ls-btn-ghost';
-    deleteBtn.textContent = 'Delete';
+    deleteBtn.textContent = t('hl_delete');
     deleteBtn.addEventListener('click', () => {
       ann.high_levels.splice(idx, 1);
       renderHighLevels();
@@ -1438,6 +1736,186 @@ function renderHighLevels() {
     row.appendChild(robotInput);
     row.appendChild(deleteBtn);
     highLevelList.appendChild(row);
+  });
+}
+
+function renderSkillSegments() {
+  const panel = document.getElementById('skillDerivationPanel');
+  const list = document.getElementById('skillSegmentList');
+  const warningsEl = document.getElementById('skillDerivationWarnings');
+  if (!panel || !list) return;
+
+  if (!skillDerivationEnabled() || state.currentEpisode == null) {
+    panel.hidden = true;
+    list.innerHTML = '';
+    if (warningsEl) warningsEl.hidden = true;
+    updateSkillDerivationMap();
+    return;
+  }
+
+  panel.hidden = false;
+  updateSkillDerivationMap();
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const segments = ann.skill_segments || [];
+  const subtaskCount = (ann.subtasks || []).length;
+  list.innerHTML = '';
+
+  if (!segments.length) {
+    const empty = document.createElement('p');
+    empty.className = 'ls-muted ls-skill-empty';
+    empty.textContent = subtaskCount
+      ? t('skill_derivation_incomplete')
+      : t('skill_derivation_no_phases');
+    list.appendChild(empty);
+  } else {
+    segments.forEach((seg) => {
+      const row = document.createElement('div');
+      row.className = 'ls-skill-row';
+      const meta = skillLabelMeta(seg.skill);
+      const badge = document.createElement('span');
+      badge.className = 'ls-skill-badge';
+      badge.style.backgroundColor = meta.color || '#9CA3AF';
+      badge.textContent = skillLabelText(seg.skill);
+      const range = document.createElement('span');
+      range.className = 'ls-skill-range';
+      range.textContent = `${seg.start.toFixed(2)}s – ${seg.end.toFixed(2)}s`;
+      const cycle = document.createElement('span');
+      cycle.className = 'ls-skill-cycle';
+      cycle.textContent = t('skill_cycle_label', { id: (seg.cycle_id ?? 0) + 1 });
+      row.appendChild(badge);
+      row.appendChild(range);
+      row.appendChild(cycle);
+      if (seg.subgoal) {
+        const subgoal = document.createElement('div');
+        subgoal.className = 'ls-skill-subgoal';
+        subgoal.textContent = seg.subgoal;
+        row.appendChild(subgoal);
+      }
+      list.appendChild(row);
+    });
+  }
+
+  if (warningsEl) {
+    const warnings = ann.skill_derivation_warnings || [];
+    if (warnings.length) {
+      warningsEl.hidden = false;
+      warningsEl.textContent = `${t('skill_derivation_warnings')}: ${warnings.join('; ')}`;
+    } else {
+      warningsEl.hidden = true;
+      warningsEl.textContent = '';
+    }
+  }
+}
+
+function renderCycleFieldsPanel() {
+  const panel = document.getElementById('cycleFieldsPanel');
+  const list = document.getElementById('cycleFieldsList');
+  if (!panel || !list) return;
+
+  if (!skillDerivationEnabled() || state.currentEpisode == null) {
+    panel.hidden = true;
+    list.innerHTML = '';
+    return;
+  }
+
+  const ann = getEpisodeAnnotations(state.currentEpisode);
+  const cycles = ann.skill_cycles || [];
+  const specs = getCycleFieldSpecs();
+  if (!cycles.length || !specs.length) {
+    panel.hidden = true;
+    list.innerHTML = '';
+    return;
+  }
+
+  panel.hidden = false;
+  list.innerHTML = '';
+
+  cycles.forEach((cycle) => {
+    const row = document.createElement('div');
+    row.className = 'ls-cycle-row';
+
+    const head = document.createElement('div');
+    head.className = 'ls-cycle-row-head';
+    const idx = Number(cycle.cycle_id ?? 0) + 1;
+    const start = Number(cycle.start || 0).toFixed(2);
+    const end = Number(cycle.end || 0).toFixed(2);
+    const structLabel = cycle.complete ? t('cycle_struct_complete') : t('cycle_struct_incomplete');
+    const sourceTag = cycle.success_source === 'manual' ? t('cycle_success_manual') : t('cycle_success_auto');
+    head.textContent = `${t('cycle_row_title', { id: idx, start, end, struct: structLabel })} · ${sourceTag}`;
+    row.appendChild(head);
+
+    const fieldsWrap = document.createElement('div');
+    fieldsWrap.className = 'ls-cycle-fields';
+
+    specs.forEach((spec) => {
+      const label = document.createElement('label');
+      label.className = 'ls-cycle-field';
+      const title = document.createElement('span');
+      title.textContent = fieldLabelText(spec);
+      label.appendChild(title);
+
+      let input;
+      if (spec.type === 'bool') {
+        input = document.createElement('select');
+        input.dataset.cycleId = String(cycle.cycle_id);
+        input.dataset.fieldId = spec.id;
+        [
+          { value: 'true', label: 'true' },
+          { value: 'false', label: 'false' },
+        ].forEach((optDef) => {
+          const opt = document.createElement('option');
+          opt.value = optDef.value;
+          opt.textContent = optDef.label;
+          input.appendChild(opt);
+        });
+        input.value = cycle.success === false ? 'false' : 'true';
+      } else if (spec.type === 'enum') {
+        input = document.createElement('select');
+        input.dataset.cycleId = String(cycle.cycle_id);
+        input.dataset.fieldId = spec.id;
+        (spec.values || []).forEach((val) => {
+          const opt = document.createElement('option');
+          opt.value = val;
+          opt.textContent = enumOptionLabel(`cycle_${spec.id}`, val);
+          input.appendChild(opt);
+        });
+        input.value = cycle[spec.id] || spec.values?.[0] || '';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.dataset.cycleId = String(cycle.cycle_id);
+        input.dataset.fieldId = spec.id;
+        input.value = cycle[spec.id] || '';
+      }
+
+      input.addEventListener('change', () => {
+        const cycleId = Number(input.dataset.cycleId);
+        const target = ann.skill_cycles.find((c) => Number(c.cycle_id) === cycleId);
+        if (!target) return;
+        if (spec.type === 'bool') {
+          target.success = input.value === 'true';
+          target.success_source = 'manual';
+          if (target.success) target.fail_reason = 'none';
+          else if (!target.fail_reason || target.fail_reason === 'none') {
+            target.fail_reason = 'incomplete';
+          }
+        } else if (spec.type === 'enum') {
+          target[spec.id] = input.value;
+          target.success_source = 'manual';
+        } else {
+          target[spec.id] = input.value;
+        }
+        syncBoxCycleFromCycles();
+        markDirty();
+        renderCycleFieldsPanel();
+      });
+
+      label.appendChild(input);
+      fieldsWrap.appendChild(label);
+    });
+
+    row.appendChild(fieldsWrap);
+    list.appendChild(row);
   });
 }
 
@@ -1458,12 +1936,10 @@ async function selectEpisode(epIdx) {
   state.selectedRegionIdx = null;
   state.forceSaveDespiteWarnings = false;
   hideValidationPanel();
-  episodeTitle.textContent = `Episode ${epIdx}`;
+  episodeTitle.textContent = t('episode_title', { idx: epIdx });
   const ep = state.episodes.find((e) => e.episode_index === epIdx);
   state.currentEpisodeData = ep || null;
-  episodeMeta.textContent = ep
-    ? `${ep.length} frames @ ${getFps()} fps • ${formatDuration(ep.duration)}`
-    : '';
+  episodeMeta.textContent = ep ? formatEpisodeMeta(ep) : '';
   renderTaskPanel(ep);
 
   if (state.egoMode && state.egoDatasetPath) {
@@ -1473,12 +1949,23 @@ async function selectEpisode(epIdx) {
     state.annotations[epIdx] = {
       subtasks,
       high_levels: [],
+      skill_segments: [],
+      skill_cycles: [],
+      skill_derivation_warnings: [],
       outcome: null,
       fields: {},
     };
     } catch (err) {
       setHelper(connectHelper, err.message);
-      state.annotations[epIdx] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
+      state.annotations[epIdx] = {
+        subtasks: [],
+        high_levels: [],
+        skill_segments: [],
+        skill_cycles: [],
+        skill_derivation_warnings: [],
+        outcome: null,
+        fields: {},
+      };
     }
   } else {
     const res = await fetch(`/api/episodes/${epIdx}/annotations`);
@@ -1486,6 +1973,9 @@ async function selectEpisode(epIdx) {
     state.annotations[epIdx] = {
       subtasks: data.subtasks || [],
       high_levels: data.high_levels || [],
+      skill_segments: data.skill_segments || [],
+      skill_cycles: data.skill_cycles || [],
+      skill_derivation_warnings: data.skill_derivation_warnings || [],
       outcome: data.outcome ?? null,
       fields: data.fields || {},
     };
@@ -1502,6 +1992,7 @@ async function selectEpisode(epIdx) {
   clearDirty();
   renderEpisodes();
   renderHighLevels();
+  refreshSkillDerivationPreview();
   if (episodeVideo.readyState >= 1) {
     renderAllTimeline();
   }
@@ -1544,7 +2035,8 @@ async function saveEpisode() {
     episode_index: state.currentEpisode,
     subtasks: ann.subtasks,
     high_levels: ann.high_levels,
-    fields: ann.fields || {},
+    skill_cycles: ann.skill_cycles || [],
+    fields: filterAllowedEpisodeFields(ann.fields || {}),
   };
   if (ann.outcome) {
     payload.outcome = ann.outcome;
@@ -1555,6 +2047,23 @@ async function saveEpisode() {
     body: JSON.stringify(payload),
   });
   if (res.ok) {
+    const data = await res.json();
+    if (data.skill_segments) {
+      ann.skill_segments = data.skill_segments;
+      ann.skill_cycles = data.skill_cycles || [];
+      ann.skill_derivation_warnings = data.skill_derivation_warnings || [];
+      if (data.fields) {
+        ann.fields = data.fields;
+        setEpisodeFieldsUI(ann.fields);
+      }
+      renderCycleFieldsPanel();
+    } else {
+      refreshSkillDerivationPreview();
+    }
+    if (data.annotation_status) {
+      updateEpisodeAnnotationStatus(state.currentEpisode, data.annotation_status);
+      renderEpisodes();
+    }
     clearDirty();
     setStatus(t('status_saved'), true);
     setHelper(connectHelper, t('connect_episode_saved', { idx: state.currentEpisode }), true);
@@ -1848,6 +2357,7 @@ connectForm.addEventListener('submit', async (event) => {
 
     state.dataset = data;
     state.episodes = data.episodes || [];
+    state.annotationProgress = data.annotation_progress || null;
     setStatus(t('status_loaded', { name: data.repo_id || data.root }), true);
     setHelper(connectHelper, t('connect_loaded', { count: state.episodes.length }), true);
     workspace.style.display = 'grid';
@@ -1858,6 +2368,7 @@ connectForm.addEventListener('submit', async (event) => {
 
     populateVideoKeys(data.video_keys, data.selected_video_key);
     applyAnnotationSchema(data.annotation_schema);
+    renderAnnotationProgressSummary();
     renderEpisodes();
     if (state.episodes.length > 0) {
       const startEp = state.egoMode ? (parseEgoUrlParams().episodeIndex || state.episodes[0].episode_index) : state.episodes[0].episode_index;
@@ -1934,7 +2445,15 @@ if (validationForceSave) {
 
 resetEpisodeBtn.addEventListener('click', () => {
   if (state.currentEpisode == null) return;
-  state.annotations[state.currentEpisode] = { subtasks: [], high_levels: [], outcome: null, fields: {} };
+  state.annotations[state.currentEpisode] = {
+    subtasks: [],
+    high_levels: [],
+    skill_segments: [],
+    skill_cycles: [],
+    skill_derivation_warnings: [],
+    outcome: null,
+    fields: {},
+  };
   setEpisodeFieldsUI({});
   state.selectedRegionIdx = null;
   setOutcomeUI(null);
@@ -1951,6 +2470,12 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 episodeSearch.addEventListener('input', renderEpisodes);
+if (episodeStatusFilter) {
+  episodeStatusFilter.addEventListener('change', () => {
+    state.episodeStatusFilter = episodeStatusFilter.value;
+    renderEpisodes();
+  });
+}
 
 episodeVideo.addEventListener('loadedmetadata', () => {
   renderAllTimeline();
@@ -2008,6 +2533,10 @@ window.__laOnLocaleChange = () => {
   if (validationDismiss) validationDismiss.textContent = t('validation_back');
   if (validationForceSave) validationForceSave.textContent = t('validation_force_save');
   if (saveEpisodeBottom) saveEpisodeBottom.setAttribute('aria-label', t('save_button'));
+  const outcomeGroup = document.getElementById('outcomeGroup');
+  if (outcomeGroup) outcomeGroup.setAttribute('aria-label', t('outcome_aria_label'));
+  const skillAutoBadge = document.getElementById('skillAutoBadge');
+  if (skillAutoBadge) skillAutoBadge.textContent = t('skill_auto_badge');
   updateConnectFields();
   if (state.dataset?.video_keys) {
     renderVideoKeyToolbar(state.dataset.video_keys, state.dataset.selected_video_key);
@@ -2018,6 +2547,19 @@ window.__laOnLocaleChange = () => {
     updateLabelHintForSelection(state.selectedLabel);
   }
   updateLabelHintForSelection(state.selectedLabel);
+  renderEpisodes();
+  if (state.currentEpisode != null) {
+    episodeTitle.textContent = t('episode_title', { idx: state.currentEpisode });
+    const ep = state.episodes.find((e) => e.episode_index === state.currentEpisode);
+    if (ep) episodeMeta.textContent = formatEpisodeMeta(ep);
+    renderHighLevels();
+    renderSkillSegments();
+    renderCycleFieldsPanel();
+    renderRegionList();
+    updatePlayhead();
+  } else if (episodeTitle) {
+    episodeTitle.textContent = t('episode_select');
+  }
   updateSaveUI();
 };
 
@@ -2028,6 +2570,14 @@ renderLabelPalette();
 updateLabelHintForSelection(state.selectedLabel);
 bindTimelineEvents();
 updateSaveUI();
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+  if (isTypingTarget(e.target)) return;
+  if (state.selectedRegionIdx == null) return;
+  e.preventDefault();
+  deleteSelectedRegion();
+});
 
 initCatalogUi().then(() => {
   const egoParams = parseEgoUrlParams();

@@ -1,8 +1,8 @@
-# Embodied Annotate — 标注 Schema 规范（v2 定稿 · 讨论稿）
+# Embodied Annotate — 标注 Schema 规范（v2 定稿 · 含 v3 扩展规划）
 
-> **状态：** 规范定稿，**尚未在代码中实现**  
+> **状态：** `box_transport_v1` 已在代码中实现（Phase A/B）；**`box_transport_v2`（L1 原子技能等）为规划，尚未实现**  
 > **适用范围：** `collection.manifest.json`、leaf 数据集 `annotation.schema.json`、标注存储 `lerobot_annotations.json`  
-> **目标：** 标签集与 Episode 扩展字段按数据集配置，不写死在 `app.js`
+> **商业对齐：** [`431132-commercial-annotation-plan.md`](./431132-commercial-annotation-plan.md)
 
 ---
 
@@ -15,6 +15,8 @@
 | **向后兼容** | 无 schema 时使用内置 `default`；annotations `version: 1` 继续可读 |
 | **任务无关字段不进全局 UI** | `box_cycle` 仅在声明了该 field 的数据集显示 |
 | **存储与 UI 分离** | schema 描述「允许什么」；`lerobot_annotations.json` 存「标了什么」 |
+| **双层标注叠加** | L2 `subtask_labels` 与 L1 `skill_labels` 并列，不互相替代（P1） |
+| **先标准后增值** | L0/L1/L2 全量；L3 高精字段仅子集或可选（P2） |
 
 ---
 
@@ -427,11 +429,11 @@ create_drag / move_drag / resize_*_drag
 | `styles.css` | 手柄、光标、tooltip |
 | `annotation-schema-spec.md` | `timeline` 节与实现核对 |
 
-### Phase C — 抛光（1 人天）
+### Phase C — 抛光（**已实现**）
 
-- 进度：episode 列表已标/未标  
-- 保存时 `box_cycle` vs `outcome` 软校验  
-- 培训文档更新
+- **进度**：episode 列表显示 `已标完 / 草稿 / 未标`；侧栏汇总 `complete / total`
+- **软校验**：保存前 `box_cycle` vs `outcome`、逐箱 `success` 一致性警告（可「仍要保存」）
+- **筛选**：按标注状态过滤 episode 列表
 
 ---
 
@@ -508,9 +510,129 @@ create_drag / move_drag / resize_*_drag
 | notes / DATA_ISSUE | `episode_fields[notes]` |
 | 间隙 >10 帧警告 | `validation.gap_warn_frames` |
 | 拖边/吸附 | `timeline.*`（Phase B） |
+| 相位边界 | 文档 [`431132-phase-boundary-spec.md`](./431132-phase-boundary-spec.md)（非 schema 字段） |
+| 3 类原子技能 | `skill_labels` + `skill_segments[]`（**P1 ✅** 自动推导） |
+| 逐箱成败 | `cycle_fields` + `skill_cycles[]`（**P1.5 ✅**） |
+| 失败原因 | `skill_cycles[].fail_reason`（逐箱）；episode 级 `fail_reason`（**P2 规划**） |
 
-培训文档路径：`docs/431132-annotation-sop-training.md`（Phase A 完成后改「旁路表」一节为工具内填写）。
+培训文档路径：`docs/431132-annotation-sop-training.md`  
+商业规划：`docs/431132-commercial-annotation-plan.md`
 
 ---
 
-*文档版本：2026-07-12 · 维护：数据平台 / embodied-annotate*
+## 17. `box_transport_v1` 扩展（P1 / P1.5 · **已实现**）
+
+> 完全保留 8 类 `subtask_labels`，仅**叠加**下列结构（无需另建 v2 schema ID）。
+
+### 17.1 顶层新增字段
+
+```json
+{
+  "schema_id": "box_transport_v2",
+  "schema_version": 2,
+  "subtask_labels": [ "... 与 v1 相同 8 类 ..." ],
+  "skill_labels": [ /* SkillLabel[] · L1 */ ],
+  "episode_fields": [ "... v1 字段 + fail_reason ..." ],
+  "cycle_fields": [ /* CycleField[] · 可选 */ ],
+  "skill_derivation": { /* 从 subtasks 自动推导 L1 的规则 */ }
+}
+```
+
+### 17.2 `SkillLabel`（L1 原子技能）
+
+```json
+{
+  "id": "grasp_skill",
+  "order": 1,
+  "color": "#F59E0B",
+  "label_zh": "抓取技能",
+  "hint_zh": "预抓 → 接触 → 抬升离地"
+}
+```
+
+| `id` | 商用语义 | 默认推导边界（见边界规范 §8） |
+|------|----------|-------------------------------|
+| `approach_skill` | 行走趋近至可操作范围 | `reach` 段（至 `pre_grasp` 前） |
+| `grasp_skill` | 预抓至抬升离地 | `pre_grasp` → `lift` |
+| `place_skill` | 持箱搬运至松手 | `transport` → `release` |
+
+### 17.3 存储扩展：`lerobot_annotations.json` v3（**已实现**）
+
+```json
+{
+  "version": 3,
+  "schema_ref": "box_transport_v1@1",
+  "episodes": {
+    "0": {
+      "subtasks": [ { "start": 0.0, "end": 4.0, "label": "idle" } ],
+      "skill_segments": [
+        { "start": 4.0, "end": 12.0, "label": "approach_skill", "cycle_id": 0 }
+      ],
+      "skill_cycles": [
+        {
+          "cycle_id": 0,
+          "start": 4.0,
+          "end": 28.0,
+          "complete": true,
+          "success": true,
+          "fail_reason": "none"
+        }
+      ],
+      "outcome": "success",
+      "fields": { "box_cycle": 2, "skill_review": "pending", "notes": "" }
+    }
+  }
+}
+```
+
+| 字段 | 层级 | 全量/子集 | 状态 |
+|------|------|-----------|------|
+| `subtasks` | L2 | 100% | ✅ |
+| `skill_segments` | L1 | 100%（P1 自动推导） | ✅ |
+| `skill_cycles[]` | 逐箱元数据 | 100%（P1.5） | ✅ |
+| `fields.box_cycle` | L0 | 100%；由 `success=true` 汇总 | ✅ |
+| `keyframes` | L3 | 5%–20% 子集 | P2 |
+
+### 17.4 `cycle_fields` / `fail_reason`（**P1.5 已实现**）
+
+Manifest `cycle_fields` 驱动 UI「逐箱结果」：
+
+| `id` | 类型 | 说明 |
+|------|------|------|
+| `success` | bool | 该箱是否成功上带（`null` = 未填） |
+| `fail_reason` | enum | `none`, `slip_grasp`, `drop_mid_transport`, `place_offset`, `incomplete`, `other` |
+
+保存时：`count(success=true)` → 写入 `fields.box_cycle`（可手动覆盖）。L2 边界变化导致 cycle `start`/`end` 变化时，用户填写的 `success`/`fail_reason` 会重置。
+
+Episode 级 `fail_reason` 枚举仍规划于 P2。
+
+### 17.5 `skill_derivation`（可选自动推导）
+
+```json
+{
+  "skill_derivation": {
+    "enabled": true,
+    "rules": {
+      "approach_skill": { "from_label": "reach", "until_label": "pre_grasp" },
+      "grasp_skill": { "from_label": "pre_grasp", "until_label": "lift", "inclusive_end": true },
+      "place_skill": { "from_label": "transport", "until_label": "release", "inclusive_end": true }
+    },
+    "cycle_split": { "pattern": ["reach", "pre_grasp", "contact", "lift", "transport", "place", "release"] }
+  }
+}
+```
+
+实现：**UI 展示 L1 推导预览 + 逐箱结果面板**；标注员只改 L2，L1 随动。
+
+### 17.6 实现阶段（相对商业规划）
+
+| 商业阶段 | Schema / 代码 | 状态 |
+|----------|----------------|------|
+| P0 | `box_transport_v1` 8 类 + L0 | ✅ |
+| P1 | `skill_labels`、`skill_segments`、`skill_derivation` | ✅ |
+| P1.5 | `cycle_fields`、`skill_cycles[]`、`box_cycle` 自动汇总 | ✅ |
+| P2 | `keyframes`、`scene_id`、episode 级 `fail_reason` | 规划中 |
+
+---
+
+*文档版本：2026-07-13 · 维护：数据平台 / embodied-annotate*

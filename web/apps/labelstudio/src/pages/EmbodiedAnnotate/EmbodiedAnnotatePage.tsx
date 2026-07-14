@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { Redirect } from "react-router-dom";
+import { Redirect, useLocation } from "react-router-dom";
 import { useUpdatePageTitle } from "@humansignal/core";
 import { useProject } from "../../providers/ProjectProvider";
 import { useParams } from "../../providers/RoutesProvider";
@@ -20,6 +20,7 @@ const EMBED_CONFIG = {
  */
 export const EmbodiedAnnotatePage = () => {
   const { t, i18n } = useTranslation("common");
+  const location = useLocation();
   const { project } = useProject();
   const params = useParams();
   const projectId = project?.id ?? params?.id;
@@ -38,8 +39,12 @@ export const EmbodiedAnnotatePage = () => {
   }, []);
 
   useEffect(() => {
-    mountEmbedLayer(EMBED_CONFIG, buildEmbodiedAnnotateEmbedSrc(), t("embodiedAnnotate.iframe_title"));
-  }, [t, i18n.language]);
+    mountEmbedLayer(
+      EMBED_CONFIG,
+      buildEmbodiedAnnotateEmbedSrc(location.search),
+      t("embodiedAnnotate.iframe_title"),
+    );
+  }, [t, i18n.language, location.search]);
 
   if (!projectId) return null;
 

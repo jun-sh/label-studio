@@ -43,9 +43,8 @@ def catalog_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 "annotation_schema": {
                     "schema_id": "box_transport_v1",
                     "schema_version": 1,
-                    "display_locale": "en",
                     "subtask_labels": [{"id": "reach", "order": 0, "color": "#000000"}],
-                    "episode_fields": [],
+                    "episode_fields": [{"id": "box_cycle", "type": "int", "required": True}],
                 },
                 "packages": [
                     {"id": "431132", "display_name": "头摄 + 全身位姿", "local_path": "431132"},
@@ -98,7 +97,7 @@ def test_get_collection_detail(catalog_root: Path) -> None:
     assert len(body["packages"]) == 2
     pkg = body["packages"][0]
     assert pkg["annotation_schema"]["schema_id"] == "box_transport_v1"
-    assert pkg["annotation_schema"].get("episode_fields") == []
+    assert any(f["id"] == "box_cycle" for f in pkg["annotation_schema"]["episode_fields"])
     first_pkg = body["packages"][0]
     assert first_pkg["id"] == "431132"
     assert first_pkg["loadable"] is True

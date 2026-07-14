@@ -1,9 +1,11 @@
 # 431132 搬箱标注 — 新手培训手册
 
-> **版本：** v1.0（培训用）  
+> **版本：** v1.1（培训用）  
 > **数据包：** `limx_box_transport / 431132`（780 条 episode）  
 > **标注平台：** http://10.10.10.34:8080/projects/15/embodied  
-> **任务一句话：** 看机器人搬箱视频，标清楚「每一刻在干什么」「整集成没成」「成功搬了几箱」。
+> **任务一句话：** 看机器人搬箱视频，标清楚「每一刻在干什么」「整集成没成」「成功搬了几箱」。  
+> **商业标准：** 对标 Optimus/Figure 双层标注（L2 细相位 + L1 原子技能）；详见 [`431132-commercial-annotation-plan.md`](./431132-commercial-annotation-plan.md)。  
+> **边界规范（P0 必读）：** [`431132-phase-boundary-spec.md`](./431132-phase-boundary-spec.md)
 
 ---
 
@@ -20,26 +22,40 @@
 9. [自检清单](#9-自检清单)
 10. [常见问题 FAQ](#10-常见问题-faq)
 11. [试点与进度建议](#11-试点与进度建议)
+12. [标注路线图（P0 / P1 / P2）](#12-标注路线图p0--p1--p2)
 
 ---
 
 ## 1. 你要完成什么
 
-每条 episode（一集录像）填 **2 个字段**：
+每条 episode（一集录像）填 **3 个字段**：
 
 | # | 名称 | 含义 | 在哪里填 |
 |---|------|------|----------|
 | ① | **Subtask 时间轴** | 录像里每一段时间机器人在做什么 | 工具内：选标签 + 在时间轴拖拽 |
 | ② | **Outcome 结果** | 整集任务算不算完成 | 工具内：底部 success / partial / fail |
+| ③ | **box_cycle 箱数** | 成功放到传送带上的箱子个数（整数） | 工具保存栏「成功搬箱数」 |
 
-**暂缓（当前工具不显示）：** `box_cycle`（成功搬箱数）、`notes`（备注）— 后续若需要再通过 schema 开启。
+**当前阶段（量产终稿）：** 主标 **L2 八阶相位**；L1 / L1.5 **自动推导**；仅修正逐箱异常 + 失败枚举；L0 outcome 仅归档。  
+**仍不需要做：** 画框、6D、力反馈、手动画 L1。
 
-**不需要做：** 画框、标接触点、标左右手、标 431133/431134 数据。
+### 1.1 工具窗格 ↔ 四层半架构（必读）
 
-### 标签语言说明
+| 工具区域 | 架构层 | 你要做什么 |
+|----------|--------|------------|
+| Task（只读） | L0 | 不用填 |
+| 8 类标签 + 时间轴 + Regions | **L2** | **主战场：手标相位** |
+| 原子技能 · L1 · auto | L1 | **只读**；含子目标语言 subgoal |
+| 逐箱结果 | L1.5 | **自动判定**；仅修正判错 + 选失败原因 |
+| 结果 / 成功搬箱数 / 备注 | L0 | outcome 归档；箱数自动汇总 |
+| 技能推导复核 | L1 质检 | 组长抽检，标注员默认「待复核」 |
 
-- **写入文件**的 subtask 标签为英文 **id**（如 `reach`、`lift`、`release`），与任务描述英文一致。
-- **界面显示**为英文名称（Reach、Lift、Release），由数据集 schema 的 `display_locale: en` 控制。
+| 层级 | 内容 | 当前工具 |
+|------|------|----------|
+| L2 细相位 | 8 类时间轴（本节重点） | ✅ 已支持 |
+| L1 原子技能 | approach / grasp / place 三段 | ✅ **自动推导**（只读预览；改 L2 即更新） |
+| L1.5 逐箱 | 每箱 success / fail_reason | ✅ **自动基线**；人工仅修正异常 |
+| L0 全局 | outcome、box_cycle、任务文本 | ✅ 已支持 |
 
 ### 数据背景（了解即可）
 
@@ -93,20 +109,22 @@ http://10.10.10.34:8080/projects/15/embodied?collection=limx_box_transport&packa
 
 ## 3. 界面导览
 
+**语言约定（中文界面）：** 按钮、列表、字段名等 **界面壳层** 显示中文；**写入 JSON 的码**（L2 相位 `idle`/`reach`…、L1 `approach_skill`…、`outcome`、`fail_reason`、`skill_review`、`success` 等）在界面与保存文件 **一致显示英文**；**悬停提示（hint）** 可用中文帮助理解；任务文本、L1 `subgoal` 保持数据集英文原文。
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  [连接数据集]  ← Load 前在这里；Load 后可点开修改                    │
 ├──────────┬──────────────────────────────────────────────────────┤
-│ Episodes │  Episode #12          当前帧号    [清空]               │
-│  列表    │  Task: go and carry all the boxes...                   │
-│  (780)   ├──────────────────────────────────────────────────────┤
+│ 片段列表 │  片段 #12          当前帧号    [清空]                   │
+│  (780)   │  任务: go and carry all the boxes...                   │
+│          ├──────────────────────────────────────────────────────┤
 │          │  ┌────────────────────────────────────────────────┐   │
 │          │  │              视频播放器                          │   │
 │          │  └────────────────────────────────────────────────┘   │
 │          │  [8 个彩色标签按钮]  ← 先点选一个                       │
 │          │  ─── 时间轴（在这里拖拽标时间段）────────────────────    │
-│          │  Regions 列表（已标分段明细）                            │
-│          │  Outcome: ( )success ( )fail ( )partial  [保存]       │
+│          │  分段列表（已标分段明细）                                │
+│          │  结果: ( )success ( )fail ( )partial  [保存]           │
 └──────────┴──────────────────────────────────────────────────────┘
 ```
 
@@ -130,8 +148,8 @@ http://10.10.10.34:8080/projects/15/embodied?collection=limx_box_transport&packa
 | 标签 ID | 读作 | 什么时候用 |
 |---------|------|------------|
 | `idle` | 空闲 | 闲着、等待、还没开始搬下一箱 |
-| `reach` | 接近 | 朝目标箱子移动，**还没碰到箱** |
-| `pre_grasp` | 预抓取 | 手在箱子附近对准、张开、调整 |
+| `reach` | 接近 | **机身行走趋近**箱体；手未做预抓动作 |
+| `pre_grasp` | 预抓取 | 机身就位后，**手部**对准、张开、调整；**未碰箱** |
 | `contact` | 接触 | 刚碰到箱子，到抓稳之前 |
 | `lift` | 抬起 | 箱子离开地面/台面 |
 | `transport` | 搬运 | 拿着箱子走向传送带 |
@@ -145,6 +163,19 @@ reach → pre_grasp → contact → lift → transport → place → release
 ```
 
 搬第二箱、第三箱：**再重复一遍**上面这串。两箱之间通常有一段 `idle`。
+
+#### reach 与 pre_grasp 怎么分？（P0 统一判据）
+
+**口诀：走是 reach，手是 pre_grasp，碰到是 contact。**
+
+| 你在画面上看到 | 标什么 |
+|----------------|--------|
+| 腿在走，手贴身或自然摆 | `reach` |
+| 停步或慢移，手明显伸出对准箱 | `pre_grasp` |
+| 边走边伸手 | 从伸手那一帧起 `pre_grasp` |
+| 手指碰到箱 | `contact` |
+
+完整判据与示意图见 **[相位边界规范](./431132-phase-boundary-spec.md)** §3。
 
 #### 三条硬规则（工具会检查）
 
@@ -174,6 +205,29 @@ reach → pre_grasp → contact → lift → transport → place → release
 | **partial** | 部分成功 | 只搬了一部分；或最后一箱没搬完 |
 | **fail** | 失败 | 一箱都没成功放上带；或画面损坏无法标 |
 
+**和 box_cycle 的关系（简单记）：**
+
+- `box_cycle = 0` → 通常是 **fail**
+- `box_cycle ≥ 1` 但明显还有箱没搬 → **partial**
+- 该搬的都搬完 → **success**
+
+---
+
+### 4.3 ③ box_cycle：成功搬了几箱
+
+**定义：** 本集里，箱子 **放到传送带上并且松手** 的次数。
+
+**推荐（P1.5）：** 在 **「逐箱结果」** 面板为每一轮搬箱选「成功 / 失败」；工具自动把 `success=true` 的箱数写入 **成功搬箱数**。也可手动改整数，但应与逐箱勾选一致。
+
+| 情况 | 算不算 1 箱 |
+|------|-------------|
+| 完整搬一箱上带并松手 | ✅ 算 |
+| 抓了但掉地上 | ❌ 不算 |
+| 放在地上/桌子上，不是传送带 | ❌ 不算 |
+| 同一箱滑脱又重抓，最终上带 | ✅ 只算 1 次（成功那次） |
+
+**例：** 两箱都成功上带 → 逐箱均选「成功」→ `box_cycle = 2`
+
 ---
 
 ## 5. 完整操作步骤
@@ -183,12 +237,13 @@ reach → pre_grasp → contact → lift → transport → place → release
 ```
 步骤 1  左侧点击 Episode #N
 步骤 2  完整播放至少一遍视频（可 1.0x / 1.5x）
-步骤 3  心里回答：整集 success / partial / fail？
+步骤 3  心里回答：搬了几箱？整集 success/partial/fail？
 步骤 4  选标签 → 在时间轴从左到右拖分段（参考 §4.1 顺序）
 步骤 5  检查 Regions：有无大片空白？有无重叠报错？
 步骤 6  选 Outcome
-步骤 7  点击「保存当前片段标注」→ 看到已保存 ✓
-步骤 8  下一条
+步骤 7  在「逐箱结果」标每箱成功/失败；核对自动汇总的「成功搬箱数」与备注
+步骤 8  点击「保存当前片段标注」→ 看到已保存 ✓
+步骤 9  下一条
 ```
 
 **建议节奏：** 熟练后每条 5～10 分钟；不确定的 episode 先标 `notes` 问组长，不要猜。
@@ -207,6 +262,7 @@ reach → pre_grasp → contact → lift → transport → place → release
 | 走向第二箱 → … → 松手 | `reach` … `release` |
 | 结束发呆 | `idle` |
 
+- **box_cycle = 2**  
 - **outcome = success**
 
 ### 示例 B：只搬了 1 箱，第二箱刚走过去视频结束
@@ -214,11 +270,13 @@ reach → pre_grasp → contact → lift → transport → place → release
 | 末尾状态 | 最后一小段标 `reach` 或 `transport`（看停在哪） |
 |----------|--------------------------------------------------|
 
+- **box_cycle = 1**  
 - **outcome = partial**
 
 ### 示例 C：一直在接近箱子，从未抓起
 
 - 全程主要是 `idle` + `reach`  
+- **box_cycle = 0**  
 - **outcome = fail**
 
 ---
@@ -229,10 +287,11 @@ reach → pre_grasp → contact → lift → transport → place → release
 |------|----------|
 | 视频从半路开始（已在搬箱中） | 从第一帧能看清的动作标起，不要编造前面 |
 | 视频半路结束（搬到一半） | 标到最后一帧；outcome 多为 **partial** |
-| 抓了又掉 | 掉之前照常标；outcome 视整集是否还有成功上带 |
+| 抓了又掉 | 掉之前照常标；这箱 **不计** box_cycle |
 | 箱与箱之间等待 | 标 **idle** |
-| 看不清、花屏、黑屏 | 能标多少标多少；outcome 倾向 **fail** |
-| 不确定放没放上带 | outcome 用 **partial** |
+| 看不清、花屏、黑屏 | 能标多少标多少；outcome 倾向 **fail**；notes 写 `DATA_ISSUE` |
+| 抓取滑脱 / 碰撞 / 放置偏 | notes 写 `SLIP` / `COLLISION` / `PLACE_OFFSET` 等（见边界规范 §6） |
+| 不确定放没放上带 | **保守：不计** box_cycle；outcome 用 **partial** |
 | 同一箱 contact 抖了好几次 | 合并理解成一次抓取，不要标成多箱 |
 
 ---
@@ -244,35 +303,29 @@ reach → pre_grasp → contact → lift → transport → place → release
 1. 标完时间轴、选好 Outcome  
 2. 点击 **「保存当前片段标注」**  
 3. 按钮旁显示 **「已保存 ✓」**  
-4. 数据写入数据集目录下的 `meta/lerobot_annotations.json`（见 §8.2 路径）
+4. 数据写入数据集目录下的 `meta/lerobot_annotations.json`（无需手改文件）
 
 **注意：** 切换 episode 前若有「未保存」提示，请先保存或确认放弃。
 
-### 8.2 标注文件在服务器上的实际路径
+### 8.2 保存栏（标注员可见）
 
-以 `431132` 为例，点击保存后写入：
+**主保存栏（始终展开）：**
 
-| 环境 | 路径 |
+- **结果** outcome（success / partial / fail）— **必选一个**
+
+**逐箱结果**（技能区下方）：自动判定；仅修正异常 + 选失败原因枚举。
+
+**归档与质检（默认折叠，不用管）：**
+
+见 **「高级项（可选）」** 折叠区（含成功搬箱数只读汇总、技能复核、高层对话）；标注员无需展开。
+
+### 8.3 数据问题怎么处理？
+
+| 情况 | 做法 |
 |------|------|
-| **34 宿主机** | `data-storage/embodied-annotate/datasets/limx_box_transport/431132/meta/lerobot_annotations.json` |
-| **容器内** | `/data/datasets/limx_box_transport/431132/meta/lerobot_annotations.json` |
-
-文件格式示例（subtask 的 `label` 为英文 id）：
-
-```json
-{
-  "version": 2,
-  "schema_ref": "box_transport_v1@1",
-  "episodes": {
-    "0": {
-      "subtasks": [
-        { "start": 0.0, "end": 4.05, "label": "reach" }
-      ],
-      "outcome": "success"
-    }
-  }
-}
-```
+| 花屏 / 看不清 | outcome 标 **fail**；逐箱标失败，失败原因选 **other** 或 **incomplete** |
+| 抓取滑脱 / 放置偏 | 逐箱失败原因选对应 **枚举**（如 slip_grasp、place_offset） |
+| 拿不准 | **暂停**，企业 IM 问组长；不要写自由备注 |
 
 ---
 
@@ -284,6 +337,9 @@ reach → pre_grasp → contact → lift → transport → place → release
 - [ ] 没有重叠分段（工具无红色报错）  
 - [ ] 多箱 episode 里，每箱大致是 `reach…release` 一轮  
 - [ ] Outcome 与看完视频的直觉一致  
+- [ ] 逐箱结果与每箱实际成败一致（若有）
+- [ ] box_cycle 与「成功上带」勾选次数一致
+- [ ] outcome 与 box_cycle / 逐箱结果无矛盾（工具黄色警告需处理或确认）  
 - [ ] 已点保存  
 
 ---
@@ -291,7 +347,7 @@ reach → pre_grasp → contact → lift → transport → place → release
 ## 10. 常见问题 FAQ
 
 **Q：必须先标 outcome 还是先标时间轴？**  
-A：建议先通看视频 → 标时间轴 → 最后选 outcome。保存前两项都要齐。
+A：建议先通看视频 → 标时间轴 → 最后选 outcome。顺序可微调，但保存前三项都要齐。
 
 **Q：一集要标多久？**  
 A：一般 5～10 分钟。特别长或特别乱的集可能 15 分钟。
@@ -302,8 +358,11 @@ A：不必须。极短的 `pre_grasp` 可并到 `reach` 或 `contact`，但 **�
 **Q：标错了怎么办？**  
 A：Regions 列表里可改帧号或删除某段；改完重新保存。
 
+**Q：box_cycle 和 release 段数量一样吗？**  
+A：**不一定。** 在空地松手、掉落也会产生 `release`，但只有 **放上传送带** 的才算 box_cycle。
+
 **Q：任务说 all boxes，画面里有 3 个箱我只搬了 2 个？**  
-A：outcome=**partial**。
+A：box_cycle=2，outcome=**partial**。
 
 **Q：保存后还能改吗？**  
 A：可以。重新打开该 episode，修改后再次保存即可覆盖。
@@ -317,19 +376,50 @@ A：可以。重新打开该 episode，修改后再次保存即可覆盖。
 | **培训试点** | 先标 **30 条**（由组长指定编号） | 统一理解，修订疑问 |
 | **正式量产** | 剩余 ~750 条 | 按批次推进，每 50 条抽检 |
 
-培训结束标准：独立完成 3 条试点，与组长答案 **outcome 一致、时间轴无明显分歧**。
+培训结束标准：独立完成 3 条试点，与组长答案 **outcome 一致、box_cycle 一致、时间轴无明显分歧**；**reach / pre_grasp 分界符合边界规范**。
+
+---
+
+## 12. 标注路线图（P0 / P1 / P2）
+
+与 [`431132-commercial-annotation-plan.md`](./431132-commercial-annotation-plan.md) 对齐，标注员只需关注当前阶段。
+
+| 阶段 | 你要做什么 | 工具能力 |
+|------|------------|----------|
+| **P0** | 8 类时间轴 + outcome + box_cycle；按边界规范统一 reach/pre_grasp | ✅ |
+| **P1** | 继续只标 L2；L1 三段自动推导（只读预览）；组长抽检 `skill_review` | ✅ |
+| **P1.5** | 「逐箱结果」标每箱成功/失败原因；`box_cycle` 自动汇总 | ✅ |
+| **Phase C** | 侧栏看标注进度、按状态筛选；保存时 outcome/box_cycle 矛盾会黄字警告 | ✅ |
+| **P2（子集）** | 关键接触帧、场景/箱 ID、episode 级 fail_reason 等 | 规划中 |
+
+**结论：** 8 类标签 **完全合适，不要改名、不要删减**；L1 不要手改，改 L2 边界即可。
 
 ---
 
 ## 附录：一句话速记卡
 
 ```
-看完整集 → 拖时间轴（8 类英文标签）→ 选 outcome → 保存
+看完整集 → 拖时间轴（8 类）→ 逐箱结果 → 选 outcome → 保存
+                ↓ 自动
+         L1 预览 + box_cycle 汇总
 
 搬一箱：reach → pre_grasp → contact → lift → transport → place → release
-outcome = success / partial / fail（整集是否完成）
+走是 reach，手是 pre_grasp，碰到是 contact
+box_cycle = 逐箱勾选「成功」的次数
+拿不准 → notes + 问组长 + 查边界规范
 ```
 
 ---
 
-*文档维护：数据平台组 · 与 embodied-annotate 工具版本同步更新*
+## 相关文档
+
+| 文档 | 读者 |
+|------|------|
+| [`431132-commercial-annotation-master.md`](./431132-commercial-annotation-master.md) | **总纲**（行业现状 + 落地 + GR00T/OpenPI） |
+| [`431132-commercial-annotation-plan.md`](./431132-commercial-annotation-plan.md) | 产品 / 算法 / 组长（精简规划） |
+| [`431132-phase-boundary-spec.md`](./431132-phase-boundary-spec.md) | 全体标注员 |
+| [`annotation-schema-spec.md`](./annotation-schema-spec.md) | 开发 |
+
+---
+
+*文档维护：数据平台组 · v1.2 · 2026-07-13（P1.5 逐箱结果）*

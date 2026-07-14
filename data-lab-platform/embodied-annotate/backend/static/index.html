@@ -67,8 +67,17 @@
     <section class="ls-workspace" id="workspace">
       <aside class="ls-sidebar">
         <div class="ls-sidebar-head">
-          <h2>Episodes</h2>
-          <input id="episodeSearch" type="search" placeholder="Filter #" />
+          <h2 id="episodesTitle">Episodes</h2>
+          <p id="episodeProgress" class="ls-episode-progress" hidden></p>
+          <div class="ls-episode-filters">
+            <input id="episodeSearch" type="search" placeholder="Filter #" />
+            <select id="episodeStatusFilter" class="ls-episode-status-filter" aria-label="Filter by status">
+              <option value="all">All</option>
+              <option value="complete">Complete</option>
+              <option value="partial">In progress</option>
+              <option value="none">Not started</option>
+            </select>
+          </div>
         </div>
         <ul id="episodeList" class="ls-episode-list"></ul>
       </aside>
@@ -119,10 +128,28 @@
 
           <div class="ls-region-list-wrap">
             <div class="ls-region-list-head">
-              <span>Regions</span>
+              <span id="regionsTitle">Regions</span>
               <span id="regionCount" class="ls-muted">0</span>
             </div>
             <div id="regionList" class="ls-region-list"></div>
+          </div>
+
+          <div id="skillDerivationPanel" class="ls-skill-panel" hidden>
+            <div class="ls-region-list-head">
+              <span id="skillDerivationTitle">原子技能（自动）</span>
+              <span class="ls-muted ls-skill-auto-badge" id="skillAutoBadge">L1 · auto</span>
+            </div>
+            <p class="ls-skill-hint" id="skillDerivationHint">调整上方 8 类相位，此处实时显示原子技能；不对请改 L2 边界，保存时一并写入。</p>
+            <p class="ls-skill-map" id="skillDerivationMap" hidden></p>
+            <div id="skillSegmentList" class="ls-skill-list"></div>
+            <div id="cycleFieldsPanel" class="ls-cycle-panel" hidden>
+              <div class="ls-region-list-head">
+                <span id="cycleFieldsTitle">逐箱结果</span>
+              </div>
+              <p class="ls-skill-hint" id="cycleFieldsHint">勾选每箱是否成功上带；成功搬箱数将自动汇总。</p>
+              <div id="cycleFieldsList" class="ls-cycle-list"></div>
+            </div>
+            <p id="skillDerivationWarnings" class="ls-skill-warnings" hidden></p>
           </div>
 
           <div id="validationPanel" class="ls-validation-panel" hidden>
@@ -135,7 +162,6 @@
           </div>
 
           <div class="ls-save-bar">
-            <div id="episodeFieldsGroup" class="ls-episode-fields" hidden></div>
             <div id="outcomeGroup" class="ls-outcome-group" role="radiogroup" aria-label="Episode outcome">
               <span class="ls-outcome-label">Outcome</span>
               <label class="ls-outcome-option ls-outcome-success">
@@ -156,62 +182,72 @@
           </div>
         </div>
 
-        <details class="ls-advanced">
-          <summary>High-level dialogue (optional)</summary>
+        <details class="ls-advanced ls-export-panel" id="exportPanel" open>
+          <summary id="exportSummary">Export</summary>
           <div class="ls-advanced-body">
+            <p class="ls-skill-hint" id="exportHint">导出训练用 Parquet；未标注的 episode 帧索引为 -1。</p>
+            <div class="ls-form-row ls-export-row">
+              <label class="ls-grow" id="exportOutputLabel">
+                Output directory
+                <input id="outputDir" type="text" placeholder="default: data/exports" />
+              </label>
+              <label class="ls-check" id="copyVideosLabel">
+                <input id="copyVideos" type="checkbox" checked />
+                <span id="copyVideosText">Copy videos</span>
+              </label>
+              <button type="button" id="exportBtn" class="ls-btn ls-btn-primary">Export locally</button>
+            </div>
+            <p class="ls-helper" id="exportStatus"></p>
+            <details class="ls-advanced" id="pushHubPanel">
+              <summary>Push to Hugging Face Hub</summary>
+              <div class="ls-advanced-body">
+                <div class="ls-form-row">
+                  <label class="ls-grow">HF Token<input id="hfToken" type="password" /></label>
+                  <label class="ls-check"><input id="pushInPlace" type="checkbox" checked /> Push in place</label>
+                </div>
+                <div class="ls-form-row" id="newRepoRow">
+                  <label class="ls-grow">New repo ID<input id="newRepoId" type="text" /></label>
+                  <label class="ls-check"><input id="privateRepo" type="checkbox" /> Private</label>
+                </div>
+                <div class="ls-form-row">
+                  <label class="ls-grow">Commit message<input id="commitMessage" value="Add annotations from LeRobot Annotate" /></label>
+                  <button type="button" id="pushHubBtn" class="ls-btn ls-btn-primary">Push to Hub</button>
+                </div>
+                <div class="ls-helper" id="pushHubStatus"></div>
+              </div>
+            </details>
+          </div>
+        </details>
+
+        <details class="ls-advanced" id="episodeAdvancedPanel">
+          <summary id="episodeAdvancedSummary">高级项（可选）</summary>
+          <div class="ls-advanced-body">
+            <p class="ls-skill-hint" id="episodeAdvancedHint">成功搬箱数由逐箱结果自动汇总；技能复核仅供组长抽检。下列内容标注员通常无需填写。</p>
+            <div id="episodeFieldsGroup" class="ls-episode-fields"></div>
+            <div id="highLevelPanel" hidden>
+            <div class="ls-advanced-divider" role="separator"></div>
+            <h3 class="ls-advanced-subtitle" id="hlSubsectionTitle">高层对话</h3>
             <div class="ls-form-row">
-              <label>Start (s)<input id="hlStart" type="number" step="0.001" /></label>
-              <label>End (s)<input id="hlEnd" type="number" step="0.001" /></label>
-              <label class="ls-grow">User prompt<input id="hlUser" type="text" /></label>
+              <label id="hlStartLabel">Start (s)<input id="hlStart" type="number" step="0.001" /></label>
+              <label id="hlEndLabel">End (s)<input id="hlEnd" type="number" step="0.001" /></label>
+              <label id="hlUserLabel" class="ls-grow">User prompt<input id="hlUser" type="text" /></label>
             </div>
             <div class="ls-form-row">
-              <label class="ls-grow">Robot response<input id="hlRobot" type="text" /></label>
+              <label id="hlRobotLabel" class="ls-grow">Robot response<input id="hlRobot" type="text" /></label>
               <button type="button" id="hlSetStart" class="ls-btn ls-btn-ghost">Set start</button>
               <button type="button" id="hlSetEnd" class="ls-btn ls-btn-ghost">Set end</button>
               <button type="button" id="addHighLevel" class="ls-btn ls-btn-primary">Add</button>
             </div>
             <div id="highLevelList" class="ls-region-list"></div>
+            </div>
           </div>
         </details>
       </main>
     </section>
-
-    <section class="ls-panel ls-export" id="exportPanel">
-      <h2>Export</h2>
-      <div class="ls-form-row">
-        <label class="ls-grow">
-          Output directory
-          <input id="outputDir" type="text" placeholder="default: data/exports" />
-        </label>
-        <label class="ls-check">
-          <input id="copyVideos" type="checkbox" />
-          Copy videos
-        </label>
-        <button type="button" id="exportBtn" class="ls-btn ls-btn-primary">Export locally</button>
-      </div>
-      <p class="ls-helper" id="exportStatus"></p>
-      <details class="ls-advanced" id="pushHubPanel">
-        <summary>Push to Hugging Face Hub</summary>
-        <div class="ls-advanced-body">
-          <div class="ls-form-row">
-            <label class="ls-grow">HF Token<input id="hfToken" type="password" /></label>
-            <label class="ls-check"><input id="pushInPlace" type="checkbox" checked /> Push in place</label>
-          </div>
-          <div class="ls-form-row" id="newRepoRow">
-            <label class="ls-grow">New repo ID<input id="newRepoId" type="text" /></label>
-            <label class="ls-check"><input id="privateRepo" type="checkbox" /> Private</label>
-          </div>
-          <div class="ls-form-row">
-            <label class="ls-grow">Commit message<input id="commitMessage" value="Add annotations from LeRobot Annotate" /></label>
-            <button type="button" id="pushHubBtn" class="ls-btn ls-btn-primary">Push to Hub</button>
-          </div>
-          <div class="ls-helper" id="pushHubStatus"></div>
-        </div>
-      </details>
-    </section>
   </div>
 
   <script src="/static/i18n.js"></script>
+  <script src="/static/skill_derivation.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

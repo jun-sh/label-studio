@@ -177,9 +177,8 @@ const sourceSelect = document.getElementById('sourceSelect');
 const repoInput = document.getElementById('repoInput');
 const localInput = document.getElementById('localInput');
 const revisionInput = document.getElementById('revisionInput');
-const videoKeyToolbar = document.getElementById('videoKeyToolbar');
-const videoKeyToolbarLabel = document.getElementById('videoKeyToolbarLabel');
-const videoKeyToolbarButtons = document.getElementById('videoKeyToolbarButtons');
+const videoGrid = document.getElementById('videoGrid');
+const videoBlock = document.getElementById('videoBlock');
 const connectHelper = document.getElementById('connectHelper');
 const repoLabel = document.getElementById('repoLabel');
 const localLabel = document.getElementById('localLabel');
@@ -199,7 +198,6 @@ const episodeTitle = document.getElementById('episodeTitle');
 const episodeMeta = document.getElementById('episodeMeta');
 const episodeTaskPanel = document.getElementById('episodeTaskPanel');
 const episodeTaskText = document.getElementById('episodeTaskText');
-const episodeVideo = document.getElementById('episodeVideo');
 const frameReadout = document.getElementById('frameReadout');
 
 const saveEpisodeBottom = document.getElementById('saveEpisodeBottom');
@@ -249,7 +247,8 @@ const pushHubBtn = document.getElementById('pushHubBtn');
 const DEMO_LOCAL_DATASET =
   '/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/lerobot-annotate/data/pusht';
 
-let videoSwitchToken = 0;
+let videoLoadToken = 0;
+const MAX_VIDEO_PANES = 2;
 
 const state = {
   dataset: null,
@@ -266,6 +265,8 @@ const state = {
   validationResult: null,
   conflictIndices: new Set(),
   forceSaveDespiteWarnings: false,
+  videoPanes: [],
+  videoSlotKeys: [],
   egoMode: false,
   egoDatasetPath: null,
   egoFeatures: [],
@@ -291,11 +292,320 @@ function getFps() {
   return state.dataset?.fps || 30;
 }
 
+function getMasterVideo() {
+  return state.videoPanes[0]?.video || null;
+}
+
+function getPaneVideos() {
+  return state.videoPanes.map((pane) => pane.video).filter(Boolean);
+}
+
+function getAllVideoKeys() {
+  const keys = Array.isArray(state.dataset?.video_keys) ? [...state.dataset.video_keys] : [];
+  if (!keys.length && state.dataset?.selected_video_key) {
+    return [state.dataset.selected_video_key];
+  }
+  return keys;
+}
+
+function needsVideoSlotPicker() {
+  return getAllVideoKeys().length > MAX_VIDEO_PANES;
+}
+
+function videoSlotStorageKey() {
+  const root = state.dataset?.root;
+  if (!root) return null;
+  return `embodied-annotate:video-slots:${root}`;
+}
+
+function persistVideoSlotKeys() {
+  const storageKey = videoSlotStorageKey();
+  if (!storageKey || !needsVideoSlotPicker()) return;
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify(state.videoSlotKeys));
+  } catch (_) {
+    /* ignore quota / private mode */
+  }
+}
+
+function initVideoSlotKeys(keys) {
+  const allKeys = keys || [];
+  if (allKeys.length <= MAX_VIDEO_PANES) {
+    state.videoSlotKeys = [];
+    return;
+  }
+
+  let saved = null;
+  const storageKey = videoSlotStorageKey();
+  if (storageKey) {
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      if (raw) saved = JSON.parse(raw);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  if (Array.isArray(saved) && saved.length) {
+    state.videoSlotKeys = saved.filter((key) => allKeys.includes(key));
+  } else {
+    state.videoSlotKeys = allKeys.slice(0, MAX_VIDEO_PANES);
+  }
+  normalizeVideoSlotKeys();
+  persistVideoSlotKeys();
+}
+
+function normalizeVideoSlotKeys() {
+  const allKeys = getAllVideoKeys();
+  if (allKeys.length <= MAX_VIDEO_PANES) return allKeys;
+
+  const slots = Array.isArray(state.videoSlotKeys) ? [...state.videoSlotKeys] : [];
+  const used = new Set();
+  const result = [];
+
+  for (let i = 0; i < MAX_VIDEO_PANES; i += 1) {
+    let key = slots[i];
+    if (!key || !allKeys.includes(key) || used.has(key)) {
+      key = allKeys.find((candidate) => !used.has(candidate));
+    }
+    if (key) {
+      result.push(key);
+      used.add(key);
+    }
+  }
+
+  state.videoSlotKeys = result;
+  return result;
+}
+
+function getDisplayVideoKeys() {
+  const allKeys = getAllVideoKeys();
+  if (allKeys.length <= MAX_VIDEO_PANES) return allKeys;
+  return normalizeVideoSlotKeys();
+}
+
+function setVideoSlotKey(slotIndex, newKey) {
+  const allKeys = getAllVideoKeys();
+  if (!allKeys.includes(newKey) || slotIndex < 0 || slotIndex >= MAX_VIDEO_PANES) return;
+
+  const slots = normalizeVideoSlotKeys();
+  const oldKey = slots[slotIndex];
+  if (oldKey === newKey) return;
+
+  const dupIndex = slots.indexOf(newKey);
+  slots[slotIndex] = newKey;
+  if (dupIndex >= 0 && dupIndex !== slotIndex) {
+    slots[dupIndex] = oldKey;
+  }
+
+  state.videoSlotKeys = slots;
+  persistVideoSlotKeys();
+
+  const master = getMasterVideo();
+  const time = master ? master.currentTime : 0;
+  const pause = !master || master.paused;
+  renderVideoGrid();
+  if (state.currentEpisode != null) {
+    loadEpisodeVideoSources(state.currentEpisode, { time, pause });
+  }
+}
+
+function createPaneLabel(key, slotIndex) {
+  const label = document.createElement('div');
+  label.className = 'ls-video-pane-label';
+
+  if (needsVideoSlotPicker()) {
+    label.classList.add('ls-video-pane-label--select');
+    const select = document.createElement('select');
+    select.className = 'ls-video-pane-select';
+    select.title = key;
+    select.setAttribute('aria-label', t('video_source_pane_aria', { name: formatVideoKeyLabel(key) }));
+    getAllVideoKeys().forEach((candidate) => {
+      const opt = document.createElement('option');
+      opt.value = candidate;
+      opt.textContent = formatVideoKeyLabel(candidate);
+      opt.title = candidate;
+      if (candidate === key) opt.selected = true;
+      select.appendChild(opt);
+    });
+    select.addEventListener('change', () => {
+      setVideoSlotKey(slotIndex, select.value);
+    });
+    label.appendChild(select);
+  } else {
+    label.textContent = formatVideoKeyLabel(key);
+    label.title = key;
+  }
+
+  return label;
+}
+
+function formatVideoKeyLabel(key) {
+  return (key || '').split('.').pop() || key;
+}
+
+function syncAllVideosToTime(time, { pause = false } = {}) {
+  getPaneVideos().forEach((video) => {
+    try {
+      if (Number.isFinite(time) && Math.abs(video.currentTime - time) > 0.0005) {
+        video.currentTime = time;
+      }
+      if (pause) video.pause();
+    } catch (_) {
+      /* ignore seek errors while loading */
+    }
+  });
+}
+
+function syncOtherVideosTo(source) {
+  if (!source) return;
+  const time = source.currentTime;
+  getPaneVideos().forEach((video) => {
+    if (video === source) return;
+    try {
+      if (Math.abs(video.currentTime - time) > 0.05) {
+        video.currentTime = time;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  });
+}
+
+function bindVideoSyncEvents(video) {
+  if (!video || video.dataset.lsBound === '1') return;
+  video.dataset.lsBound = '1';
+  video.addEventListener('timeupdate', () => {
+    syncOtherVideosTo(video);
+    updatePlayhead();
+    drawEgoHandOverlay();
+  });
+  video.addEventListener('seeked', () => {
+    syncOtherVideosTo(video);
+    updatePlayhead();
+    drawEgoHandOverlay();
+  });
+  video.addEventListener('loadedmetadata', () => {
+    if (videoBlock?.classList.contains('ls-video-switching')) return;
+    renderAllTimeline();
+    drawEgoHandOverlay();
+  });
+  video.addEventListener('play', () => {
+    const time = video.currentTime;
+    getPaneVideos().forEach((el) => {
+      if (el === video) return;
+      try {
+        if (Math.abs(el.currentTime - time) > 0.05) el.currentTime = time;
+        el.play().catch(() => {});
+      } catch (_) {
+        /* ignore */
+      }
+    });
+  });
+  video.addEventListener('pause', () => {
+    getPaneVideos().forEach((el) => {
+      if (el !== video && !el.paused) el.pause();
+    });
+  });
+}
+
+function pauseAllVideos() {
+  getPaneVideos().forEach((video) => {
+    video.pause();
+  });
+}
+
+function setVideoBlockLayout(paneCount) {
+  if (!videoBlock) return;
+  videoBlock.classList.remove('ls-video-block--1', 'ls-video-block--2');
+  if (paneCount === 1 || paneCount === 2) {
+    videoBlock.classList.add(`ls-video-block--${paneCount}`);
+  }
+}
+
+function renderVideoGrid() {
+  if (!videoGrid) return;
+  const keys = getDisplayVideoKeys();
+  videoGrid.innerHTML = '';
+  state.videoPanes = [];
+
+  if (!keys.length) {
+    videoGrid.className = 'ls-video-grid ls-video-grid--1';
+    setVideoBlockLayout(0);
+    return;
+  }
+
+  const layoutCount = Math.min(keys.length, MAX_VIDEO_PANES);
+  videoGrid.className = `ls-video-grid ls-video-grid--${layoutCount}`;
+  setVideoBlockLayout(layoutCount);
+
+  keys.forEach((key, index) => {
+    const pane = document.createElement('div');
+    pane.className = 'ls-video-pane';
+    pane.dataset.videoKey = key;
+
+    const label = createPaneLabel(key, index);
+
+    const video = document.createElement('video');
+    video.className = index === 0 ? 'ls-video-master' : 'ls-video-slave';
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.controls = true;
+
+    pane.appendChild(label);
+    pane.appendChild(video);
+    videoGrid.appendChild(pane);
+    state.videoPanes.push({ key, video, pane });
+
+    bindVideoSyncEvents(video);
+  });
+
+  if (state.dataset) {
+    state.dataset.selected_video_key = keys[0];
+  }
+}
+
+function loadEpisodeVideoSources(epIdx, { time = 0, pause = true } = {}) {
+  const keys = getDisplayVideoKeys();
+  if (!keys.length || state.currentEpisode == null) return;
+
+  const token = ++videoLoadToken;
+  if (videoBlock) videoBlock.classList.add('ls-video-switching');
+
+  let pending = keys.length;
+  const finishLoad = () => {
+    if (token !== videoLoadToken) return;
+    pending -= 1;
+    if (pending > 0) return;
+    syncAllVideosToTime(time, { pause });
+    if (videoBlock) videoBlock.classList.remove('ls-video-switching');
+    updatePlayhead();
+    drawEgoHandOverlay();
+    renderAllTimeline();
+  };
+
+  keys.forEach((key) => {
+    const pane = state.videoPanes.find((p) => p.key === key);
+    if (!pane) {
+      finishLoad();
+      return;
+    }
+    const { video } = pane;
+    const onReady = () => {
+      video.removeEventListener('loadedmetadata', onReady);
+      finishLoad();
+    };
+    video.addEventListener('loadedmetadata', onReady);
+    video.src = `/api/video/${epIdx}?video_key=${encodeURIComponent(key)}`;
+  });
+}
+
 function getTotalFrames() {
   if (state.currentEpisodeData?.length != null) {
     return state.currentEpisodeData.length;
   }
-  const dur = episodeVideo.duration;
+  const master = getMasterVideo();
+  const dur = master?.duration;
   if (!dur) return 0;
   return Math.max(1, Math.round(dur * getFps()));
 }
@@ -378,7 +688,9 @@ let egoHandCanvas = null;
 let egoHandCtx = null;
 
 function ensureEgoHandCanvas() {
-  if (!episodeVideo || !episodeVideo.parentElement) return null;
+  const master = getMasterVideo();
+  const wrap = master?.parentElement;
+  if (!master || !wrap) return null;
   if (!egoHandCanvas) {
     egoHandCanvas = document.createElement('canvas');
     egoHandCanvas.id = 'egoHandOverlay';
@@ -387,7 +699,6 @@ function ensureEgoHandCanvas() {
     egoHandCanvas.style.top = '0';
     egoHandCanvas.style.pointerEvents = 'none';
     egoHandCanvas.style.zIndex = '2';
-    const wrap = episodeVideo.parentElement;
     if (wrap.style.position !== 'relative' && wrap.style.position !== 'absolute') {
       wrap.style.position = 'relative';
     }
@@ -397,43 +708,28 @@ function ensureEgoHandCanvas() {
   return egoHandCtx;
 }
 
-function projectHandPoseTo2D(pose63, videoW, videoH) {
-  const pts = [];
-  const arr = pose63 || [];
-  if (arr.length < 63) return pts;
-  for (let j = 0; j < 21; j += 1) {
-    const x = Number(arr[j * 3]);
-    const y = Number(arr[j * 3 + 1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    if (Math.abs(x) < 1e-3 && Math.abs(y) < 1e-3) continue;
-    const px = x <= 1.5 ? x * videoW : x;
-    const py = y <= 1.5 ? y * videoH : y;
-    pts.push([px, py]);
-  }
-  return pts;
-}
-
 function drawEgoHandOverlay() {
   if (!state.egoMode || !hasEgoFeature('observation.hand_pose_')) {
     if (egoHandCanvas) egoHandCanvas.style.display = 'none';
     return;
   }
+  const master = getMasterVideo();
   const ctx = ensureEgoHandCanvas();
-  if (!ctx || !episodeVideo.videoWidth) return;
-  const rect = episodeVideo.getBoundingClientRect();
+  if (!ctx || !master?.videoWidth) return;
+  const rect = master.getBoundingClientRect();
   egoHandCanvas.width = rect.width;
   egoHandCanvas.height = rect.height;
   egoHandCanvas.style.width = `${rect.width}px`;
   egoHandCanvas.style.height = `${rect.height}px`;
   egoHandCanvas.style.display = 'block';
   ctx.clearRect(0, 0, egoHandCanvas.width, egoHandCanvas.height);
-  const frame = secondsToStartFrame(episodeVideo.currentTime || 0);
+  const frame = secondsToStartFrame(master.currentTime || 0);
   const poseRow = state.egoHandPosesByFrame.get(frame);
   if (!poseRow) return;
-  const sx = rect.width / episodeVideo.videoWidth;
-  const sy = rect.height / episodeVideo.videoHeight;
+  const sx = rect.width / master.videoWidth;
+  const sy = rect.height / master.videoHeight;
   const drawSide = (pose, color) => {
-    const pts = projectHandPoseTo2D(pose, episodeVideo.videoWidth, episodeVideo.videoHeight);
+    const pts = projectHandPoseTo2D(pose, master.videoWidth, master.videoHeight);
     if (pts.length < 2) return;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
@@ -452,6 +748,22 @@ function drawEgoHandOverlay() {
   };
   drawSide(poseRow.hand_pose_left, '#34d399');
   drawSide(poseRow.hand_pose_right, '#60a5fa');
+}
+
+function projectHandPoseTo2D(pose63, videoW, videoH) {
+  const pts = [];
+  const arr = pose63 || [];
+  if (arr.length < 63) return pts;
+  for (let j = 0; j < 21; j += 1) {
+    const x = Number(arr[j * 3]);
+    const y = Number(arr[j * 3 + 1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (Math.abs(x) < 1e-3 && Math.abs(y) < 1e-3) continue;
+    const px = x <= 1.5 ? x * videoW : x;
+    const py = y <= 1.5 ? y * videoH : y;
+    pts.push([px, py]);
+  }
+  return pts;
 }
 
 async function loadEgoContext(epIdx) {
@@ -509,15 +821,20 @@ function formatEpisodeMeta(ep) {
 }
 
 function currentTime() {
-  return Number(episodeVideo.currentTime.toFixed(3));
+  const master = getMasterVideo();
+  if (!master) return 0;
+  return Number(master.currentTime.toFixed(3));
 }
 
 function currentFrame() {
-  return secondsToStartFrame(episodeVideo.currentTime);
+  const master = getMasterVideo();
+  if (!master) return 0;
+  return secondsToStartFrame(master.currentTime);
 }
 
 function getEpisodeDuration() {
-  return episodeVideo.duration || 0;
+  const master = getMasterVideo();
+  return master?.duration || 0;
 }
 
 function getEpisodeAnnotations(epIdx) {
@@ -1193,7 +1510,7 @@ function seekToClientX(clientX) {
   if (state.currentEpisode == null) return;
   if (!getTotalFrames()) return;
   const frame = percentToFrame(trackXToPercent(clientX));
-  episodeVideo.currentTime = startFrameToSeconds(frame);
+  syncAllVideosToTime(startFrameToSeconds(frame));
   updatePlayhead();
   drawEgoHandOverlay();
 }
@@ -1204,7 +1521,7 @@ function beginSeekDrag(e) {
   e.preventDefault();
   e.stopPropagation();
 
-  episodeVideo.pause();
+  pauseAllVideos();
   state.drag = {
     mode: 'seek',
     moved: false,
@@ -1343,7 +1660,8 @@ function renderTimelineRegions() {
 
 function updatePlayhead() {
   const total = getTotalFrames();
-  if (!total || !episodeVideo.duration) {
+  const master = getMasterVideo();
+  if (!total || !master?.duration) {
     playhead.style.left = '0%';
     return;
   }
@@ -1651,7 +1969,7 @@ function onTimelineMouseUp(e) {
     const { startPct, currentPct, moved } = drag;
     if (!moved) {
       const frame = percentToFrame(startPct);
-      episodeVideo.currentTime = startFrameToSeconds(frame);
+      syncAllVideosToTime(startFrameToSeconds(frame));
       updatePlayhead();
       return;
     }
@@ -2035,8 +2353,7 @@ async function selectEpisode(epIdx) {
   setOutcomeUI(state.annotations[epIdx].outcome);
   setEpisodeFieldsUI(state.annotations[epIdx].fields);
 
-  const videoUrl = `/api/video/${epIdx}?video_key=${encodeURIComponent(state.dataset.selected_video_key)}`;
-  episodeVideo.src = videoUrl;
+  loadEpisodeVideoSources(epIdx, { time: 0, pause: true });
 
   if (saveEpisodeBottom) saveEpisodeBottom.disabled = false;
   resetEpisodeBtn.disabled = false;
@@ -2045,9 +2362,6 @@ async function selectEpisode(epIdx) {
   renderEpisodes();
   renderHighLevels();
   refreshSkillDerivationPreview();
-  if (episodeVideo.readyState >= 1) {
-    renderAllTimeline();
-  }
 }
 
 async function saveEpisode() {
@@ -2135,95 +2449,22 @@ async function saveEpisode() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Video camera toolbar (above player)
-// ---------------------------------------------------------------------------
-
-function formatVideoKeyLabel(key) {
-  const short = (key || '').split('.').pop() || key;
-  const map = {
-    head_camera: t('camera_head'),
-    camera1: t('camera_1'),
-    camera2: t('camera_2'),
-    image: t('camera_main'),
-  };
-  return map[short] || short;
-}
-
-function renderVideoKeyToolbar(keys, selected) {
-  if (!videoKeyToolbar || !videoKeyToolbarButtons) return;
-  const list = Array.isArray(keys) ? keys : [];
-  if (list.length <= 1) {
-    videoKeyToolbar.hidden = true;
-    videoKeyToolbarButtons.innerHTML = '';
-    return;
+function populateVideoKeys(keys, selected) {
+  if (state.dataset) {
+    state.dataset.video_keys = keys || [];
+    state.dataset.selected_video_key = selected || keys?.[0] || null;
   }
-  videoKeyToolbar.hidden = false;
-  if (videoKeyToolbarLabel) {
-    videoKeyToolbarLabel.textContent = t('label_camera_view');
+  initVideoSlotKeys(keys || []);
+  if (egoHandCanvas) {
+    egoHandCanvas.remove();
+    egoHandCanvas = null;
+    egoHandCtx = null;
   }
-  videoKeyToolbarButtons.innerHTML = '';
-  list.forEach((key) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `ls-video-view-btn${key === selected ? ' is-active' : ''}`;
-    btn.textContent = formatVideoKeyLabel(key);
-    btn.setAttribute('role', 'tab');
-    btn.setAttribute('aria-selected', key === selected ? 'true' : 'false');
-    btn.title = key;
-    btn.addEventListener('click', () => switchVideoKey(key));
-    videoKeyToolbarButtons.appendChild(btn);
-  });
-}
-
-async function switchVideoKey(newKey) {
-  if (!state.dataset || !newKey || newKey === state.dataset.selected_video_key) return;
-  if (state.currentEpisode == null) return;
-
-  const savedFrame = currentFrame();
-  const wasPaused = episodeVideo.paused;
-  const epIdx = state.currentEpisode;
-  const total = getTotalFrames();
-  const frame = total ? Math.min(savedFrame, total - 1) : savedFrame;
-  const targetTime = startFrameToSeconds(frame);
-
-  state.dataset.selected_video_key = newKey;
-  renderVideoKeyToolbar(state.dataset.video_keys, newKey);
-
-  const videoBlock = episodeVideo.parentElement;
-  const token = ++videoSwitchToken;
-  if (videoBlock) videoBlock.classList.add('ls-video-switching');
-
-  let finished = false;
-  const finishSwitch = () => {
-    if (finished || token !== videoSwitchToken) return;
-    finished = true;
-    if (videoBlock) videoBlock.classList.remove('ls-video-switching');
-    if (wasPaused) episodeVideo.pause();
-    updatePlayhead();
-    drawEgoHandOverlay();
-  };
-
-  const onLoadedMetadata = () => {
-    if (token !== videoSwitchToken) return;
-    episodeVideo.removeEventListener('loadedmetadata', onLoadedMetadata);
-
-    episodeVideo.addEventListener('seeked', finishSwitch, { once: true });
-    episodeVideo.currentTime = targetTime;
-    if (wasPaused) episodeVideo.pause();
-
-    window.setTimeout(() => {
-      if (finished || token !== videoSwitchToken) return;
-      if (Math.abs(episodeVideo.currentTime - targetTime) <= (1 / getFps())) {
-        finishSwitch();
-      }
-    }, 80);
-
-    window.setTimeout(finishSwitch, 500);
-  };
-
-  episodeVideo.addEventListener('loadedmetadata', onLoadedMetadata);
-  episodeVideo.src = `/api/video/${epIdx}?video_key=${encodeURIComponent(newKey)}`;
+  renderVideoGrid();
+  if (state.currentEpisode != null) {
+    const time = getMasterVideo() ? startFrameToSeconds(currentFrame()) : 0;
+    loadEpisodeVideoSources(state.currentEpisode, { time, pause: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2385,10 +2626,6 @@ function updateConnectFields() {
       ? (showCatalog ? t('connect_helper_catalog') : t('connect_helper_local'))
       : t('connect_helper_hf'),
   );
-}
-
-function populateVideoKeys(keys, selected) {
-  renderVideoKeyToolbar(keys, selected);
 }
 
 sourceSelect.addEventListener('change', updateConnectFields);
@@ -2570,17 +2807,6 @@ if (episodeStatusFilter) {
   });
 }
 
-episodeVideo.addEventListener('loadedmetadata', () => {
-  if (episodeVideo.closest('.ls-video-switching')) return;
-  renderAllTimeline();
-  drawEgoHandOverlay();
-});
-
-episodeVideo.addEventListener('timeupdate', () => {
-  updatePlayhead();
-  drawEgoHandOverlay();
-});
-
 exportBtn.addEventListener('click', async () => {
   exportStatus.textContent = t('export_running');
   const payload = {
@@ -2622,6 +2848,7 @@ if (pushHubBtn) pushHubBtn.addEventListener('click', handlePushToHub);
 // ---------------------------------------------------------------------------
 
 laI18n.init();
+renderVideoGrid();
 
 window.__laOnLocaleChange = () => {
   if (validationDismiss) validationDismiss.textContent = t('validation_back');
@@ -2632,9 +2859,6 @@ window.__laOnLocaleChange = () => {
   const skillAutoBadge = document.getElementById('skillAutoBadge');
   if (skillAutoBadge) skillAutoBadge.textContent = t('skill_auto_badge');
   updateConnectFields();
-  if (state.dataset?.video_keys) {
-    renderVideoKeyToolbar(state.dataset.video_keys, state.dataset.selected_video_key);
-  }
   if (state.annotationSchema) {
     renderLabelPalette();
     renderEpisodeFields();

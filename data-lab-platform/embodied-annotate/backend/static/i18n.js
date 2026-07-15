@@ -25,6 +25,7 @@
       label_package: 'Package',
       label_revision: 'Revision',
       label_camera_view: 'Camera view',
+      video_source_pane_aria: 'Switch camera: {name}',
       camera_head: 'Head cam',
       camera_1: 'Camera 1',
       camera_2: 'Camera 2',
@@ -154,6 +155,7 @@
       label_package: '子数据集',
       label_revision: '版本',
       label_camera_view: '相机视角',
+      video_source_pane_aria: '切换相机：{name}',
       camera_head: '头摄',
       camera_1: '相机 1',
       camera_2: '相机 2',
@@ -338,9 +340,6 @@
     setLabelText(document.getElementById('packageLabel'), t('label_package'));
     setLabelText(document.getElementById('localLabel'), t('label_local_path'));
     setLabelText(document.getElementById('revisionLabel'), t('label_revision'));
-
-    const cameraToolbarLabel = document.getElementById('videoKeyToolbarLabel');
-    if (cameraToolbarLabel) cameraToolbarLabel.textContent = t('label_camera_view');
 
     const loadBtn = document.querySelector('#connectForm button[type="submit"]');
     if (loadBtn) loadBtn.textContent = t('btn_load');

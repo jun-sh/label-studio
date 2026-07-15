@@ -224,6 +224,7 @@ services:
       - ./data-storage/embodied-annotate/cache:/data/cache
       - ./data-storage/embodied-annotate/exports:/data/exports
       - ./data-storage/embodied-annotate/datasets:/data/datasets
+      - ./data-storage/corpus/ego_214_hand_pose:/data/datasets/ego_214:ro
       - ./data-lab-platform/embodied-annotate/backend:/app/backend:ro
       - ./data-storage/samples:/datalab-samples:ro
     environment:

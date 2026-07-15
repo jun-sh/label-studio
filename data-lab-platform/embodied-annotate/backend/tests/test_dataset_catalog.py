@@ -85,6 +85,8 @@ def test_list_collections(catalog_root: Path) -> None:
     ids = {c["id"] for c in body["collections"]}
     assert "pusht" in ids
     assert "limx_box_transport" in ids
+    pusht = next(c for c in body["collections"] if c["id"] == "pusht")
+    assert pusht["title"] == "pusht"
 
 
 def test_get_collection_detail(catalog_root: Path) -> None:

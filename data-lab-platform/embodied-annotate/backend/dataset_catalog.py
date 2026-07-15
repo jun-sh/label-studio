@@ -139,8 +139,6 @@ def _leaf_collection(collection_dir: Path) -> dict[str, Any] | None:
     pkg = _enrich_package(collection_dir, {"id": collection_dir.name, "display_name": collection_dir.name})
     ann_schema = resolve_annotation_schema(collection_dir)
     title = collection_dir.name
-    if pkg.get("robot_type"):
-        title = f"{title} ({pkg['robot_type']})"
     pkg["annotation_schema"] = ann_schema
     pkg["schema_ref"] = schema_ref(ann_schema)
     return {

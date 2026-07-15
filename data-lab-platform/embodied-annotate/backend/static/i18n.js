@@ -76,6 +76,7 @@
       label_hint_overlap: 'Overlaps an existing segment — adjust start/end frames',
       timeline_resize_start: 'Drag to adjust start frame',
       timeline_resize_end: 'Drag to adjust end frame',
+      timeline_playhead_scrub: 'Drag to scrub video frame',
       regions_title: 'Regions',
       outcome_label: 'Outcome',
       save_button: 'Save segment annotations',
@@ -204,6 +205,7 @@
       label_hint_overlap: '与已有分段重叠，请调整起止帧',
       timeline_resize_start: '拖动调整起始帧',
       timeline_resize_end: '拖动调整结束帧',
+      timeline_playhead_scrub: '拖动红线扫帧，视频画面同步跳转',
       regions_title: '分段列表',
       outcome_label: '结果',
       save_button: '保存当前片段标注',
@@ -375,6 +377,11 @@
 
     const regionsHead = document.getElementById('regionsTitle') || document.querySelector('.ls-region-list-head span');
     if (regionsHead) regionsHead.textContent = t('regions_title');
+    const playheadHandleEl = document.getElementById('playheadHandle');
+    if (playheadHandleEl) {
+      playheadHandleEl.title = t('timeline_playhead_scrub');
+      playheadHandleEl.setAttribute('aria-label', t('timeline_playhead_scrub'));
+    }
     const outcomeLabel = document.querySelector('.ls-outcome-label');
     if (outcomeLabel) outcomeLabel.textContent = t('outcome_label');
     const outcomeGroup = document.getElementById('outcomeGroup');

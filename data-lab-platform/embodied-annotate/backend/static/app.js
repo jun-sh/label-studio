@@ -223,6 +223,7 @@ const timelineRuler = document.getElementById('timelineRuler');
 const timelineTrack = document.getElementById('timelineTrack');
 const timelineRegions = document.getElementById('timelineRegions');
 const playhead = document.getElementById('playhead');
+const playheadHandle = document.getElementById('playheadHandle');
 const dragPreview = document.getElementById('dragPreview');
 const regionList = document.getElementById('regionList');
 const regionCount = document.getElementById('regionCount');
@@ -247,6 +248,8 @@ const pushHubBtn = document.getElementById('pushHubBtn');
 
 const DEMO_LOCAL_DATASET =
   '/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/lerobot-annotate/data/pusht';
+
+let videoSwitchToken = 0;
 
 const state = {
   dataset: null,
@@ -1186,6 +1189,40 @@ function trackXToPercent(clientX) {
   return Math.max(0, Math.min(1, x / rect.width));
 }
 
+function seekToClientX(clientX) {
+  if (state.currentEpisode == null) return;
+  if (!getTotalFrames()) return;
+  const frame = percentToFrame(trackXToPercent(clientX));
+  episodeVideo.currentTime = startFrameToSeconds(frame);
+  updatePlayhead();
+  drawEgoHandOverlay();
+}
+
+function beginSeekDrag(e) {
+  if (state.currentEpisode == null || e.button !== 0) return false;
+  if (!getTotalFrames()) return false;
+  e.preventDefault();
+  e.stopPropagation();
+
+  episodeVideo.pause();
+  state.drag = {
+    mode: 'seek',
+    moved: false,
+  };
+  document.body.classList.add('ls-timeline-dragging', 'ls-playhead-seeking');
+  seekToClientX(e.clientX);
+  return true;
+}
+
+function onPlayheadMouseDown(e) {
+  beginSeekDrag(e);
+}
+
+function onRulerMouseDown(e) {
+  if (e.target !== timelineRuler) return;
+  beginSeekDrag(e);
+}
+
 // ---------------------------------------------------------------------------
 // Label palette
 // ---------------------------------------------------------------------------
@@ -1578,6 +1615,11 @@ function onTimelineMouseDown(e) {
 
 function onTimelineMouseMove(e) {
   if (!state.drag) return;
+  if (state.drag.mode === 'seek') {
+    state.drag.moved = true;
+    seekToClientX(e.clientX);
+    return;
+  }
   if (state.drag.mode === 'create') {
     const pct = trackXToPercent(e.clientX);
     if (Math.abs(pct - state.drag.startPct) > 0.005) {
@@ -1598,6 +1640,12 @@ function onTimelineMouseUp(e) {
   state.drag = null;
   document.body.classList.remove('ls-timeline-dragging');
   hideDragPreview();
+
+  if (drag.mode === 'seek') {
+    document.body.classList.remove('ls-playhead-seeking');
+    seekToClientX(e.clientX);
+    return;
+  }
 
   if (drag.mode === 'create') {
     const { startPct, currentPct, moved } = drag;
@@ -1636,6 +1684,10 @@ function onTimelineMouseUp(e) {
 function bindTimelineEvents() {
   timelineTrack.addEventListener('mousedown', onTimelineMouseDown);
   timelineRegions.addEventListener('mousedown', onTimelineMouseDown);
+  timelineRuler.addEventListener('mousedown', onRulerMouseDown);
+  if (playheadHandle) {
+    playheadHandle.addEventListener('mousedown', onPlayheadMouseDown);
+  }
   window.addEventListener('mousemove', onTimelineMouseMove);
   window.addEventListener('mouseup', onTimelineMouseUp);
 }
@@ -2126,10 +2178,51 @@ function renderVideoKeyToolbar(keys, selected) {
 
 async function switchVideoKey(newKey) {
   if (!state.dataset || !newKey || newKey === state.dataset.selected_video_key) return;
+  if (state.currentEpisode == null) return;
+
+  const savedFrame = currentFrame();
+  const wasPaused = episodeVideo.paused;
+  const epIdx = state.currentEpisode;
+  const total = getTotalFrames();
+  const frame = total ? Math.min(savedFrame, total - 1) : savedFrame;
+  const targetTime = startFrameToSeconds(frame);
+
   state.dataset.selected_video_key = newKey;
   renderVideoKeyToolbar(state.dataset.video_keys, newKey);
-  if (state.currentEpisode == null) return;
-  const epIdx = state.currentEpisode;
+
+  const videoBlock = episodeVideo.parentElement;
+  const token = ++videoSwitchToken;
+  if (videoBlock) videoBlock.classList.add('ls-video-switching');
+
+  let finished = false;
+  const finishSwitch = () => {
+    if (finished || token !== videoSwitchToken) return;
+    finished = true;
+    if (videoBlock) videoBlock.classList.remove('ls-video-switching');
+    if (wasPaused) episodeVideo.pause();
+    updatePlayhead();
+    drawEgoHandOverlay();
+  };
+
+  const onLoadedMetadata = () => {
+    if (token !== videoSwitchToken) return;
+    episodeVideo.removeEventListener('loadedmetadata', onLoadedMetadata);
+
+    episodeVideo.addEventListener('seeked', finishSwitch, { once: true });
+    episodeVideo.currentTime = targetTime;
+    if (wasPaused) episodeVideo.pause();
+
+    window.setTimeout(() => {
+      if (finished || token !== videoSwitchToken) return;
+      if (Math.abs(episodeVideo.currentTime - targetTime) <= (1 / getFps())) {
+        finishSwitch();
+      }
+    }, 80);
+
+    window.setTimeout(finishSwitch, 500);
+  };
+
+  episodeVideo.addEventListener('loadedmetadata', onLoadedMetadata);
   episodeVideo.src = `/api/video/${epIdx}?video_key=${encodeURIComponent(newKey)}`;
 }
 
@@ -2478,6 +2571,7 @@ if (episodeStatusFilter) {
 }
 
 episodeVideo.addEventListener('loadedmetadata', () => {
+  if (episodeVideo.closest('.ls-video-switching')) return;
   renderAllTimeline();
   drawEgoHandOverlay();
 });

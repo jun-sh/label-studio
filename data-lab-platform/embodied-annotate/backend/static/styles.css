@@ -140,9 +140,31 @@ body {
   display: none;
 }
 
-.ls-package-meta {
+.ls-package-meta,
+.ls-job-meta {
   margin: 4px 0 0;
   color: var(--ls-text);
+}
+
+.ls-job-banner {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--ls-border);
+  border-radius: 6px;
+  background: var(--ls-bg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ls-job-banner strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ls-text);
+  margin-bottom: 2px;
+}
+
+.ls-job-banner-sub {
+  color: var(--ls-muted);
 }
 
 input[readonly] {

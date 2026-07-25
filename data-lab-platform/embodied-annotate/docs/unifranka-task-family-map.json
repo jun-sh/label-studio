@@ -1,0 +1,815 @@
+{
+  "map_version": "1.0",
+  "collection_id": "unifranka",
+  "generated_from": "datasets/unifranka/*/meta",
+  "task_families": [
+    "pick_place",
+    "pour_transfer",
+    "tool_use",
+    "wipe_clean",
+    "articulate_drag",
+    "articulation"
+  ],
+  "schema_by_family": {
+    "pick_place": "pick_place_v1",
+    "pour_transfer": "pour_transfer_v1",
+    "tool_use": "tool_use_v1",
+    "wipe_clean": "wipe_clean_v1",
+    "articulate_drag": "articulate_drag_v1",
+    "articulation": "articulation_v1"
+  },
+  "policy": {
+    "l1_5_cycles": false,
+    "l0_source": "lerobot_tasks_parquet",
+    "cross_family_l2_mix_train": false
+  },
+  "summary": {
+    "unique_tasks": 80,
+    "episodes_by_family": {
+      "pick_place": 4570,
+      "wipe_clean": 178,
+      "pour_transfer": 78,
+      "articulation": 45,
+      "tool_use": 63,
+      "articulate_drag": 66
+    }
+  },
+  "packages": {
+    "681458": {
+      "total_episodes": 1000,
+      "task_families": {
+        "pick_place": 1000
+      },
+      "dominant_family": "pick_place",
+      "annotation_scope": "full_l2",
+      "recommended_sample_per_family": null
+    },
+    "681460": {
+      "total_episodes": 1000,
+      "task_families": {
+        "pick_place": 871,
+        "wipe_clean": 115,
+        "pour_transfer": 14
+      },
+      "dominant_family": "pick_place",
+      "annotation_scope": "sample_by_family",
+      "recommended_sample_per_family": 30
+    },
+    "681485": {
+      "total_episodes": 1000,
+      "task_families": {
+        "pour_transfer": 64,
+        "wipe_clean": 63,
+        "articulation": 45,
+        "tool_use": 63,
+        "pick_place": 699,
+        "articulate_drag": 66
+      },
+      "dominant_family": "pick_place",
+      "annotation_scope": "sample_by_family",
+      "recommended_sample_per_family": 30
+    },
+    "681496": {
+      "total_episodes": 1000,
+      "task_families": {
+        "pick_place": 1000
+      },
+      "dominant_family": "pick_place",
+      "annotation_scope": "full_l2",
+      "recommended_sample_per_family": null
+    },
+    "681520": {
+      "total_episodes": 1000,
+      "task_families": {
+        "pick_place": 1000
+      },
+      "dominant_family": "pick_place",
+      "annotation_scope": "full_l2",
+      "recommended_sample_per_family": null
+    }
+  },
+  "tasks": [
+    {
+      "task_text": "Arrange the utensils neatly.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 55
+    },
+    {
+      "task_text": "Clean the desktop.",
+      "task_family": "wipe_clean",
+      "schema_ref": "wipe_clean_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 45
+    },
+    {
+      "task_text": "Clean the table with a broom.",
+      "task_family": "wipe_clean",
+      "schema_ref": "wipe_clean_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 73
+    },
+    {
+      "task_text": "Drag the egg tray.",
+      "task_family": "articulate_drag",
+      "schema_ref": "articulate_drag_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Drag the fruit bowl.",
+      "task_family": "articulate_drag",
+      "schema_ref": "articulate_drag_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Drag the green bowl.",
+      "task_family": "articulate_drag",
+      "schema_ref": "articulate_drag_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Drag the green plate.",
+      "task_family": "articulate_drag",
+      "schema_ref": "articulate_drag_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 22
+    },
+    {
+      "task_text": "Drag the yellow plate.",
+      "task_family": "articulate_drag",
+      "schema_ref": "articulate_drag_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Flip the green cup and place it upside down on top of the yellow cup.",
+      "task_family": "articulation",
+      "schema_ref": "articulation_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 18
+    },
+    {
+      "task_text": "Fold the green towel.",
+      "task_family": "articulation",
+      "schema_ref": "articulation_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 27
+    },
+    {
+      "task_text": "Pick the cup lid up and place it on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 262
+    },
+    {
+      "task_text": "Pick the cup lid up.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 262
+    },
+    {
+      "task_text": "Pick up an egg from the egg tray and place it on the plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681496"
+      ],
+      "episodes": 469
+    },
+    {
+      "task_text": "Pick up an egg from the egg tray.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681496"
+      ],
+      "episodes": 531
+    },
+    {
+      "task_text": "Pick up the banana and place it on the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 43
+    },
+    {
+      "task_text": "Pick up the cup lid and place it on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 73
+    },
+    {
+      "task_text": "Pick up the egg tray and place it on the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 30
+    },
+    {
+      "task_text": "Pick up the green cup and put it back.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Pick up the mango and place it on the yellow plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Place the banana from the table onto the plate, then put it back on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 120
+    },
+    {
+      "task_text": "Place the bananas from the plate on the table, then put them back on the plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 116
+    },
+    {
+      "task_text": "Place the bananas from the plate on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 240
+    },
+    {
+      "task_text": "Place the egg from the tray into the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 44
+    },
+    {
+      "task_text": "Place the eggs from the bowl into the egg carton, and then put them back into the bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 135
+    },
+    {
+      "task_text": "Place the eggs from the egg carton into the bowl, and then put them back into the egg carton.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 149
+    },
+    {
+      "task_text": "Place the plastic fork on the plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681458"
+      ],
+      "episodes": 357
+    },
+    {
+      "task_text": "Pour the coffee from the glass bottle into the other glass bottle..",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Pour the coffee from the green bowl into the glass bottle.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Pour the coffee from the green bowl into the green cup.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 10
+    },
+    {
+      "task_text": "Pour the coffee from the green bowl into the yellow cup.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Pour the coffee from the yellow cup into the green bowl.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Pour the water from the cup into the glass bottle.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 14
+    },
+    {
+      "task_text": "Pour the water from the yellow cup into the plate.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put away the knife on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the banana into the green cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 28
+    },
+    {
+      "task_text": "Put the banana into the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 22
+    },
+    {
+      "task_text": "Put the banana into the other plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the banana into the yellow plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 22
+    },
+    {
+      "task_text": "Put the cherry tomatoes into the other plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the cherry tomatoes onto the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 110
+    },
+    {
+      "task_text": "Put the cup lid on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 18
+    },
+    {
+      "task_text": "Put the egg from the green plate back into the tray.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 44
+    },
+    {
+      "task_text": "Put the egg from the tray into the green bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 93
+    },
+    {
+      "task_text": "Put the egg into the glass bottle.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 14
+    },
+    {
+      "task_text": "Put the fruit on the table onto the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 29
+    },
+    {
+      "task_text": "Put the green cup into the green bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 34
+    },
+    {
+      "task_text": "Put the green cup into the yellow cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the green cup onto the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Put the knife into the green cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 14
+    },
+    {
+      "task_text": "Put the knife into the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the lid back on the cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460",
+        "681485"
+      ],
+      "episodes": 24
+    },
+    {
+      "task_text": "Put the mangosteen into the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 22
+    },
+    {
+      "task_text": "Put the mangosteen into the yellow bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Put the pineapple onto the yellow plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the white fan into the yellow plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Put the yellow bowl on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Put the yellow cup on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 11
+    },
+    {
+      "task_text": "Remove the plastic fork from the plate and place it on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681458",
+        "681460"
+      ],
+      "episodes": 299
+    },
+    {
+      "task_text": "Stir the coffee in the bowl with a spoon.",
+      "task_family": "tool_use",
+      "schema_ref": "tool_use_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 18
+    },
+    {
+      "task_text": "Take the cup from the green plate and place it on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 33
+    },
+    {
+      "task_text": "Take the cup out of the green bowl, place it on the table, and then put it back into the green bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 12
+    },
+    {
+      "task_text": "Take the egg from the cup and place it on the egg tray.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 14
+    },
+    {
+      "task_text": "Take the egg from the egg tray and place it into the yellow cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Take the eggs from the egg tray and place them into the green cup.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 15
+    },
+    {
+      "task_text": "Take the eggs from the egg tray and place them into the yellow bowl.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Take the fruit from the green plate and place it on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 28
+    },
+    {
+      "task_text": "Take the items from the egg tray and place them onto the yellow plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Take the spoon from the cup and place it on the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 14
+    },
+    {
+      "task_text": "Take the spoon from the plate, put it into the cup, and stir..",
+      "task_family": "tool_use",
+      "schema_ref": "tool_use_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Take the utensils from the cup and place them on the table.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Take the utensils from the cup and place them onto the green plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 18
+    },
+    {
+      "task_text": "Throw the crumpled paper into the trash can.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681458"
+      ],
+      "episodes": 374
+    },
+    {
+      "task_text": "Use a fork to spear the mangosteen.",
+      "task_family": "tool_use",
+      "schema_ref": "tool_use_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Use a knife to cut the mangosteen.",
+      "task_family": "tool_use",
+      "schema_ref": "tool_use_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Use a robotic arm to pick up bananas and place them on a plate.",
+      "task_family": "pick_place",
+      "schema_ref": "pick_place_v1@1",
+      "packages": [
+        "681520"
+      ],
+      "episodes": 240
+    },
+    {
+      "task_text": "Use a spoon to scoop the coffee from the glass into the bowl.",
+      "task_family": "pour_transfer",
+      "schema_ref": "pour_transfer_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Use the green cloth to wipe the table.",
+      "task_family": "wipe_clean",
+      "schema_ref": "wipe_clean_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    },
+    {
+      "task_text": "Use the knife to cut the fruit in the basket.",
+      "task_family": "tool_use",
+      "schema_ref": "tool_use_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 18
+    },
+    {
+      "task_text": "Wipe the table with the green cloth.",
+      "task_family": "wipe_clean",
+      "schema_ref": "wipe_clean_v1@1",
+      "packages": [
+        "681460"
+      ],
+      "episodes": 42
+    },
+    {
+      "task_text": "Wipe the yellow plate with the green cloth.",
+      "task_family": "wipe_clean",
+      "schema_ref": "wipe_clean_v1@1",
+      "packages": [
+        "681485"
+      ],
+      "episodes": 9
+    }
+  ]
+}

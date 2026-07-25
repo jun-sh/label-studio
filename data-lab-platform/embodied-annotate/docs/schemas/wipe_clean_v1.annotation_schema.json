@@ -1,0 +1,25 @@
+{
+  "schema_id": "wipe_clean_v1",
+  "schema_version": 1,
+  "subtask_labels": [
+    {"id": "idle", "order": 0, "color": "#9CA3AF", "label_zh": "空闲", "label_en": "Idle", "hint_zh": "未清洁", "hint_en": "Not cleaning"},
+    {"id": "reach", "order": 1, "color": "#34D399", "label_zh": "接近", "label_en": "Reach", "hint_zh": "移向清洁工具或区域", "hint_en": "Moving toward tool or surface"},
+    {"id": "grasp_tool", "order": 2, "color": "#6EE7B7", "label_zh": "取工具", "label_en": "Grasp tool", "hint_zh": "抓取布/扫帚等", "hint_en": "Grasp cloth or broom"},
+    {"id": "contact_surface", "order": 3, "color": "#FB923C", "label_zh": "接触表面", "label_en": "Contact surface", "hint_zh": "工具首次接触桌面/目标面", "hint_en": "Tool first contacts surface"},
+    {"id": "wipe", "order": 4, "color": "#3B82F6", "label_zh": "擦拭/清扫", "label_en": "Wipe", "hint_zh": "持续擦拭或扫动", "hint_en": "Continuous wiping or sweeping"},
+    {"id": "retract", "order": 5, "color": "#A78BFA", "label_zh": "撤回", "label_en": "Retract", "hint_zh": "工具离开表面", "hint_en": "Tool leaves surface"},
+    {"id": "release", "order": 6, "color": "#F472B6", "label_zh": "释放", "label_en": "Release", "hint_zh": "放下工具", "hint_en": "Release tool"}
+  ],
+  "episode_fields": [
+    {
+      "id": "outcome",
+      "type": "enum",
+      "required": false,
+      "values": ["success", "fail", "partial"],
+      "label_zh": "Episode 结果",
+      "label_en": "Episode outcome"
+    }
+  ],
+  "validation": {"segments_must_not_overlap": true, "gap_warn_frames": 10},
+  "timeline": {"snap_adjacent_frames": 1, "enable_move": true, "enable_resize": true, "create_on_empty_track_only": true}
+}

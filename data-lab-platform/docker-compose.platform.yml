@@ -224,13 +224,14 @@ services:
       - ./data-storage/embodied-annotate/cache:/data/cache
       - ./data-storage/embodied-annotate/exports:/data/exports
       - ./data-storage/embodied-annotate/datasets:/data/datasets
-      - ./data-storage/corpus/ego_214_hand_pose:/data/datasets/ego_214:ro
       - ./data-lab-platform/embodied-annotate/backend:/app/backend:ro
+      - ./data-lab-platform/embodied-annotate/docs/schemas:/app/docs/schemas:ro
       - ./data-storage/samples:/datalab-samples:ro
     environment:
       - LEROBOT_ANNOTATE_CACHE=/data/cache
       - LEROBOT_ANNOTATE_EXPORT=/data/exports
       - LEROBOT_ANNOTATE_DATASETS=/data/datasets
+      - LEROBOT_ANNOTATE_SCHEMA_REGISTRY=/app/docs/schemas
       - PYTHONPATH=/app:/app/backend
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7861/ >/dev/null || exit 1"]

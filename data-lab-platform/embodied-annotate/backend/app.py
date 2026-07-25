@@ -28,13 +28,42 @@ from annotation_schema import (
     validate_skill_cycles,
     validate_subtasks,
 )
+from annotation_job import AnnotationJob
+from annotation_jobs_service import (
+    auto_select_open_job,
+    build_job_detail,
+    compute_job_episode_indices,
+    filter_jobs,
+    get_job_by_id,
+    infer_collection_context,
+    job_schema_ref,
+    job_to_summary,
+    load_collection_jobs,
+    load_jobs_document,
+    package_requires_job,
+    resolve_job_for_load,
+)
+from task_family import (
+    JobFamilyMismatchError,
+    TaskFamilyUnresolvedError,
+    load_schema_by_id,
+    load_task_family_map,
+    resolve_schema_for_episode,
+)
 from dataset_catalog import datasets_root, get_collection, list_collections, resolve_package_path
 from episode_progress import (
     build_annotation_progress,
     episode_annotation_status,
     soft_validate_episode,
 )
-from export_builders import build_skill_cycles_dataframe, build_skill_segments_dataframe
+from export_builders import (
+    build_cycles_dataframe,
+    build_episodes_meta_dataframe,
+    build_export_manifest,
+    build_skill_segments_dataframe,
+    build_subtasks_lookup_dataframe,
+)
+from export_staging import stage_training_meta
 from skill_derivation import apply_skill_derivation, sync_box_cycle_from_cycles
 from ego_parquet import (
     episode_meta_public,
@@ -142,6 +171,9 @@ class DatasetLoadRequest(BaseModel):
     revision: str | None = None
     local_path: str | None = None
     video_key: str | None = None
+    collection_id: str | None = None
+    package_id: str | None = None
+    job_id: str | None = None
 
 
 class SegmentSubtask(BaseModel):
@@ -197,6 +229,146 @@ class DataManager:
         self.annotations_path: Path | None = None
         self.annotation_schema: dict[str, Any] = {}
         self.schema_ref: str | None = None
+        self.collection_id: str | None = None
+        self.package_id: str | None = None
+        self.collection_dir: Path | None = None
+        self.family_map: dict[str, Any] | None = None
+        self.active_job: AnnotationJob | None = None
+        self.job_episode_indices: set[int] = set()
+
+    def _episode_row(self, episode_index: int) -> pd.Series:
+        assert self.episodes_df is not None
+        row = self.episodes_df[self.episodes_df["episode_index"] == episode_index]
+        if row.empty:
+            raise HTTPException(status_code=404, detail=f"Episode {episode_index} not found")
+        return row.iloc[0]
+
+    def _assert_episode_in_job(self, episode_index: int) -> None:
+        if self.active_job is None:
+            return
+        if int(episode_index) not in self.job_episode_indices:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Episode {episode_index} is outside active job "
+                    f"{self.active_job.job_id!r} (J-01)"
+                ),
+            )
+
+    def _episode_schema_resolution(self, episode_index: int):
+        row = self._episode_row(episode_index)
+        task_text, task_index = self._resolve_episode_task_text(row)
+        try:
+            return resolve_schema_for_episode(
+                collection_id=self.collection_id or "",
+                package_id=self.package_id or (self.dataset_root.name if self.dataset_root else ""),
+                episode_index=episode_index,
+                task_text=task_text,
+                task_index=task_index,
+                active_job=self.active_job,
+                family_map=self.family_map,
+                package_root=self.dataset_root,
+            )
+        except JobFamilyMismatchError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    def _episode_schema(self, episode_index: int) -> dict[str, Any]:
+        return self._episode_schema_resolution(episode_index).schema
+
+    def _configure_job_context(self, req: DatasetLoadRequest) -> None:
+        assert self.dataset_root is not None
+        inferred_collection, inferred_package = infer_collection_context(self.dataset_root)
+        self.collection_id = req.collection_id or inferred_collection
+        self.package_id = req.package_id or inferred_package
+        self.collection_dir = None
+        self.family_map = None
+        self.active_job = None
+        self.job_episode_indices = set()
+
+        if not self.collection_id:
+            self.annotation_schema = resolve_annotation_schema(self.dataset_root)
+            self.schema_ref = schema_ref(self.annotation_schema)
+            assert self.episodes_df is not None
+            self.job_episode_indices = {
+                int(x) for x in self.episodes_df["episode_index"].tolist()
+            }
+            return
+
+        self.collection_dir = datasets_root() / self.collection_id
+        if self.collection_dir.is_dir():
+            self.family_map = load_task_family_map(self.collection_dir)
+
+        jobs_doc_exists = (
+            self.collection_dir.is_dir()
+            and load_jobs_document(self.collection_dir) is not None
+        )
+        if jobs_doc_exists and self.package_id:
+            try:
+                self.active_job = resolve_job_for_load(
+                    collection_dir=self.collection_dir,
+                    package_id=self.package_id,
+                    job_id=req.job_id,
+                    family_map=self.family_map,
+                )
+            except ValueError:
+                self.active_job = None
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"Job not found: {req.job_id}") from exc
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except LookupError as exc:
+                open_jobs = filter_jobs(
+                    load_collection_jobs(self.collection_dir),
+                    package_id=self.package_id,
+                    status="open",
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": str(exc),
+                        "requires_job": True,
+                        "open_jobs": [j.job_id for j in open_jobs],
+                    },
+                ) from exc
+            except JobFamilyMismatchError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        assert self.episodes_df is not None
+        if self.active_job is not None:
+            indices = compute_job_episode_indices(
+                self.active_job,
+                self.episodes_df,
+                family_map=self.family_map,
+                resolve_task_text=self._resolve_episode_task_text,
+            )
+            self.job_episode_indices = set(indices)
+            self.annotation_schema = load_schema_by_id(
+                self.active_job.schema_id,
+                package_root=self.dataset_root,
+            )
+            self.schema_ref = schema_ref(self.annotation_schema)
+        else:
+            self.annotation_schema = resolve_annotation_schema(self.dataset_root)
+            self.schema_ref = schema_ref(self.annotation_schema)
+            self.job_episode_indices = {
+                int(x) for x in self.episodes_df["episode_index"].tolist()
+            }
+
+    def _active_job_payload(self) -> dict[str, Any] | None:
+        if self.active_job is None:
+            return None
+        return {
+            "job_id": self.active_job.job_id,
+            "display_name": self.active_job.display_name,
+            "collection_id": self.active_job.collection_id,
+            "package_id": self.active_job.package_id,
+            "task_family": self.active_job.task_family,
+            "schema_id": self.active_job.schema_id,
+            "schema_ref": self.schema_ref,
+            "scope": self.active_job.scope,
+            "status": self.active_job.status,
+            "episode_count": len(self.job_episode_indices),
+        }
 
     def load_dataset(self, req: DatasetLoadRequest) -> dict[str, Any]:
         if req.source not in {"hf", "local"}:
@@ -243,8 +415,7 @@ class DataManager:
             )
 
         self.annotations_path = self.dataset_root / "meta" / "lerobot_annotations.json"
-        self.annotation_schema = resolve_annotation_schema(self.dataset_root)
-        self.schema_ref = schema_ref(self.annotation_schema)
+        self._configure_job_context(req)
         self._load_existing_annotations()
         return self._build_summary()
 
@@ -341,23 +512,32 @@ class DataManager:
             fields=payload.get("fields") or {},
         )
 
-    def _refresh_skill_derivation(self, ann: EpisodeAnnotations) -> None:
-        if not skill_derivation_enabled(self.annotation_schema):
+    def _refresh_skill_derivation(self, ann: EpisodeAnnotations, episode_index: int) -> None:
+        schema = self._episode_schema(episode_index)
+        if not skill_derivation_enabled(schema):
             return
         previous_cycles = list(ann.skill_cycles)
         segments, cycles, warnings = apply_skill_derivation(
             ann.subtasks,
-            self.annotation_schema,
+            schema,
             previous_cycles=previous_cycles,
         )
         ann.skill_segments = segments
         ann.skill_cycles = cycles
         ann.skill_derivation_warnings = warnings
-        ann.fields = sync_box_cycle_from_cycles(ann.skill_cycles, ann.fields)
+        if any(spec.get("id") == "box_cycle" for spec in schema.get("episode_fields") or []):
+            ann.fields = sync_box_cycle_from_cycles(ann.skill_cycles, ann.fields)
 
-    def _maybe_reset_skill_review(self, old: EpisodeAnnotations | None, new_subtasks: list[dict[str, Any]], fields: dict[str, Any]) -> dict[str, Any]:
+    def _maybe_reset_skill_review(
+        self,
+        old: EpisodeAnnotations | None,
+        new_subtasks: list[dict[str, Any]],
+        fields: dict[str, Any],
+        episode_index: int,
+    ) -> dict[str, Any]:
         fields = dict(fields or {})
-        if not skill_derivation_enabled(self.annotation_schema):
+        schema = self._episode_schema(episode_index)
+        if not skill_derivation_enabled(schema):
             return fields
         if old and old.subtasks != new_subtasks and fields.get("skill_review") == "approved":
             fields["skill_review"] = "pending"
@@ -365,15 +545,16 @@ class DataManager:
             fields.setdefault("skill_review", "pending")
         return fields
 
-    def _episode_status(self, ann: EpisodeAnnotations) -> str:
+    def _episode_status(self, ann: EpisodeAnnotations, episode_index: int) -> str:
         return episode_annotation_status(
             ann.subtasks,
             ann.outcome,
             ann.fields,
-            self.annotation_schema,
+            self._episode_schema(episode_index),
         )
 
     def _annotation_response(self, episode_index: int, ann: EpisodeAnnotations) -> dict[str, Any]:
+        resolution = self._episode_schema_resolution(episode_index)
         return {
             "episode_index": episode_index,
             "subtasks": ann.subtasks,
@@ -383,7 +564,11 @@ class DataManager:
             "skill_derivation_warnings": ann.skill_derivation_warnings,
             "outcome": ann.outcome,
             "fields": ann.fields,
-            "annotation_status": self._episode_status(ann),
+            "annotation_status": self._episode_status(ann, episode_index),
+            "task_family": resolution.task_family,
+            "schema_ref": resolution.schema_ref,
+            "l2_annotation_enabled": resolution.l2_annotation_enabled,
+            "annotation_schema": resolution.schema,
         }
 
     def _get_video_keys(self) -> list[str]:
@@ -397,7 +582,7 @@ class DataManager:
             for ep_str, payload in data.get("episodes", {}).items():
                 ep_idx = int(ep_str)
                 ann = self._episode_payload_from_storage(payload)
-                self._refresh_skill_derivation(ann)
+                self._refresh_skill_derivation(ann, ep_idx)
                 self.annotations[ep_idx] = ann
             return
 
@@ -432,6 +617,16 @@ class DataManager:
                 "subtasks": ann.subtasks,
                 "high_levels": ann.high_levels,
             }
+            if ep_idx in self.job_episode_indices or self.active_job is None:
+                try:
+                    resolution = self._episode_schema_resolution(ep_idx)
+                    ep_payload["schema_ref"] = resolution.schema_ref
+                    if resolution.task_family:
+                        ep_payload["task_family"] = resolution.task_family
+                except HTTPException:
+                    pass
+            if self.active_job is not None:
+                ep_payload["job_id"] = self.active_job.job_id
             if ann.skill_segments:
                 ep_payload["skill_segments"] = ann.skill_segments
             if ann.skill_cycles:
@@ -456,20 +651,26 @@ class DataManager:
         
         episodes = []
         for _, row in self.episodes_df.iterrows():
+            ep_idx = int(row["episode_index"])
+            if self.active_job is not None and ep_idx not in self.job_episode_indices:
+                continue
             length = int(row.get("length", row.get("dataset_to_index", 0) - row.get("dataset_from_index", 0)))
             duration = length / fps if fps else 0.0
-            ep_idx = int(row["episode_index"])
             task_text, task_index = self._resolve_episode_task_text(row)
 
             # Get video timing info for this episode
             video_info = episode_video_offsets.get(ep_idx, {"video_start_time": 0.0, "video_end_time": duration})
 
+            resolution = self._episode_schema_resolution(ep_idx)
             episode_entry: dict[str, Any] = {
                 "episode_index": ep_idx,
                 "length": length,
                 "duration": duration,
                 "video_start_time": video_info["video_start_time"],
                 "video_end_time": video_info["video_end_time"],
+                "task_family": resolution.task_family,
+                "schema_ref": resolution.schema_ref,
+                "l2_annotation_enabled": resolution.l2_annotation_enabled,
             }
             if task_text:
                 episode_entry["task_text"] = task_text
@@ -477,7 +678,7 @@ class DataManager:
                 episode_entry["task_index"] = task_index
             ann = self.annotations.get(ep_idx)
             episode_entry["annotation_status"] = (
-                self._episode_status(ann) if ann is not None else "none"
+                self._episode_status(ann, ep_idx) if ann is not None else "none"
             )
             episodes.append(episode_entry)
 
@@ -492,11 +693,14 @@ class DataManager:
             "repo_id": self.repo_id,
             "revision": self.revision,
             "root": str(self.dataset_root),
+            "collection_id": self.collection_id,
+            "package_id": self.package_id,
             "fps": fps,
             "video_keys": self._get_video_keys(),
             "selected_video_key": self.video_key,
             "annotation_schema": self.annotation_schema,
             "schema_ref": self.schema_ref,
+            "active_job": self._active_job_payload(),
             "annotation_progress": progress,
             "episodes": episodes,
         }
@@ -543,6 +747,7 @@ class DataManager:
         return result
 
     def get_episode_video_path(self, episode_index: int, video_key: str | None = None) -> Path:
+        self._assert_episode_in_job(episode_index)
         if self.episodes_df is None or self.info is None:
             raise HTTPException(status_code=400, detail="Dataset not loaded")
         video_key = video_key or self.video_key
@@ -582,10 +787,11 @@ class DataManager:
         raise HTTPException(status_code=404, detail=f"Video file not found: {full_path}")
 
     def get_episode_annotations(self, episode_index: int) -> EpisodeAnnotations:
+        self._assert_episode_in_job(episode_index)
         if episode_index not in self.annotations:
             self.annotations[episode_index] = EpisodeAnnotations()
         ann = self.annotations[episode_index]
-        self._refresh_skill_derivation(ann)
+        self._refresh_skill_derivation(ann, episode_index)
         return ann
 
     def _episode_frame_bounds(self, episode_index: int) -> tuple[float, int | None]:
@@ -601,29 +807,41 @@ class DataManager:
     def set_episode_annotations(
         self, payload: EpisodeAnnotationsPayload
     ) -> tuple[EpisodeAnnotations, dict[str, Any]]:
+        self._assert_episode_in_job(payload.episode_index)
         if payload.outcome is not None and payload.outcome not in VALID_OUTCOMES:
             raise HTTPException(
                 status_code=400,
                 detail=f"outcome must be one of {sorted(VALID_OUTCOMES)} or null",
             )
+        resolution = self._episode_schema_resolution(payload.episode_index)
+        if payload.subtasks and not resolution.l2_annotation_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Episode {payload.episode_index} is unmapped or outside job family; "
+                    "L2 annotation disabled (J-02)"
+                ),
+            )
         subtasks_dicts = [seg.dict() for seg in payload.subtasks]
+        episode_schema = resolution.schema
         fps, max_frame = self._episode_frame_bounds(payload.episode_index)
         validate_subtasks(
-            self.annotation_schema,
+            episode_schema,
             subtasks_dicts,
             fps=fps,
             max_frame=max_frame,
         )
         old = self.annotations.get(payload.episode_index)
         fields = filter_episode_fields(
-            self.annotation_schema,
+            episode_schema,
             self._maybe_reset_skill_review(
                 old,
                 subtasks_dicts,
                 dict(payload.fields or {}),
+                payload.episode_index,
             ),
         )
-        validate_episode_fields(self.annotation_schema, fields)
+        validate_episode_fields(episode_schema, fields)
         ann = EpisodeAnnotations(
             subtasks=subtasks_dicts,
             high_levels=[seg.dict() for seg in payload.high_levels],
@@ -631,8 +849,8 @@ class DataManager:
             outcome=payload.outcome,
             fields=fields,
         )
-        self._refresh_skill_derivation(ann)
-        validate_skill_cycles(self.annotation_schema, ann.skill_cycles)
+        self._refresh_skill_derivation(ann, payload.episode_index)
+        validate_skill_cycles(episode_schema, ann.skill_cycles)
         self.annotations[payload.episode_index] = ann
         self._save_annotations()
         response = self._annotation_response(payload.episode_index, ann)
@@ -641,7 +859,7 @@ class DataManager:
             outcome=ann.outcome,
             fields=ann.fields,
             skill_cycles=ann.skill_cycles,
-            schema=self.annotation_schema,
+            schema=episode_schema,
         )
         return ann, response
 
@@ -658,28 +876,47 @@ class DataManager:
 
         out_root.mkdir(parents=True, exist_ok=True)
 
-        # Copy meta directory first
         src_meta = self.dataset_root / "meta"
         dst_meta = out_root / "meta"
-        if dst_meta.exists():
-            shutil.rmtree(dst_meta)
-        shutil.copytree(src_meta, dst_meta)
+        stage_training_meta(src_meta, dst_meta)
 
-        subtasks_df, subtask_map = build_subtasks_dataframe(self.annotations)
-        skills_df, skill_map = build_skill_segments_dataframe(self.annotations, self.annotation_schema)
-        cycles_df = build_skill_cycles_dataframe(self.annotations)
+        subtasks_df, subtask_map = build_subtasks_lookup_dataframe(self.annotations)
+        _, skill_map = build_skill_segments_dataframe(self.annotations, self.annotation_schema)
+        cycles_df = build_cycles_dataframe(self.annotations)
+        episode_indices = sorted(self.job_episode_indices) if self.active_job else [
+            int(x) for x in self.episodes_df["episode_index"].tolist()
+        ]
+        episodes_meta_df = build_episodes_meta_dataframe(
+            self.annotations,
+            episode_indices,
+            self.episodes_df,
+            self.annotation_schema,
+            self.schema_ref,
+        )
         tasks_df, task_map = build_high_level_dataframe(self.annotations)
 
         if not subtasks_df.empty:
             subtasks_df.to_parquet(dst_meta / "subtasks.parquet", engine="pyarrow", compression="snappy")
-        if not skills_df.empty:
-            skills_df.to_parquet(dst_meta / "skills.parquet", engine="pyarrow", compression="snappy")
         if not cycles_df.empty:
-            cycles_df.to_parquet(dst_meta / "skill_cycles.parquet", engine="pyarrow", compression="snappy")
+            cycles_df.to_parquet(dst_meta / "cycles.parquet", engine="pyarrow", compression="snappy")
+        if not episodes_meta_df.empty:
+            episodes_meta_df.to_parquet(dst_meta / "episodes_meta.parquet", engine="pyarrow", compression="snappy")
         if not tasks_df.empty:
             tasks_df.to_parquet(dst_meta / "tasks_high_level.parquet", engine="pyarrow", compression="snappy")
 
-        # Update info.json features
+        row_counts = {
+            "episodes": len(episodes_meta_df),
+            "cycles": len(cycles_df),
+            "subtask_labels": len(subtasks_df),
+            "skills_in_memory": len(skill_map),
+        }
+        manifest = build_export_manifest(
+            schema_ref_value=self.schema_ref,
+            schema=self.annotation_schema,
+            row_counts=row_counts,
+            output_dir=str(out_root),
+        )
+        (dst_meta / "export_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         info_path = dst_meta / "info.json"
         info = json.loads(info_path.read_text())
         info.setdefault("features", {})
@@ -769,20 +1006,17 @@ class DataManager:
         return {
             "output_dir": str(out_root),
             "subtasks": len(subtasks_df),
-            "skills": len(skills_df),
-            "skill_cycles": len(cycles_df),
+            "skills": len(skill_map),
+            "cycles": len(cycles_df),
+            "episodes_meta": len(episodes_meta_df),
             "tasks_high_level": len(tasks_df),
+            "export_contract_version": manifest["export_contract_version"],
         }
 
 
 def build_subtasks_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
-    labels = sorted({seg["label"] for ann in annotations.values() for seg in ann.subtasks if seg.get("label")})
-    data = [{"subtask": label, "subtask_index": idx} for idx, label in enumerate(labels)]
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.set_index("subtask")
-    subtask_map = {label: idx for idx, label in enumerate(labels)}
-    return df, subtask_map
+    """Backward-compatible wrapper."""
+    return build_subtasks_lookup_dataframe(annotations)
 
 
 def build_high_level_dataframe(annotations: dict[int, EpisodeAnnotations]) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -906,6 +1140,112 @@ def api_get_collection(collection_id: str) -> JSONResponse:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Collection not found: {collection_id}") from exc
     return JSONResponse(collection)
+
+
+@app.get("/api/datasets/collections/{collection_id}/jobs")
+def api_list_jobs(
+    collection_id: str,
+    package_id: str | None = None,
+    task_family: str | None = None,
+    status: str | None = None,
+) -> JSONResponse:
+    from annotation_jobs_service import count_annotated_episodes
+
+    collection_dir = datasets_root() / collection_id
+    if not collection_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Collection not found: {collection_id}")
+    jobs = filter_jobs(
+        load_collection_jobs(collection_dir),
+        package_id=package_id,
+        task_family=task_family,
+        status=status,
+    )
+    family_map = load_task_family_map(collection_dir)
+    summaries: list[dict[str, Any]] = []
+    for job in jobs:
+        pkg_root = collection_dir / job.package_id
+        if not pkg_root.is_dir():
+            continue
+        ep_files = sorted((pkg_root / "meta" / "episodes").rglob("*.parquet"))
+        if not ep_files:
+            continue
+        episodes_df = pd.concat([pd.read_parquet(f) for f in ep_files], ignore_index=True)
+        annotations: dict[int, Any] = {}
+        ann_path = pkg_root / "meta" / "lerobot_annotations.json"
+        if ann_path.is_file():
+            raw = json.loads(ann_path.read_text(encoding="utf-8"))
+            annotations = {int(k): v for k, v in (raw.get("episodes") or {}).items()}
+        dm = DataManager()
+        dm.tasks_map = dm._load_tasks_map(pkg_root)
+        indices = compute_job_episode_indices(
+            job,
+            episodes_df,
+            family_map=family_map,
+            resolve_task_text=dm._resolve_episode_task_text,
+        )
+        try:
+            schema = load_schema_by_id(job.schema_id, package_root=pkg_root)
+            annotated = count_annotated_episodes(indices, annotations, schema)
+        except FileNotFoundError:
+            annotated = 0
+        summaries.append(job_to_summary(job, episode_count=len(indices), annotated_count=annotated))
+    return JSONResponse({"collection_id": collection_id, "jobs": summaries})
+
+
+@app.get("/api/datasets/collections/{collection_id}/jobs/{job_id}")
+def api_get_job(collection_id: str, job_id: str) -> JSONResponse:
+    collection_dir = datasets_root() / collection_id
+    job = get_job_by_id(collection_dir, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    package_root = collection_dir / job.package_id
+    if not package_root.is_dir():
+        raise HTTPException(status_code=404, detail=f"Package not found: {job.package_id}")
+    family_map = load_task_family_map(collection_dir)
+    episodes_df = pd.concat(
+        [pd.read_parquet(f) for f in sorted((package_root / "meta" / "episodes").rglob("*.parquet"))],
+        ignore_index=True,
+    )
+    annotations: dict[int, Any] = {}
+    ann_path = package_root / "meta" / "lerobot_annotations.json"
+    if ann_path.is_file():
+        raw = json.loads(ann_path.read_text(encoding="utf-8"))
+        annotations = {int(k): v for k, v in (raw.get("episodes") or {}).items()}
+    dm = DataManager()
+    dm.tasks_map = dm._load_tasks_map(package_root)
+    detail = build_job_detail(
+        job,
+        collection_dir=collection_dir,
+        package_root=package_root,
+        episodes_df=episodes_df,
+        family_map=family_map,
+        annotations=annotations,
+        resolve_task_text=dm._resolve_episode_task_text,
+    )
+    return JSONResponse(detail)
+
+
+@app.get("/api/episodes/{episode_index}/resolve")
+def api_resolve_episode(episode_index: int, job_id: str | None = None) -> JSONResponse:
+    if manager.dataset_root is None:
+        raise HTTPException(status_code=400, detail="Dataset not loaded")
+    manager._assert_episode_in_job(episode_index)
+    resolution = manager._episode_schema_resolution(episode_index)
+    row = manager._episode_row(episode_index)
+    task_text, task_index = manager._resolve_episode_task_text(row)
+    return JSONResponse(
+        {
+            "episode_index": episode_index,
+            "task_text": task_text,
+            "task_index": task_index,
+            "task_family": resolution.task_family,
+            "schema_ref": resolution.schema_ref,
+            "l2_annotation_enabled": resolution.l2_annotation_enabled,
+            "resolution_source": resolution.resolution_source,
+            "in_job": episode_index in manager.job_episode_indices,
+            "active_job": manager._active_job_payload(),
+        }
+    )
 
 
 @app.post("/api/dataset/load")

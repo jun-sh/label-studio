@@ -1,6 +1,6 @@
 {
   "tag": "deploy-release-v0.0.6",
-  "snapshotted_at": "2026-07-15T18:45:13+08:00",
+  "snapshotted_at": "2026-07-25T20:24:12+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
     {
@@ -29,6 +29,10 @@
     },
     {
       "path": "data-lab-platform/ego-local-web",
+      "type": "monorepo-subtree"
+    },
+    {
+      "path": "data-lab-platform/lerobot-qc",
       "type": "monorepo-subtree"
     }
   ]

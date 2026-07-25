@@ -1,0 +1,156 @@
+{
+  "schema_id": "pick_place_v1",
+  "schema_version": 1,
+  "subtask_labels": [
+    {
+      "id": "idle",
+      "order": 0,
+      "color": "#9CA3AF",
+      "label_zh": "空闲",
+      "label_en": "Idle",
+      "hint_zh": "等待，末端未参与当前操作",
+      "hint_en": "Waiting; end-effector not engaged in the current manipulation"
+    },
+    {
+      "id": "reach",
+      "order": 1,
+      "color": "#34D399",
+      "label_zh": "接近",
+      "label_en": "Reach",
+      "hint_zh": "移向目标物体，尚未进入预抓姿态",
+      "hint_en": "Moving toward target object; no pre-grasp pose yet"
+    },
+    {
+      "id": "pre_grasp",
+      "order": 2,
+      "color": "#6EE7B7",
+      "label_zh": "预抓取",
+      "label_en": "Pre-grasp",
+      "hint_zh": "对准、张开夹爪，尚未接触物体",
+      "hint_en": "Aligning and opening gripper; no object contact"
+    },
+    {
+      "id": "contact",
+      "order": 3,
+      "color": "#FB923C",
+      "label_zh": "接触",
+      "label_en": "Contact",
+      "hint_zh": "首次接触物体至稳定抓稳前",
+      "hint_en": "First touch until stable grasp"
+    },
+    {
+      "id": "lift",
+      "order": 4,
+      "color": "#60A5FA",
+      "label_zh": "抬起",
+      "label_en": "Lift",
+      "hint_zh": "物体离开支撑面",
+      "hint_en": "Object leaves support surface"
+    },
+    {
+      "id": "transport",
+      "order": 5,
+      "color": "#3B82F6",
+      "label_zh": "搬运",
+      "label_en": "Transport",
+      "hint_zh": "持物移向目标放置位",
+      "hint_en": "Carrying object toward placement goal"
+    },
+    {
+      "id": "place",
+      "order": 6,
+      "color": "#A78BFA",
+      "label_zh": "放置",
+      "label_en": "Place",
+      "hint_zh": "朝目标位下降，尚未松手",
+      "hint_en": "Lowering onto goal; not released"
+    },
+    {
+      "id": "release",
+      "order": 7,
+      "color": "#F472B6",
+      "label_zh": "释放",
+      "label_en": "Release",
+      "hint_zh": "松手，物体脱离夹爪",
+      "hint_en": "Gripper opens; object detached"
+    }
+  ],
+  "skill_labels": [
+    {
+      "id": "approach_skill",
+      "order": 0,
+      "color": "#10B981",
+      "label_zh": "接近技能",
+      "label_en": "Approach",
+      "hint_zh": "趋近目标并准备抓取",
+      "subgoal_en": "move close to the target object and prepare for grasping",
+      "subgoal_zh": "趋近目标物体并准备抓取"
+    },
+    {
+      "id": "grasp_skill",
+      "order": 1,
+      "color": "#F59E0B",
+      "label_zh": "抓取技能",
+      "label_en": "Grasp",
+      "hint_zh": "预抓 → 接触 → 抬升",
+      "subgoal_en": "pre-align, contact and lift the object stably",
+      "subgoal_zh": "预对位、接触并稳定抬升物体"
+    },
+    {
+      "id": "place_skill",
+      "order": 2,
+      "color": "#8B5CF6",
+      "label_zh": "放置技能",
+      "label_en": "Place",
+      "hint_zh": "持物搬运 → 对位 → 放置 → 松手",
+      "subgoal_en": "transport the object and place it at the goal",
+      "subgoal_zh": "搬运物体并放置到目标位置"
+    }
+  ],
+  "skill_derivation": {
+    "enabled": true,
+    "cycle_start_labels": ["reach"],
+    "skills": {
+      "approach_skill": {
+        "from_label": "reach",
+        "until_label": "pre_grasp",
+        "until_exclusive": true
+      },
+      "grasp_skill": {
+        "from_label": "pre_grasp",
+        "until_label": "lift",
+        "until_inclusive": true
+      },
+      "place_skill": {
+        "from_label": "transport",
+        "until_label": "release",
+        "until_inclusive": true
+      }
+    }
+  },
+  "episode_fields": [
+    {
+      "id": "outcome",
+      "type": "enum",
+      "required": false,
+      "values": ["success", "fail", "partial"],
+      "label_zh": "Episode 结果",
+      "label_en": "Episode outcome",
+      "hint_zh": "该 episode 是否完成语言指令目标",
+      "hint_en": "Whether the language instruction goal was achieved"
+    }
+  ],
+  "validation": {
+    "segments_must_not_overlap": true,
+    "gap_warn_frames": 10,
+    "require_full_coverage": false,
+    "min_segment_frames": 1
+  },
+  "timeline": {
+    "snap_adjacent_frames": 1,
+    "resize_handle_px": 6,
+    "enable_move": true,
+    "enable_resize": true,
+    "create_on_empty_track_only": true
+  }
+}

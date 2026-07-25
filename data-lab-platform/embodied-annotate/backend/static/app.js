@@ -184,9 +184,13 @@ const repoLabel = document.getElementById('repoLabel');
 const localLabel = document.getElementById('localLabel');
 const collectionLabel = document.getElementById('collectionLabel');
 const packageLabel = document.getElementById('packageLabel');
+const jobLabel = document.getElementById('jobLabel');
 const collectionSelect = document.getElementById('collectionSelect');
 const packageSelect = document.getElementById('packageSelect');
+const jobSelect = document.getElementById('jobSelect');
 const packageMeta = document.getElementById('packageMeta');
+const jobMeta = document.getElementById('jobMeta');
+const jobBanner = document.getElementById('jobBanner');
 const toggleAdvancedPath = document.getElementById('toggleAdvancedPath');
 
 const workspace = document.getElementById('workspace');
@@ -278,8 +282,11 @@ const state = {
     byId: new Map(),
     selectedCollectionId: null,
     selectedPackageId: null,
+    selectedJobId: null,
+    jobs: [],
     advancedPath: false,
   },
+  activeJob: null,
   annotationProgress: null,
   episodeStatusFilter: 'all',
 };
@@ -651,6 +658,7 @@ function parseEgoUrlParams() {
   const datasetPath = params.get('datasetPath');
   const collection = params.get('collection');
   const packageId = params.get('package');
+  const jobId = params.get('job');
   const episodeRaw = params.get('episodeIndex') ?? params.get('episode');
   const episodeIndex = Number(episodeRaw || '0');
   return {
@@ -658,6 +666,7 @@ function parseEgoUrlParams() {
     datasetPath,
     collection,
     packageId,
+    jobId,
     episodeIndex: Number.isFinite(episodeIndex) ? episodeIndex : 0,
   };
 }
@@ -1319,6 +1328,77 @@ function renderAnnotationProgressSummary() {
     total: progress.total,
     partial: progress.partial ?? 0,
   });
+}
+
+function jobScopeLabel(scope) {
+  if (scope === 'full') return t('job_scope_full');
+  if (scope === 'sample') return t('job_scope_sample');
+  return scope || '';
+}
+
+function jobStatusLabel(status) {
+  if (status === 'open') return t('job_status_open');
+  if (status === 'paused') return t('job_status_paused');
+  return status || '';
+}
+
+function renderJobBanner() {
+  if (!jobBanner) return;
+  const job = state.activeJob;
+  if (!job) {
+    jobBanner.hidden = true;
+    jobBanner.textContent = '';
+    return;
+  }
+  const count = state.episodes?.length ?? job.episode_count ?? 0;
+  jobBanner.hidden = false;
+  jobBanner.innerHTML = '';
+  const title = document.createElement('strong');
+  title.textContent = job.display_name || job.job_id;
+  const sub = document.createElement('span');
+  sub.className = 'ls-job-banner-sub';
+  sub.textContent = t('job_banner_sub', {
+    family: job.task_family || '',
+    schema: job.schema_id || '',
+    count,
+  });
+  jobBanner.appendChild(title);
+  jobBanner.appendChild(sub);
+}
+
+function syncCatalogUrlParams(overrides = {}) {
+  const params = new URLSearchParams(window.location.search);
+  const collectionId = state.catalog.selectedCollectionId;
+  const packageId = state.catalog.selectedPackageId;
+  const jobId = state.catalog.selectedJobId || state.activeJob?.job_id;
+
+  if (collectionId) params.set('collection', collectionId);
+  else params.delete('collection');
+  if (packageId) params.set('package', packageId);
+  else params.delete('package');
+  if (jobId) params.set('job', jobId);
+  else params.delete('job');
+
+  const episode = overrides.episode ?? state.currentEpisode;
+  if (episode != null && state.dataset) {
+    params.set('episode', String(episode));
+  } else if (overrides.clearEpisode) {
+    params.delete('episode');
+  }
+
+  const query = params.toString();
+  const next = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+  window.history.replaceState(null, '', next);
+}
+
+function formatLoadErrorDetail(detail) {
+  if (!detail) return 'Failed to load dataset';
+  if (typeof detail === 'string') return detail;
+  if (detail.requires_job) {
+    const jobs = Array.isArray(detail.open_jobs) ? detail.open_jobs.join(', ') : '';
+    return t('connect_requires_job', { jobs });
+  }
+  return detail.message || JSON.stringify(detail);
 }
 
 function recomputeAnnotationProgress() {
@@ -2362,6 +2442,7 @@ async function selectEpisode(epIdx) {
   renderEpisodes();
   renderHighLevels();
   refreshSkillDerivationPreview();
+  syncCatalogUrlParams({ episode: epIdx });
 }
 
 async function saveEpisode() {
@@ -2468,8 +2549,101 @@ function populateVideoKeys(keys, selected) {
 }
 
 // ---------------------------------------------------------------------------
-// Dataset catalog (Collection → Package)
+// Dataset catalog (Collection → Package → Job)
 // ---------------------------------------------------------------------------
+
+function formatJobOption(job) {
+  const pausedSuffix = job.status !== 'open' ? t('job_option_paused') : '';
+  return `${t('job_option', {
+    name: job.display_name || job.job_id,
+    family: job.task_family || '',
+    count: job.episode_count ?? 0,
+  })}${pausedSuffix}`;
+}
+
+function updateJobMeta(job) {
+  if (!jobMeta) return;
+  if (!job) {
+    jobMeta.hidden = true;
+    jobMeta.textContent = '';
+    return;
+  }
+  jobMeta.textContent = t('job_meta', {
+    family: job.task_family || '',
+    schema: job.schema_id || '',
+    scope: jobScopeLabel(job.scope),
+    status: jobStatusLabel(job.status),
+  });
+  jobMeta.hidden = false;
+}
+
+async function fetchJobs(collectionId, packageId) {
+  if (!collectionId || !packageId) return [];
+  try {
+    const url = `/api/datasets/collections/${encodeURIComponent(collectionId)}/jobs?package_id=${encodeURIComponent(packageId)}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to load jobs');
+    return data.jobs || [];
+  } catch (err) {
+    console.warn('job fetch failed', err);
+    return [];
+  }
+}
+
+function applyJobSelection(job) {
+  if (!job) {
+    state.catalog.selectedJobId = null;
+    updateJobMeta(null);
+    return;
+  }
+  state.catalog.selectedJobId = job.job_id;
+  if (jobSelect && jobSelect.value !== job.job_id) {
+    jobSelect.value = job.job_id;
+  }
+  updateJobMeta(job);
+}
+
+async function populateJobSelect(collectionId, packageId, preferredJobId) {
+  if (!jobSelect) return;
+  jobSelect.innerHTML = '';
+  state.catalog.jobs = [];
+  state.catalog.selectedJobId = null;
+  updateJobMeta(null);
+
+  const jobs = await fetchJobs(collectionId, packageId);
+  state.catalog.jobs = jobs;
+
+  if (!jobs.length) {
+    if (jobLabel) jobLabel.style.display = 'none';
+    if (jobMeta) jobMeta.hidden = true;
+    updateConnectFields();
+    return;
+  }
+
+  const openJobs = jobs.filter((j) => j.status === 'open');
+  let selectedId = preferredJobId;
+  if (selectedId && !jobs.some((j) => j.job_id === selectedId)) {
+    selectedId = null;
+  }
+  if (!selectedId && openJobs.length === 1) {
+    selectedId = openJobs[0].job_id;
+  }
+
+  jobs.forEach((job) => {
+    const option = document.createElement('option');
+    option.value = job.job_id;
+    option.textContent = formatJobOption(job);
+    if (job.status !== 'open') option.disabled = true;
+    if (job.job_id === selectedId) option.selected = true;
+    jobSelect.appendChild(option);
+  });
+
+  const selected = jobs.find((j) => j.job_id === selectedId) || null;
+  if (selected) applyJobSelection(selected);
+  updateConnectFields();
+  syncCatalogUrlParams({ clearEpisode: true });
+}
 
 function formatPackageOption(pkg) {
   const parts = [pkg.display_name || pkg.id];
@@ -2510,15 +2684,19 @@ function setAdvancedPathMode(enabled) {
   }
 }
 
-function applyPackageSelection(pkg) {
+function applyPackageSelection(pkg, preferredJobId = null) {
   if (!pkg || !localInput) return;
   state.catalog.selectedPackageId = pkg.id;
   localInput.value = pkg.local_path || '';
   updatePackageMeta(pkg);
   setAdvancedPathMode(state.catalog.advancedPath);
+  const jobId = preferredJobId ?? (
+    parseEgoUrlParams().packageId === pkg.id ? parseEgoUrlParams().jobId : null
+  );
+  void populateJobSelect(state.catalog.selectedCollectionId, pkg.id, jobId);
 }
 
-function populatePackageSelect(collectionId, preferredPackageId) {
+function populatePackageSelect(collectionId, preferredPackageId, preferredJobId = null) {
   if (!packageSelect) return;
   packageSelect.innerHTML = '';
   const collection = state.catalog.byId.get(collectionId);
@@ -2531,11 +2709,14 @@ function populatePackageSelect(collectionId, preferredPackageId) {
     packageSelect.appendChild(option);
   });
   const selected = packages.find((p) => p.id === preferredPackageId) || packages[0];
-  if (selected) applyPackageSelection(selected);
-  else updatePackageMeta(null);
+  if (selected) applyPackageSelection(selected, preferredJobId);
+  else {
+    updatePackageMeta(null);
+    void populateJobSelect(collectionId, null, null);
+  }
 }
 
-function populateCollectionSelect(preferredCollectionId, preferredPackageId) {
+function populateCollectionSelect(preferredCollectionId, preferredPackageId, preferredJobId = null) {
   if (!collectionSelect) return;
   collectionSelect.innerHTML = '';
   state.catalog.collections.forEach((col) => {
@@ -2547,7 +2728,7 @@ function populateCollectionSelect(preferredCollectionId, preferredPackageId) {
   });
   const selectedId = preferredCollectionId || state.catalog.collections[0]?.id;
   state.catalog.selectedCollectionId = selectedId || null;
-  if (selectedId) populatePackageSelect(selectedId, preferredPackageId);
+  if (selectedId) populatePackageSelect(selectedId, preferredPackageId, preferredJobId);
 }
 
 async function fetchCatalog() {
@@ -2575,24 +2756,25 @@ function pickDefaultCatalogSelection() {
     return {
       collectionId: params.collection,
       packageId: params.packageId || state.catalog.byId.get(params.collection)?.packages?.[0]?.id,
+      jobId: params.jobId || null,
     };
   }
   if (state.catalog.byId.has('limx_box_transport')) {
     const pkgs = state.catalog.byId.get('limx_box_transport')?.packages || [];
-    return { collectionId: 'limx_box_transport', packageId: pkgs[0]?.id };
+    return { collectionId: 'limx_box_transport', packageId: pkgs[0]?.id, jobId: null };
   }
   if (state.catalog.byId.has('pusht')) {
-    return { collectionId: 'pusht', packageId: 'pusht' };
+    return { collectionId: 'pusht', packageId: 'pusht', jobId: null };
   }
   const first = state.catalog.collections[0];
   const firstPkg = state.catalog.byId.get(first?.id)?.packages?.[0];
-  return { collectionId: first?.id, packageId: firstPkg?.id };
+  return { collectionId: first?.id, packageId: firstPkg?.id, jobId: null };
 }
 
 async function initCatalogUi() {
   await fetchCatalog();
   const defaults = pickDefaultCatalogSelection();
-  populateCollectionSelect(defaults.collectionId, defaults.packageId);
+  populateCollectionSelect(defaults.collectionId, defaults.packageId, defaults.jobId);
   const params = parseEgoUrlParams();
   if (params.datasetPath && localInput) {
     localInput.value = params.datasetPath;
@@ -2613,6 +2795,9 @@ function updateConnectFields() {
   if (localLabel) localLabel.style.display = isLocal ? 'flex' : 'none';
   if (collectionLabel) collectionLabel.style.display = showCatalog ? 'flex' : 'none';
   if (packageLabel) packageLabel.style.display = showCatalog ? 'flex' : 'none';
+  const showJobs = showCatalog && state.catalog.jobs.length > 0;
+  if (jobLabel) jobLabel.style.display = showJobs ? 'flex' : 'none';
+  if (jobMeta) jobMeta.hidden = !showJobs || !jobMeta.textContent;
   if (packageMeta) packageMeta.hidden = !showCatalog || !packageMeta.textContent;
   const revisionLabel = document.getElementById('revisionLabel');
   if (revisionLabel) revisionLabel.style.display = isLocal ? 'none' : 'flex';
@@ -2620,12 +2805,31 @@ function updateConnectFields() {
     localInput.value = DEMO_LOCAL_DATASET;
   }
   setAdvancedPathMode(state.catalog.advancedPath);
-  setHelper(
-    connectHelper,
-    isLocal
-      ? (showCatalog ? t('connect_helper_catalog') : t('connect_helper_local'))
-      : t('connect_helper_hf'),
-  );
+
+  let helperKey = isLocal
+    ? (showCatalog ? 'connect_helper_catalog' : 'connect_helper_local')
+    : 'connect_helper_hf';
+  if (showJobs) {
+    const selectedJob = state.catalog.jobs.find((j) => j.job_id === state.catalog.selectedJobId);
+    const openJobs = state.catalog.jobs.filter((j) => j.status === 'open');
+    if (selectedJob?.status === 'open') {
+      helperKey = 'connect_helper_job';
+      setHelper(connectHelper, t(helperKey, {
+        name: selectedJob.display_name || selectedJob.job_id,
+        count: selectedJob.episode_count ?? 0,
+      }));
+      return;
+    }
+    if (openJobs.length > 1) {
+      setHelper(connectHelper, t('connect_helper_job_pick'));
+      return;
+    }
+    if (selectedJob?.status === 'paused') {
+      setHelper(connectHelper, t('connect_job_paused'));
+      return;
+    }
+  }
+  setHelper(connectHelper, t(helperKey));
 }
 
 sourceSelect.addEventListener('change', updateConnectFields);
@@ -2633,7 +2837,7 @@ sourceSelect.addEventListener('change', updateConnectFields);
 if (collectionSelect) {
   collectionSelect.addEventListener('change', () => {
     state.catalog.selectedCollectionId = collectionSelect.value;
-    populatePackageSelect(collectionSelect.value, null);
+    populatePackageSelect(collectionSelect.value, null, null);
     updateConnectFields();
   });
 }
@@ -2642,7 +2846,16 @@ if (packageSelect) {
   packageSelect.addEventListener('change', () => {
     const collection = state.catalog.byId.get(state.catalog.selectedCollectionId);
     const pkg = (collection?.packages || []).find((p) => p.id === packageSelect.value);
-    if (pkg) applyPackageSelection(pkg);
+    if (pkg) applyPackageSelection(pkg, null);
+  });
+}
+
+if (jobSelect) {
+  jobSelect.addEventListener('change', () => {
+    const job = state.catalog.jobs.find((j) => j.job_id === jobSelect.value);
+    if (job) applyJobSelection(job);
+    updateConnectFields();
+    syncCatalogUrlParams({ clearEpisode: true });
   });
 }
 
@@ -2661,12 +2874,32 @@ connectForm.addEventListener('submit', async (event) => {
     localInput.focus();
     return;
   }
+
+  const selectedJob = state.catalog.jobs.find((j) => j.job_id === state.catalog.selectedJobId);
+  if (state.catalog.jobs.length > 0) {
+    if (!selectedJob) {
+      const openJobs = state.catalog.jobs.filter((j) => j.status === 'open');
+      setHelper(connectHelper, t('connect_requires_job', {
+        jobs: openJobs.map((j) => j.job_id).join(', '),
+      }));
+      if (jobSelect) jobSelect.focus();
+      return;
+    }
+    if (selectedJob.status !== 'open') {
+      setHelper(connectHelper, t('connect_job_paused'));
+      return;
+    }
+  }
+
   const payload = {
     source: sourceSelect.value,
     repo_id: isLocal ? null : repoInput.value.trim() || null,
     revision: revisionInput.value.trim() || null,
     local_path: isLocal ? localPath : null,
     video_key: null,
+    collection_id: state.catalog.selectedCollectionId || parseEgoUrlParams().collection || null,
+    package_id: state.catalog.selectedPackageId || parseEgoUrlParams().packageId || null,
+    job_id: state.catalog.selectedJobId || null,
   };
 
   setHelper(connectHelper, t('connect_loading'));
@@ -2677,7 +2910,7 @@ connectForm.addEventListener('submit', async (event) => {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Failed to load dataset');
+    if (!res.ok) throw new Error(formatLoadErrorDetail(data.detail));
 
     const egoParams = parseEgoUrlParams();
     state.egoMode = egoParams.ego && !!egoParams.datasetPath;
@@ -2698,11 +2931,23 @@ connectForm.addEventListener('submit', async (event) => {
 
     populateVideoKeys(data.video_keys, data.selected_video_key);
     applyAnnotationSchema(data.annotation_schema);
+    state.activeJob = data.active_job || null;
+    if (state.activeJob?.job_id) {
+      state.catalog.selectedJobId = state.activeJob.job_id;
+    }
+    renderJobBanner();
     renderAnnotationProgressSummary();
     renderEpisodes();
+    syncCatalogUrlParams();
     if (state.episodes.length > 0) {
-      const startEp = state.egoMode ? (parseEgoUrlParams().episodeIndex || state.episodes[0].episode_index) : state.episodes[0].episode_index;
+      const urlEp = parseEgoUrlParams().episodeIndex;
+      const hasUrlEp = state.episodes.some((e) => e.episode_index === urlEp);
+      const startEp = state.egoMode
+        ? (hasUrlEp ? urlEp : state.episodes[0].episode_index)
+        : (hasUrlEp ? urlEp : state.episodes[0].episode_index);
       await selectEpisode(startEp);
+    } else {
+      renderJobBanner();
     }
   } catch (err) {
     setStatus(t('status_disconnected'));

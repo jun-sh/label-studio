@@ -23,6 +23,7 @@
       label_local_path: 'Dataset directory',
       label_collection: 'Collection',
       label_package: 'Package',
+      label_job: 'Annotation job',
       label_revision: 'Revision',
       label_camera_view: 'Camera view',
       video_source_pane_aria: 'Switch camera: {name}',
@@ -33,7 +34,19 @@
       btn_load: 'Load',
       connect_helper_local: 'Local: enter the dataset directory below, then Load.',
       connect_helper_catalog: 'Select a collection and package, then Load.',
+      connect_helper_job: 'Job: {name} · {count} episodes. Click Load.',
+      connect_helper_job_pick: 'Select an open annotation job for this package, then Load.',
+      connect_requires_job: 'This package has multiple jobs. Select an open job above. Available: {jobs}',
+      connect_job_paused: 'The selected job is paused and cannot be loaded.',
       connect_helper_hf: 'Hub: enter repo id, e.g. lerobot/pusht',
+      job_option: '{name} · {family} · {count} ep',
+      job_option_paused: ' (paused)',
+      job_meta: '{family} · {schema} · {scope} · {status}',
+      job_banner_sub: '{family} · {schema} · {count} episodes',
+      job_scope_full: 'full',
+      job_scope_sample: 'sample',
+      job_status_open: 'open',
+      job_status_paused: 'paused',
       catalog_advanced_path: 'Advanced path',
       catalog_hide_advanced: 'Use catalog path',
       catalog_collection_option: '{title} · {count} subsets',
@@ -153,6 +166,7 @@
       label_local_path: '数据集目录',
       label_collection: '数据集集合',
       label_package: '子数据集',
+      label_job: '标注任务',
       label_revision: '版本',
       label_camera_view: '相机视角',
       video_source_pane_aria: '切换相机：{name}',
@@ -163,7 +177,19 @@
       btn_load: '加载',
       connect_helper_local: '本地模式：填写下方数据集目录后点击「加载」。',
       connect_helper_catalog: '选择数据集集合与子包，然后点击「加载」。',
+      connect_helper_job: '任务：{name} · {count} 条 episode。点击「加载」。',
+      connect_helper_job_pick: '请为该子包选择一个进行中的标注任务，然后点击「加载」。',
+      connect_requires_job: '该子包有多个标注任务，请先在上方选择进行中的任务。可选：{jobs}',
+      connect_job_paused: '所选任务已暂停，无法加载。',
       connect_helper_hf: 'Hub：填写仓库 ID，例如 lerobot/pusht',
+      job_option: '{name} · {family} · {count} ep',
+      job_option_paused: '（已暂停）',
+      job_meta: '{family} · {schema} · {scope} · {status}',
+      job_banner_sub: '{family} · {schema} · {count} 条 episode',
+      job_scope_full: '全量',
+      job_scope_sample: '抽样',
+      job_status_open: '进行中',
+      job_status_paused: '已暂停',
       catalog_advanced_path: '高级路径',
       catalog_hide_advanced: '使用目录选择',
       catalog_collection_option: '{title} · {count} 个子集',
@@ -338,6 +364,7 @@
     setLabelText(document.getElementById('repoLabel'), t('label_repo'));
     setLabelText(document.getElementById('collectionLabel'), t('label_collection'));
     setLabelText(document.getElementById('packageLabel'), t('label_package'));
+    setLabelText(document.getElementById('jobLabel'), t('label_job'));
     setLabelText(document.getElementById('localLabel'), t('label_local_path'));
     setLabelText(document.getElementById('revisionLabel'), t('label_revision'));
 

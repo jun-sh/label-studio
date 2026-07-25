@@ -42,6 +42,10 @@
             Package
             <select id="packageSelect"></select>
           </label>
+          <label id="jobLabel">
+            Job
+            <select id="jobSelect"></select>
+          </label>
           <label id="repoLabel">
             Repo ID
             <input id="repoInput" type="text" placeholder="lerobot/pusht" />
@@ -57,6 +61,7 @@
           <button type="submit" class="ls-btn ls-btn-primary">Load</button>
         </div>
         <p class="ls-package-meta ls-helper" id="packageMeta" hidden></p>
+        <p class="ls-job-meta ls-helper" id="jobMeta" hidden></p>
         <p class="ls-helper">
           <button type="button" class="ls-link-btn" id="toggleAdvancedPath" hidden>Advanced path</button>
         </p>
@@ -68,6 +73,7 @@
       <aside class="ls-sidebar">
         <div class="ls-sidebar-head">
           <h2 id="episodesTitle">Episodes</h2>
+          <div id="jobBanner" class="ls-job-banner" hidden></div>
           <p id="episodeProgress" class="ls-episode-progress" hidden></p>
           <div class="ls-episode-filters">
             <input id="episodeSearch" type="search" placeholder="Filter #" />

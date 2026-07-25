@@ -1,0 +1,25 @@
+{
+  "schema_id": "pour_transfer_v1",
+  "schema_version": 1,
+  "subtask_labels": [
+    {"id": "idle", "order": 0, "color": "#9CA3AF", "label_zh": "空闲", "label_en": "Idle", "hint_zh": "未参与倾倒", "hint_en": "Not pouring"},
+    {"id": "reach", "order": 1, "color": "#34D399", "label_zh": "接近", "label_en": "Reach", "hint_zh": "移向容器/工具", "hint_en": "Moving toward container or tool"},
+    {"id": "grasp", "order": 2, "color": "#6EE7B7", "label_zh": "抓取", "label_en": "Grasp", "hint_zh": "抓住待倾倒容器或勺具", "hint_en": "Grasping source container or scoop"},
+    {"id": "lift_tilt", "order": 3, "color": "#60A5FA", "label_zh": "抬升倾斜", "label_en": "Lift-tilt", "hint_zh": "抬起并开始倾斜，液体尚未流出", "hint_en": "Lifting and beginning tilt; no flow yet"},
+    {"id": "pour", "order": 4, "color": "#3B82F6", "label_zh": "倾倒", "label_en": "Pour", "hint_zh": "液体/颗粒正在转移", "hint_en": "Liquid or granules transferring"},
+    {"id": "return_level", "order": 5, "color": "#A78BFA", "label_zh": "回正", "label_en": "Return level", "hint_zh": "容器回正、停止流出", "hint_en": "Container leveled; flow stopped"},
+    {"id": "release", "order": 6, "color": "#F472B6", "label_zh": "释放", "label_en": "Release", "hint_zh": "放下容器/勺具并松手", "hint_en": "Set down and release"}
+  ],
+  "episode_fields": [
+    {
+      "id": "outcome",
+      "type": "enum",
+      "required": false,
+      "values": ["success", "fail", "partial"],
+      "label_zh": "Episode 结果",
+      "label_en": "Episode outcome"
+    }
+  ],
+  "validation": {"segments_must_not_overlap": true, "gap_warn_frames": 10},
+  "timeline": {"snap_adjacent_frames": 1, "enable_move": true, "enable_resize": true, "create_on_empty_track_only": true}
+}

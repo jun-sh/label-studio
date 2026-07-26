@@ -51,3 +51,8 @@
 body[data-datalab-embodied-page="1"] .content-wrapper__content iframe:not(#datalab-embodied-frame) {
   display: none !important;
 }
+
+.embodied-annotate-hint--pipeline {
+  pointer-events: auto;
+  z-index: 52;
+}

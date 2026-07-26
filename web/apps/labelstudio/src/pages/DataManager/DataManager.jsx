@@ -16,6 +16,7 @@ import { isDefined } from "../../utils/helpers";
 import { ImportModal } from "../CreateProject/Import/ImportModal";
 import { ExportPage } from "../ExportPage/ExportPage";
 import { EmbodiedAnnotateToolbarButton, isEmbodiedAnnotateProject } from "../EmbodiedAnnotate";
+import { LerobotQcToolbarButton } from "../LerobotQc";
 import { APIConfig } from "./api-config";
 
 import "./DataManager.scss";
@@ -371,6 +372,7 @@ DataManagerPage.context = ({ dmRef }) => {
   return project && project.id && !isEmbodiedAnnotateProject(project) ? (
     <Space size="small">
       <EmbodiedAnnotateToolbarButton />
+      <LerobotQcToolbarButton />
       {project.expert_instruction && mode !== "explorer" && (
         <Button
           size="small"

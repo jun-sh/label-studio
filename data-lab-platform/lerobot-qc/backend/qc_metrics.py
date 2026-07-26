@@ -12,6 +12,14 @@ import pyarrow.parquet as pq
 from dataset_manager import DatasetState
 
 
+def dt_max_threshold_ms(fps: float) -> float:
+    """Flag dt_max only when it exceeds ~2.5× the nominal frame interval (same scale as time-gap check)."""
+    if not fps or fps <= 0:
+        return 20.0
+    expected_ms = 1000.0 / fps
+    return max(20.0, expected_ms * 2.5)
+
+
 def _iter_data_parquet_files(root: Path) -> list[Path]:
     data_root = root / "data"
     if not data_root.is_dir():
@@ -157,10 +165,11 @@ def compute_qc_metrics(state: DatasetState, episode_index: int) -> dict[str, Any
                 frame_rate_stable = bool(np.max(np.abs(dts - expected)) < expected * 0.5)
 
     anomalies: list[str] = []
+    dt_threshold_ms = dt_max_threshold_ms(state.fps)
     if duration < 1.0:
         anomalies.append("duration_lt_1s")
-    if dt_max_ms > 20.0:
-        anomalies.append("dt_max_gt_20ms")
+    if dt_max_ms > dt_threshold_ms:
+        anomalies.append("dt_max_exceeds_threshold")
     if has_time_gap:
         anomalies.append("time_gap")
 
@@ -169,6 +178,7 @@ def compute_qc_metrics(state: DatasetState, episode_index: int) -> dict[str, Any
         "duration_sec": duration,
         "frame_count": length,
         "dt_max_ms": round(dt_max_ms, 3),
+        "dt_max_threshold_ms": round(dt_threshold_ms, 3),
         "has_time_gap": has_time_gap,
         "frame_rate_stable": frame_rate_stable,
         "anomalies": anomalies,

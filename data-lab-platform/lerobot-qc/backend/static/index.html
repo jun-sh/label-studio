@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data QC</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app" class="ls-app">
+    <header class="ls-topbar">
+      <div class="ls-brand">
+        <span class="ls-brand-mark">DL</span>
+        <div>
+          <strong id="brandTitle">Data QC</strong>
+          <span class="ls-brand-sub" id="brandSub">Terminal inspection</span>
+        </div>
+      </div>
+      <div class="ls-topbar-actions">
+        <span class="ls-status" id="status">Disconnected</span>
+      </div>
+    </header>
+
+    <section class="ls-panel ls-connect" id="connectPanel">
+      <button type="button" class="ls-connect-toggle" id="connectToggle" aria-expanded="true">
+        Connect dataset
+      </button>
+      <form id="connectForm" class="ls-connect-body">
+        <div class="ls-form-row">
+          <label id="collectionLabel">
+            Collection
+            <select id="collectionSelect"></select>
+          </label>
+          <label id="packageLabel">
+            Package
+            <select id="packageSelect"></select>
+          </label>
+          <label id="localLabel" class="ls-grow">
+            Dataset path (read-only)
+            <input id="datasetPathInput" type="text" placeholder="/data/datasets/your_lerobot_v3_package" required />
+          </label>
+          <label id="operatorLabel">
+            Operator ID
+            <input id="operatorInput" type="text" value="reviewer-01" placeholder="reviewer-01" />
+          </label>
+          <button type="submit" class="ls-btn ls-btn-primary" id="loadBtn">Load dataset</button>
+        </div>
+        <div class="ls-form-row" hidden>
+          <label class="ls-qc-screening-label" id="screeningLabel">
+            Import coarse screening JSON
+            <input id="screeningFileInput" type="file" accept="application/json,.json" disabled />
+          </label>
+        </div>
+        <p class="ls-helper" id="connectHelper"></p>
+      </form>
+    </section>
+
+    <section class="ls-workspace" id="workspace" hidden>
+      <aside class="ls-sidebar">
+        <div class="ls-sidebar-head">
+          <h2 id="episodesTitle">Episodes</h2>
+          <p id="datasetMeta" class="ls-muted ls-episode-progress"></p>
+          <p id="reviewProgress" class="ls-muted ls-episode-progress"></p>
+          <div class="ls-episode-filters">
+            <input id="episodeSearch" type="search" placeholder="Filter #" />
+            <select id="episodeStatusFilter" class="ls-episode-status-filter" aria-label="Filter by review status">
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="suspicious">Suspicious</option>
+              <option value="rejected">Removed</option>
+            </select>
+          </div>
+        </div>
+        <ul id="episodeList" class="ls-episode-list"></ul>
+      </aside>
+
+      <main class="ls-editor">
+        <div class="ls-editor-head">
+          <div>
+            <h2 id="episodeTitle">Select an episode</h2>
+            <p id="episodeMeta" class="ls-muted"></p>
+          </div>
+          <div class="ls-editor-tools">
+            <button type="button" id="stepBackBtn" class="ls-btn ls-btn-ghost" disabled>◀ Frame</button>
+            <button type="button" id="playPauseBtn" class="ls-btn ls-btn-ghost" disabled>Play</button>
+            <button type="button" id="stepFwdBtn" class="ls-btn ls-btn-ghost" disabled>Frame ▶</button>
+            <select id="speedSelect" class="ls-qc-speed" disabled>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2x</option>
+            </select>
+            <span id="frameReadout" class="ls-frame-readout">frame —</span>
+          </div>
+        </div>
+
+        <div id="metricsPanel" class="ls-qc-metrics" hidden></div>
+
+        <div class="ls-qc-instruction-panel">
+          <label for="instructionInput" id="instructionLabel">Language instruction</label>
+          <textarea id="instructionInput" rows="3" placeholder="VLM-generated task text" disabled></textarea>
+          <div class="ls-qc-instruction-actions">
+            <button type="button" id="saveInstructionBtn" class="ls-btn ls-btn-primary" disabled>Save instruction</button>
+            <div class="ls-qc-review-actions">
+              <button type="button" id="approveBtn" class="ls-btn ls-btn-primary" disabled>Mark approved</button>
+              <button type="button" id="rejectBtn" class="ls-btn ls-btn-ghost ls-qc-btn-danger" disabled>Mark remove</button>
+              <button type="button" id="suspiciousBtn" class="ls-btn ls-btn-ghost ls-qc-btn-warning" disabled>Mark suspicious</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="ls-video-block" id="videoBlock">
+          <div class="ls-video-grid" id="videoGrid"></div>
+        </div>
+
+        <div class="ls-qc-charts">
+          <div class="ls-qc-chart-block">
+            <h3 id="actionChartTitle">Action</h3>
+            <canvas id="actionChart" height="180"></canvas>
+          </div>
+          <div class="ls-qc-chart-block">
+            <h3 id="stateChartTitle">observation.state</h3>
+            <canvas id="stateChart" height="180"></canvas>
+          </div>
+        </div>
+
+        <details class="ls-advanced ls-export-panel" id="deliveryPanel" open>
+          <summary id="deliverySummary">Delivery rebuild</summary>
+          <div class="ls-advanced-body">
+            <p class="ls-skill-hint" id="deliveryHint">Physically rebuild a delivery dataset from approved episodes (sidecar removals applied).</p>
+            <div class="ls-form-row ls-export-row">
+              <button type="button" id="rebuildBtn" class="ls-btn ls-btn-primary" disabled>Rebuild</button>
+            </div>
+            <p class="ls-helper" id="rebuildStatusInline"></p>
+          </div>
+        </details>
+      </main>
+    </section>
+
+    <div id="rebuildModal" class="ls-qc-modal" hidden>
+      <div class="ls-qc-modal-body">
+        <h3 id="rebuildModalTitle">Delivery rebuild</h3>
+        <p id="rebuildStatusText" class="ls-muted">Starting…</p>
+        <button type="button" id="closeRebuildModal" class="ls-btn ls-btn-ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/i18n.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

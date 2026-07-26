@@ -69,6 +69,11 @@
     "dataset_hint": "Dataset path (use as Local directory in Connect):",
     "back_to_data": "Project data"
   },
+  "lerobotQc": {
+    "page_title": "LeRobot QC",
+    "iframe_title": "LeRobot terminal QC inspection",
+    "toolbar_button": "QC review"
+  },
   "home": {
     "page_title": "Home",
     "welcome": "Workbench",

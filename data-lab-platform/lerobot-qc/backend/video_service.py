@@ -120,8 +120,10 @@ def resolve_stream_path(state: DatasetState, episode_index: int, video_key: str 
         cache_path = trimmed_cache_path(original, episode_index, start_time, end_time)
         if not cache_path.is_file():
             ok = trim_video_with_ffmpeg(original, cache_path, start_time, end_time)
-            if ok:
-                return cache_path
+            if not ok:
+                return original
+        if cache_path.is_file():
+            return cache_path
     return original
 
 

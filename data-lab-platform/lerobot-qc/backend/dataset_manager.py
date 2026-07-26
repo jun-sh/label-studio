@@ -30,6 +30,28 @@ class DatasetState:
         features = self.info.get("features") or {}
         return sorted(k for k, spec in features.items() if spec.get("dtype") == "video")
 
+    def resolve_video_key(self, video_key: str | None) -> str:
+        selected = video_key or self.video_key
+        if not selected:
+            raise HTTPException(status_code=400, detail="video_key is required")
+
+        keys = self.video_keys()
+        if selected in keys:
+            return selected
+
+        suffix_matches = [k for k in keys if k.endswith(f".{selected}") or k.endswith(f"/{selected}")]
+        if len(suffix_matches) == 1:
+            return suffix_matches[0]
+        if len(suffix_matches) > 1:
+            exact = [k for k in suffix_matches if k.split(".")[-1] == selected]
+            if len(exact) == 1:
+                return exact[0]
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video key '{selected}' not available",
+        )
+
     def scalar_feature_keys(self) -> list[str]:
         features = self.info.get("features") or {}
         keys: list[str] = []
@@ -83,6 +105,7 @@ class DatasetState:
         return max(0, to_idx - from_idx)
 
     def video_offsets(self, video_key: str, episode_index: int) -> dict[str, float]:
+        video_key = self.resolve_video_key(video_key)
         row = self.episode_row(episode_index)
         length = self.episode_length(row)
         duration = length / self.fps if self.fps else 0.0
@@ -99,9 +122,7 @@ class DatasetState:
         return {"video_start_time": 0.0, "video_end_time": duration}
 
     def video_path(self, episode_index: int, video_key: str | None = None) -> Path:
-        video_key = video_key or self.video_key
-        if not video_key:
-            raise HTTPException(status_code=400, detail="video_key is required")
+        video_key = self.resolve_video_key(video_key)
 
         row = self.episode_row(episode_index)
         chunk_col = f"videos/{video_key}/chunk_index"
@@ -111,16 +132,27 @@ class DatasetState:
 
         chunk_index = int(row[chunk_col])
         file_index = int(row[file_col])
-        rel_tpl = self.info.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        features = self.info.get("features") or {}
+        feature_info = (features.get(video_key) or {}).get("info") or {}
+        rel_tpl = (
+            feature_info.get("depth.video_path")
+            or self.info.get("video_path")
+            or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        )
         rel_path = rel_tpl.format(
             video_key=video_key,
             chunk_index=chunk_index,
             file_index=file_index,
         )
         full_path = (self.dataset_root / rel_path).resolve()
-        if not full_path.is_file():
-            raise HTTPException(status_code=404, detail=f"Video file not found: {full_path}")
-        return full_path
+        if full_path.is_file():
+            return full_path
+        # Fallback: alternate extension when template does not match on-disk container.
+        alt_suffix = ".mkv" if full_path.suffix.lower() == ".mp4" else ".mp4"
+        alt_path = full_path.with_suffix(alt_suffix)
+        if alt_path.is_file():
+            return alt_path
+        raise HTTPException(status_code=404, detail=f"Video file not found: {full_path}")
 
     def frame_bounds(self, episode_index: int) -> tuple[int, int]:
         row = self.episode_row(episode_index)
@@ -232,6 +264,19 @@ def validate_v3_dataset(root: Path) -> None:
         )
 
 
+def _default_video_key(keys: list[str], info: dict[str, Any]) -> str:
+    features = info.get("features") or {}
+    rgb_keys: list[str] = []
+    for key in keys:
+        meta = (features.get(key) or {}).get("info") or {}
+        if meta.get("video.is_depth_map"):
+            continue
+        if "depth" in key.lower():
+            continue
+        rgb_keys.append(key)
+    return rgb_keys[0] if rgb_keys else keys[0]
+
+
 def load_local_dataset(local_path: str, video_key: str | None = None) -> DatasetState:
     root = Path(local_path).expanduser().resolve()
     if not root.is_dir():
@@ -247,7 +292,7 @@ def load_local_dataset(local_path: str, video_key: str | None = None) -> Dataset
     if not keys:
         raise HTTPException(status_code=400, detail="Dataset has no video keys")
 
-    selected = video_key or keys[0]
+    selected = video_key or _default_video_key(keys, info)
     if selected not in keys:
         raise HTTPException(
             status_code=400,

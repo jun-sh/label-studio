@@ -17,6 +17,13 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
+
 def dataset_sidecar_id(dataset_root: Path) -> str:
     digest = hashlib.sha256(str(dataset_root.resolve()).encode("utf-8")).hexdigest()[:16]
     return f"{dataset_root.name}_{digest}"
@@ -71,7 +78,10 @@ class QcStore:
 
     def _save_manifest(self) -> None:
         self.manifest["updated_at"] = _utc_now()
-        self.manifest_path.write_text(json.dumps(self.manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(
+            self.manifest_path,
+            json.dumps(self.manifest, indent=2, ensure_ascii=False),
+        )
 
     def append_audit(
         self,
@@ -196,7 +206,10 @@ class QcStore:
                     "updated_at": record.get("updated_at") or "",
                 }
             )
-        self.removed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write_text(
+            self.removed_path,
+            json.dumps(payload, indent=2, ensure_ascii=False),
+        )
 
     def visible_episode_indices(self, all_indices: list[int]) -> list[int]:
         removed = self.removed_episode_indices()
@@ -225,6 +238,18 @@ class QcStore:
                 break
         self._save_manifest()
 
+    def get_rebuild_job(self, job_id: str) -> dict[str, Any] | None:
+        for job in self.manifest.get("rebuild_jobs") or []:
+            if job.get("job_id") == job_id:
+                return dict(job)
+        return None
+
+    def active_rebuild_job(self) -> dict[str, Any] | None:
+        for job in reversed(self.manifest.get("rebuild_jobs") or []):
+            if job.get("status") in ("queued", "running"):
+                return dict(job)
+        return None
+
     def read_audit_entries(self, limit: int = 200) -> list[dict[str, Any]]:
         if not self.audit_path.is_file():
             return []
@@ -236,3 +261,18 @@ class QcStore:
                 continue
             entries.append(json.loads(line))
         return entries
+
+    def review_summary(self, all_episode_indices: list[int]) -> dict[str, Any]:
+        counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
+        for ep_idx in all_episode_indices:
+            status = self.get_review(ep_idx).get("status") or "pending"
+            if status not in counts:
+                status = "pending"
+            counts[status] += 1
+        visible = len(self.visible_episode_indices(all_episode_indices))
+        return {
+            "total": len(all_episode_indices),
+            "visible": visible,
+            "removed_preview": len(all_episode_indices) - visible,
+            **counts,
+        }

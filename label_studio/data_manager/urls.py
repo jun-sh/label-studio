@@ -22,4 +22,6 @@ urlpatterns = [
     path('projects/<int:pk>/data/export', views.task_page, name='project-export'),
     path('projects/<int:pk>/embodied/', views.task_page, name='project-embodied'),
     path('projects/<int:pk>/embodied', views.task_page, name='project-embodied-no-slash'),
+    path('projects/<int:pk>/lerobot-qc/', views.task_page, name='project-lerobot-qc'),
+    path('projects/<int:pk>/lerobot-qc', views.task_page, name='project-lerobot-qc-no-slash'),
 ]

@@ -1,6 +1,6 @@
 {
   "tag": "deploy-release-v0.0.6",
-  "snapshotted_at": "2026-07-25T20:24:12+08:00",
+  "snapshotted_at": "2026-07-26T14:29:13+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
     {

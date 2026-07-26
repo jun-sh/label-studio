@@ -69,6 +69,11 @@
     "dataset_hint": "数据集路径（在 Connect 中填写 Local directory）：",
     "back_to_data": "任务数据"
   },
+  "lerobotQc": {
+    "page_title": "LeRobot 终检",
+    "iframe_title": "LeRobot 终检复核",
+    "toolbar_button": "终检 QC"
+  },
   "home": {
     "page_title": "首页",
     "welcome": "工作台",

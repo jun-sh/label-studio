@@ -10,6 +10,7 @@ import { cn } from "../../utils/bem";
 import { getDateFnsLocale } from "../../utils/dateFnsLocale";
 import { absoluteURL } from "../../utils/helpers";
 import { isEmbodiedAnnotateProject, stripEmbodiedMarkerFromDescription } from "../EmbodiedAnnotate/embodiedAnnotate";
+import { isLerobotQcProject, stripLerobotQcMarkerFromDescription } from "../LerobotQc/lerobotQc";
 import { ProjectStateChip } from "@humansignal/app-common";
 
 const DEFAULT_CARD_COLORS = ["#FFFFFF", "#FDFDFC"];
@@ -83,8 +84,12 @@ const ProjectCard = ({ project }) => {
 
   const projectPath = isEmbodiedAnnotateProject(project)
     ? `/projects/${project.id}/embodied`
-    : `/projects/${project.id}/data`;
+    : isLerobotQcProject(project)
+      ? `/projects/${project.id}/lerobot-qc`
+      : `/projects/${project.id}/data`;
   const embodied = isEmbodiedAnnotateProject(project);
+  const lerobotQc = isLerobotQcProject(project);
+  const customPipeline = embodied || lerobotQc;
 
   return (
     <div className={cn("projects-page").elem("link").toClassName()}>
@@ -93,7 +98,7 @@ const ProjectCard = ({ project }) => {
           to={projectPath}
           className={cn("project-card").elem("nav-link").toClassName()}
           aria-label={cardTitle}
-          {...(!embodied ? { "data-external": true } : {})}
+          {...(!customPipeline ? { "data-external": true } : {})}
         />
         <div className={cn("project-card").elem("header").toClassName()}>
           <div className={cn("project-card").elem("title").toClassName()}>
@@ -151,7 +156,11 @@ const ProjectCard = ({ project }) => {
           </div>
         </div>
         <div className={cn("project-card").elem("description").toClassName()}>
-          {embodied ? stripEmbodiedMarkerFromDescription(project.description) : project.description}
+          {embodied
+            ? stripEmbodiedMarkerFromDescription(project.description)
+            : lerobotQc
+              ? stripLerobotQcMarkerFromDescription(project.description)
+              : project.description}
         </div>
         <div className={cn("project-card").elem("info").toClassName()}>
           <div className={cn("project-card").elem("created-date").toClassName()}>

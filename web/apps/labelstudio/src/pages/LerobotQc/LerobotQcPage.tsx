@@ -5,28 +5,28 @@ import { useUpdatePageTitle } from "@humansignal/core";
 import { useProject } from "../../providers/ProjectProvider";
 import { useParams } from "../../providers/RoutesProvider";
 import { attachEmbedLayoutListeners, mountEmbedLayer } from "../DataViz/datalabEmbedLayer";
-import { buildEmbodiedAnnotateEmbedSrc, isEmbodiedAnnotateProject } from "./embodiedAnnotate";
-import { PipelineToolbarLinks } from "../LerobotQc/LerobotQcToolbar";
+import { buildLerobotQcEmbedSrc, canAccessLerobotQc } from "./lerobotQc";
+import { PipelineToolbarLinks } from "./LerobotQcToolbar";
 
-import "./EmbodiedAnnotatePage.scss";
+import "./LerobotQcPage.scss";
 
 const EMBED_CONFIG = {
-  layerId: "datalab-embodied-layer",
-  frameId: "datalab-embodied-frame",
-  bodyDataset: "datalabEmbodiedPage",
+  layerId: "datalab-lerobot-qc-layer",
+  frameId: "datalab-lerobot-qc-frame",
+  bodyDataset: "datalabLerobotQcPage",
 } as const;
 
 /**
- * /projects/:id/embodied — fullscreen iframe for lerobot-annotate (via /lerobot-annotate/ proxy).
+ * /projects/:id/lerobot-qc — fullscreen iframe for lerobot-qc terminal inspection.
  */
-export const EmbodiedAnnotatePage = () => {
+export const LerobotQcPage = () => {
   const { t, i18n } = useTranslation("common");
   const location = useLocation();
   const { project } = useProject();
   const params = useParams();
   const projectId = project?.id ?? params?.id;
 
-  useUpdatePageTitle(t("embodiedAnnotate.page_title"));
+  useUpdatePageTitle(t("lerobotQc.page_title"));
 
   useEffect(() => {
     document.body.dataset[EMBED_CONFIG.bodyDataset] = "1";
@@ -42,24 +42,24 @@ export const EmbodiedAnnotatePage = () => {
   useEffect(() => {
     mountEmbedLayer(
       EMBED_CONFIG,
-      buildEmbodiedAnnotateEmbedSrc(location.search),
-      t("embodiedAnnotate.iframe_title"),
+      buildLerobotQcEmbedSrc(location.search, project?.description),
+      t("lerobotQc.iframe_title"),
     );
-  }, [t, i18n.language, location.search]);
+  }, [t, i18n.language, location.search, project?.description]);
 
   if (!projectId) return null;
 
-  if (project?.id && !isEmbodiedAnnotateProject(project)) {
+  if (project?.id && !canAccessLerobotQc(project)) {
     return <Redirect to={`/projects/${projectId}/data`} />;
   }
 
   return (
-    <div className="embodied-annotate-hint embodied-annotate-hint--pipeline">
+    <div className="lerobot-qc-hint lerobot-qc-hint--pipeline">
       <PipelineToolbarLinks />
     </div>
   );
 };
 
-EmbodiedAnnotatePage.path = "/embodied";
-EmbodiedAnnotatePage.exact = true;
-EmbodiedAnnotatePage.i18nTitleKey = "embodiedAnnotate.page_title";
+LerobotQcPage.path = "/lerobot-qc";
+LerobotQcPage.exact = true;
+LerobotQcPage.i18nTitleKey = "lerobotQc.page_title";

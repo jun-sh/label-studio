@@ -1,0 +1,35 @@
+# Fallback standalone image when embodied-annotate base is unavailable.
+# Uses Tsinghua Debian mirror to avoid slow deb.debian.org downloads.
+FROM python:3.10-slim-bookworm
+
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources; \
+    else \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" \
+    -r /app/backend/requirements.txt
+
+COPY backend/ /app/backend/
+
+ENV PYTHONPATH=/app/backend
+ENV LEROBOT_QC_CACHE=/data/cache
+ENV LEROBOT_QC_SIDECAR=/data/qc-sidecar
+ENV LEROBOT_QC_DELIVERY=/data/qc-delivery
+ENV LEROBOT_QC_DATASETS=/data/datasets
+
+EXPOSE 7863
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=10 \
+  CMD curl -fsS http://127.0.0.1:7863/healthz >/dev/null || exit 1
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7863"]

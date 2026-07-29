@@ -90,6 +90,7 @@ def _append_visual_frame(
     preview_out: dict,
     imu6,
     camera_ts_offset_ns: dict[str, int] | None = None,
+    imu_raw_batch: list | tuple | None = None,
 ) -> None:
     if recorder.use_hw_h264:
         if preview_out:
@@ -99,6 +100,7 @@ def _append_visual_frame(
             camera_jpegs=capture_out,
             imu6=imu6,
             camera_ts_offset_ns=camera_ts_offset_ns,
+            imu_raw_batch=imu_raw_batch,
         )
     elif recorder.use_hw_jpeg:
         preview_hub.offer_jpegs(capture_out)
@@ -109,6 +111,7 @@ def _append_visual_frame(
             camera_jpegs=capture_out,
             imu6=imu6,
             camera_ts_offset_ns=camera_ts_offset_ns,
+            imu_raw_batch=imu_raw_batch,
         )
     else:
         camera_jpegs = encode_camera_bgr_jpegs(capture_out)
@@ -120,6 +123,7 @@ def _append_visual_frame(
             camera_jpegs=camera_jpegs,
             imu6=imu6,
             camera_ts_offset_ns=camera_ts_offset_ns,
+            imu_raw_batch=imu_raw_batch,
         )
 
 
@@ -289,6 +293,7 @@ def main() -> None:
             imu_interpolate=imu_interpolate,
         )
         for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
+            imu_raw_batch = recorder.pop_pending_imu_raw()
             emit_mono = time.monotonic()
             _append_visual_frame(
                 writer,
@@ -299,6 +304,7 @@ def main() -> None:
                 preview_out=preview_out,
                 imu6=imu6,
                 camera_ts_offset_ns=cam_offsets,
+                imu_raw_batch=imu_raw_batch,
             )
             frame_count += 1
             wall_emit_times.append(emit_mono)
@@ -321,6 +327,9 @@ def main() -> None:
                     flush=True,
                 )
     finally:
+        remaining_imu = recorder.flush_remaining_imu_raw()
+        if remaining_imu:
+            writer.append_imu_raw(remaining_imu)
         writer.close()
         if heartbeat is not None:
             heartbeat.stop_periodic_heartbeat()

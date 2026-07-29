@@ -36,6 +36,10 @@ def mini_segment(tmp_path: Path) -> Path:
         {"frame_index": 1, "timestamp_ns": 2, "task": "t", "observation.state": [0] * 6},
     ]
     (seg / "rows.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    (seg / "imu_raw.jsonl").write_text(
+        json.dumps({"ts_ns": 1, "sensor": "gyro", "x": 0.0, "y": 0.0, "z": 0.0}) + "\n",
+        encoding="utf-8",
+    )
     (seg / "frames" / "00000000.bin").write_bytes(b"DLB1\x01\x04" + b"\x00" * 20)
     (seg / "frames" / "00000001.bin").write_bytes(b"DLB1\x01\x04" + b"\x00" * 20)
     return seg
@@ -59,6 +63,7 @@ def test_pack_segment_tar_zst_roundtrip(tmp_path: Path, mini_segment: Path) -> N
         tar.extractall(extract, filter="data")
     assert (extract / "manifest.json").is_file()
     assert (extract / "rows.jsonl").is_file()
+    assert (extract / "imu_raw.jsonl").is_file()
     assert (extract / "frames" / "00000000.bin").is_file()
 
 

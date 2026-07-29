@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - optional until pip install
     zstd = None  # type: ignore[assignment]
 
 ZSTD_LEVEL = 1
-_SEGMENT_MEMBERS = ("manifest.json", "rows.jsonl")
+_SEGMENT_MEMBERS = ("manifest.json", "rows.jsonl", "imu_raw.jsonl")
 
 
 def pack_segment_tar_zst(segment_dir: Path, out_path: Path) -> tuple[Path, str]:

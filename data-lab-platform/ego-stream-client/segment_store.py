@@ -128,6 +128,14 @@ class _PersistJob:
     imu6: np.ndarray
     task: str
     camera_ts_offset_ns: dict[str, int] | None = None
+    imu_raw_batch: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class _ImuRawPersistJob:
+    session_id: str
+    segment_id: str
+    records: tuple[dict[str, Any], ...]
 
 
 @dataclass(frozen=True)
@@ -142,7 +150,7 @@ class _SegmentCloseJob:
     segment_id: str
 
 
-PersistWorkItem = _PersistJob | _SegmentCloseJob
+PersistWorkItem = _PersistJob | _ImuRawPersistJob | _SegmentCloseJob
 
 
 @dataclass
@@ -171,6 +179,9 @@ class _OpenSegmentWriter:
         self._rows_path = segment_dir / "rows.jsonl"
         self._rows_fp: TextIO = open(self._rows_path, "a", encoding="utf-8", buffering=256 * 1024)
         self._row_lines: list[str] = []
+        self._imu_raw_path = segment_dir / "imu_raw.jsonl"
+        self._imu_raw_fp: TextIO | None = None
+        self._imu_raw_lines: list[str] = []
         self._h264_buffers: dict[str, list[bytes]] = {}
 
     def write_frame(self, job: _PersistJob) -> None:
@@ -205,8 +216,34 @@ class _OpenSegmentWriter:
             camera_ts_offset_ns=job.camera_ts_offset_ns,
         )
         self._row_lines.append(json.dumps(row, separators=(",", ":")) + "\n")
+        if job.imu_raw_batch:
+            self._append_imu_raw_records(job.imu_raw_batch)
         if len(self._row_lines) >= SEGMENT_ROWS_BUFFER_LINES:
             self._flush_rows()
+
+    def _ensure_imu_raw_fp(self) -> TextIO:
+        if self._imu_raw_fp is None:
+            self._imu_raw_fp = open(self._imu_raw_path, "a", encoding="utf-8", buffering=256 * 1024)
+        return self._imu_raw_fp
+
+    def _append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        for rec in records:
+            self._imu_raw_lines.append(json.dumps(rec, separators=(",", ":")) + "\n")
+        if len(self._imu_raw_lines) >= SEGMENT_ROWS_BUFFER_LINES:
+            self._flush_imu_raw()
+
+    def _flush_imu_raw(self) -> None:
+        if not self._imu_raw_lines:
+            return
+        fp = self._ensure_imu_raw_fp()
+        fp.write("".join(self._imu_raw_lines))
+        self._imu_raw_lines.clear()
+
+    def append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
+        self._append_imu_raw_records(records)
+        self._flush_imu_raw()
 
     def _flush_rows(self) -> None:
         if not self._row_lines:
@@ -221,7 +258,17 @@ class _OpenSegmentWriter:
             mux_h264_buffers_to_mp4(self.segment_dir, self._h264_buffers)
             self._h264_buffers.clear()
         self._flush_rows()
+        self._flush_imu_raw()
         self._rows_fp.flush()
+        if self._imu_raw_fp is not None:
+            self._imu_raw_fp.flush()
+            if SEGMENT_FSYNC_ON_CLOSE:
+                try:
+                    os.fsync(self._imu_raw_fp.fileno())
+                except OSError:
+                    pass
+            self._imu_raw_fp.close()
+            self._imu_raw_fp = None
         if SEGMENT_FSYNC_ON_CLOSE:
             try:
                 os.fsync(self._rows_fp.fileno())
@@ -599,6 +646,7 @@ class SegmentCaptureWriter:
         camera_jpegs: dict[str, bytes],
         imu6: np.ndarray,
         camera_ts_offset_ns: dict[str, int] | None = None,
+        imu_raw_batch: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
     ) -> int:
         if not camera_jpegs:
             raise RuntimeError("append_frame requires camera_jpegs")
@@ -619,6 +667,7 @@ class SegmentCaptureWriter:
                 imu6=imu6,
                 task=self.task,
                 camera_ts_offset_ns=camera_ts_offset_ns,
+                imu_raw_batch=tuple(imu_raw_batch or ()),
             )
             self._next_frame_index += 1
             self._open_frame_count += 1
@@ -628,6 +677,20 @@ class SegmentCaptureWriter:
                 self._persist_checkpoint()
         self._offer_persist(job, blocking=False)
         return job.frame_index
+
+    def append_imu_raw(self, records: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
+        if not records:
+            return
+        with self._lock:
+            self._ensure_open_segment()
+            segment_id = self._open_segment_id
+            assert segment_id is not None
+            job = _ImuRawPersistJob(
+                session_id=self.session_id,
+                segment_id=segment_id,
+                records=tuple(records),
+            )
+        self._offer_persist(job, blocking=True)
 
     def _offer_persist(self, item: PersistWorkItem, *, blocking: bool) -> None:
         """Non-blocking for frames (drop oldest); segment close may block on flush."""
@@ -648,6 +711,8 @@ class SegmentCaptureWriter:
                         self._persist_queue.put_nowait(dropped)
                     except queue.Full:
                         pass
+                    continue
+                if isinstance(dropped, _ImuRawPersistJob):
                     continue
                 self._dropped_frames += 1
 
@@ -687,7 +752,10 @@ class SegmentCaptureWriter:
                             if not active_dir.is_dir():
                                 active_dir = self._segments_dir() / seg_id
                             self._open_writers[seg_id] = _OpenSegmentWriter(active_dir)
-                        self._open_writers[seg_id].write_frame(work)
+                        if isinstance(work, _ImuRawPersistJob):
+                            self._open_writers[seg_id].append_imu_raw_records(work.records)
+                        else:
+                            self._open_writers[seg_id].write_frame(work)
                 self._persist_queue.task_done()
 
     def flush(self) -> None:

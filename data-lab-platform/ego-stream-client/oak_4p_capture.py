@@ -335,6 +335,10 @@ class Oak4pEgoRecorder:
         self._strict_last_emit_ts_ns: int | None = None
         self._intrinsics_document: dict[str, Any] | None = None
         self._calibration_source: str | None = None
+        self._imu_flush_gyro_idx = 0
+        self._imu_flush_accel_idx = 0
+        self._pending_imu_raw: list[dict[str, Any]] = []
+        self._strict_imu_buf: Any = None
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -820,6 +824,28 @@ class Oak4pEgoRecorder:
         del buf.accel_ts_ns[:drop]
         del buf.accel_xyz[:drop]
 
+    def pop_pending_imu_raw(self) -> list[dict[str, Any]]:
+        out = self._pending_imu_raw
+        self._pending_imu_raw = []
+        return out
+
+    def flush_remaining_imu_raw(self) -> list[dict[str, Any]]:
+        buf = self._strict_imu_buf
+        if buf is not None:
+            self._flush_imu_raw_from_buf(buf)
+        return self.pop_pending_imu_raw()
+
+    def _flush_imu_raw_from_buf(self, buf: EpisodeBuffers) -> None:
+        from ego_capture_studio.capture.imu_raw_flush import collect_imu_raw_since
+
+        batch, self._imu_flush_gyro_idx, self._imu_flush_accel_idx = collect_imu_raw_since(
+            buf,
+            gyro_from=self._imu_flush_gyro_idx,
+            accel_from=self._imu_flush_accel_idx,
+        )
+        if batch:
+            self._pending_imu_raw.extend(batch)
+
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
         if self._hw_jpeg:
             last_preview: dict[str, bytes] = {}
@@ -1098,7 +1124,12 @@ class Oak4pEgoRecorder:
         interval_s = interval_ns / 1e9
         use_imu_interp = EGO_IMU_INTERPOLATE if imu_interpolate is None else bool(imu_interpolate)
 
+        self._imu_flush_gyro_idx = 0
+        self._imu_flush_accel_idx = 0
+        self._pending_imu_raw = []
+
         buf = EpisodeBuffers()
+        self._strict_imu_buf = buf
         cam_rings: dict[str, deque[_CamRingSample]] = {
             oak: deque(maxlen=self._strict_ring_len(oak)) for oak in self._cam_list
         }
@@ -1124,7 +1155,10 @@ class Oak4pEgoRecorder:
 
         while time.monotonic() < t_end:
             self._drain_imu(buf)
+            self._flush_imu_raw_from_buf(buf)
             self._trim_imu_buffer(buf)
+            self._imu_flush_gyro_idx = len(buf.gyro_ts_ns)
+            self._imu_flush_accel_idx = len(buf.accel_ts_ns)
             for cam_name, queue in self._cam_queues.items():
                 pkt = queue.tryGet()
                 while pkt is not None:

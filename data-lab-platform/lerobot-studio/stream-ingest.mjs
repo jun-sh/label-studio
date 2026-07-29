@@ -20,7 +20,7 @@ import {
   isFullMuxMode,
   probeMp4FrameCount as execProbeMp4FrameCount,
 } from "./mux-exec.mjs";
-import { hasSessionMarker, SESSION_MARKERS } from "./session-markers.mjs";
+import { hasSessionMarker, SESSION_MARKERS, markSessionMcapFailed } from "./session-markers.mjs";
 import {
   attachEpisodeMetaToIndexEntry,
   bootstrapDatasetSchema,
@@ -456,6 +456,50 @@ export function spawnAppendSegmentParquetSync(root, extractDir) {
   }
 }
 
+const EXPORT_MCAP_SCRIPT = path.join(__dirname, "scripts", "export_segment_to_mcap.py");
+
+export function mcapExportEnabled() {
+  return String(process.env.DERIVE_MCAP_EXPORT || "0").trim() === "1";
+}
+
+export function mcapValidateEnabled() {
+  const v = process.env.DERIVE_MCAP_VALIDATE;
+  if (v === undefined || v === null || String(v).trim() === "") return true;
+  const s = String(v).trim().toLowerCase();
+  return s !== "0" && s !== "false" && s !== "no";
+}
+
+export function spawnExportSegmentMcapSync(root, extractDir, sessionId, segmentId) {
+  const py = resolveParquetPython();
+  if (!py) throw new Error("no_python_for_mcap");
+  const outDir = path.join(root, "raw", "mcap", sessionId);
+  fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, `${segmentId}.mcap`);
+  const intrinsicsPath = path.join(root, "meta", "camera_intrinsics.json");
+  const args = [EXPORT_MCAP_SCRIPT, extractDir, "-o", outPath];
+  if (fs.existsSync(intrinsicsPath)) {
+    args.push("--intrinsics", intrinsicsPath);
+  }
+  if (!mcapValidateEnabled()) {
+    args.push("--no-validate-imu");
+  }
+  const res = spawnSync(py, args, {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PYTHONPATH: path.join(__dirname, "scripts"),
+    },
+  });
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "mcap export failed").slice(0, 500));
+  }
+  try {
+    return JSON.parse(String(res.stdout || "{}").trim() || "{}");
+  } catch {
+    return { ok: true, out_path: outPath };
+  }
+}
+
 const EXPORT_VIDEOS_SCRIPT = path.join(__dirname, "scripts", "export-videos-from-parquet.py");
 
 /** Official LeRobot only — videos encoded by LeRobotDataset.save_episode(). */
@@ -797,6 +841,32 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
       parquetRows: Number(append.total_rows || append.parquet_rows || 0),
       backend: "lerobot",
     });
+    if (mcapExportEnabled()) {
+      try {
+        const mcapReport = spawnExportSegmentMcapSync(
+          root,
+          extractDir,
+          body.sessionId,
+          body.segmentId,
+        );
+        streamLog(stationId, "mcap_export_ok", {
+          sessionId: body.sessionId,
+          segmentId: body.segmentId,
+          outPath: mcapReport.out_path || null,
+          degradedImu: Boolean(mcapReport.degraded_imu),
+        });
+      } catch (mcapErr) {
+        const message = String(mcapErr?.message || mcapErr).slice(0, 300);
+        streamLog(stationId, "mcap_export_fail", {
+          sessionId: body.sessionId,
+          segmentId: body.segmentId,
+          message,
+        });
+        markSessionMcapFailed(root, body.sessionId, message, {
+          segmentId: body.segmentId,
+        });
+      }
+    }
     syncEpisodesMetaOnly(stationId);
     streamLog(stationId, "derive_segment_ok", {
       sessionId: body.sessionId,

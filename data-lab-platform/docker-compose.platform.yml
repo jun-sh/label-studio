@@ -100,6 +100,8 @@ services:
       - DERIVE_MUX_MODE=${DERIVE_MUX_MODE:-full}
       - DERIVE_VIDEO_EXPORT_BACKEND=lerobot
       - DERIVE_PARQUET_BACKEND=lerobot
+      - DERIVE_MCAP_EXPORT=${DERIVE_MCAP_EXPORT:-0}
+      - DERIVE_MCAP_VALIDATE=${DERIVE_MCAP_VALIDATE:-1}
       - DERIVE_STANDALONE=${DERIVE_STANDALONE:-1}
       - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
     healthcheck:
@@ -146,6 +148,8 @@ services:
       - DERIVE_MUX_MODE=${DERIVE_MUX_MODE:-full}
       - DERIVE_VIDEO_EXPORT_BACKEND=lerobot
       - DERIVE_PARQUET_BACKEND=lerobot
+      - DERIVE_MCAP_EXPORT=${DERIVE_MCAP_EXPORT:-0}
+      - DERIVE_MCAP_VALIDATE=${DERIVE_MCAP_VALIDATE:-1}
       - DERIVE_DEFER_PUBLISH=${DERIVE_DEFER_PUBLISH:-1}
       - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
     healthcheck:
@@ -253,6 +257,7 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         BASE_IMAGE: ${LEROBOT_QC_BASE_IMAGE:-data-lab-embodied-annotate:local}
+        INSTALL_LEROBOT: ${LEROBOT_QC_INSTALL_LEROBOT:-1}
     image: ${LEROBOT_QC_IMAGE:-data-lab-lerobot-qc:local}
     restart: unless-stopped
     expose:

@@ -35,7 +35,11 @@ pip3 download --dest "${WHEEL_DIR}" -i "${TUNA}" \
   "datasets>=4.0.0,<5.0.0" "huggingface_hub>=0.34.0" \
   einops "jsonlines<5.0.0,>=4.0.0" "packaging<26.0,>=24.2"
 
-echo "==> [2b/4] lerobot import-chain runtime (--no-deps each)"
+echo "==> [2b/4] MCAP ROS2 export (PR2/PR3)"
+pip3 download --dest "${WHEEL_DIR}" -i "${TUNA}" --no-deps \
+  "mcap>=1.3.0" "mcap-ros2-support>=0.5.0"
+
+echo "==> [2c/4] lerobot import-chain runtime (--no-deps each)"
 for pkg in \
   "accelerate<2.0.0,>=1.10.0" safetensors psutil draccus==0.10.0 \
   "deepdiff<9.0.0,>=7.0.1" "termcolor<4.0.0,>=2.4.0" "imageio>=2.34.0" \

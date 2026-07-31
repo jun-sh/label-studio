@@ -1505,6 +1505,21 @@ body.ls-playhead-seeking .ls-playhead-handle {
   color: #cf1322;
 }
 
+.ls-qc-removed-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #ffa39e;
+  background: #fff1f0;
+  color: #a8071a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ls-qc-removed-banner[hidden] {
+  display: none !important;
+}
+
 .ls-qc-speed {
   padding: 6px 6px;
   border: 1px solid var(--ls-border);
@@ -1543,6 +1558,75 @@ body.ls-playhead-seeking .ls-playhead-handle {
 
 .ls-qc-modal-body h3 {
   margin: 0 0 8px;
+}
+
+.ls-qc-modal-body--running {
+  border-color: #bae6fd;
+  background: #f0f9ff;
+}
+
+.ls-qc-modal-body--success {
+  border-color: #86efac;
+  background: #ecfdf3;
+}
+
+.ls-qc-modal-body--failed {
+  border-color: #ffa39e;
+  background: #fff1f0;
+}
+
+.ls-qc-rebuild-status--success {
+  color: #15803d;
+  font-weight: 600;
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+
+.ls-qc-rebuild-status--error {
+  color: #cf1322;
+  font-weight: 600;
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+
+#rebuildStatusText.ls-muted {
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+
+.ls-rebuild-progress {
+  margin: 10px 0 12px;
+}
+
+.ls-rebuild-progress--inline {
+  margin: 8px 0 4px;
+}
+
+.ls-rebuild-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ls-border);
+  overflow: hidden;
+}
+
+.ls-rebuild-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb, #3b82f6);
+  transition: width 0.35s ease;
+}
+
+.ls-rebuild-progress-label {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ls-muted);
+}
+
+.ls-rebuild-output-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  word-break: break-all;
 }
 
 .ls-video-pane--error video {

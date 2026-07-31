@@ -5,7 +5,7 @@
 (function () {
   "use strict";
   if (globalThis.__DATALAB_HAND_KP2D__) return;
-  var src = "/lerobot/branding/overlay-hand-keypoints.mjs?v=20";
+  var src = "/lerobot/branding/overlay-hand-keypoints.mjs?v=21";
   var existing = document.querySelector('script[type="module"][src*="overlay-hand-keypoints.mjs"]');
   if (existing) return;
   var s = document.createElement("script");

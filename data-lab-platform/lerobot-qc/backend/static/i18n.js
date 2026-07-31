@@ -169,6 +169,9 @@
       qc_filter_approved: 'Approved',
       qc_filter_suspicious: 'Suspicious',
       qc_filter_rejected: 'Removed',
+      qc_removed_banner: 'This episode is marked for removal (read-only preview).',
+      qc_removed_banner_with_reason: 'This episode is marked for removal (read-only preview). Reason: {reason}',
+      qc_btn_restore: 'Restore removal',
       qc_status_approved: 'Approved',
       qc_status_rejected: 'Removed',
       qc_status_suspicious: 'Suspicious',
@@ -176,6 +179,11 @@
       qc_rebuild_starting: 'Starting rebuild job…',
       qc_rebuild_in_progress: '{status}',
       qc_rebuild_completed: 'Completed → {output}',
+      qc_rebuild_completed_title: 'Rebuild completed',
+      qc_rebuild_episode_progress: 'Episode {current}/{total} ({pct}%)',
+      qc_rebuild_writing_parquet: 'Writing parquet files…',
+      qc_rebuild_finalizing_done: 'Writing metadata…',
+      qc_rebuild_output_hint: 'Output: {path}',
       qc_rebuild_failed: 'Rebuild failed: {error}',
       qc_rebuild_poll_error: 'Status poll failed: {error}',
       qc_rebuild_stale_hint: 'Rebuild interrupted (service restarted). Close this dialog and start a new rebuild.',
@@ -353,6 +361,9 @@
       qc_filter_approved: '已通过',
       qc_filter_suspicious: '可疑',
       qc_filter_rejected: '已移除',
+      qc_removed_banner: '此集已标记移除（只读预览）。',
+      qc_removed_banner_with_reason: '此集已标记移除（只读预览）。原因：{reason}',
+      qc_btn_restore: '撤销移除',
       qc_status_approved: '已通过',
       qc_status_rejected: '已移除',
       qc_status_suspicious: '可疑',
@@ -360,6 +371,11 @@
       qc_rebuild_starting: '正在启动重建任务…',
       qc_rebuild_in_progress: '{status}',
       qc_rebuild_completed: '重建完成 → {output}',
+      qc_rebuild_completed_title: '重建完成',
+      qc_rebuild_episode_progress: '第 {current}/{total} 集 ({pct}%)',
+      qc_rebuild_writing_parquet: '正在写入 Parquet 文件…',
+      qc_rebuild_finalizing_done: '正在写入元数据…',
+      qc_rebuild_output_hint: '输出：{path}',
       qc_rebuild_failed: '重建失败：{error}',
       qc_rebuild_poll_error: '状态查询失败：{error}',
       qc_rebuild_stale_hint: '重建已中断（服务曾重启）。请关闭此对话框并重新发起重建。',
@@ -561,6 +577,8 @@
     if (rejectBtn) rejectBtn.textContent = t('qc_btn_reject');
     const suspiciousBtn = document.getElementById('suspiciousBtn');
     if (suspiciousBtn) suspiciousBtn.textContent = t('qc_btn_suspicious');
+    const restoreEpisodeBtn = document.getElementById('restoreEpisodeBtn');
+    if (restoreEpisodeBtn) restoreEpisodeBtn.textContent = t('qc_btn_restore');
     const stepBackBtn = document.getElementById('stepBackBtn');
     if (stepBackBtn) stepBackBtn.textContent = t('qc_btn_step_back');
     const stepFwdBtn = document.getElementById('stepFwdBtn');

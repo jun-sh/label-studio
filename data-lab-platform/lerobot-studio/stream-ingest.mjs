@@ -34,12 +34,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const STREAM_ROOT = process.env.STREAM_DATA_ROOT || "/srv/stream";
 
-const VIDEO_KEYS = [
+const VIDEO_KEYS_V0 = [
   "observation.images.camera_front_left",
   "observation.images.camera_front_right",
   "observation.images.camera_rear_left",
   "observation.images.camera_rear_right",
 ];
+
+/** ego-standard fleet topology (see config/camera_topology_standard.yaml). */
+const VIDEO_KEYS_V1 = [
+  "observation.images.camera_front_left",
+  "observation.images.camera_rear_right",
+  "observation.images.camera_depth_left",
+  "observation.images.camera_front_right",
+];
+
+const VIDEO_KEYS = VIDEO_KEYS_V0;
 
 const LEGACY_VIDEO_KEYS = [
   "observation.images.camera_head_left",
@@ -53,8 +63,40 @@ const LEGACY_VIDEO_KEY_ALIASES = {
   "observation.images.camera_front_left": ["observation.images.camera_head_left"],
   "observation.images.camera_front_right": ["observation.images.camera_head_right"],
   "observation.images.camera_rear_left": ["observation.images.camera_depth_head"],
+  "observation.images.camera_depth_left": ["observation.images.camera_depth_head", "observation.images.camera_rear_left"],
   "observation.images.camera_rear_right": ["observation.images.camera_02"],
 };
+
+const STATION_TOPOLOGY_PATH = path.join(__dirname, "config", "station-topology.json");
+let _stationTopologyCache = null;
+
+function loadStationTopology() {
+  if (_stationTopologyCache) return _stationTopologyCache;
+  _stationTopologyCache = readJson(STATION_TOPOLOGY_PATH, {});
+  return _stationTopologyCache;
+}
+
+function topologyVideoKeys(topologyId) {
+  const registry = loadStationTopology();
+  const spec = registry[topologyId];
+  if (spec?.video_keys?.length) return spec.video_keys;
+  if (topologyId === "ego-standard") return VIDEO_KEYS_V1;
+  return VIDEO_KEYS_V0;
+}
+
+function defaultVideoKeysForStation(stationId) {
+  const registry = loadStationTopology();
+  const entry = registry.stations?.[stationId];
+  if (entry?.topology_id) return topologyVideoKeys(entry.topology_id);
+  return VIDEO_KEYS_V1;
+}
+
+function videoKeysFromIntrinsics(root) {
+  const intr = readJson(path.join(root, "meta", "camera_intrinsics.json"), {});
+  const topoId = intr?.topology?.topology_id;
+  if (topoId) return topologyVideoKeys(topoId);
+  return null;
+}
 
 const LEGACY_TO_CANONICAL = Object.fromEntries(
   Object.entries(LEGACY_VIDEO_KEY_ALIASES).map(([canonical, legacyList]) => [
@@ -63,14 +105,22 @@ const LEGACY_TO_CANONICAL = Object.fromEntries(
   ]),
 );
 
-/** New sessions use VIDEO_KEYS; resumed sessions keep keys from existing meta/info.json. */
+/** New sessions use station topology; resumed sessions keep keys from existing meta/info.json. */
 function ingestVideoKeys(root) {
   const info = readJson(path.join(root, "meta", "info.json"), {});
   const feats = info?.features || {};
   if (feats["observation.images.camera_head_left"]) {
     return LEGACY_VIDEO_KEYS;
   }
-  return VIDEO_KEYS;
+  if (feats["observation.images.camera_depth_left"]) {
+    return VIDEO_KEYS_V1;
+  }
+  if (feats["observation.images.camera_rear_left"]) {
+    return VIDEO_KEYS_V0;
+  }
+  const fromIntrinsics = videoKeysFromIntrinsics(root);
+  if (fromIntrinsics) return fromIntrinsics;
+  return defaultVideoKeysForStation(stationIdFromRoot(root));
 }
 
 const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 30);
@@ -438,16 +488,45 @@ function writeSegmentDeriveMarker(root, sessionId, segmentId, meta) {
   });
 }
 
-export function spawnAppendSegmentParquetSync(root, extractDir) {
+function pendingSessionEpisodePath(root, sessionId) {
+  return path.join(root, "live", "derive", "pending_episode", `${sessionId}.json`);
+}
+
+export function hasPendingSessionEpisode(root, sessionId) {
+  return fs.existsSync(pendingSessionEpisodePath(root, sessionId));
+}
+
+export function spawnAppendSegmentParquetSync(root, extractDir, { deferSave = false } = {}) {
   const script = resolveAppendParquetScript();
   const py = resolveParquetPython();
   if (!py) throw new Error("no_python_for_parquet");
-  const res = spawnSync(py, [script, root, extractDir], {
+  const args = [script, root, extractDir];
+  if (deferSave) args.push("--defer-save");
+  const res = spawnSync(py, args, {
     ...parquetSpawnOptions(),
     encoding: "utf8",
   });
   if (res.status !== 0) {
     throw new Error(String(res.stderr || res.stdout || "append parquet failed").slice(0, 500));
+  }
+  try {
+    return JSON.parse(String(res.stdout || "{}").trim() || "{}");
+  } catch {
+    return { ok: true };
+  }
+}
+
+/** Flush deferred session episode buffer to LeRobot parquet (one save_episode per session). */
+export function spawnFinalizeSessionEpisodeSync(root, sessionId) {
+  const script = resolveAppendParquetScript();
+  const py = resolveParquetPython();
+  if (!py) throw new Error("no_python_for_parquet");
+  const res = spawnSync(py, [script, root, "--finalize-session", sessionId], {
+    ...parquetSpawnOptions(),
+    encoding: "utf8",
+  });
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "finalize session episode failed").slice(0, 500));
   }
   try {
     return JSON.parse(String(res.stdout || "{}").trim() || "{}");
@@ -811,7 +890,10 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
         );
       }
     }
-    const append = spawnAppendSegmentParquetSync(root, extractDir);
+    const deferEpisodeSave = useSessionSingleEpisode(stationId);
+    const append = spawnAppendSegmentParquetSync(root, extractDir, {
+      deferSave: deferEpisodeSave,
+    });
     const framesCommitted = Number(
       append.frames_committed || append.rows_added || body.frames?.length || 0,
     );
@@ -840,6 +922,8 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
       framesCommitted,
       parquetRows: Number(append.total_rows || append.parquet_rows || 0),
       backend: "lerobot",
+      deferSave: Boolean(append.defer_save),
+      episodeSaved: append.episode_saved !== false,
     });
     if (mcapExportEnabled()) {
       try {
@@ -1587,7 +1671,7 @@ function segmentScratchJsonlPath(root, sessionId, segmentId) {
 function stageFrameImages(root, frameIndex, images) {
   const inflight = frameInflightDir(root, frameIndex);
   ensureDir(inflight);
-  for (const videoKey of VIDEO_KEYS) {
+  for (const videoKey of ingestVideoKeys(root)) {
     const buf = imageBuffer(images, videoKey);
     if (!buf) continue;
     const safe = videoKey.replace(/\./g, "_");
@@ -1664,12 +1748,25 @@ function resetSegmentCommitState(root, sessionId, segmentId, frameIndices = []) 
     segmentMetaPath(root, sessionId, segmentId),
     segmentScratchJsonlPath(root, sessionId, segmentId),
     path.join(root, "live", "derive", "markers", sessionId, `${segmentId}.ok.json`),
+    pendingSessionEpisodePath(root, sessionId),
   ];
   for (const p of paths) {
     try {
       fs.rmSync(p, { force: true });
     } catch {
       /* ignore */
+    }
+  }
+  // Deferred session episodes must be re-derived as a whole after any segment reset.
+  const markerDir = path.join(root, "live", "derive", "markers", sessionId);
+  if (fs.existsSync(markerDir)) {
+    for (const name of fs.readdirSync(markerDir)) {
+      if (!name.endsWith(".ok.json")) continue;
+      try {
+        fs.rmSync(path.join(markerDir, name), { force: true });
+      } catch {
+        /* ignore */
+      }
     }
   }
   for (const idx of frameIndices) {
@@ -2331,7 +2428,7 @@ export function isRemotePreviewAllowed(stationId) {
 
 function defaultInfo(stationId, shapes, episodeMeta = null) {
   const features = {};
-  for (const key of VIDEO_KEYS) {
+  for (const key of defaultVideoKeysForStation(stationId)) {
     const [h, w] = shapes[key] || [1200, 1920];
     features[key] = {
       dtype: "video",
@@ -3351,7 +3448,7 @@ async function ensureSessionForImport(stationId, body) {
   }
   const task = body.frames[0]?.task;
   const videoShapes = {};
-  for (const key of VIDEO_KEYS) {
+  for (const key of defaultVideoKeysForStation(stationId)) {
     videoShapes[key] = [800, 1280];
   }
   await handleStreamUpload(stationId, {
@@ -3980,7 +4077,7 @@ export async function handleStreamUpload(stationId, body) {
     ensureDir(stagingTmpRoot(root));
     ensureDir(path.join(stagingTmpRoot(root), "inflight"));
     ensureDir(locksDir(root));
-    const stagingKeys = isResume ? ingestVideoKeys(root) : VIDEO_KEYS;
+    const stagingKeys = isResume ? ingestVideoKeys(root) : defaultVideoKeysForStation(stationId);
     for (const key of stagingKeys) {
       ensureDir(stagingDir(root, key));
     }

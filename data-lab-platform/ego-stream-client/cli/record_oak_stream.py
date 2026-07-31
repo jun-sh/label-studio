@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import time
 from collections import deque
 from pathlib import Path
@@ -28,6 +29,14 @@ from ego_capture_studio.capture.frame_jpeg_codec import (
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
 from ego_capture_studio.capture.preview_server import start_preview_stack
 from ego_capture_studio.capture.segment_store import SegmentCaptureWriter, new_session_id
+
+_SHUTDOWN = False
+
+
+def _request_shutdown(signum: int, _frame) -> None:
+    global _SHUTDOWN
+    _SHUTDOWN = True
+    print(f"capture_shutdown signal={signum}", flush=True)
 
 try:
     from ego_capture_studio.capture.stream_upload import FrameStreamUploader
@@ -161,6 +170,11 @@ def _kick_heartbeat(heartbeat: FrameStreamUploader | None) -> None:
 
 
 def main() -> None:
+    global _SHUTDOWN
+    _SHUTDOWN = False
+    signal.signal(signal.SIGTERM, _request_shutdown)
+    signal.signal(signal.SIGINT, _request_shutdown)
+
     p = argparse.ArgumentParser(
         description="OAK edge capture (Scheme A): segments on disk + MJPEG preview, no live upload.",
     )
@@ -291,8 +305,12 @@ def main() -> None:
             strict_duration_s,
             interval_ms=interval_ms,
             imu_interpolate=imu_interpolate,
+            shutdown_check=lambda: _SHUTDOWN,
         )
         for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
+            if _SHUTDOWN:
+                print("capture_shutdown exit frame loop", flush=True)
+                break
             imu_raw_batch = recorder.pop_pending_imu_raw()
             emit_mono = time.monotonic()
             _append_visual_frame(
@@ -330,10 +348,13 @@ def main() -> None:
         remaining_imu = recorder.flush_remaining_imu_raw()
         if remaining_imu:
             writer.append_imu_raw(remaining_imu)
+        try:
+            recorder.stop()
+        except Exception as exc:
+            print(f"recorder.stop warning: {exc}", flush=True)
         writer.close()
         if heartbeat is not None:
             heartbeat.stop_periodic_heartbeat()
-        recorder.stop()
 
     elapsed = max(time.monotonic() - t0, 1e-6)
     print(

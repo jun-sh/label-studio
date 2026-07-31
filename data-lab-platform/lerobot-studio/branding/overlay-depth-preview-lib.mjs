@@ -1,15 +1,17 @@
 /**
- * Depth preview overlay logic (P0 relative depth, scheme A).
+ * Depth preview overlay logic (front_left depth shown in front_right slot).
  */
-export const DEPTH_OVERLAY_VERSION = 2;
+export const DEPTH_OVERLAY_VERSION = 3;
 
 export const SOURCE_VIDEO_KEY = "observation.images.camera_front_left";
 export const DISPLAY_VIDEO_KEY = "observation.images.camera_front_right";
+export const DISPLAY_PANEL_LABEL = "depth_front_left";
 
 export const LEGACY_TO_CANONICAL_VIDEO_KEY = {
   "observation.images.camera_head_left": "observation.images.camera_front_left",
   "observation.images.camera_head_right": "observation.images.camera_front_right",
   "observation.images.camera_depth_head": "observation.images.camera_rear_left",
+  "observation.images.camera_depth_left": "observation.images.camera_rear_left",
   "observation.images.camera_02": "observation.images.camera_rear_right",
 };
 
@@ -21,8 +23,19 @@ export function cameraShortName(featureKey) {
   return (featureKey || "").split(".").pop() || "";
 }
 
+export function displayPanelLabel(payload) {
+  return payload?.display_panel_label || DISPLAY_PANEL_LABEL;
+}
+
 export function featureMatchesText(text, featureKey) {
   if (!text) return false;
+  if (
+    featureKey === DISPLAY_VIDEO_KEY
+    || canonicalVideoKey(featureKey) === DISPLAY_VIDEO_KEY
+  ) {
+    const panelLabel = DISPLAY_PANEL_LABEL;
+    if (text.indexOf(panelLabel) >= 0) return true;
+  }
   if (text.indexOf(featureKey) >= 0) return true;
   const short = cameraShortName(featureKey);
   if (!short || text.indexOf(short) < 0) return false;

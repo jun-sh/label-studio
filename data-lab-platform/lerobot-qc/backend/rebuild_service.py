@@ -19,7 +19,7 @@ import pyarrow.parquet as pq
 from dataset_manager import DatasetState, _load_tasks_map
 from qc_metrics import read_episode_frames
 from qc_store import QcStore
-from video_service import trim_video_with_ffmpeg
+from video_service import expected_video_duration, trim_video_for_delivery
 
 CHUNKS_SIZE_DEFAULT = 1000
 
@@ -170,6 +170,25 @@ def _job_updates(record: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in record.items() if key != "job_id"}
 
 
+def _normalize_episode_tasks(value: Any) -> list[str] | None:
+    """Normalize episode tasks to list[str] for parquet (avoid str/ndarray mix)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else None
+    if isinstance(value, np.ndarray):
+        items = [str(item).strip() for item in value.tolist()]
+        items = [item for item in items if item]
+        return items or None
+    if isinstance(value, (list, tuple)):
+        items = [str(item).strip() for item in value]
+        items = [item for item in items if item]
+        return items or None
+    text = str(value).strip()
+    return [text] if text else None
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -232,8 +251,11 @@ def _copy_episode_videos(
     dst_episode_index: int,
     output_root: Path,
     chunks_size: int,
+    frame_count: int,
+    fps: float,
 ) -> dict[str, Any]:
     video_meta: dict[str, Any] = {}
+    duration = expected_video_duration(frame_count, fps)
     for video_key in state.video_keys():
         src_path = state.video_path(src_episode_index, video_key=video_key)
         offsets = state.video_offsets(video_key, src_episode_index)
@@ -250,14 +272,20 @@ def _copy_episode_videos(
 
         start = offsets["video_start_time"]
         end = offsets["video_end_time"]
-        if start > 0.05 or end > 0:
-            ok = trim_video_with_ffmpeg(src_path, dst_path, start, end)
-            if not ok:
-                shutil.copy2(src_path, dst_path)
-        else:
-            shutil.copy2(src_path, dst_path)
+        ok = trim_video_for_delivery(
+            src_path,
+            dst_path,
+            start,
+            end,
+            frame_count,
+            fps,
+        )
+        if not ok:
+            raise RuntimeError(
+                f"Failed to trim delivery video for episode {src_episode_index} "
+                f"({video_key}) -> {dst_path}"
+            )
 
-        duration = max(0.0, end - start)
         video_meta[f"videos/{video_key}/chunk_index"] = chunk_index
         video_meta[f"videos/{video_key}/file_index"] = file_index
         video_meta[f"videos/{video_key}/from_timestamp"] = 0.0
@@ -332,9 +360,9 @@ def rebuild_delivery_dataset(
             ep_record["task_index"] = int(row["task_index"])
         override = store.get_instruction_override(original_index)
         if override:
-            ep_record["tasks"] = override
+            ep_record["tasks"] = _normalize_episode_tasks(override)
         elif "tasks" in row.index and pd.notna(row.get("tasks")):
-            ep_record["tasks"] = row.get("tasks")
+            ep_record["tasks"] = _normalize_episode_tasks(row.get("tasks"))
 
         ep_record.update(
             _copy_episode_videos(
@@ -343,6 +371,8 @@ def rebuild_delivery_dataset(
                 dst_episode_index=new_index,
                 output_root=output_root,
                 chunks_size=chunks_size,
+                frame_count=length,
+                fps=fps,
             )
         )
         episode_rows.append(ep_record)

@@ -340,16 +340,15 @@
     }
   }
 
+  function isScalarSplitSidebar(node) {
+    if (!node) return false;
+    var blob = (node.textContent || "").replace(/\s+/g, " ").trim();
+    return /拆分|split/i.test(blob);
+  }
+
   function dismissScalarSplitView() {
-    var hasJointsSidebar = false;
     document.querySelectorAll("div.fixed.z-50").forEach(function (node) {
-      var blob = (node.textContent || "").replace(/\s+/g, " ").trim();
-      if (/全部\s*joints|all\s*joints|拆分/i.test(blob)) {
-        hasJointsSidebar = true;
-      }
-    });
-    if (!hasJointsSidebar) return false;
-    document.querySelectorAll("div.fixed.z-50").forEach(function (node) {
+      if (!isScalarSplitSidebar(node)) return;
       var closeBtn = node.querySelector("button");
       if (closeBtn) {
         try {
@@ -358,9 +357,13 @@
           /* ignore */
         }
       }
-      node.remove();
     });
-    return true;
+  }
+
+  function closeOpenRadixMenus() {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }),
+    );
   }
 
   function findTransportBar() {
@@ -432,7 +435,7 @@
   var liveRawSnapshotObserver = null;
   var applyingLiveFeaturesPlaceholder = false;
   var livePauseGuardTimer = null;
-  var liveJointsFreezeTimer = null;
+  var liveJointsGuardTimer = null;
 
   function clickAllFeaturesTab() {
     var buttons = document.querySelectorAll("button");
@@ -525,130 +528,278 @@
     return null;
   }
 
-  function jointsChartSnapshotsReady() {
-    var gv = findJointsChartGroupview();
-    if (!gv) return false;
-    var canvases = gv.querySelectorAll("canvas");
-    for (var ci = 0; ci < canvases.length; ci++) {
-      if (canvases[ci]._datalabLiveJointsSnapshot) return true;
-    }
-    return false;
+  function isJointsPickerSummaryText(text) {
+    if (!text) return false;
+    return (
+      /^全部\s*joints$/i.test(text) ||
+      /^all\s*joints$/i.test(text) ||
+      /^未选择$/i.test(text) ||
+      /^none\s*selected$/i.test(text) ||
+      /^已选\s*\d+$/i.test(text) ||
+      /^\d+\s*selected$/i.test(text)
+    );
   }
 
-  function imageDataHasChartInk(imageData) {
-    if (!imageData || !imageData.data) return false;
-    var d = imageData.data;
-    for (var i = 3; i < d.length; i += 64) {
-      if (d[i] > 0 && d[i - 1] + d[i - 2] + d[i - 3] > 0) return true;
-    }
-    return false;
-  }
-
-  /** Capture grid/axes paint at current frame (call after seek-to-0 + pause). */
-  function captureJointsChartSnapshots() {
-    var gv = findJointsChartGroupview();
-    if (!gv) return false;
-    var captured = false;
-    var canvases = gv.querySelectorAll("canvas");
-    for (var ci = 0; ci < canvases.length; ci++) {
-      var canvas = canvases[ci];
-      if (canvas.width <= 0 || canvas.height <= 0) continue;
-      var ctx = canvas.getContext("2d");
-      if (!ctx) continue;
-      try {
-        var snap = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        if (!imageDataHasChartInk(snap)) continue;
-        canvas._datalabLiveJointsSnapshot = snap;
-        captured = true;
-      } catch (e0) {
-        /* ignore */
+  function findJointsPickerTriggerButton(gv) {
+    if (!gv) gv = findJointsChartGroupview();
+    if (!gv) return null;
+    var buttons = gv.querySelectorAll("button");
+    for (var bi = 0; bi < buttons.length; bi++) {
+      var btn = buttons[bi];
+      if (btn.closest("[data-datalab-collection-mode-root]")) continue;
+      var labelSpan = btn.querySelector("span.truncate");
+      if (labelSpan && isJointsPickerSummaryText((labelSpan.textContent || "").trim())) {
+        return btn;
+      }
+      var spans = btn.querySelectorAll("span");
+      for (var si = 0; si < spans.length; si++) {
+        if (isJointsPickerSummaryText((spans[si].textContent || "").replace(/\s+/g, " ").trim())) {
+          return btn;
+        }
       }
     }
-    return captured;
+    return null;
   }
 
-  /** Restore frozen grid/axes snapshot; overwrites LeRobot per-frame curve redraws. */
-  function restoreJointsChartSnapshots() {
-    var gv = findJointsChartGroupview();
-    if (!gv) return;
-    gv.setAttribute("data-datalab-live-joints-frozen", "1");
-    var canvases = gv.querySelectorAll("canvas");
-    for (var ci = 0; ci < canvases.length; ci++) {
-      var canvas = canvases[ci];
-      var snap = canvas._datalabLiveJointsSnapshot;
-      if (!snap || canvas.width <= 0 || canvas.height <= 0) continue;
-      if (snap.width !== canvas.width || snap.height !== canvas.height) continue;
-      var ctx = canvas.getContext("2d");
-      if (!ctx) continue;
-      try {
-        ctx.putImageData(snap, 0, 0);
-      } catch (e1) {
-        /* ignore */
+  function jointsPickerSummaryText(gv) {
+    if (!gv) gv = findJointsChartGroupview();
+    if (!gv) return "";
+    var trigger = findJointsPickerTriggerButton(gv);
+    if (!trigger) return "";
+    var labelSpan = trigger.querySelector("span.truncate");
+    if (labelSpan) {
+      return (labelSpan.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    var spans = trigger.querySelectorAll("span");
+    for (var si = 0; si < spans.length; si++) {
+      var spanText = (spans[si].textContent || "").replace(/\s+/g, " ").trim();
+      if (isJointsPickerSummaryText(spanText)) return spanText;
+    }
+    return "";
+  }
+
+  function jointsPickerIsNone(gv) {
+    var label = jointsPickerSummaryText(gv);
+    return /^未选择$/i.test(label) || /^none\s*selected$/i.test(label);
+  }
+
+  function jointsPickerIsAll(gv) {
+    var label = jointsPickerSummaryText(gv);
+    return /^全部\s*joints$/i.test(label) || /^all\s*joints$/i.test(label);
+  }
+
+  function findJointsPickerMenuRoot() {
+    var inputs = document.querySelectorAll("input[placeholder]");
+    for (var ii = 0; ii < inputs.length; ii++) {
+      var placeholder = inputs[ii].getAttribute("placeholder") || "";
+      if (!/joint/i.test(placeholder)) continue;
+      var node = inputs[ii].parentElement;
+      for (var depth = 0; depth < 20 && node; depth += 1) {
+        if (node.querySelector('button[data-filter-row="true"]')) return node;
+        node = node.parentElement;
       }
     }
+    return null;
   }
 
-  function clearJointsChartSnapshots() {
-    var gv = findJointsChartGroupview();
-    if (gv) {
-      gv.querySelectorAll("canvas").forEach(function (canvas) {
-        delete canvas._datalabLiveJointsSnapshot;
-      });
-    }
-    delete g.__DATALAB_LIVE_JOINTS_CAPTURED__;
+  function findJointsMenuSelectAllToggle(menu) {
+    if (!menu) return null;
+    return menu.querySelector('button[data-filter-row="true"]');
   }
 
-  function bootstrapJointsChartSnapshot(attempt) {
-    if (typeof attempt !== "number") attempt = 0;
-    if (jointsChartSnapshotsReady()) {
-      restoreJointsChartSnapshots();
-      g.__DATALAB_LIVE_JOINTS_CAPTURED__ = true;
-      return;
-    }
-    ensureTransportPaused();
-    if (attempt === 0) {
-      seekReplayTransportToStart();
-    }
-    if (captureJointsChartSnapshots()) {
-      g.__DATALAB_LIVE_JOINTS_CAPTURED__ = true;
-      restoreJointsChartSnapshots();
-      return;
-    }
-    if (attempt >= 30) return;
-    g.setTimeout(function () {
-      bootstrapJointsChartSnapshot(attempt + 1);
-    }, 100);
+  function closeJointsPickerMenu() {
+    closeOpenRadixMenus();
   }
 
-  function clearJointsChartFreezeMark() {
-    document.querySelectorAll("[data-datalab-live-joints-frozen]").forEach(function (node) {
-      node.removeAttribute("data-datalab-live-joints-frozen");
+  function markJointsChartLiveCleared(gv) {
+    if (!gv) gv = findJointsChartGroupview();
+    if (gv) gv.setAttribute("data-datalab-live-joints-cleared", "1");
+    document.documentElement.setAttribute("data-datalab-live-joints-none", "1");
+    closeJointsPickerMenu();
+    g.__DATALAB_LIVE_JOINTS_CLEARED__ = true;
+  }
+
+  function clearJointsChartLiveClearedMark() {
+    document.querySelectorAll("[data-datalab-live-joints-cleared]").forEach(function (node) {
+      node.removeAttribute("data-datalab-live-joints-cleared");
     });
+    document.documentElement.removeAttribute("data-datalab-live-joints-none");
+    document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+    delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
   }
 
-  function startLiveJointsFreeze() {
-    bootstrapJointsChartSnapshot(0);
-    restoreJointsChartSnapshots();
-    if (liveJointsFreezeTimer) return;
-    liveJointsFreezeTimer = g.setInterval(function () {
-      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
-        stopLiveJointsFreeze();
+  var jointsBootstrapInFlight = false;
+
+  function bootstrapJointsSelectionForLive(attempt) {
+    if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+    if (typeof attempt !== "number") attempt = 0;
+    if (g.__DATALAB_LIVE_JOINTS_CLEARED__ && jointsPickerIsNone(findJointsChartGroupview())) {
+      closeJointsPickerMenu();
+      return;
+    }
+    if (attempt === 0 && jointsBootstrapInFlight) return;
+    if (attempt === 0) {
+      jointsBootstrapInFlight = true;
+      document.documentElement.setAttribute("data-datalab-live-joints-bootstrapping", "1");
+    }
+    if (attempt >= 20) {
+      jointsBootstrapInFlight = false;
+      document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+      closeJointsPickerMenu();
+      return;
+    }
+    dismissScalarSplitView();
+    ensureTransportPaused();
+    var gv = findJointsChartGroupview();
+    if (!gv) {
+      g.setTimeout(function () {
+        bootstrapJointsSelectionForLive(attempt + 1);
+      }, 150);
+      return;
+    }
+    if (jointsPickerIsNone(gv)) {
+      jointsBootstrapInFlight = false;
+      document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+      markJointsChartLiveCleared(gv);
+      return;
+    }
+    var menu = findJointsPickerMenuRoot();
+    if (!menu) {
+      var trigger = findJointsPickerTriggerButton(gv);
+      if (trigger) {
+        try {
+          trigger.click();
+        } catch (e0) {
+          /* ignore */
+        }
+      }
+      g.setTimeout(function () {
+        bootstrapJointsSelectionForLive(attempt + 1);
+      }, 180);
+      return;
+    }
+    var toggle = findJointsMenuSelectAllToggle(menu);
+    if (!toggle) {
+      g.setTimeout(function () {
+        bootstrapJointsSelectionForLive(attempt + 1);
+      }, 120);
+      return;
+    }
+    try {
+      toggle.click();
+    } catch (e1) {
+      /* ignore */
+    }
+    g.setTimeout(function () {
+      if (jointsPickerIsNone(findJointsChartGroupview())) {
+        jointsBootstrapInFlight = false;
+        document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+        markJointsChartLiveCleared(gv);
         return;
       }
-      if (!jointsChartSnapshotsReady()) {
-        bootstrapJointsChartSnapshot(1);
-      }
-      restoreJointsChartSnapshots();
-    }, 100);
+      bootstrapJointsSelectionForLive(attempt + 1);
+    }, 200);
   }
 
-  function stopLiveJointsFreeze() {
-    if (liveJointsFreezeTimer) {
-      g.clearInterval(liveJointsFreezeTimer);
-      liveJointsFreezeTimer = null;
+  var jointsSelectionBootstrapToken = 0;
+
+  function scheduleJointsSelectionBootstrap() {
+    jointsSelectionBootstrapToken += 1;
+    var token = jointsSelectionBootstrapToken;
+    delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
+    clearJointsChartLiveClearedMark();
+    bootstrapJointsSelectionForLive(0);
+    g.setTimeout(function () {
+      if (token !== jointsSelectionBootstrapToken) return;
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+      if (g.__DATALAB_LIVE_JOINTS_CLEARED__) return;
+      bootstrapJointsSelectionForLive(0);
+    }, 600);
+  }
+
+  function runRestoreJointsSelectionForReplay(attempt) {
+    if (collectionModeUi.mode === "preview" && previewModeAllowed()) return;
+    if (typeof attempt !== "number") attempt = 0;
+    if (attempt > 12) {
+      closeJointsPickerMenu();
+      return;
     }
-    clearJointsChartSnapshots();
-    clearJointsChartFreezeMark();
+    var gv = findJointsChartGroupview();
+    if (!gv) {
+      g.setTimeout(function () {
+        runRestoreJointsSelectionForReplay(attempt + 1);
+      }, 150);
+      return;
+    }
+    clearJointsChartLiveClearedMark();
+    if (jointsPickerIsAll(gv)) {
+      closeJointsPickerMenu();
+      return;
+    }
+    var menu = findJointsPickerMenuRoot();
+    if (!menu) {
+      var trigger = findJointsPickerTriggerButton(gv);
+      if (trigger) {
+        try {
+          trigger.click();
+        } catch (e2) {
+          /* ignore */
+        }
+      }
+      g.setTimeout(function () {
+        runRestoreJointsSelectionForReplay(attempt + 1);
+      }, 180);
+      return;
+    }
+    var toggle = findJointsMenuSelectAllToggle(menu);
+    if (!toggle) {
+      g.setTimeout(function () {
+        runRestoreJointsSelectionForReplay(attempt + 1);
+      }, 120);
+      return;
+    }
+    if (jointsPickerIsNone(gv) || !jointsPickerIsAll(gv)) {
+      try {
+        toggle.click();
+      } catch (e3) {
+        /* ignore */
+      }
+    }
+    g.setTimeout(function () {
+      runRestoreJointsSelectionForReplay(attempt + 1);
+    }, 200);
+  }
+
+  function restoreJointsSelectionForReplay() {
+    runRestoreJointsSelectionForReplay(0);
+  }
+
+  function startLiveJointsSelectionGuard() {
+    scheduleJointsSelectionBootstrap();
+    if (liveJointsGuardTimer) return;
+    liveJointsGuardTimer = g.setInterval(function () {
+      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
+        stopLiveJointsSelectionGuard();
+        return;
+      }
+      if (jointsPickerIsNone(findJointsChartGroupview())) {
+        closeJointsPickerMenu();
+        return;
+      }
+      if (!g.__DATALAB_LIVE_JOINTS_CLEARED__ || jointsBootstrapInFlight) return;
+      bootstrapJointsSelectionForLive(0);
+    }, 2000);
+  }
+
+  function stopLiveJointsSelectionGuard() {
+    if (liveJointsGuardTimer) {
+      g.clearInterval(liveJointsGuardTimer);
+      liveJointsGuardTimer = null;
+    }
+    jointsBootstrapInFlight = false;
+    closeJointsPickerMenu();
+    restoreJointsSelectionForReplay();
+    clearJointsChartLiveClearedMark();
   }
 
   function buildZeroedFeaturesHtml(html) {

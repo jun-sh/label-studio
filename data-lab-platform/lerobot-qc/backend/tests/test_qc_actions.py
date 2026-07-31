@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -47,6 +47,30 @@ def test_instruction_rejects_removed_episode(loaded_qc: tuple[MagicMock, QcStore
     with pytest.raises(HTTPException) as exc:
         qc_app.api_qc_instruction(qc_app.InstructionRequest(episode_index=0, instruction="new text"))
     assert exc.value.status_code == 400
+
+
+def test_removed_episode_detail_allows_preview(loaded_qc: tuple[MagicMock, QcStore]) -> None:
+    state, store = loaded_qc
+    state.fps = 5.0
+    state.episode_length = MagicMock(return_value=10)
+    state.resolve_language_instruction = MagicMock(return_value=("task text", 0))
+    state.video_keys = MagicMock(return_value=["observation.images.exterior_image_1"])
+    state.video_key = "observation.images.exterior_image_1"
+    store.set_review(1, "rejected", reason="no_action")
+    with patch.object(qc_app, "compute_qc_metrics", return_value={"duration_sec": 2.0}):
+        response = qc_app.api_episode_detail(1)
+    payload = __import__("json").loads(response.body)
+    assert payload["is_removed"] is True
+    assert payload["removal_reason"] == "no_action"
+
+
+def test_restore_removed_episode_via_pending(loaded_qc: tuple[MagicMock, QcStore]) -> None:
+    _, store = loaded_qc
+    store.set_review(2, "rejected", reason="bad_quality")
+    response = qc_app.api_qc_review(qc_app.ReviewRequest(episode_index=2, status="pending"))
+    payload = __import__("json").loads(response.body)
+    assert payload["review"]["status"] == "pending"
+    assert 2 not in store.removed_episode_indices()
 
 
 def test_instruction_keeps_suspicious_status(loaded_qc: tuple[MagicMock, QcStore]) -> None:

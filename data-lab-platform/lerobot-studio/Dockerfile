@@ -62,13 +62,15 @@ COPY scripts/package_delivery_sample.py /app/scripts/package_delivery_sample.py
 COPY scripts/ego_mcap/ /app/scripts/ego_mcap/
 COPY patches/apply-branding.sh /app/patches/apply-branding.sh
 COPY patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
+COPY patches/patch-playback-mode.sh /app/patches/patch-playback-mode.sh
 COPY branding/ /app/branding/
 COPY config/datasets.json /app/config/datasets.json
 COPY config/sample-datasets.manifest.json /app/config/sample-datasets.manifest.json
 COPY config/collection-stations.json /app/config/collection-stations.json
 
 RUN chmod +x /app/download-assets.sh /app/docker-entrypoint.sh /app/prepare-bundled-dataset.sh \
-  /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh /app/patches/patch-dockview-scalar-chart.sh
+  /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh /app/patches/patch-dockview-scalar-chart.sh \
+  /app/patches/patch-playback-mode.sh
 
 ENV PORT=7860
 ENV LEROBOT_STUDIO_ROOT=/srv/lerobot

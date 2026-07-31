@@ -1,5 +1,5 @@
 [Unit]
-Description=EGO OAK capture stack (manual: record + heartbeat, no upload)
+Description=EGO OAK capture stack (manual: record only, no upload)
 Documentation=file:///home/server/workspace/ego-studio/README.md
 After=network-online.target
 Wants=network-online.target

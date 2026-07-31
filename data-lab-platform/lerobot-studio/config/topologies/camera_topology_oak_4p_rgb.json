@@ -1,0 +1,39 @@
+{
+  "topology_id": "ego-oak-4p-rgb",
+  "version": 1,
+  "board_profile": "OAK-FFC-4P-Ego",
+  "description": "OAK 4P ego helmet — four RGB streams (legacy rear_left keying)",
+  "primary_socket": "CAM_A",
+  "socket_to_role": {
+    "CAM_A": "front_left",
+    "CAM_B": "rear_left",
+    "CAM_C": "rear_right",
+    "CAM_D": "front_right"
+  },
+  "role_to_lerobot_key": {
+    "front_left": "observation.images.camera_front_left",
+    "front_right": "observation.images.camera_front_right",
+    "rear_left": "observation.images.camera_rear_left",
+    "rear_right": "observation.images.camera_rear_right"
+  },
+  "viewer_display_order": [
+    "front_left",
+    "front_right",
+    "rear_left",
+    "rear_right"
+  ],
+  "viewer_labels": {
+    "zh": {
+      "front_left": "前左",
+      "front_right": "前右",
+      "rear_left": "后左",
+      "rear_right": "后右"
+    },
+    "en": {
+      "front_left": "Front Left",
+      "front_right": "Front Right",
+      "rear_left": "Rear Left",
+      "rear_right": "Rear Right"
+    }
+  }
+}

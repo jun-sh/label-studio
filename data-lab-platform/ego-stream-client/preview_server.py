@@ -121,9 +121,21 @@ def _make_handler(hub: PreviewHub):
 
 
 def _http_loop(hub: PreviewHub) -> None:
-    server = ThreadingHTTPServer((PREVIEW_HTTP_HOST, PREVIEW_HTTP_PORT), _make_handler(hub))
-    server.daemon_threads = True
-    server.serve_forever(poll_interval=0.5)
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        try:
+            server = ThreadingHTTPServer(
+                (PREVIEW_HTTP_HOST, PREVIEW_HTTP_PORT),
+                _make_handler(hub),
+            )
+            server.daemon_threads = True
+            server.serve_forever(poll_interval=0.5)
+            return
+        except OSError as exc:
+            if getattr(exc, "errno", None) != 98:
+                raise
+            time.sleep(0.2)
+    raise OSError(f"preview HTTP bind failed on {PREVIEW_HTTP_HOST}:{PREVIEW_HTTP_PORT}")
 
 
 def start_preview_stack() -> PreviewHub:

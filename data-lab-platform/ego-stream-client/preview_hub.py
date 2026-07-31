@@ -7,13 +7,28 @@ from typing import Dict, Optional
 
 import numpy as np
 
-# Short URL segment -> LeRobot video feature key
-PREVIEW_CAMERAS: tuple[tuple[str, str], ...] = (
-    ("front_left", "observation.images.camera_front_left"),
-    ("front_right", "observation.images.camera_front_right"),
-    ("rear_left", "observation.images.camera_rear_left"),
-    ("rear_right", "observation.images.camera_rear_right"),
+# Short URL segment -> LeRobot video feature keys (first match wins).
+PREVIEW_CAMERAS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("front_left", ("observation.images.camera_front_left", "observation.images.camera_head_left")),
+    ("front_right", ("observation.images.camera_front_right", "observation.images.camera_head_right")),
+    (
+        "rear_left",
+        (
+            "observation.images.camera_rear_left",
+            "observation.images.camera_depth_left",
+            "observation.images.camera_depth_head",
+        ),
+    ),
+    ("rear_right", ("observation.images.camera_rear_right", "observation.images.camera_02")),
 )
+
+
+def _pick_camera_payload(camera_frames: dict, keys: tuple[str, ...]):
+    for key in keys:
+        value = camera_frames.get(key)
+        if value is not None:
+            return value
+    return None
 
 # Historical preview URLs (read-only compat; map to canonical short names).
 LEGACY_PREVIEW_CAM_ALIASES: dict[str, str] = {
@@ -43,8 +58,8 @@ class PreviewHub:
     def offer(self, camera_frames: dict[str, np.ndarray]) -> None:
         """Non-blocking: keep only the latest synced quad-frame (legacy RGB path)."""
         snap: Dict[str, np.ndarray] = {}
-        for short, key in PREVIEW_CAMERAS:
-            rgb = camera_frames.get(key)
+        for short, keys in PREVIEW_CAMERAS:
+            rgb = _pick_camera_payload(camera_frames, keys)
             if rgb is not None:
                 snap[short] = rgb
         if not snap:
@@ -55,8 +70,8 @@ class PreviewHub:
     def offer_jpegs(self, camera_jpegs: dict[str, bytes]) -> None:
         """Non-blocking: latest per-camera JPEG bytes (shared with upload/ring)."""
         snap: Dict[str, bytes] = {}
-        for short, key in PREVIEW_CAMERAS:
-            data = camera_jpegs.get(key)
+        for short, keys in PREVIEW_CAMERAS:
+            data = _pick_camera_payload(camera_jpegs, keys)
             if data:
                 snap[short] = data
         if not snap:

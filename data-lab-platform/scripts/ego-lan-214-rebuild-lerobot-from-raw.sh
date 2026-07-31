@@ -21,6 +21,7 @@ rm -rf "${STREAM}/meta/episodes" "${STREAM}/meta/stats"
 rm -f "${STREAM}/meta/tasks.jsonl" "${STREAM}/meta/tasks.parquet"
 rm -f "${STREAM}/live/episodes-index.json"
 rm -rf "${STREAM}/live/derive/markers"
+rm -rf "${STREAM}/live/derive/pending_episode"
 rm -rf "${STREAM}/live/sessions"
 rm -f "${STREAM}/live/parquet_sync.json"
 

@@ -95,6 +95,8 @@
           </div>
         </div>
 
+        <div id="removedBanner" class="ls-qc-removed-banner" hidden></div>
+
         <div id="metricsPanel" class="ls-qc-metrics" hidden></div>
 
         <div class="ls-qc-instruction-panel">
@@ -103,6 +105,7 @@
           <div class="ls-qc-instruction-actions">
             <button type="button" id="saveInstructionBtn" class="ls-btn ls-btn-primary" disabled>Save instruction</button>
             <div class="ls-qc-review-actions">
+              <button type="button" id="restoreEpisodeBtn" class="ls-btn ls-btn-ghost" hidden>Restore removal</button>
               <button type="button" id="approveBtn" class="ls-btn ls-btn-primary" disabled>Mark approved</button>
               <button type="button" id="rejectBtn" class="ls-btn ls-btn-ghost ls-qc-btn-danger" disabled>Mark remove</button>
               <button type="button" id="suspiciousBtn" class="ls-btn ls-btn-ghost ls-qc-btn-warning" disabled>Mark suspicious</button>
@@ -132,6 +135,20 @@
             <div class="ls-form-row ls-export-row">
               <button type="button" id="rebuildBtn" class="ls-btn ls-btn-primary" disabled>Rebuild</button>
             </div>
+            <div id="rebuildInlineProgress" class="ls-rebuild-progress ls-rebuild-progress--inline" hidden>
+              <div
+                id="rebuildInlineProgressBar"
+                class="ls-rebuild-progress-bar"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              >
+                <div id="rebuildInlineProgressFill" class="ls-rebuild-progress-fill"></div>
+              </div>
+              <p id="rebuildInlineProgressLabel" class="ls-rebuild-progress-label"></p>
+            </div>
+            <p id="rebuildOutputHint" class="ls-helper ls-rebuild-output-hint"></p>
             <p class="ls-helper" id="rebuildStatusInline"></p>
           </div>
         </details>
@@ -139,9 +156,9 @@
     </section>
 
     <div id="rebuildModal" class="ls-qc-modal" hidden>
-      <div class="ls-qc-modal-body">
+      <div class="ls-qc-modal-body" id="rebuildModalBody">
         <h3 id="rebuildModalTitle">Delivery rebuild</h3>
-        <p id="rebuildStatusText" class="ls-muted">Starting…</p>
+        <p id="rebuildStatusText">Starting…</p>
         <button type="button" id="closeRebuildModal" class="ls-btn ls-btn-ghost">Close</button>
       </div>
     </div>

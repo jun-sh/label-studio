@@ -139,10 +139,9 @@ def api_load_dataset(req: DatasetLoadRequest) -> JSONResponse:
     operator = req.operator_id or DEFAULT_OPERATOR
     store = QcStore.open(loaded.dataset_root, SIDECAR_ROOT, operator_id=operator)
     hydrate_jobs_from_store(store)
-    all_indices = [int(x) for x in loaded.episodes_df["episode_index"].tolist()]
-    visible = store.visible_episode_indices(all_indices)
-    summary = loaded.build_summary(visible_episode_indices=visible)
+    summary = loaded.build_summary()
     summary["sidecar_root"] = str(store.sidecar_root)
+    summary["removed_count"] = len(store.removed_episode_indices())
     summary["qc_state"] = _qc_episode_map(loaded, store)
     return JSONResponse(_attach_qc_summary(summary, loaded, store))
 
@@ -151,12 +150,10 @@ def api_load_dataset(req: DatasetLoadRequest) -> JSONResponse:
 def api_dataset_info() -> JSONResponse:
     ds = _require_state()
     qc = _require_store()
-    all_indices = [int(x) for x in ds.episodes_df["episode_index"].tolist()]
-    visible = qc.visible_episode_indices(all_indices)
-    summary = ds.build_summary(visible_episode_indices=visible)
+    summary = ds.build_summary()
     summary["sidecar_root"] = str(qc.sidecar_root)
-    summary["qc_state"] = _qc_episode_map(ds, qc)
     summary["removed_count"] = len(qc.removed_episode_indices())
+    summary["qc_state"] = _qc_episode_map(ds, qc)
     return JSONResponse(_attach_qc_summary(summary, ds, qc))
 
 
@@ -196,6 +193,7 @@ def api_resolve_package(collection: str, package: str) -> JSONResponse:
 
 
 def _qc_episode_map(ds: DatasetState, qc: QcStore) -> dict[str, Any]:
+    removed = qc.removed_episode_indices()
     payload: dict[str, Any] = {}
     for ep_idx in ds.episodes_df["episode_index"].tolist():
         ep_idx = int(ep_idx)
@@ -203,6 +201,7 @@ def _qc_episode_map(ds: DatasetState, qc: QcStore) -> dict[str, Any]:
         payload[str(ep_idx)] = {
             "review": review,
             "language_instruction": _episode_instruction(ds, ep_idx),
+            "is_removed": ep_idx in removed,
         }
     return payload
 
@@ -211,12 +210,12 @@ def _qc_episode_map(ds: DatasetState, qc: QcStore) -> dict[str, Any]:
 def api_episode_detail(episode_index: int) -> JSONResponse:
     ds = _require_state()
     qc = _require_store()
-    if episode_index in qc.removed_episode_indices():
-        raise HTTPException(status_code=404, detail="Episode is marked for removal (preview hidden)")
     row = ds.episode_row(episode_index)
     length = ds.episode_length(row)
     instruction = _episode_instruction(ds, episode_index)
     original_row_text, task_index = ds.resolve_language_instruction(row)
+    review = qc.get_review(episode_index)
+    is_removed = episode_index in qc.removed_episode_indices()
     return JSONResponse(
         {
             "episode_index": episode_index,
@@ -225,7 +224,9 @@ def api_episode_detail(episode_index: int) -> JSONResponse:
             "language_instruction": instruction,
             "original_language_instruction": original_row_text,
             "task_index": task_index,
-            "review": qc.get_review(episode_index),
+            "review": review,
+            "is_removed": is_removed,
+            "removal_reason": review.get("reason") if is_removed else None,
             "metrics": compute_qc_metrics(ds, episode_index),
             "video_keys": ds.video_keys(),
             "selected_video_key": ds.video_key,
@@ -236,9 +237,7 @@ def api_episode_detail(episode_index: int) -> JSONResponse:
 @app.get("/api/episodes/{episode_index}/trajectory")
 def api_episode_trajectory(episode_index: int) -> JSONResponse:
     ds = _require_state()
-    qc = _require_store()
-    if episode_index in qc.removed_episode_indices():
-        raise HTTPException(status_code=404, detail="Episode is marked for removal")
+    _require_store()
     return JSONResponse(build_trajectory_payload(ds, episode_index))
 
 
@@ -269,9 +268,7 @@ def api_video_timing(episode_index: int, video_key: str | None = None) -> JSONRe
 @app.get("/api/video/{episode_index}")
 def api_stream_video(episode_index: int, request: Request, video_key: str | None = None) -> Response:
     ds = _require_state()
-    qc = _require_store()
-    if episode_index in qc.removed_episode_indices():
-        raise HTTPException(status_code=404, detail="Episode is marked for removal")
+    _require_store()
     path = resolve_stream_path(ds, episode_index, video_key=video_key)
     file_size = path.stat().st_size
     range_header = request.headers.get("range")

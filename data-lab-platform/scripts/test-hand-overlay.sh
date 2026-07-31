@@ -7,6 +7,7 @@ BRANDING="${ROOT}/data-lab-platform/lerobot-studio/branding"
 echo "==> node overlay unit tests"
 node --test "${BRANDING}/overlay-hand-keypoints.test.mjs"
 node --test "${BRANDING}/overlay-depth-preview.test.mjs"
+node --test "${BRANDING}/overlay-camera-layout.test.mjs"
 
 if [[ -d "${ROOT}/ego-platform/tests" ]]; then
   echo "==> ego-platform overlay export tests"

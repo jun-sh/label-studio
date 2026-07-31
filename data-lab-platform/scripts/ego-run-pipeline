@@ -61,7 +61,7 @@ export EGO_OAK_TRACK_MODE="${EGO_OAK_TRACK_MODE:-vio}"
 export EGO_OAK_LANGUAGE_MODE="${EGO_OAK_LANGUAGE_MODE:-auto}"
 export EGO_OAK_DEPTH_BACKEND="${EGO_OAK_DEPTH_BACKEND:-depth_anything_v2}"
 export EGO_DEPTH_ANYTHING_MODEL="${EGO_DEPTH_ANYTHING_MODEL:-depth-anything/Depth-Anything-V2-Small-hf}"
-EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-stub}"
+EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-geopavlakos}"
 PLATFORM_PYTHON="python3"
 _venv_py="$PIPE_ROOT/.venv/bin/python3"
 if [[ -x "$_venv_py" ]]; then

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DISPLAY_PANEL_LABEL,
   DISPLAY_VIDEO_KEY,
   containedVideoLayout,
   displayVideoKeyCandidates,
@@ -46,6 +47,7 @@ describe("overlay-depth-preview-lib", () => {
   it("accepts panel text for a single camera", () => {
     const text = "observation.images.camera_front_right";
     assert.equal(featureMatchesText(text, DISPLAY_VIDEO_KEY), true);
+    assert.equal(featureMatchesText(DISPLAY_PANEL_LABEL, DISPLAY_VIDEO_KEY), true);
   });
 
   it("includes legacy head_right aliases for display slot lookup", () => {

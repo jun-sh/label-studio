@@ -13,6 +13,7 @@ import {
   countDeriveMarkersForSession,
   countRawTarZstForSession,
   exportVideosFromParquetSync,
+  hasPendingSessionEpisode,
   isSegmentParquetDerivedOnDisk,
   listRawSessionIds,
   processTarZstDeriveSegment,
@@ -26,8 +27,10 @@ import {
   stagingNeedsRehydrate,
   stationRoot,
   streamLog,
+  spawnFinalizeSessionEpisodeSync,
   syncDataParquetFromJsonl,
   syncEpisodesMetaOnly,
+  useSessionSingleEpisode,
   usesParquetVideoExport,
   writeMuxValidatedSnapshot,
   STREAM_ROOT,
@@ -319,6 +322,35 @@ async function runLinearPipeline(stationId, { muxOnly = false, sessionId: forced
         });
       } finally {
         derivingSegments.delete(segKey);
+      }
+    }
+
+    const allSegmentsDerived =
+      segments.length > 0 &&
+      segments.every((seg) =>
+        isSegmentParquetDerivedOnDisk(stationId, seg.sessionId, seg.segmentId),
+      );
+    if (
+      allSegmentsDerived &&
+      useSessionSingleEpisode(stationId) &&
+      hasPendingSessionEpisode(root, sessionId)
+    ) {
+      streamLog(stationId, "session_episode_finalize_start", { sessionId });
+      try {
+        const finalized = spawnFinalizeSessionEpisodeSync(root, sessionId);
+        streamLog(stationId, "session_episode_finalize_done", {
+          sessionId,
+          skipped: Boolean(finalized.skipped),
+          episodeIndex: finalized.episode_index,
+          framesCommitted: finalized.frames_committed,
+          totalRows: finalized.total_rows,
+        });
+      } catch (err) {
+        streamLog(stationId, "session_episode_finalize_error", {
+          sessionId,
+          message: String(err?.message || err).slice(0, 300),
+        });
+        throw err;
       }
     }
   }

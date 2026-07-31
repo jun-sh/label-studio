@@ -27,6 +27,10 @@ PORT = int(os.environ.get("EGO_WEB_PORT", "8080"))
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
 STANDBY_STACK_TARGET = os.environ.get("EGO_STANDBY_STACK_TARGET", "ecs-oak-standby-stack.target")
+STATION_HEARTBEAT_UNIT = os.environ.get(
+    "EGO_STATION_HEARTBEAT_UNIT",
+    "ecs-station-heartbeat.service",
+)
 SEGMENT_ACTIVE_ROOT = Path(
     os.environ.get("EGO_SEGMENT_ACTIVE_ROOT", "/dev/shm/ego-capture-active"),
 )
@@ -242,9 +246,33 @@ def _systemctl(*args: str, timeout: float = 10) -> subprocess.CompletedProcess[s
     )
 
 
+def _capture_unit_state(unit: str = CAPTURE_RECORD_UNIT) -> str:
+    proc = _systemctl("is-active", unit, timeout=5)
+    return proc.stdout.strip()
+
+
 def _capture_active() -> bool:
-    proc = _systemctl("is-active", CAPTURE_TARGET, timeout=5)
-    return proc.stdout.strip() == "active"
+    return _capture_unit_state(CAPTURE_TARGET) == "active"
+
+
+def _capture_stopping() -> bool:
+    state = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    return state in ("activating", "deactivating")
+
+
+def _ensure_capture_fully_stopped(timeout_s: float = 25.0) -> bool:
+    """Stop lingering capture unit before a new start (avoids OAK in-use / 120s stop wait)."""
+    state = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    if state in ("inactive", "failed", ""):
+        return True
+    _systemctl("stop", CAPTURE_TARGET, timeout=STOP_TIMEOUT_S)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        state = _capture_unit_state(CAPTURE_RECORD_UNIT)
+        if state in ("inactive", "failed", ""):
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def _stop_standby_preview() -> None:
@@ -253,6 +281,14 @@ def _stop_standby_preview() -> None:
 
 def _start_standby_preview() -> None:
     _systemctl("start", STANDBY_STACK_TARGET, timeout=60)
+    _ensure_station_heartbeat()
+
+
+def _ensure_station_heartbeat() -> None:
+    """Keep 34 collection UI in sync after capture stops (heartbeat is not PartOf capture stack)."""
+    if _systemctl("is-active", STATION_HEARTBEAT_UNIT, timeout=5).stdout.strip() == "active":
+        return
+    _systemctl("start", STATION_HEARTBEAT_UNIT, timeout=20)
 
 
 def _format_free_gb(path: Path) -> str:
@@ -329,7 +365,7 @@ def _build_status() -> dict[str, Any]:
         msg = ""
     elif active:
         state = "warming"
-        msg = "相机初始化中，开始写入数据后计时"
+        msg = "开始写入数据后计时"
     else:
         state = "idle"
         msg = ""
@@ -363,6 +399,13 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
         if action == "start":
             if _capture_active():
                 return True, "采集已在运行"
+            if _capture_stopping():
+                if not _ensure_capture_fully_stopped():
+                    _last_error = "上一段采集仍在退出，请稍后再试"
+                    return False, _last_error
+            elif not _ensure_capture_fully_stopped():
+                _last_error = "采集服务未能完全停止，请稍后再试"
+                return False, _last_error
             _begin_new_capture_session()
             _stop_standby_preview()
             proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
@@ -489,6 +532,10 @@ INDEX_HTML = """<!DOCTYPE html>
       line-height: 1.3;
       width: 100%;
       margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
     }
     .status[data-state="idle"] .status-title {
       font-size: 1.6rem;
@@ -582,7 +629,9 @@ INDEX_HTML = """<!DOCTYPE html>
 <body>
   <div class="app">
     <header class="status" id="statusBar" data-state="idle">
-      <div class="status-title" id="statusTitle">设备待机中</div>
+      <div class="status-title" id="statusTitle">
+        <span class="spinner" id="statusSpinner" hidden></span><span id="statusTitleText">设备待机中</span>
+      </div>
       <div class="status-sub" id="statusSub"></div>
     </header>
 
@@ -610,6 +659,8 @@ INDEX_HTML = """<!DOCTYPE html>
 (function () {
   var statusBar = document.getElementById("statusBar");
   var statusTitle = document.getElementById("statusTitle");
+  var statusSpinner = document.getElementById("statusSpinner");
+  var statusTitleText = document.getElementById("statusTitleText");
   var statusSub = document.getElementById("statusSub");
   var mainBtn = document.getElementById("mainBtn");
   var previewImg = document.getElementById("previewImg");
@@ -627,12 +678,17 @@ INDEX_HTML = """<!DOCTYPE html>
     return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
   }
 
+  function setStatusTitle(showSpinner, text) {
+    statusSpinner.hidden = !showSpinner;
+    statusTitleText.textContent = text;
+  }
+
   function applyStatus(data) {
     var st = data.state || "idle";
     statusBar.setAttribute("data-state", st);
 
     if (st === "idle") {
-      statusTitle.textContent = "设备待机中";
+      setStatusTitle(false, "设备待机中");
       statusSub.textContent = data.msg || "";
       mainBtn.textContent = "开始录制";
       mainBtn.setAttribute("data-mode", "start");
@@ -643,29 +699,29 @@ INDEX_HTML = """<!DOCTYPE html>
       }
     } else if (st === "warming") {
       statusBar.classList.remove("status--solo");
-      statusTitle.innerHTML = '<span class="spinner"></span>相机预热中';
-      statusSub.textContent = data.msg || "四路相机就绪后开始计时";
+      setStatusTitle(true, "相机初始化中");
+      statusSub.textContent = data.msg || "开始写入数据后计时";
       mainBtn.textContent = "结束录制";
       mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "recording") {
       statusBar.classList.remove("status--solo");
-      statusTitle.textContent = "正在录制中";
+      setStatusTitle(false, "正在录制中");
       statusSub.textContent = formatDuration(data.duration || 0);
       mainBtn.textContent = "结束录制";
       mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "starting") {
       statusBar.classList.remove("status--solo");
-      statusTitle.innerHTML = '<span class="spinner"></span>正在启动相机';
+      setStatusTitle(true, "正在启动相机");
       statusSub.textContent = data.msg || "请稍候，约需数秒";
       mainBtn.disabled = true;
     } else if (st === "stopping") {
       statusBar.classList.remove("status--solo");
-      statusTitle.innerHTML = '<span class="spinner"></span>正在保存数据';
+      setStatusTitle(true, "正在保存数据");
       statusSub.textContent = data.msg || "请勿断电";
       mainBtn.disabled = true;
     } else if (st === "error") {
       statusBar.classList.remove("status--solo");
-      statusTitle.textContent = "出现问题";
+      setStatusTitle(false, "出现问题");
       statusSub.textContent = data.msg || "请稍后重试";
       mainBtn.textContent = data.capture_active ? "结束录制" : "开始录制";
       mainBtn.setAttribute("data-mode", data.capture_active ? "stop" : "start");
@@ -692,7 +748,7 @@ INDEX_HTML = """<!DOCTYPE html>
       .then(applyStatus)
       .catch(function () {
         statusBar.setAttribute("data-state", "error");
-        statusTitle.textContent = "无法连接设备";
+        setStatusTitle(false, "无法连接设备");
         statusSub.textContent = "请确认已连接 EGO WiFi";
       });
   }
@@ -725,12 +781,18 @@ INDEX_HTML = """<!DOCTYPE html>
     if (actionInFlight) return;
     actionInFlight = true;
     mainBtn.disabled = true;
+    if (path === "/api/capture/stop") {
+      statusBar.setAttribute("data-state", "stopping");
+      setStatusTitle(true, "正在保存数据");
+      statusSub.textContent = "请勿断电";
+      stopPreview();
+    }
     fetch(path, { method: "POST", cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (!res.success && res.msg) {
           statusBar.setAttribute("data-state", "error");
-          statusTitle.textContent = "操作失败";
+          setStatusTitle(false, "操作失败");
           statusSub.textContent = res.msg;
         }
         return fetchStatus();

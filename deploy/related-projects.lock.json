@@ -1,39 +1,15 @@
 {
   "tag": "deploy-release-v0.0.6",
-  "snapshotted_at": "2026-07-26T14:29:13+08:00",
+  "snapshotted_at": "2026-07-31T09:24:36+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
-    {
-      "path": "ml-services/sam2",
-      "remote": "https://github.com/facebookresearch/sam2.git",
-      "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
-      "checkpoints_excluded": "ml-services/sam2/checkpoints/*.pt"
-    },
-    {
-      "path": "ml-services/label-studio-ml-backend",
-      "remote": "https://github.com/HumanSignal/label-studio-ml-backend.git",
-      "commit": "231a16455c7cbfb27768e3d1400f5356c3bc1a35",
-      "uncommitted_files": 1
-    },
-    {
-      "path": "data-lab-platform/embodied-annotate",
-      "type": "monorepo-subtree"
-    },
-    {
-      "path": "data-lab-platform/ego-stream-client",
-      "type": "monorepo-subtree"
-    },
-    {
-      "path": "data-lab-platform/lerobot-studio",
-      "type": "monorepo-subtree"
-    },
-    {
-      "path": "data-lab-platform/ego-local-web",
-      "type": "monorepo-subtree"
-    },
-    {
-      "path": "data-lab-platform/lerobot-qc",
-      "type": "monorepo-subtree"
-    }
+    {"path": "ml-services/sam2", "remote": "https://github.com/facebookresearch/sam2.git", "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4", "checkpoints_excluded": "ml-services/sam2/checkpoints/*.pt"},
+    {"path": "ml-services/label-studio-ml-backend", "remote": "https://github.com/HumanSignal/label-studio-ml-backend.git", "commit": "231a16455c7cbfb27768e3d1400f5356c3bc1a35", "uncommitted_files": 1},
+    {"path": "data-lab-platform/embodied-annotate", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/ego-stream-client", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/lerobot-studio", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/ego-local-web", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/lerobot-qc", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/mcap-viewer", "type": "monorepo-subtree"}
   ]
 }

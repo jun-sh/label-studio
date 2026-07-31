@@ -10,7 +10,7 @@
 |------|----------|------|
 | `ecs-preview-standby.service` | 待机（采集栈未运行） | 低帧率 OAK 预检，`:8765` MJPEG，不写盘 |
 | `ecs-record-oak-stream.service` | 采集中 | 30Hz 写段 + 本机预览（214 WiFi） |
-| `ecs-station-heartbeat.service` | 常开 | 向 34 上报 `captureState` |
+| `ecs-station-heartbeat.service` | 常开（**不得** `PartOf=capture-stack`） | 向 34 上报 `captureState` |
 | `ecs-oak-standby-stack.target` | 默认启用 | 聚合待机预检 |
 | `ecs-oak-capture-stack.target` | 手动启停 | 与 standby 互斥 |
 
@@ -74,6 +74,18 @@ systemctl --user stop ecs-oak-capture-stack.target    # 自动启 standby
 | 2 | 214 开始录制 | `captureState=recording`，实时灰化，proxy 403 |
 | 3 | 结束录制 | 回到 `idle`，实时恢复 |
 | 4 | 采集中 | 「回放」仍可浏览已派生历史数据 |
+
+---
+
+## 故障排查
+
+| 现象 | 常见原因 | 处理 |
+|------|----------|------|
+| 「实时」灰化，`online=false` | `ecs-station-heartbeat` 未运行 | `systemctl --user start ecs-station-heartbeat.service` |
+| `captureState=unknown` | 心跳停太久，34 只有陈旧快照 | 重启心跳，等待 15s 后刷新采集页 |
+| 采集结束后实时不可用 | 误配 `ecs-station-heartbeat.service.d/capture-stack.conf`（`PartOf=capture-stack`） | 删除该 drop-in 并 `daemon-reload`；待机栈会 `Wants` 心跳自拉起 |
+
+部署脚本 `ego-lan-214-deploy-remote-preview.sh` 与 `ego-lan-214-reset-for-rerun.sh` 会自动删除错误 drop-in。
 
 ---
 

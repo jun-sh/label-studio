@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# ego-deliver — 214 上传 → 34 派生等待 → 后处理 → Viewer 发布（一条命令）
+# 用法: ego-deliver <station>
+#
+# 典型流程（录完后在 34 上执行）:
+#   bash data-lab-platform/scripts/ego-deliver ego-lan-214
+#
+# 或在 214 录完、34 可 SSH 到 214 时，本脚本会自动上传所有待传 session。
+set -euo pipefail
+
+STATION="${1:-}"
+if [[ -z "$STATION" || "$STATION" == "-h" || "$STATION" == "--help" ]]; then
+  cat <<'EOF'
+用法: ego-deliver <station>
+
+端到端交付（录完后一条命令）:
+  1. 214: 上传所有待传 segment（ego_upload）
+  2. 34:  等待派生完成（LeRobot parquet + MP4 + MCAP）
+  3. 34:  后处理（畸变校正 / 手部骨架 / 深度 / 发布）
+  4. 34:  部署 Viewer
+
+示例:
+  bash data-lab-platform/scripts/ego-deliver ego-lan-214
+
+环境变量:
+  EDGE_HOST          默认 server@10.10.10.214
+  DERIVE_TIMEOUT_SEC 派生等待超时，默认 3600
+  EGO_RESET_YES=1    传给 ego-run-pipeline --reset（慎用）
+EOF
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+EDGE_HOST="${EDGE_HOST:-server@10.10.10.214}"
+DERIVE_TIMEOUT_SEC="${DERIVE_TIMEOUT_SEC:-3600}"
+PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
+PLATFORM_HOST="${PLATFORM_HOST%/}"
+
+log() { echo "[deliver] $*"; }
+die() { echo "[deliver] ERROR: $*" >&2; exit 1; }
+
+SLUG="$(python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" slug "$STATION" \
+  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_214_hand_pose")"
+VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+
+log "=== 1/3 214 上传待传 segment ==="
+ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<'REMOTE'
+set -euo pipefail
+PY="${EGO_PYTHON:-/home/server/workspace/ego-studio/.venv/bin/python}"
+SEG_ROOT="${EGO_SEGMENT_ROOT:-/home/server/cache/ego-lan-214/segments}"
+uploaded=0
+for sess_dir in "${SEG_ROOT}/sessions"/sess_*/; do
+  [[ -d "$sess_dir" ]] || continue
+  sid="$(basename "$sess_dir")"
+  if "$PY" -c "
+from pathlib import Path
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+root = Path('${SEG_ROOT}')
+pending = list_closed_pending_segments(root, '${sid}')
+raise SystemExit(0 if pending else 1)
+" 2>/dev/null; then
+    echo "[214] uploading ${sid}..."
+    "$PY" -m ego_capture_studio.cli.ego_upload --source segments --session-id "$sid" --no-live-ui
+    uploaded=$((uploaded + 1))
+  fi
+done
+if [[ "$uploaded" -eq 0 ]]; then
+  echo "[214] nothing to upload (segments already sent or no closed segments)"
+fi
+REMOTE
+
+log "=== 2/3 等待 34 派生（LeRobot + MCAP + MP4）==="
+deadline=$(( $(date +%s) + DERIVE_TIMEOUT_SEC ))
+STREAM="${DATALAB_ROOT}/data-storage/stream/${STATION}"
+last_pct=""
+while (( $(date +%s) < deadline )); do
+  status_json="$(curl -sf "${PLATFORM_HOST}/lerobot/api/collection/stations/${STATION}/derive-status" 2>/dev/null || echo '{}')"
+  read -r pct markers total phase parquet_rows <<<"$(
+    python3 -c "
+import json,sys
+d=json.loads(sys.argv[1]) if len(sys.argv)>1 else {}
+p=d.get('progress') or {}
+print(p.get('percent',0), p.get('markers',0), p.get('total',0), d.get('phase','?'), p.get('parquetRows',0))
+" "$status_json" 2>/dev/null || echo "0 0 0 ? 0"
+  )"
+  line="$(date +%H:%M:%S) derive ${pct}% markers=${markers}/${total} phase=${phase} parquetRows=${parquet_rows}"
+  if [[ "$line" != "$last_pct" ]]; then
+    log "$line"
+    last_pct="$line"
+  fi
+  # Ready when parquet + mp4 exist and derive percent is 100 (or no pending uploads)
+  if [[ -f "${STREAM}/meta/info.json" && -f "${STREAM}/data/chunk-000/file-000.parquet" ]] \
+    && find "${STREAM}/videos" -name '*.mp4' -print -quit 2>/dev/null | grep -q .; then
+    if [[ "${total:-0}" -gt 0 && "${pct:-0}" -ge 100 ]]; then
+      log "派生完成"
+      break
+    fi
+    if [[ "${total:-0}" -eq 0 && "$(python3 -c "import json; print(json.load(open('${STREAM}/meta/info.json')).get('total_frames',0))" 2>/dev/null || echo 0)" -gt 0 ]]; then
+      log "派生完成（stream 已有数据）"
+      break
+    fi
+  fi
+  sleep 20
+done
+if (( $(date +%s) >= deadline )); then
+  die "派生超时 ${DERIVE_TIMEOUT_SEC}s — 查: ego-derive-status 或 docker logs data-lab-derive-worker-1"
+fi
+
+log "=== 3/3 后处理 + 发布 Viewer ==="
+PIPELINE_ARGS=("$STATION")
+if [[ "${EGO_RESET_YES:-}" == "1" ]]; then
+  PIPELINE_ARGS+=("--reset")
+fi
+bash "${SCRIPT_DIR}/ego-run-pipeline" "${PIPELINE_ARGS[@]}"
+
+log "交付完成 → ${VIEWER_URL}"

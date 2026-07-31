@@ -52,12 +52,14 @@ const els = {
   episodeStatusFilter: document.getElementById("episodeStatusFilter"),
   episodeTitle: document.getElementById("episodeTitle"),
   episodeMeta: document.getElementById("episodeMeta"),
+  removedBanner: document.getElementById("removedBanner"),
   metricsPanel: document.getElementById("metricsPanel"),
   instructionInput: document.getElementById("instructionInput"),
   saveInstructionBtn: document.getElementById("saveInstructionBtn"),
   approveBtn: document.getElementById("approveBtn"),
   rejectBtn: document.getElementById("rejectBtn"),
   suspiciousBtn: document.getElementById("suspiciousBtn"),
+  restoreEpisodeBtn: document.getElementById("restoreEpisodeBtn"),
   videoBlock: document.getElementById("videoBlock"),
   videoGrid: document.getElementById("videoGrid"),
   playPauseBtn: document.getElementById("playPauseBtn"),
@@ -69,7 +71,14 @@ const els = {
   stateChart: document.getElementById("stateChart"),
   rebuildBtn: document.getElementById("rebuildBtn"),
   rebuildStatusInline: document.getElementById("rebuildStatusInline"),
+  rebuildInlineProgress: document.getElementById("rebuildInlineProgress"),
+  rebuildInlineProgressBar: document.getElementById("rebuildInlineProgressBar"),
+  rebuildInlineProgressFill: document.getElementById("rebuildInlineProgressFill"),
+  rebuildInlineProgressLabel: document.getElementById("rebuildInlineProgressLabel"),
+  rebuildOutputHint: document.getElementById("rebuildOutputHint"),
   rebuildModal: document.getElementById("rebuildModal"),
+  rebuildModalBody: document.getElementById("rebuildModalBody"),
+  rebuildModalTitle: document.getElementById("rebuildModalTitle"),
   rebuildStatusText: document.getElementById("rebuildStatusText"),
   closeRebuildModal: document.getElementById("closeRebuildModal"),
 };
@@ -164,12 +173,43 @@ function syncUrlQuery() {
   }
 }
 
+function isCurrentEpisodeRemoved() {
+  if (state.currentDetail?.is_removed) return true;
+  if (state.currentEpisode == null) return false;
+  const review = state.qcState[String(state.currentEpisode)]?.review?.status;
+  return review === "rejected";
+}
+
+function updateRemovedBanner(detail) {
+  if (!els.removedBanner) return;
+  const removed = detail?.is_removed || isCurrentEpisodeRemoved();
+  if (!removed) {
+    els.removedBanner.hidden = true;
+    els.removedBanner.textContent = "";
+    return;
+  }
+  const reason =
+    detail?.removal_reason ||
+    state.qcState[String(state.currentEpisode)]?.review?.reason ||
+    "";
+  els.removedBanner.hidden = false;
+  els.removedBanner.textContent = reason.trim()
+    ? t("qc_removed_banner_with_reason", { reason: reason.trim() })
+    : t("qc_removed_banner");
+}
+
 function updateQcActionButtons() {
-  const enabled = Boolean(state.dataset && state.currentEpisode != null && !qcActionInFlight);
-  els.saveInstructionBtn.disabled = !enabled;
-  els.approveBtn.disabled = !enabled;
-  els.rejectBtn.disabled = !enabled;
-  els.suspiciousBtn.disabled = !enabled;
+  const hasEpisode = Boolean(state.dataset && state.currentEpisode != null && !qcActionInFlight);
+  const removed = isCurrentEpisodeRemoved();
+  els.saveInstructionBtn.disabled = !hasEpisode || removed;
+  els.instructionInput.disabled = !hasEpisode || removed;
+  els.approveBtn.disabled = !hasEpisode || removed;
+  els.rejectBtn.disabled = !hasEpisode || removed;
+  els.suspiciousBtn.disabled = !hasEpisode || removed;
+  if (els.restoreEpisodeBtn) {
+    els.restoreEpisodeBtn.hidden = !hasEpisode || !removed;
+    els.restoreEpisodeBtn.disabled = !hasEpisode || !removed;
+  }
 }
 
 function setQcActionsBusy(busy) {
@@ -756,7 +796,8 @@ async function selectEpisode(episodeIndex) {
   }) + ` · ${reviewStatusLabel(review)}`;
   renderMetrics(detail.metrics);
   els.instructionInput.value = detail.language_instruction || "";
-  els.instructionInput.disabled = false;
+  updateRemovedBanner(detail);
+  updateQcActionButtons();
   const videoKeys = getPlaybackVideoKeys(detail.video_keys || state.dataset?.video_keys || []);
   renderVideoGrid(videoKeys);
   loadEpisodeVideoSources(episodeIndex, videoKeys, { time: 0, pause: true });
@@ -765,7 +806,6 @@ async function selectEpisode(episodeIndex) {
   els.stepBackBtn.disabled = false;
   els.stepFwdBtn.disabled = false;
   els.speedSelect.disabled = false;
-  updateQcActionButtons();
   renderRuler();
   updatePlayhead();
   drawCharts();
@@ -832,9 +872,7 @@ async function postReview(status) {
     });
     const info = await refreshDatasetInfo();
     if (status === "rejected") {
-      const next = state.episodes[0];
-      if (next) await selectEpisode(next.episode_index);
-      else els.episodeTitle.textContent = t("episode_select");
+      await selectEpisode(state.currentEpisode);
       setStatus(t("status_saved"), true);
       return;
     }
@@ -897,9 +935,95 @@ async function importScreeningFile(file) {
   if (state.episodes.length) await selectEpisode(state.episodes[0].episode_index);
 }
 
-function setRebuildStatus(text) {
-  els.rebuildStatusText.textContent = text;
-  if (els.rebuildStatusInline) els.rebuildStatusInline.textContent = text;
+function hideRebuildModal() {
+  if (els.rebuildModal) els.rebuildModal.hidden = true;
+}
+
+function showRebuildResultModal(message, inlineTone = null) {
+  hideRebuildProgress();
+  if (els.rebuildModal) els.rebuildModal.hidden = false;
+  setRebuildModalTitle(t("qc_delivery_title"));
+  els.rebuildStatusText.textContent = message;
+  els.rebuildStatusText.className = "ls-muted";
+  if (els.rebuildModalBody) {
+    els.rebuildModalBody.classList.remove(
+      "ls-qc-modal-body--running",
+      "ls-qc-modal-body--success",
+      "ls-qc-modal-body--failed",
+    );
+    els.rebuildModalBody.classList.add("ls-qc-modal-body--running");
+  }
+  if (els.rebuildStatusInline) {
+    els.rebuildStatusInline.textContent = inlineTone ? message : "";
+    els.rebuildStatusInline.classList.remove("ok", "error");
+    if (inlineTone === "success") els.rebuildStatusInline.classList.add("ok");
+    if (inlineTone === "error") els.rebuildStatusInline.classList.add("error");
+  }
+}
+
+function setRebuildModalTitle(text) {
+  if (els.rebuildModalTitle) els.rebuildModalTitle.textContent = text;
+}
+
+function hideRebuildProgress() {
+  if (els.rebuildInlineProgress) els.rebuildInlineProgress.hidden = true;
+  if (els.rebuildOutputHint) els.rebuildOutputHint.textContent = "";
+}
+
+function localizeRebuildProgress(progress) {
+  if (!progress) return "";
+  const text = String(progress);
+  if (text === "writing parquet files") return t("qc_rebuild_writing_parquet");
+  return text;
+}
+
+function applyRebuildProgressBar(fillEl, barEl, labelEl, pct, label) {
+  if (!fillEl) return;
+  const clamped = Math.max(0, Math.min(100, pct));
+  fillEl.style.width = `${clamped}%`;
+  if (barEl) barEl.setAttribute("aria-valuenow", String(clamped));
+  if (labelEl) labelEl.textContent = label;
+}
+
+function renderRebuildProgress(status) {
+  const isActive = status && ["queued", "running"].includes(status.status);
+  if (els.rebuildInlineProgress) els.rebuildInlineProgress.hidden = !isActive;
+  if (!isActive) return;
+
+  let pct = 0;
+  let label = "";
+  const progressText = localizeRebuildProgress(status.progress);
+  const isEpisodeProgress = /^\d+\/\d+ episodes$/.test(String(status.progress || ""));
+
+  if (status.progress_current != null && status.progress_total) {
+    pct = Math.round((status.progress_current / status.progress_total) * 100);
+    if (isEpisodeProgress || !progressText) {
+      label = t("qc_rebuild_episode_progress", {
+        current: status.progress_current,
+        total: status.progress_total,
+        pct,
+      });
+    } else {
+      label = progressText;
+    }
+  } else if (progressText) {
+    label = progressText;
+    if (status.status === "queued") pct = 0;
+  }
+
+  applyRebuildProgressBar(
+    els.rebuildInlineProgressFill,
+    els.rebuildInlineProgressBar,
+    els.rebuildInlineProgressLabel,
+    pct,
+    label,
+  );
+
+  if (els.rebuildOutputHint) {
+    els.rebuildOutputHint.textContent = status.output_root
+      ? t("qc_rebuild_output_hint", { path: status.output_root })
+      : "";
+  }
 }
 
 function formatRebuildStatus(status) {
@@ -910,7 +1034,7 @@ function formatRebuildStatus(status) {
   } else if (status.progress) {
     text += ` · ${status.progress}`;
   }
-  if (status.output_root && status.status !== "completed") {
+  if (status.output_root) {
     text += ` → ${status.output_root}`;
   }
   if (status.error) text += ` · ${status.error}`;
@@ -934,30 +1058,28 @@ async function pollRebuildJob(jobId) {
   const poll = async () => {
     try {
       const status = await api(`/api/qc/rebuild/${jobId}`);
-      const text = formatRebuildStatus(status);
-      setRebuildStatus(t("qc_rebuild_in_progress", { status: text }));
+      hideRebuildModal();
+      renderRebuildProgress(status);
       if (status.status === "queued" || status.status === "running") {
         rebuildPollTimer = setTimeout(poll, 1500);
         return;
       }
       clearRebuildPollTimer();
       setRebuildUiActive(false);
+      const text = formatRebuildStatus(status);
       if (status.status === "completed") {
-        setRebuildStatus(
-          t("qc_rebuild_completed", { output: status.output_root || status.progress || "" }),
-        );
+        showRebuildResultModal(formatRebuildStatus(status), "success");
       } else if (status.status === "failed") {
         const err = status.error || text;
-        if (String(err).includes("Service restarted")) {
-          setRebuildStatus(t("qc_rebuild_stale_hint"));
-        } else {
-          setRebuildStatus(t("qc_rebuild_failed", { error: err }));
-        }
+        const message = String(err).includes("Service restarted")
+          ? t("qc_rebuild_stale_hint")
+          : formatRebuildStatus(status);
+        showRebuildResultModal(message, "error");
       }
     } catch (error) {
       clearRebuildPollTimer();
       setRebuildUiActive(false);
-      setRebuildStatus(t("qc_rebuild_poll_error", { error: parseApiError(error) }));
+      showRebuildResultModal(t("qc_rebuild_poll_error", { error: parseApiError(error) }), "error");
     }
   };
   await poll();
@@ -967,13 +1089,13 @@ async function resumeActiveRebuild(activeJob) {
   if (!activeJob?.job_id) return;
   if (!["queued", "running"].includes(activeJob.status)) {
     if (activeJob.status === "failed") {
-      setRebuildStatus(t("qc_rebuild_stale_hint"));
+      showRebuildResultModal(t("qc_rebuild_stale_hint"), "error");
     }
     return;
   }
   setRebuildUiActive(true);
-  els.rebuildModal.hidden = false;
-  setRebuildStatus(formatRebuildStatus(activeJob));
+  hideRebuildModal();
+  renderRebuildProgress(activeJob);
   await pollRebuildJob(activeJob.job_id);
 }
 
@@ -981,8 +1103,12 @@ async function startRebuild() {
   if (rebuildActive) return;
   clearRebuildPollTimer();
   setRebuildUiActive(true);
-  els.rebuildModal.hidden = false;
-  setRebuildStatus(t("qc_rebuild_starting"));
+  hideRebuildModal();
+  hideRebuildProgress();
+  if (els.rebuildStatusInline) {
+    els.rebuildStatusInline.textContent = "";
+    els.rebuildStatusInline.classList.remove("ok", "error");
+  }
   try {
     const job = await api("/api/qc/rebuild", { method: "POST", body: JSON.stringify({}) });
     await pollRebuildJob(job.job_id);
@@ -990,7 +1116,6 @@ async function startRebuild() {
     setRebuildUiActive(false);
     const message = String(error.message || error);
     if (message.includes("already in progress") || message.includes("409")) {
-      setRebuildStatus(t("qc_rebuild_already_running"));
       try {
         const info = await api("/api/dataset/info");
         if (info.active_rebuild_job) await resumeActiveRebuild(info.active_rebuild_job);
@@ -999,7 +1124,7 @@ async function startRebuild() {
       }
       return;
     }
-    setRebuildStatus(t("qc_rebuild_failed", { error: message }));
+    showRebuildResultModal(t("qc_rebuild_failed", { error: message }), "error");
   }
 }
 
@@ -1104,11 +1229,10 @@ els.stepFwdBtn.addEventListener("click", () => setFrame(currentFrame() + 1));
 els.approveBtn.addEventListener("click", () => postReview("approved"));
 els.rejectBtn.addEventListener("click", () => postReview("rejected"));
 els.suspiciousBtn.addEventListener("click", () => postReview("suspicious"));
+els.restoreEpisodeBtn?.addEventListener("click", () => postReview("pending"));
 els.saveInstructionBtn.addEventListener("click", saveInstruction);
 els.rebuildBtn.addEventListener("click", startRebuild);
-els.closeRebuildModal.addEventListener("click", () => {
-  els.rebuildModal.hidden = true;
-});
+els.closeRebuildModal.addEventListener("click", hideRebuildModal);
 els.screeningFileInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file || !state.dataset) return;

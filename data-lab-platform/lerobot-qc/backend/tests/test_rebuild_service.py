@@ -123,3 +123,17 @@ def test_reconcile_stale_jobs_marks_orphaned_running_failed(tmp_path: Path) -> N
     assert job is not None
     assert job["status"] == "failed"
     assert "restarted" in job["error"]
+
+
+def test_normalize_episode_tasks_mixed_types_write_parquet() -> None:
+    import numpy as np
+    import pandas as pd
+    import pyarrow as pa
+
+    ndarray_task = np.array(["pick the cube"], dtype=object)
+    rows = [
+        {"episode_index": 0, "tasks": rebuild_service._normalize_episode_tasks("override text")},
+        {"episode_index": 1, "tasks": rebuild_service._normalize_episode_tasks(ndarray_task)},
+    ]
+    table = pa.Table.from_pandas(pd.DataFrame(rows), preserve_index=False)
+    assert table.num_rows == 2

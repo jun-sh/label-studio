@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCAP Viewer</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; background: #111; color: #eee; }
+    h1 { margin: 0 0 8px; font-size: 1.4rem; }
+    p { color: #aaa; margin: 0 0 20px; }
+    .card { background: #1c1c1c; border: 1px solid #333; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .dropzone {
+      border: 2px dashed #555; border-radius: 10px; padding: 32px; text-align: center;
+      color: #bbb; cursor: pointer; transition: border-color .15s, background .15s;
+    }
+    .dropzone.dragover { border-color: #4c8bf5; background: #182033; color: #fff; }
+    button, .btn {
+      display: inline-block; padding: 8px 14px; border-radius: 8px; border: none;
+      background: #4c8bf5; color: #fff; text-decoration: none; cursor: pointer; font-size: 14px;
+    }
+    button.secondary { background: #333; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #2a2a2a; }
+    li:last-child { border-bottom: none; }
+    .path { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; }
+    .meta { color: #888; font-size: 12px; margin-top: 4px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>MCAP Viewer</h1>
+  <p>Drag a local <code>.mcap</code> file here, pick from server files below, or open the viewer directly.</p>
+
+  <div class="card">
+    <div id="dropzone" class="dropzone">
+      Drop <strong>.mcap</strong> file here (opens in viewer via browser local file API)
+    </div>
+    <div class="row" style="margin-top:12px">
+      <a class="btn secondary" id="open-viewer" href="#">Open empty viewer</a>
+      <button class="secondary" id="refresh">Refresh file list</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 12px;font-size:1rem">Server MCAP files</h2>
+    <ul id="file-list"><li>Loading…</li></ul>
+  </div>
+
+  <script>
+    const VIEWER_PORT = location.port === "8877" ? "8765" : (new URLSearchParams(location.search).get("viewerPort") || "8765");
+    const viewerBase = `${location.protocol}//${location.hostname}:${VIEWER_PORT}`;
+
+    document.getElementById("open-viewer").href = viewerBase;
+
+    function viewerUrlForRemote(mcapUrl) {
+      return `${viewerBase}/?ds=remote-file&ds.url=${encodeURIComponent(mcapUrl)}`;
+    }
+
+    function viewerUrlForLocalFile() {
+      return `${viewerBase}/?ds=mcap-local-file`;
+    }
+
+    const dropzone = document.getElementById("dropzone");
+    dropzone.addEventListener("click", () => {
+      window.open(viewerBase, "_blank");
+    });
+    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      const file = [...e.dataTransfer.files].find((f) => f.name.endsWith(".mcap"));
+      if (!file) { alert("Please drop a .mcap file"); return; }
+      // Browser cannot pass File object via URL; open viewer and user re-drops there,
+      // OR use object URL trick: open viewer tab — best UX is open viewer for manual drop.
+      // For same-machine: opening viewer is enough; user drops once in viewer window.
+      const w = window.open(viewerBase, "_blank");
+      alert(`Viewer opened. Drop "${file.name}" into the viewer window.`);
+      void w;
+    });
+
+    async function loadFiles() {
+      const list = document.getElementById("file-list");
+      try {
+        const res = await fetch("/api/files");
+        const files = await res.json();
+        if (!files.length) {
+          list.innerHTML = "<li>No .mcap files found under data root. Mount MCAP_DIR to your data directory.</li>";
+          return;
+        }
+        list.innerHTML = files.map((f) => {
+          const remote = `${location.origin}/files/${f.path}`;
+          const href = viewerUrlForRemote(remote);
+          const sizeMb = (f.size / 1024 / 1024).toFixed(1);
+          return `<li>
+            <div>
+              <div class="path">${f.path}</div>
+              <div class="meta">${sizeMb} MB</div>
+            </div>
+            <a class="btn" href="${href}" target="_blank" rel="noopener">Open</a>
+          </li>`;
+        }).join("");
+      } catch (err) {
+        list.innerHTML = `<li>Failed to load file list: ${err}</li>`;
+      }
+    }
+
+    document.getElementById("refresh").addEventListener("click", loadFiles);
+    loadFiles();
+  </script>
+</body>
+</html>

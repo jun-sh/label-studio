@@ -17,6 +17,7 @@ log "=== sync capture modules ==="
 ssh -o BatchMode=yes "${EDGE_HOST}" "mkdir -p '${CAP}' '${TOOLS}' '${WEB_DEST}'"
 scp -q \
   "${ECS_SRC}/capture_state.py" \
+  "${ECS_SRC}/preview_hub.py" \
   "${ECS_SRC}/preview_standby.py" \
   "${EDGE_HOST}:${CAP}/"
 scp -q "${ECS_SRC}/tools/station_heartbeat_loop.py" "${EDGE_HOST}:${TOOLS}/"
@@ -30,6 +31,8 @@ set -euo pipefail
 UD="\${HOME}/.config/systemd/user"
 DROPIN="\${UD}/ecs-record-oak-stream.service.d"
 mkdir -p "\${UD}" "\${DROPIN}"
+# Heartbeat must stay always-on; do not bind it to capture-stack PartOf.
+rm -f "\${UD}/ecs-station-heartbeat.service.d/capture-stack.conf"
 REMOTE
 for unit in \
   ecs-preview-standby.service \
@@ -38,6 +41,9 @@ for unit in \
   ecs-station-heartbeat.service; do
   scp -q "${ECS_SRC}/systemd/${unit}" "${EDGE_HOST}:.config/systemd/user/${unit}"
 done
+ssh -o BatchMode=yes "${EDGE_HOST}" "mkdir -p .config/systemd/user/ecs-station-heartbeat.service.d"
+scp -q "${ECS_SRC}/systemd/ecs-station-heartbeat.service.d/zz-always-on.conf" \
+  "${EDGE_HOST}:.config/systemd/user/ecs-station-heartbeat.service.d/zz-always-on.conf"
 scp -q "${ECS_SRC}/systemd/ecs-record-oak-stream.service.d/no-standby-preview.conf" \
   "${EDGE_HOST}:.config/systemd/user/ecs-record-oak-stream.service.d/no-standby-preview.conf"
 

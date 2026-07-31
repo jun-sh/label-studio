@@ -1,0 +1,55 @@
+# EgoVerse fleet golden camera topology (v1).
+# All 10 OAK-4P stations should provision with this file unless mechanical wiring differs.
+#
+# Layers:
+#   socket_id  — OAK motherboard FFC connector (hardware, fixed per board)
+#   role_id    — semantic mount position on the helmet
+#   lerobot_key — LeRobot v3 observation.images.* written to dataset / stream
+#
+# Deploy: copy to /etc/ego/camera_topology.yaml on each edge device and set:
+#   EGO_TOPOLOGY_FILE=/etc/ego/camera_topology.yaml
+
+topology_id: ego-standard
+version: 1
+board_profile: OAK-FFC-4P-Ego
+description: EgoVerse 4x RGB helmet — standard FFC wiring per assembly drawing R7M1E7
+
+primary_socket: CAM_A
+depth_socket: CAM_B
+head_right_socket: CAM_D
+
+socket_to_role:
+  CAM_A: front_left
+  CAM_B: depth_left
+  CAM_C: rear_right
+  CAM_D: front_right
+
+role_to_lerobot_key:
+  front_left: observation.images.camera_front_left
+  front_right: observation.images.camera_front_right
+  depth_left: observation.images.camera_depth_left
+  rear_right: observation.images.camera_rear_right
+
+# Viewer four-tile layout (top-left → bottom-right)
+viewer_display_order:
+  - front_left
+  - rear_right
+  - depth_left
+  - front_right
+
+viewer_labels:
+  zh:
+    front_left: 前左
+    front_right: 前右
+    depth_left: 深度左
+    rear_right: 后右
+  en:
+    front_left: Front Left
+    front_right: Front Right
+    depth_left: Depth Left
+    rear_right: Rear Right
+
+strict_sync:
+  causal_sockets:
+    - CAM_B
+    - CAM_C

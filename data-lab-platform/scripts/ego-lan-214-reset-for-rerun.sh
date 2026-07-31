@@ -36,6 +36,8 @@ confirm "${1:-}" || die "aborted"
 log "=== 214: stop capture (best effort) + wipe segments/export/shm ==="
 ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<'REMOTE' || die "SSH to 214 failed (${EDGE_HOST})"
 set -euo pipefail
+rm -f "${HOME}/.config/systemd/user/ecs-station-heartbeat.service.d/capture-stack.conf"
+systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user stop ecs-oak-capture-stack.target 2>/dev/null || true
 systemctl stop ecs-oak-capture-stack.target 2>/dev/null || true
 systemctl stop ecs-record-oak-stream.service 2>/dev/null || true
@@ -43,12 +45,20 @@ systemctl stop ecs-record-oak-stream.service 2>/dev/null || true
 rm -rf /home/server/cache/ego-lan-214/segments/sessions
 rm -f /home/server/cache/ego-lan-214/segments/registry.json
 rm -f /home/server/cache/ego-lan-214/segments/checkpoint.json
+rm -f /home/server/cache/ego-lan-214/segments/strict_emit_ts.json
 mkdir -p /home/server/cache/ego-lan-214/segments
 
+rm -rf /home/server/cache/ego-lan-214/logs/*
 rm -rf /home/server/export/ego-lan-214
 rm -rf /dev/shm/ego-capture-active 2>/dev/null || true
 
 echo "214 segments: $(du -sh /home/server/cache/ego-lan-214/segments 2>/dev/null | cut -f1)"
+
+# Heartbeat is independent of capture stack — required for collection "Live" mode.
+systemctl --user enable ecs-station-heartbeat.service 2>/dev/null || true
+systemctl --user start ecs-station-heartbeat.service 2>/dev/null || true
+systemctl --user enable ecs-oak-standby-stack.target 2>/dev/null || true
+systemctl --user start ecs-oak-standby-stack.target 2>/dev/null || true
 REMOTE
 
 log "=== 34: wipe stream (collection page source) ==="
@@ -63,6 +73,20 @@ rm -rf "${STREAM_DEV}" 2>/dev/null || true
 rm -rf "${ARCHIVE_HOST}"
 mkdir -p "${ARCHIVE_HOST}"
 
+log "=== 34: wipe pipeline (HaMeR/MANO postprocess) ==="
+rm -rf "${ROOT}/data-storage/pipeline/${STATION}"
+
+log "=== 34: wipe corpus + annotation publish artifacts ==="
+rm -rf "${ROOT}/data-storage/corpus/ego_214_hand_pose"
+rm -f "${ROOT}/data-storage/corpus/ego_214_hand_pose.zip"
+rm -rf "${ROOT}/data-storage/embodied-annotate/datasets/ego_214"
+rm -rf "${ROOT}/data-storage/stream/delivery_samples/ego_dual_v1"
+rm -rf "${ROOT}/data-storage/samples/ego_214_hand_pose"*
+rm -f "${ROOT}/data-storage/samples/ego_214_hand_pose.zip"*
+rm -f "${ROOT}/data-storage/samples/ego_214_hand_pose_hand_kp2d.json"
+rm -f "${ROOT}/data-storage/samples/ego_214_hand_pose_depth_preview.json"
+rm -rf "${ROOT}/data-storage/samples/ego_214_hand_pose_depth_preview_frames"
+
 log "=== 34: wipe pipeline outputs + published samples ==="
 if [[ -d "${PIPE_ROOT}/outputs" ]]; then
   rm -rf "${PIPE_ROOT}/outputs/${STATION}"
@@ -76,6 +100,11 @@ rm -f "${ROOT}/data-storage/samples/${SAMPLES_SLUG}_hand_kp2d.json"
 rm -f "${ROOT}/data-storage/samples/${SAMPLES_SLUG}.webp"
 
 log "=== Docker: remove bundled copies + restart ingest/lerobot ==="
+COMPOSE=(docker compose)
+if ! docker compose version &>/dev/null; then
+  COMPOSE=(docker-compose)
+fi
+
 if docker ps --format '{{.Names}}' | grep -q '^data-lab-lerobot-1$'; then
   docker exec data-lab-lerobot-1 sh -c "
     rm -f /srv/bundled/${SAMPLES_SLUG}.zip \
@@ -85,8 +114,10 @@ if docker ps --format '{{.Names}}' | grep -q '^data-lab-lerobot-1$'; then
 fi
 
 cd "${ROOT}"
-docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml \
-  restart stream-ingest lerobot nginx >/dev/null
+"${COMPOSE[@]}" -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml \
+  restart stream-ingest derive-worker lerobot nginx >/dev/null 2>&1 || \
+"${COMPOSE[@]}" -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml \
+  restart stream-ingest lerobot nginx >/dev/null 2>&1 || true
 
 log "=== Verify ==="
 frames="$(curl -sf "http://127.0.0.1:8080/lerobot/api/stream/${STATION}/status" \

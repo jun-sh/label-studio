@@ -7,15 +7,19 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
 from ego_capture_studio.capture.buffers import EpisodeBuffers
 from ego_capture_studio.capture.camera_map import (
     ALL_OAK_SOCKETS,
+    DEPTH_OAK_SOCKET as _TOPO_DEPTH_OAK_SOCKET,
+    HEAD_RIGHT_OAK_SOCKET as _TOPO_HEAD_RIGHT_OAK_SOCKET,
     OAK_SOCKET_TO_LEROBOT_VIDEO,
     PRIMARY_OAK_SOCKET,
+    STRICT_CAUSAL_OAK_SOCKETS as _TOPO_STRICT_CAUSAL_OAK_SOCKETS,
+    topology_snapshot,
 )
 from ego_capture_studio.capture.camera_intrinsics import (
     build_camera_intrinsics_document,
@@ -85,12 +89,16 @@ STRICT_CAM_RING_LEN = max(48, int(os.environ.get("STRICT_CAM_RING_LEN", "64")))
 STRICT_PRIMARY_RING_LEN = max(64, int(os.environ.get("STRICT_PRIMARY_RING_LEN", "96")))
 STRICT_RGB_RING_LEN = max(48, int(os.environ.get("STRICT_RGB_RING_LEN", "64")))
 STRICT_DEPTH_RING_LEN = max(12, int(os.environ.get("STRICT_DEPTH_RING_LEN", "24")))
-DEPTH_OAK_SOCKET = os.environ.get("DEPTH_OAK_SOCKET", "CAM_C").strip() or "CAM_C"
-HEAD_RIGHT_OAK_SOCKET = os.environ.get("HEAD_RIGHT_OAK_SOCKET", "CAM_B").strip() or "CAM_B"
-STRICT_CAUSAL_OAK_SOCKETS = frozenset(
-    s.strip()
-    for s in os.environ.get("STRICT_CAUSAL_OAK_SOCKETS", "CAM_B,CAM_C").split(",")
-    if s.strip()
+DEPTH_OAK_SOCKET = os.environ.get("DEPTH_OAK_SOCKET", _TOPO_DEPTH_OAK_SOCKET).strip() or _TOPO_DEPTH_OAK_SOCKET
+HEAD_RIGHT_OAK_SOCKET = (
+    os.environ.get("HEAD_RIGHT_OAK_SOCKET", _TOPO_HEAD_RIGHT_OAK_SOCKET).strip()
+    or _TOPO_HEAD_RIGHT_OAK_SOCKET
+)
+_env_causal = os.environ.get("STRICT_CAUSAL_OAK_SOCKETS", "").strip()
+STRICT_CAUSAL_OAK_SOCKETS = (
+    frozenset(s.strip() for s in _env_causal.split(",") if s.strip())
+    if _env_causal
+    else _TOPO_STRICT_CAUSAL_OAK_SOCKETS
 )
 EGO_STRICT_DEPTH_CAUSAL = os.environ.get("EGO_STRICT_DEPTH_CAUSAL", "1").strip().lower() in (
     "1",
@@ -107,7 +115,7 @@ STRICT_SYNC_MISS_MAX = max(1, int(os.environ.get("STRICT_SYNC_MISS_MAX", "4")))
 STRICT_IMU_BUFFER_MAX = max(256, int(os.environ.get("STRICT_IMU_BUFFER_MAX", "2000")))
 _STRICT_PRIMARY_KEY_SUBSTRS = ("front_left", "head_left")
 _STRICT_RGB_KEY_SUBSTRS = ("front_right", "rear_right", "head_right", "camera_02")
-_STRICT_DEPTH_KEY_SUBSTRS = ("rear_left", "depth_head")
+_STRICT_DEPTH_KEY_SUBSTRS = ("depth_left", "rear_left", "depth_head")
 
 
 def _strict_channel_for_key(key: str) -> str | None:
@@ -385,6 +393,7 @@ class Oak4pEgoRecorder:
             cameras=cameras,
             calibration_source=self._calibration_source,
         )
+        doc["topology"] = topology_snapshot()
         self._intrinsics_document = doc
         return doc
 
@@ -1105,6 +1114,7 @@ class Oak4pEgoRecorder:
         interval_ms: int | None = None,
         imu_interpolate: bool | None = None,
         grid_epoch_ns: int = 0,
+        shutdown_check: Callable[[], bool] | None = None,
     ):
         """Yield strict grid frames: (t_grid_ns, capture, preview, imu6, camera_ts_offset_ns).
 
@@ -1154,6 +1164,8 @@ class Oak4pEgoRecorder:
             time.sleep(0.0005)
 
         while time.monotonic() < t_end:
+            if shutdown_check and shutdown_check():
+                return
             self._drain_imu(buf)
             self._flush_imu_raw_from_buf(buf)
             self._trim_imu_buffer(buf)

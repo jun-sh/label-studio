@@ -14,7 +14,7 @@
 | CLI | `--fps 30 --imu-hz 200` |
 | 时序网格 | `EGO_FRAME_INTERVAL_MS=33` |
 | manifest | `sync_mode: egoverse_30hz` |
-| 分段 | 300 帧 / 段（10s @30Hz） |
+| 分段 | 1800 帧 / 段（60s @30Hz）；`EGO_SEGMENT_MAX_SECONDS=75` |
 | 34 mux | `STREAM_MUX_FPS=30` |
 
 参考：`data-lab-platform/ego-stream-client/config/egoverse_30hz_production.env`

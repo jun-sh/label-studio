@@ -1,11 +1,13 @@
 /**
  * Depth preview overlay for LeRobot Viewer (scheme A).
- * front_right panel shows relative depth derived from front_left RGB.
+ * front_right slot shows front_left depth; panel label is depth_front_left.
  */
 import {
   DEPTH_OVERLAY_VERSION,
+  DISPLAY_PANEL_LABEL,
   cameraShortName,
   containedVideoLayout,
+  displayPanelLabel,
   displayVideoKeyCandidates,
   episodeKeyCandidates,
   featureMatchesText,
@@ -133,6 +135,46 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     return rect;
   }
 
+  function applyDisplayPanelLabel(wrap) {
+    const label = displayPanelLabel(state.payload);
+    const replacements = [
+      ["observation.images.camera_front_right", label],
+      ["camera_front_right", label],
+    ];
+    let node = wrap;
+    for (let depth = 0; depth < 14 && node; depth += 1) {
+      const stack = [node];
+      while (stack.length) {
+        const el = stack.pop();
+        if (!el) continue;
+        if (el.nodeType === Node.TEXT_NODE) {
+          let text = el.textContent || "";
+          let changed = false;
+          for (const [from, to] of replacements) {
+            if (text.indexOf(from) >= 0) {
+              text = text.split(from).join(to);
+              changed = true;
+            }
+          }
+          if (changed) el.textContent = text;
+          continue;
+        }
+        if (el.nodeType !== Node.ELEMENT_NODE) continue;
+        for (const attr of ["title", "aria-label"]) {
+          const value = el.getAttribute(attr);
+          if (!value) continue;
+          let next = value;
+          for (const [from, to] of replacements) {
+            next = next.split(from).join(to);
+          }
+          if (next !== value) el.setAttribute(attr, next);
+        }
+        for (const child of el.childNodes || []) stack.push(child);
+      }
+      node = node.parentElement;
+    }
+  }
+
   function ensureSlot() {
     const found = findDisplayVideoSlot();
     if (!found?.wrap || !found?.video) return null;
@@ -144,8 +186,9 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
 
     wrap.classList.add("datalab-depth-preview-panel");
     wrap.setAttribute("data-datalab-depth-preview", "1");
-    wrap.setAttribute("data-datalab-depth-preview-camera", cameraShortName(featureKey));
+    wrap.setAttribute("data-datalab-depth-preview-camera", displayPanelLabel(state.payload));
     wrap.setAttribute("data-datalab-depth-version", String(DEPTH_OVERLAY_VERSION));
+    applyDisplayPanelLabel(wrap);
     if (g.getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
 
     video.classList.add("datalab-depth-preview-target-video");
@@ -186,7 +229,8 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     const pill = ensurePill();
     const ep = state.episodeKey || "?";
     const backend = state.payload?.episodes?.[ep]?.backend || state.payload?.depth_kind || "relative";
-    pill.textContent = `depth · ep ${parseInt(ep, 10)} · ${backend}`;
+    const label = displayPanelLabel(state.payload);
+    pill.textContent = `${label} · ep ${parseInt(ep, 10)} · ${backend}`;
   }
 
   function fetchDepthPreview(datasetId) {

@@ -28,6 +28,65 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.ok(OVERLAY_VERSION >= 16);
   });
 
+  it("mediapipe preview draws low-confidence hands with alpha", () => {
+    const flatL = Array(42).fill(0);
+    flatL[0] = 100;
+    flatL[1] = 200;
+    flatL[2] = 110;
+    flatL[3] = 210;
+    flatL[4] = 120;
+    flatL[5] = 220;
+    flatL[6] = 130;
+    flatL[7] = 230;
+    const payload = {
+      kp2d_source: "mediapipe",
+      hands_mode: "both",
+      frame_index: [0],
+      hands: {
+        left: {
+          kp2d: [flatL],
+          hand_confidence: [0.25],
+        },
+        right: {
+          kp2d: [Array(42).fill(0)],
+          hand_confidence: [0],
+        },
+      },
+    };
+    const lookup = buildLookup(payload);
+    const hands = handsToDraw(payload, 0, lookup);
+    assert.equal(hands.length, 1);
+    assert.equal(hands[0].side, "left");
+    assert.ok(hands[0].alpha >= 0.25);
+  });
+
+  it("mediapipe preview ignores reproj gate", () => {
+    const flatR = Array(42).fill(0);
+    flatR[0] = 500;
+    flatR[1] = 600;
+    flatR[2] = 510;
+    flatR[3] = 610;
+    flatR[4] = 520;
+    flatR[5] = 620;
+    const payload = {
+      kp2d_source: "mediapipe",
+      hands_mode: "both",
+      frame_index: [0],
+      hands: {
+        right: {
+          kp2d: [flatR],
+          hand_confidence: [0.9],
+          reprojection_error: [999],
+          frame_quality: [2],
+        },
+      },
+    };
+    const lookup = buildLookup(payload);
+    const hands = handsToDraw(payload, 0, lookup);
+    assert.equal(hands.length, 1);
+    assert.equal(hands[0].side, "right");
+  });
+
   it("cameraPayloadFromSub passes layered reproj thresholds (regression: left was 12px)", () => {
     const root = { hands_mode: "both", fps: 30 };
     const sub = {
@@ -60,9 +119,25 @@ describe("overlay-hand-keypoints-lib", () => {
     const flatL = Array(42).fill(0);
     flatL[0] = 100;
     flatL[1] = 200;
+    flatL[2] = 110;
+    flatL[3] = 210;
+    flatL[4] = 120;
+    flatL[5] = 220;
+    flatL[6] = 130;
+    flatL[7] = 230;
+    flatL[8] = 140;
+    flatL[9] = 240;
     const flatR = Array(42).fill(0);
     flatR[0] = 500;
     flatR[1] = 600;
+    flatR[2] = 510;
+    flatR[3] = 610;
+    flatR[4] = 520;
+    flatR[5] = 620;
+    flatR[6] = 530;
+    flatR[7] = 630;
+    flatR[8] = 540;
+    flatR[9] = 640;
     const payload = {
       hands_mode: "both",
       frame_index: [0],

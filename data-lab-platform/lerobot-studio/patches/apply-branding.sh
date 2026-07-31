@@ -50,6 +50,7 @@ for f in "${ROOT}"/assets/index-*.js; do
 done
 
 sh "$(dirname "$0")/patch-dockview-scalar-chart.sh" "${ROOT}"
+sh "$(dirname "$0")/patch-playback-mode.sh" "${ROOT}"
 node "$(dirname "$0")/patch-lerobot-manifest.mjs" "${ROOT}" || true
 node "$(dirname "$0")/patch-lerobot-stream.mjs" "${ROOT}" || true
 

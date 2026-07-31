@@ -2,7 +2,7 @@
  * Pure hand-kp2d overlay logic (testable, no DOM).
  * Invariants: see .cursor/rules/hand-overlay.mdc
  */
-export const OVERLAY_VERSION = 20;
+export const OVERLAY_VERSION = 21;
 
 export const RENDER = {
   LINE_WIDTH: 2,
@@ -11,7 +11,7 @@ export const RENDER = {
   ALPHA_HIGH: 0.95,
   ALPHA_LOW: 0.45,
   ALPHA_REPROJ_CAP: 0.55,
-  REPROJ_THRESHOLD: 12.0,
+  REPROJ_THRESHOLD: 20.0,
   REPROJ_THRESHOLD_LEFT: 96.0,
   QUALITY_LOW: 2,
 };
@@ -26,6 +26,7 @@ export const LEGACY_TO_CANONICAL_VIDEO_KEY = {
   "observation.images.camera_head_left": "observation.images.camera_front_left",
   "observation.images.camera_head_right": "observation.images.camera_front_right",
   "observation.images.camera_depth_head": "observation.images.camera_rear_left",
+  "observation.images.camera_depth_left": "observation.images.camera_rear_left",
   "observation.images.camera_02": "observation.images.camera_rear_right",
 };
 
@@ -258,6 +259,12 @@ export function resolveEpisodeMap(rootPayload, activeEpisodeIndex) {
   return { key: null, map: null, episodeNumber: null };
 }
 
+export function isMediapipePreview(payload) {
+  if (!payload) return false;
+  const source = payload.kp2d_source || payload.preview_source || "";
+  return source === "mediapipe";
+}
+
 export function cameraPayloadFromSub(sub, rootPayload) {
   const reprojRight =
     sub.reproj_threshold_px_right ||
@@ -282,6 +289,8 @@ export function cameraPayloadFromSub(sub, rootPayload) {
     hands: sub.hands || null,
     sync_mode: sub.sync_mode || rootPayload.sync_mode || "frame_index",
     episode_index: sub.episode_index,
+    kp2d_source: sub.kp2d_source || rootPayload.kp2d_source || rootPayload.preview_source || null,
+    preview_source: sub.preview_source || rootPayload.preview_source || sub.kp2d_source || null,
     reproj_threshold_px: reprojRight,
     reproj_threshold_px_left: reprojLeft,
     reproj_threshold_px_right: reprojRight,
@@ -314,6 +323,21 @@ export function isValidWrist(flat) {
   return flat && flat.length >= 2 && isValidJoint(flat[0], flat[1]);
 }
 
+/** Require a spread skeleton, not stub HaMeR (wrist + collapsed zeros). */
+export function isValidSkeleton(flat, minDistinctJoints = 5, payload = null) {
+  const minJoints = isMediapipePreview(payload) ? 3 : minDistinctJoints;
+  if (!isValidWrist(flat)) return false;
+  const seen = new Set();
+  for (let j = 0; j < 21; j += 1) {
+    const u = flat[j * 2];
+    const v = flat[j * 2 + 1];
+    if (!isValidJoint(u, v)) continue;
+    seen.add(`${Math.round(u)}:${Math.round(v)}`);
+    if (seen.size >= minJoints) return true;
+  }
+  return false;
+}
+
 export function reprojThreshold(payload) {
   let t = payload && payload.reproj_threshold_px_right;
   if (!Number.isFinite(t) || t <= 0) {
@@ -344,6 +368,10 @@ export function metricForHand(handPayload, payload, row, key) {
 }
 
 export function shouldDrawHand(side, frameQuality, reprojErr, payload, handConfidence) {
+  if (isMediapipePreview(payload)) {
+    if (handConfidence !== undefined && Number(handConfidence) <= 0) return false;
+    return true;
+  }
   if (side === "left") {
     if (handConfidence !== undefined && Number(handConfidence) <= 0) return false;
   } else if (
@@ -372,6 +400,13 @@ export function blendAlphaForRow(frameQuality, reprojErr, reprojThresholdPx) {
 }
 
 export function alphaForHand(side, handPayload, row, payload) {
+  if (isMediapipePreview(payload)) {
+    const conf = handPayload.hand_confidence ? handPayload.hand_confidence[row] : undefined;
+    if (conf !== undefined && Number(conf) > 0) {
+      return Math.max(RENDER.ALPHA_LOW, Math.min(RENDER.ALPHA_HIGH, Number(conf)));
+    }
+    return RENDER.ALPHA_LOW;
+  }
   const threshold = reprojThresholdForHand(payload, side);
   const conf = handPayload.hand_confidence ? handPayload.hand_confidence[row] : undefined;
   if (side === "left" && conf !== undefined && Number(conf) > 0) {
@@ -394,13 +429,13 @@ export function handsToDraw(payload, frameIdx, lookup) {
       const conf = h.hand_confidence ? h.hand_confidence[row] : undefined;
       if (!shouldDrawHand(side, fq, re, payload, conf)) continue;
       const flat = h.kp2d[row];
-      if (!isValidWrist(flat)) continue;
+      if (!isValidSkeleton(flat, 5, payload)) continue;
       out.push({ side, flat, alpha: alphaForHand(side, h, row, payload) });
     }
     if (out.length) return out;
   }
   const flat = lookup.get(frameIdx);
-  if (!isValidWrist(flat)) return [];
+  if (!isValidSkeleton(flat, 5, payload)) return [];
   const fqLegacy = payload.frame_quality ? payload.frame_quality[row] : undefined;
   const reLegacy = payload.reprojection_error ? payload.reprojection_error[row] : undefined;
   if (!shouldDrawHand("right", fqLegacy, reLegacy, payload, undefined)) return [];
@@ -459,12 +494,15 @@ export function validateOverlayPayload(rootPayload) {
     errors.push("missing payload");
     return errors;
   }
+  const usesMediapipe = isMediapipePreview(rootPayload);
     if (rootPayload.version === 4) {
-    if (!rootPayload.reproj_threshold_px_left) {
-      errors.push("v4 missing reproj_threshold_px_left at root");
-    }
-    if (!rootPayload.reproj_threshold_px_right) {
-      errors.push("v4 missing reproj_threshold_px_right at root");
+    if (!usesMediapipe) {
+      if (!rootPayload.reproj_threshold_px_left) {
+        errors.push("v4 missing reproj_threshold_px_left at root");
+      }
+      if (!rootPayload.reproj_threshold_px_right) {
+        errors.push("v4 missing reproj_threshold_px_right at root");
+      }
     }
     const episodes = rootPayload.episodes || {};
     if (Object.keys(episodes).length > 1 && !rootPayload.episode_meta) {
@@ -474,7 +512,9 @@ export function validateOverlayPayload(rootPayload) {
       for (const [vk, sub] of Object.entries(epMap)) {
         if (!sub.hands) errors.push(`${epKey}/${vk}: missing hands`);
         if (sub.hands_mode !== "both") errors.push(`${epKey}/${vk}: hands_mode not both`);
-        if (!sub.reproj_threshold_px_left) errors.push(`${epKey}/${vk}: missing reproj_threshold_px_left`);
+        if (!usesMediapipe && !sub.reproj_threshold_px_left) {
+          errors.push(`${epKey}/${vk}: missing reproj_threshold_px_left`);
+        }
         if (sub.episode_index !== undefined && normalizeEpisodeNumber(sub.episode_index) !== normalizeEpisodeNumber(epKey)) {
           errors.push(`${epKey}/${vk}: episode_index mismatch ${sub.episode_index}`);
         }

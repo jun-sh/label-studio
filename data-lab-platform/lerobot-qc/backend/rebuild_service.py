@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,8 @@ from qc_store import QcStore
 from video_service import expected_video_duration, trim_video_for_delivery
 
 CHUNKS_SIZE_DEFAULT = 1000
+REBUILD_MODE = os.environ.get("LEROBOT_QC_REBUILD_MODE", "minimal").strip().lower()
+RebuildMode = Literal["minimal", "legacy"]
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,13 @@ _running_lock = threading.Lock()
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _resolve_rebuild_mode(mode: str | None = None) -> RebuildMode:
+    selected = (mode or REBUILD_MODE or "minimal").strip().lower()
+    if selected not in ("minimal", "legacy"):
+        raise ValueError(f"Unsupported rebuild mode: {selected!r}")
+    return selected  # type: ignore[return-value]
 
 
 def find_rebuild_job_in_sidecar(job_id: str, sidecar_root: Path) -> dict[str, Any] | None:
@@ -201,6 +211,162 @@ def _atomic_write_parquet(table: pa.Table, path: Path) -> None:
     tmp.replace(path)
 
 
+def _build_episode_mapping(
+    all_indices: list[int],
+    removed: set[int],
+) -> tuple[list[int], dict[int, int]]:
+    kept = [idx for idx in all_indices if idx not in removed]
+    return kept, {old: new for new, old in enumerate(kept)}
+
+
+def _copy_dataset_tree(src_root: Path, dst_root: Path) -> None:
+    shutil.copytree(src_root, dst_root, dirs_exist_ok=False)
+
+
+def _update_splits(info: dict[str, Any], kept_count: int) -> None:
+    splits = dict(info.get("splits") or {})
+    for key, value in list(splits.items()):
+        if isinstance(value, str) and ":" in value:
+            start, _ = value.split(":", 1)
+            splits[key] = f"{start}:{kept_count}"
+    info["splits"] = splits
+
+
+def _patch_episode_tasks(row: pd.Series, store: QcStore, original_index: int) -> pd.Series:
+    override = store.get_instruction_override(original_index)
+    if not override:
+        return row
+    patched = row.copy()
+    patched["tasks"] = _normalize_episode_tasks(override)
+    return patched
+
+
+def _filter_episodes_parquet(
+    episodes_df: pd.DataFrame,
+    *,
+    kept: list[int],
+    old_to_new: dict[int, int],
+    store: QcStore,
+) -> pd.DataFrame:
+    """Preserve original columns; patch episode_index, dataset bounds, and tasks overrides."""
+    rows: list[pd.Series] = []
+    global_offset = 0
+    for original_index in kept:
+        src = episodes_df[episodes_df["episode_index"] == original_index].iloc[0]
+        src = _patch_episode_tasks(src, store, original_index)
+        length = int(src["length"]) if "length" in src.index and pd.notna(src["length"]) else 0
+        patched = src.copy()
+        patched["episode_index"] = old_to_new[original_index]
+        patched["dataset_from_index"] = global_offset
+        patched["dataset_to_index"] = global_offset + length
+        global_offset += length
+        rows.append(patched)
+
+    out = pd.DataFrame(rows)
+    column_order = [col for col in episodes_df.columns if col in out.columns]
+    extra_cols = [col for col in out.columns if col not in column_order]
+    return out[column_order + extra_cols]
+
+
+def _coerce_dataframe_to_schema(df: pd.DataFrame, schema: pa.Schema) -> pd.DataFrame:
+    coerced = df.copy()
+    for field in schema:
+        if field.name not in coerced.columns:
+            continue
+        if pa.types.is_float32(field.type):
+            coerced[field.name] = coerced[field.name].astype(np.float32)
+        elif pa.types.is_int64(field.type):
+            coerced[field.name] = coerced[field.name].astype(np.int64)
+        elif pa.types.is_int32(field.type):
+            coerced[field.name] = coerced[field.name].astype(np.int32)
+    return coerced
+
+
+def _filter_data_parquet(
+    src_path: Path,
+    dst_path: Path,
+    *,
+    removed: set[int],
+    old_to_new: dict[int, int],
+) -> int:
+    table = pq.read_table(src_path)
+    schema = table.schema
+    df = table.to_pandas()
+    if removed:
+        df = df[~df["episode_index"].isin(removed)].copy()
+    if old_to_new:
+        df["episode_index"] = df["episode_index"].map(old_to_new)
+    sort_cols = [col for col in ("episode_index", "frame_index") if col in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols, kind="stable")
+    if "index" in df.columns:
+        df["index"] = np.arange(len(df), dtype=df["index"].dtype)
+    df = _coerce_dataframe_to_schema(df, schema)
+    _atomic_write_parquet(pa.Table.from_pandas(df, schema=schema, preserve_index=False), dst_path)
+    return len(df)
+
+
+def _update_stats_frame_counts(stats: dict[str, Any], old_total: int, new_total: int) -> None:
+    for section in stats.values():
+        if not isinstance(section, dict):
+            continue
+        count = section.get("count")
+        if isinstance(count, list) and len(count) == 1 and count[0] == old_total:
+            section["count"] = [new_total]
+        elif count == old_total:
+            section["count"] = new_total
+
+
+def _recompute_global_stats(output_root: Path, *, old_total_frames: int, new_total_frames: int) -> None:
+    stats_path = output_root / "meta" / "stats.json"
+    if not stats_path.is_file():
+        return
+    try:
+        stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if old_total_frames > 0 and new_total_frames != old_total_frames:
+        _update_stats_frame_counts(stats, old_total_frames, new_total_frames)
+    _write_json(stats_path, stats)
+
+
+def _write_delivery_report(
+    store: QcStore,
+    *,
+    batch_id: str,
+    report_lines: list[str],
+) -> Path:
+    report_dir = store.sidecar_root / "delivery_reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"{batch_id}.txt"
+    report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    return report_path
+
+
+def _delivery_report_lines(
+    *,
+    state: DatasetState,
+    output_root: Path,
+    batch_id: str,
+    all_indices: list[int],
+    kept: list[int],
+    removed: set[int],
+    store: QcStore,
+) -> list[str]:
+    return [
+        "LeRobot QC Delivery Report",
+        f"Generated: {_utc_now()}",
+        f"Source dataset: {state.dataset_root}",
+        f"Output dataset: {output_root}",
+        f"Batch ID: {batch_id}",
+        f"Rebuild mode: minimal",
+        f"Original episodes: {len(all_indices)}",
+        f"Removed episodes: {len(removed)}",
+        f"Delivered episodes: {len(kept)}",
+        f"Instruction corrections: {len(store.manifest.get('instruction_overrides') or {})}",
+    ]
+
+
 def _try_finalize(output_root: Path) -> tuple[bool, str | None]:
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -244,6 +410,21 @@ def _rebuild_tasks_parquet(output_root: Path, tasks_map: dict[int, str]) -> None
     _atomic_write_parquet(table, output_root / "meta" / "tasks.parquet")
 
 
+def _video_rel_path(state: DatasetState, video_key: str, chunk_index: int, file_index: int) -> str:
+    features = state.info.get("features") or {}
+    feature_info = (features.get(video_key) or {}).get("info") or {}
+    rel_tpl = (
+        feature_info.get("depth.video_path")
+        or state.info.get("video_path")
+        or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    )
+    return rel_tpl.format(
+        video_key=video_key,
+        chunk_index=chunk_index,
+        file_index=file_index,
+    )
+
+
 def _copy_episode_videos(
     state: DatasetState,
     *,
@@ -261,12 +442,7 @@ def _copy_episode_videos(
         offsets = state.video_offsets(video_key, src_episode_index)
         chunk_index = dst_episode_index // chunks_size
         file_index = dst_episode_index % chunks_size
-        rel_tpl = state.info.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
-        rel_path = rel_tpl.format(
-            video_key=video_key,
-            chunk_index=chunk_index,
-            file_index=file_index,
-        )
+        rel_path = _video_rel_path(state, video_key, chunk_index, file_index)
         dst_path = output_root / rel_path
         dst_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -293,7 +469,101 @@ def _copy_episode_videos(
     return video_meta
 
 
-def rebuild_delivery_dataset(
+def _rebuild_minimal_delivery_dataset(
+    *,
+    state: DatasetState,
+    store: QcStore,
+    output_root: Path,
+    batch_id: str,
+    job_id: str,
+) -> dict[str, Any]:
+    removed = store.removed_episode_indices()
+    all_indices = [int(x) for x in state.episodes_df["episode_index"].tolist()]
+    kept, old_to_new = _build_episode_mapping(all_indices, removed)
+    old_total_frames = int(state.info.get("total_frames") or 0)
+
+    if output_root.exists():
+        raise ValueError(f"Output directory already exists: {output_root}")
+
+    _sync_job(job_id, store, progress="copying dataset", status="running")
+    _copy_dataset_tree(state.dataset_root, output_root)
+
+    total_frames = 0
+    data_files = sorted((state.dataset_root / "data").rglob("*.parquet"))
+    for index, src_parquet in enumerate(data_files, start=1):
+        rel = src_parquet.relative_to(state.dataset_root / "data")
+        _sync_job(
+            job_id,
+            store,
+            progress=f"patching data {index}/{len(data_files)}",
+            progress_current=index,
+            progress_total=len(data_files),
+            status="running",
+        )
+        total_frames += _filter_data_parquet(
+            src_parquet,
+            output_root / "data" / rel,
+            removed=removed,
+            old_to_new=old_to_new,
+        )
+
+    episode_files = sorted((state.dataset_root / "meta" / "episodes").rglob("*.parquet"))
+    for index, src_parquet in enumerate(episode_files, start=1):
+        rel = src_parquet.relative_to(state.dataset_root / "meta" / "episodes")
+        _sync_job(
+            job_id,
+            store,
+            progress=f"patching episodes {index}/{len(episode_files)}",
+            progress_current=index,
+            progress_total=len(episode_files),
+            status="running",
+        )
+        orig_df = pd.read_parquet(src_parquet)
+        patched = _filter_episodes_parquet(
+            orig_df,
+            kept=kept,
+            old_to_new=old_to_new,
+            store=store,
+        )
+        schema = pq.read_schema(src_parquet)
+        _atomic_write_parquet(
+            pa.Table.from_pandas(patched, schema=schema, preserve_index=False),
+            output_root / "meta" / "episodes" / rel,
+        )
+
+    info = json.loads((output_root / "meta" / "info.json").read_text(encoding="utf-8"))
+    info["total_episodes"] = len(kept)
+    info["total_frames"] = total_frames
+    info["codebase_version"] = "v3.0"
+    _update_splits(info, len(kept))
+    _write_json(output_root / "meta" / "info.json", info)
+    _recompute_global_stats(output_root, old_total_frames=old_total_frames, new_total_frames=total_frames)
+
+    report_path = _write_delivery_report(
+        store,
+        batch_id=batch_id,
+        report_lines=_delivery_report_lines(
+            state=state,
+            output_root=output_root,
+            batch_id=batch_id,
+            all_indices=all_indices,
+            kept=kept,
+            removed=removed,
+            store=store,
+        ),
+    )
+
+    return {
+        "output_root": str(output_root),
+        "kept_episodes": len(kept),
+        "removed_episodes": len(removed),
+        "finalized": False,
+        "rebuild_mode": "minimal",
+        "report_path": str(report_path),
+    }
+
+
+def _rebuild_legacy_delivery_dataset(
     *,
     state: DatasetState,
     store: QcStore,
@@ -391,6 +661,7 @@ def rebuild_delivery_dataset(
     info["total_frames"] = int(global_frame_offset)
     info["chunks_size"] = chunks_size
     info["codebase_version"] = "v3.0"
+    _update_splits(info, len(kept))
     _write_json(output_root / "meta" / "info.json", info)
     _rebuild_tasks_parquet(output_root, tasks_map)
 
@@ -416,12 +687,13 @@ def rebuild_delivery_dataset(
         f"Source dataset: {state.dataset_root}",
         f"Output dataset: {output_root}",
         f"Batch ID: {batch_id}",
+        f"Rebuild mode: legacy",
         f"Original episodes: {len(all_indices)}",
         f"Removed episodes: {len(removed)}",
         f"Delivered episodes: {len(kept)}",
         f"Instruction corrections: {len(store.manifest.get('instruction_overrides') or {})}",
     ]
-    (output_root / "qc_report.txt").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    report_path = _write_delivery_report(store, batch_id=batch_id, report_lines=report_lines)
 
     finalized, finalize_error = _try_finalize(output_root)
     result: dict[str, Any] = {
@@ -429,10 +701,39 @@ def rebuild_delivery_dataset(
         "kept_episodes": len(kept),
         "removed_episodes": len(removed),
         "finalized": finalized,
+        "rebuild_mode": "legacy",
+        "report_path": str(report_path),
     }
     if finalize_error:
         result["finalize_error"] = finalize_error
     return result
+
+
+def rebuild_delivery_dataset(
+    *,
+    state: DatasetState,
+    store: QcStore,
+    output_root: Path,
+    batch_id: str,
+    job_id: str,
+    mode: str | None = None,
+) -> dict[str, Any]:
+    rebuild_mode = _resolve_rebuild_mode(mode)
+    if rebuild_mode == "legacy":
+        return _rebuild_legacy_delivery_dataset(
+            state=state,
+            store=store,
+            output_root=output_root,
+            batch_id=batch_id,
+            job_id=job_id,
+        )
+    return _rebuild_minimal_delivery_dataset(
+        state=state,
+        store=store,
+        output_root=output_root,
+        batch_id=batch_id,
+        job_id=job_id,
+    )
 
 
 def start_rebuild_job(
@@ -441,6 +742,7 @@ def start_rebuild_job(
     store: QcStore,
     delivery_root: Path,
     batch_id: str | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     active = get_active_rebuild_job(store)
     if active and active.get("status") in ("queued", "running"):
@@ -462,6 +764,7 @@ def start_rebuild_job(
         "created_at": _utc_now(),
         "batch_id": batch,
         "output_root": str(output_root),
+        "rebuild_mode": _resolve_rebuild_mode(mode),
     }
     store.register_rebuild_job(job_record)
     _set_job(job_id, **_job_updates(job_record))
@@ -476,6 +779,7 @@ def start_rebuild_job(
                 output_root=output_root,
                 batch_id=batch,
                 job_id=job_id,
+                mode=mode,
             )
             finished = {
                 "status": "completed",

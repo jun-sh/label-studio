@@ -202,6 +202,13 @@ if not all(checks.values()):
     sys.exit(1)
 PY
 
+echo "==> B7 viewer publish gate (if samples deployed)"
+SLUG="$(python3 "${DATALAB}/data-lab-platform/scripts/ego-pipeline-sessions.py" slug "${STATION}" --datalab-root "${DATALAB}" 2>/dev/null || echo "ego_214_hand_pose")"
+HTTP_DATASET="${DATALAB}/data-storage/samples/${SLUG}/dataset"
+if [[ -d "${HTTP_DATASET}" ]]; then
+  bash "${DATALAB}/data-lab-platform/scripts/ego-viewer-publish-gate.sh" "${SLUG}"
+fi
+
 echo "==> oak finalize markers"
 python3 "${DATALAB}/data-lab-platform/scripts/ego-pipeline-sessions.py" pending "${STATION}" \
   --datalab-root "${DATALAB}" --backend oak | while read -r sid; do

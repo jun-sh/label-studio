@@ -1,6 +1,6 @@
 {
   "tag": "deploy-release-v0.0.6",
-  "snapshotted_at": "2026-07-31T09:24:36+08:00",
+  "snapshotted_at": "2026-08-05T22:27:10+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
     {"path": "ml-services/sam2", "remote": "https://github.com/facebookresearch/sam2.git", "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4", "checkpoints_excluded": "ml-services/sam2/checkpoints/*.pt"},
@@ -9,7 +9,7 @@
     {"path": "data-lab-platform/ego-stream-client", "type": "monorepo-subtree"},
     {"path": "data-lab-platform/lerobot-studio", "type": "monorepo-subtree"},
     {"path": "data-lab-platform/ego-local-web", "type": "monorepo-subtree"},
-    {"path": "data-lab-platform/lerobot-qc", "type": "monorepo-subtree"},
+    {"path": "data-lab-platform/lerobot-qc", "type": "monorepo-subtree", "docker_image": "data-lab-lerobot-qc:local"},
     {"path": "data-lab-platform/mcap-viewer", "type": "monorepo-subtree"}
   ]
 }

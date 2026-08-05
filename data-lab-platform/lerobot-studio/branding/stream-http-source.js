@@ -52,7 +52,14 @@
   };
 
   HttpLeRobotSource.prototype.getObjectUrl = async function (p, mime, progress) {
-    var key = (mime || "application/octet-stream") + ":" + this.resolvePath(p);
+    var rel = this.resolvePath(p);
+    var isVideo = /\.mp4$/i.test(rel) || (mime && String(mime).indexOf("video/") === 0);
+    if (isVideo) {
+      var direct = joinUrl(this.base, rel);
+      progress?.({ phase: "read", loaded: 1, total: 1 });
+      return direct;
+    }
+    var key = (mime || "application/octet-stream") + ":" + rel;
     if (this.objectUrlCache.has(key)) return this.objectUrlCache.get(key);
     if (this.objectUrlLoading.has(key)) return this.objectUrlLoading.get(key);
 
@@ -160,8 +167,14 @@
   function streamBaseFromQuery() {
     try {
       var raw = new URLSearchParams(g.location.search).get("url") || "";
-      if (!raw || raw.indexOf("/api/stream/") < 0) return null;
-      return raw.startsWith("http") ? raw : g.location.origin + raw;
+      if (!raw) return null;
+      if (raw.indexOf("/api/stream/") >= 0) {
+        return raw.startsWith("http") ? raw : g.location.origin + raw;
+      }
+      if (raw.indexOf("/api/sample/") >= 0 && raw.indexOf("/dataset/") >= 0) {
+        return raw.startsWith("http") ? raw : g.location.origin + raw;
+      }
+      return null;
     } catch (e) {
       return null;
     }

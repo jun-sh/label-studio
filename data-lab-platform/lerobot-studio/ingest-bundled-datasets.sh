@@ -61,6 +61,15 @@ if [ -d "${SAMPLES}" ]; then
   copy_if_newer "${SAMPLES}/SenseXperience UMI.zip" "${BUNDLED}/sensexperience_umi.zip" || true
   copy_if_newer "${SAMPLES}/DualAirbot Folding.zip" "${BUNDLED}/dualairbot_fold.zip" || true
   copy_if_newer "${SAMPLES}/ego_214_hand_pose.zip" "${BUNDLED}/ego_214_hand_pose.zip" || true
+  if [ -d "${SAMPLES}/ego_214_hand_pose/dataset" ]; then
+    mkdir -p "${BUNDLED}/ego_214_hand_pose"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/ego_214_hand_pose/dataset/" "${BUNDLED}/ego_214_hand_pose/" || true
+    else
+      rm -rf "${BUNDLED}/ego_214_hand_pose"
+      cp -a "${SAMPLES}/ego_214_hand_pose/dataset" "${BUNDLED}/ego_214_hand_pose" || true
+    fi
+  fi
   copy_if_newer "${SAMPLES}/ego_214_hand_pose_hand_kp2d.json" "${BUNDLED}/overlays/ego_214_hand_pose_hand_kp2d.json" || true
   copy_if_newer "${SAMPLES}/ego_214_hand_pose_depth_preview.json" "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview.json" || true
   if [ -d "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" ]; then

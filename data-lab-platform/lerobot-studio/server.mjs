@@ -201,6 +201,36 @@ function depthPreviewFramesRoot(datasetId) {
   return path.join(BUNDLED, "overlays", `${datasetId}_depth_preview_frames`);
 }
 
+function sampleHttpDatasetUrl(datasetId) {
+  return `${BASE}/api/sample/${encodeURIComponent(datasetId)}/dataset/`;
+}
+
+function sampleHttpDatasetRoots(datasetId) {
+  const samplesDir = process.env.DATALAB_SAMPLES_DIR || "/datalab-samples";
+  return [
+    path.join(BUNDLED, datasetId),
+    path.join(samplesDir, datasetId, "dataset"),
+  ];
+}
+
+function resolveSampleDatasetFile(datasetId, relPath) {
+  const safeRel = normPath(relPath);
+  if (!safeRel || safeRel.includes("..")) return null;
+  for (const root of sampleHttpDatasetRoots(datasetId)) {
+    const disk = safeJoin(root, safeRel);
+    if (disk && fs.existsSync(disk) && fs.statSync(disk).isFile()) {
+      return disk;
+    }
+  }
+  return null;
+}
+
+function normPath(p) {
+  return String(p || "")
+    .replace(/^\/+/, "")
+    .replace(/\\/g, "/");
+}
+
 function readHandKp2dFromZip(zipPath, innerPath) {
   try {
     const raw = execFileSync("unzip", ["-p", zipPath, innerPath], {
@@ -333,15 +363,15 @@ function injectBranding(html, search = "") {
   }
   inject +=
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=67"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=8"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=2"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=70"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=7"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
-    '<script src="/lerobot/branding/stream-http-source.js?v=51"></script>' +
+    '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=67"></script>' +
-    '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=20"></script>' +
-    '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=2"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=70"></script>' +
+    '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=26"></script>' +
+    '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {
     inject +=
@@ -360,7 +390,12 @@ function injectBranding(html, search = "") {
 }
 
 function findDataset(id) {
-  return datasets.find((d) => d.id === id);
+  const entry = datasets.find((d) => d.id === id);
+  if (!entry) return null;
+  if (!entry.httpDatasetUrl && resolveSampleDatasetFile(id, "meta/info.json")) {
+    return { ...entry, httpDatasetUrl: sampleHttpDatasetUrl(id) };
+  }
+  return entry;
 }
 
 const server = http.createServer((req, res) => {
@@ -380,7 +415,17 @@ const server = http.createServer((req, res) => {
   }
 
   if (p === `${BASE}/sample-datasets.manifest.json`) {
-    return sendJson(res, 200, samplesManifest);
+    const manifest = {
+      ...samplesManifest,
+      datasets: (samplesManifest.datasets || []).map((entry) => {
+        if (entry.httpDatasetUrl) return entry;
+        if (resolveSampleDatasetFile(entry.id, "meta/info.json")) {
+          return { ...entry, httpDatasetUrl: sampleHttpDatasetUrl(entry.id) };
+        }
+        return entry;
+      }),
+    };
+    return sendJson(res, 200, manifest);
   }
 
   const sampleMatch = p.match(new RegExp(`^${BASE}/api/sample/([^/]+)$`));
@@ -431,7 +476,7 @@ const server = http.createServer((req, res) => {
   const depthFrameMatch = p.match(
     new RegExp(`^${BASE}/api/sample/([^/]+)/depth-preview/([^/]+)/(frame_\\d{6}\\.png)$`),
   );
-  if (depthFrameMatch && req.method === "GET") {
+  if (depthFrameMatch && (req.method === "GET" || req.method === "HEAD")) {
     const datasetId = decodeURIComponent(depthFrameMatch[1]);
     const episodeKey = decodeURIComponent(depthFrameMatch[2]);
     const frameName = depthFrameMatch[3];
@@ -439,11 +484,33 @@ const server = http.createServer((req, res) => {
     if (!framePath) {
       return sendJson(res, 404, { error: "depth_frame_not_found", datasetId, episodeKey, frameName });
     }
+    if (req.method === "HEAD") {
+      const stat = fs.statSync(framePath);
+      res.writeHead(200, {
+        "Content-Type": "image/png",
+        "Content-Length": stat.size,
+        "Cache-Control": "public, max-age=3600",
+      });
+      return res.end();
+    }
     res.writeHead(200, {
       "Content-Type": "image/png",
       "Cache-Control": "public, max-age=3600",
     });
     return fs.createReadStream(framePath).pipe(res);
+  }
+
+  const sampleDatasetMatch = p.match(
+    new RegExp(`^${BASE}/api/sample/([^/]+)/dataset/(.*)$`),
+  );
+  if (sampleDatasetMatch && (req.method === "GET" || req.method === "HEAD")) {
+    const datasetId = decodeURIComponent(sampleDatasetMatch[1]);
+    const rel = sampleDatasetMatch[2] || "";
+    const disk = resolveSampleDatasetFile(datasetId, rel);
+    if (!disk) {
+      return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+    }
+    return serveFileWithRange(req, res, disk);
   }
 
   function enrichStation(station) {

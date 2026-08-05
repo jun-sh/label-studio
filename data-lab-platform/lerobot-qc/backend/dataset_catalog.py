@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from storage_manager import get_active_storage_root
+
 MANIFEST_FILENAME = "collection.manifest.json"
 INFO_FILENAME = "meta/info.json"
 V3_CODEBASE = "v3.0"
@@ -186,6 +188,13 @@ def _load_collections_registry() -> dict[str, Any] | None:
     return registry if isinstance(registry, dict) else None
 
 
+def _registry_storage_root(registry: dict[str, Any]) -> Path:
+    active = get_active_storage_root()
+    if active is not None:
+        return active
+    return Path(str(registry.get("storage_root") or "/data/bookduo")).expanduser()
+
+
 def _resolve_registry_collection_dir(registry: dict[str, Any], entry: dict[str, Any]) -> Path | None:
     raw_path = str(entry.get("path") or "").strip()
     if not raw_path:
@@ -193,19 +202,42 @@ def _resolve_registry_collection_dir(registry: dict[str, Any], entry: dict[str, 
     path = Path(raw_path).expanduser()
     if path.is_absolute():
         return path.resolve() if path.is_dir() else None
-    storage_root = Path(str(registry.get("storage_root") or "/data/bookduo")).expanduser()
+    storage_root = _registry_storage_root(registry)
     collection_dir = (storage_root / raw_path).resolve()
     return collection_dir if collection_dir.is_dir() else None
 
 
-def _load_registry_collection(registry: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any] | None:
+def _registry_collection_dir(registry: dict[str, Any], entry: dict[str, Any]) -> Path | None:
+    raw_path = str(entry.get("path") or "").strip()
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    return (_registry_storage_root(registry) / raw_path).resolve()
+
+
+def _load_registry_collection(registry: dict[str, Any], entry: dict[str, Any], *, include_unavailable: bool = False) -> dict[str, Any] | None:
     collection_id = str(entry.get("id") or "").strip()
     if not collection_id:
         return None
 
     collection_dir = _resolve_registry_collection_dir(registry, entry)
+    expected_dir = _registry_collection_dir(registry, entry)
     if collection_dir is None:
-        return None
+        if not include_unavailable:
+            return None
+        return {
+            "id": collection_id,
+            "title": entry.get("title") or collection_id,
+            "description": entry.get("description"),
+            "robot_type": entry.get("robot_type"),
+            "package_count": 0,
+            "packages": [],
+            "kind": "collection",
+            "status": "unavailable",
+            "expected_path": str(expected_dir) if expected_dir else None,
+        }
 
     if (collection_dir / MANIFEST_FILENAME).is_file():
         collection = _load_manifest_collection(collection_dir)
@@ -219,9 +251,22 @@ def _load_registry_collection(registry: dict[str, Any], entry: dict[str, Any]) -
         )
 
     if collection is None:
-        return None
+        if not include_unavailable:
+            return None
+        return {
+            "id": collection_id,
+            "title": entry.get("title") or collection_id,
+            "description": entry.get("description"),
+            "robot_type": entry.get("robot_type"),
+            "package_count": 0,
+            "packages": [],
+            "kind": "collection",
+            "status": "unavailable",
+            "expected_path": str(collection_dir),
+        }
 
     collection["id"] = collection_id
+    collection["status"] = "available"
     if entry.get("title"):
         collection["title"] = entry["title"]
     if entry.get("description"):
@@ -231,12 +276,12 @@ def _load_registry_collection(registry: dict[str, Any], entry: dict[str, Any]) -
     return collection
 
 
-def _list_registry_collections(registry: dict[str, Any]) -> list[dict[str, Any]]:
+def _list_registry_collections(registry: dict[str, Any], *, include_unavailable: bool = False) -> list[dict[str, Any]]:
     collections: list[dict[str, Any]] = []
     for entry in registry.get("collections") or []:
         if not isinstance(entry, dict):
             continue
-        collection = _load_registry_collection(registry, entry)
+        collection = _load_registry_collection(registry, entry, include_unavailable=include_unavailable)
         if collection is not None:
             collections.append(collection)
     return collections
@@ -258,10 +303,10 @@ def _leaf_collection(collection_dir: Path) -> dict[str, Any] | None:
     }
 
 
-def list_collections() -> list[dict[str, Any]]:
+def list_collections(*, include_unavailable: bool = False) -> list[dict[str, Any]]:
     registry = _load_collections_registry()
     if registry is not None:
-        return _list_registry_collections(registry)
+        return _list_registry_collections(registry, include_unavailable=include_unavailable)
 
     root = datasets_root()
     if not root.is_dir():
@@ -312,13 +357,15 @@ def allowed_dataset_roots() -> list[Path]:
     if ds_root.is_dir():
         roots.add(ds_root)
 
+    active_root = get_active_storage_root()
+    if active_root is not None:
+        roots.add(active_root)
+
     registry = _load_collections_registry()
     if registry:
-        storage_raw = str(registry.get("storage_root") or "").strip()
-        if storage_raw:
-            storage_path = Path(storage_raw).expanduser().resolve()
-            if storage_path.is_dir():
-                roots.add(storage_path)
+        storage_path = _registry_storage_root(registry).resolve()
+        if storage_path.is_dir():
+            roots.add(storage_path)
 
     for collection in list_collections():
         for pkg in collection.get("packages") or []:

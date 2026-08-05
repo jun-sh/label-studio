@@ -11,12 +11,22 @@ const patches = [
   {
     tag: "httpDataset-vo",
     old: "if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\\/\\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}return{kind:`unknown`,raw:t}}",
-    neu: "if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\\/\\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}",
+    neu: "if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\\/\\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)||t.includes(`/api/sample/`)&&t.includes(`/dataset/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}",
+  },
+  {
+    tag: "httpDataset-vo-stream",
+    old: "if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\\/\\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}",
+    neu: "if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\\/\\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)||t.includes(`/api/sample/`)&&t.includes(`/dataset/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}",
   },
   {
     tag: "httpDataset-open",
     old: "openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`remoteArchive`){",
     neu: "openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`httpDataset`&&typeof window.__datalabOpenHttpDataset==`function`){this.deps.setWelcomeRequest(null),await window.__datalabOpenHttpDataset(this,n.raw,t);return}if(n.kind===`remoteArchive`){",
+  },
+  {
+    tag: "httpDataset-openSample",
+    old: "async openSample(e){let t=_o(e.id),n=ji(e);await this.openRemoteArchive(n,{shareUrl:t,label:e.title||e.name,historyMode:`push`,historyKind:`sample`,sampleId:e.id})}",
+    neu: "async openSample(e){if(e.httpDatasetUrl&&typeof window.__datalabOpenHttpDataset==`function`){this.deps.setWelcomeRequest(null),this.deps.setDatasetLabel?.(e.title||e.name||e.id);let t=e.httpDatasetUrl.startsWith(`http`)?e.httpDatasetUrl:new URL(e.httpDatasetUrl,window.location.origin).href;await window.__datalabOpenHttpDataset(this,t,`push`);return}let t=_o(e.id),n=ji(e);await this.openRemoteArchive(n,{shareUrl:t,label:e.title||e.name,historyMode:`push`,historyKind:`sample`,sampleId:e.id})}",
   },
   {
     tag: "collection-empty-sidebar",

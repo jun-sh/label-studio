@@ -17,13 +17,30 @@ const API_PREFIX = (() => {
 
 const t = (key, vars) => window.LA_I18N?.t(key, vars) ?? key;
 
+function getOperatorId() {
+  return els.operatorInput.value.trim() || undefined;
+}
+
+function getDatasetPath() {
+  return state.datasetPath || els.datasetPathInput?.value?.trim() || "";
+}
+
+function datasetContextHeaders() {
+  const localPath = getDatasetPath();
+  return localPath ? { "X-Dataset-Path": localPath } : {};
+}
+
 async function api(path, options = {}) {
   let url = path.startsWith("/") ? path : `/${path}`;
   if (API_PREFIX && url.startsWith(`${API_PREFIX}/`)) {
     url = url.slice(API_PREFIX.length);
   }
   const response = await fetch(`${API_PREFIX}${url}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...datasetContextHeaders(),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   if (!response.ok) {
@@ -44,6 +61,10 @@ const els = {
   operatorInput: document.getElementById("operatorInput"),
   screeningFileInput: document.getElementById("screeningFileInput"),
   connectHelper: document.getElementById("connectHelper"),
+  storagePanel: document.getElementById("storagePanel"),
+  storageStatus: document.getElementById("storageStatus"),
+  storageVolumes: document.getElementById("storageVolumes"),
+  storageRefreshBtn: document.getElementById("storageRefreshBtn"),
   workspace: document.getElementById("workspace"),
   datasetMeta: document.getElementById("datasetMeta"),
   reviewProgress: document.getElementById("reviewProgress"),
@@ -81,13 +102,16 @@ const els = {
   rebuildModalTitle: document.getElementById("rebuildModalTitle"),
   rebuildStatusText: document.getElementById("rebuildStatusText"),
   closeRebuildModal: document.getElementById("closeRebuildModal"),
+  qcHomeBtn: document.getElementById("qcHomeBtn"),
 };
 
 const state = {
   dataset: null,
+  datasetPath: "",
   episodes: [],
   qcState: {},
   collections: [],
+  storage: null,
   queryEpisode: null,
   currentEpisode: null,
   currentDetail: null,
@@ -129,18 +153,31 @@ function reviewStatusClass(status) {
   return "none";
 }
 
-function collapseConnectPanel() {
-  if (els.connectToggle) {
-    els.connectToggle.setAttribute("aria-expanded", "false");
-  }
-  if (els.connectForm) {
-    els.connectForm.classList.add("collapsed");
-  }
-}
-
 function showWorkspace() {
   els.workspace.hidden = false;
   els.workspace.style.display = "grid";
+}
+
+function getQcHomeUrl() {
+  const base = API_PREFIX || "/qc";
+  return base.replace(/\/$/, "") || "/qc";
+}
+
+function hasQcSubpageQuery() {
+  const params = new URLSearchParams(window.location.search);
+  return (
+    params.has("collection") ||
+    params.has("package") ||
+    params.has("local_path") ||
+    params.has("datasetPath") ||
+    params.has("episode")
+  );
+}
+
+function updateHomeButton() {
+  if (!els.qcHomeBtn) return;
+  els.qcHomeBtn.href = getQcHomeUrl();
+  els.qcHomeBtn.hidden = !hasQcSubpageQuery();
 }
 
 function readQueryParams() {
@@ -151,6 +188,7 @@ function readQueryParams() {
   state.queryPackage = params.get("package") || "";
   const episodeParam = params.get("episode");
   state.queryEpisode = episodeParam != null && episodeParam !== "" ? Number(episodeParam) : null;
+  updateHomeButton();
 }
 
 function syncUrlQuery() {
@@ -171,6 +209,7 @@ function syncUrlQuery() {
   if (currentUrl !== nextUrl) {
     window.history.replaceState(null, "", nextUrl);
   }
+  updateHomeButton();
 }
 
 function isCurrentEpisodeRemoved() {
@@ -350,7 +389,10 @@ function getPlaybackVideoKeys(keys) {
 }
 
 function buildVideoUrl(episodeIndex, videoKey) {
-  return `${API_PREFIX}/api/video/${episodeIndex}?video_key=${encodeURIComponent(videoKey)}`;
+  const params = new URLSearchParams({ video_key: videoKey });
+  const localPath = getDatasetPath();
+  if (localPath) params.set("local_path", localPath);
+  return `${API_PREFIX}/api/video/${episodeIndex}?${params.toString()}`;
 }
 
 function setVideoBlockLayout(paneCount) {
@@ -768,8 +810,16 @@ function drawCharts() {
   drawSeriesChart(els.stateChart, state.trajectory.observation_state, "#52a675");
 }
 
+function assertDatasetContext(info) {
+  const expected = state.datasetPath;
+  const actual = info?.session_path || info?.root || "";
+  if (!expected || !actual || actual === expected) return;
+  throw new Error("Dataset context mismatch. Please reload this page.");
+}
+
 async function refreshDatasetInfo() {
   const info = await api("/api/dataset/info");
+  assertDatasetContext(info);
   state.qcState = info.qc_state || {};
   state.episodes = info.episodes || [];
   renderReviewProgress(info.review_summary);
@@ -822,12 +872,12 @@ async function loadDataset(event) {
       method: "POST",
       body: JSON.stringify({ local_path, operator_id }),
     });
+    state.datasetPath = summary.session_path || summary.root || local_path;
     state.dataset = summary;
     state.episodes = summary.episodes || [];
     state.qcState = summary.qc_state || {};
     els.workspace.hidden = false;
     showWorkspace();
-    collapseConnectPanel();
     els.datasetMeta.textContent = `${summary.total_episodes} episodes · ${summary.fps} fps · ${summary.robot_type || "robot"}`;
     els.connectHelper.textContent = `Sidecar: ${summary.sidecar_root}`;
     els.rebuildBtn.disabled = false;
@@ -868,6 +918,7 @@ async function postReview(status) {
         episode_index: state.currentEpisode,
         status,
         reason: reason.trim() || undefined,
+        operator_id: getOperatorId(),
       }),
     });
     const info = await refreshDatasetInfo();
@@ -904,6 +955,7 @@ async function saveInstruction() {
         episode_index: state.currentEpisode,
         instruction,
         original_instruction: state.currentDetail?.original_language_instruction,
+        operator_id: getOperatorId(),
       }),
     });
     await refreshDatasetInfo();
@@ -1132,24 +1184,126 @@ async function loadCollections() {
   try {
     const data = await api("/api/datasets/collections");
     state.collections = data.collections || [];
+    state.storage = data.storage || null;
+    renderStoragePanel();
     els.collectionSelect.innerHTML = "";
     state.collections.forEach((c) => {
       const opt = document.createElement("option");
       opt.value = c.id;
-      opt.textContent = `${c.title || c.id} (${c.package_count || 0})`;
+      const offline = c.status === "unavailable" ? t("collection_unavailable") : "";
+      opt.textContent = `${c.title || c.id} (${c.package_count || 0})${offline}`;
+      opt.disabled = c.status === "unavailable";
       els.collectionSelect.appendChild(opt);
     });
+    const firstAvailable = state.collections.find((c) => c.status !== "unavailable");
     if (state.queryCollection) {
       els.collectionSelect.value = state.queryCollection;
+    } else if (firstAvailable) {
+      els.collectionSelect.value = firstAvailable.id;
     } else if (state.collections.length) {
       els.collectionSelect.value = state.collections[0].id;
     }
-    if (els.collectionSelect.value) {
+    if (els.collectionSelect.value && !els.collectionSelect.selectedOptions[0]?.disabled) {
       await onCollectionChange();
       if (state.queryPackage) els.packageSelect.value = state.queryPackage;
+    } else {
+      els.connectHelper.textContent = state.storage?.active_host_path
+        ? t("connect_helper_catalog")
+        : t("storage_inactive");
     }
   } catch (error) {
     els.connectHelper.textContent = `Catalog unavailable: ${error.message || error}`;
+  }
+}
+
+function storageVolumeStatusLabel(status) {
+  if (status === "available") return t("storage_volume_available");
+  if (status === "empty") return t("storage_volume_empty");
+  return t("storage_volume_offline");
+}
+
+function renderStoragePanel() {
+  if (!els.storageStatus || !els.storageVolumes) return;
+  const storage = state.storage;
+  const activePath = storage?.active_host_path || storage?.active_root;
+  els.storageStatus.className = "ls-storage-status";
+  if (activePath) {
+    els.storageStatus.classList.add("is-ok");
+    els.storageStatus.textContent = t("storage_active", { path: activePath });
+  } else if (storage?.saved_available === false && storage?.saved_host_path) {
+    els.storageStatus.classList.add("is-warning");
+    els.storageStatus.textContent = t("storage_saved_missing", { path: storage.saved_host_path });
+  } else {
+    els.storageStatus.textContent = t("storage_inactive");
+  }
+
+  const volumes = storage?.volumes || [];
+  els.storageVolumes.innerHTML = "";
+  if (!volumes.length) {
+    const empty = document.createElement("p");
+    empty.className = "ls-helper";
+    empty.textContent = t("storage_no_volumes");
+    els.storageVolumes.appendChild(empty);
+    return;
+  }
+
+  volumes.forEach((volume) => {
+    const row = document.createElement("div");
+    const isActive = Boolean(activePath && volume.host_path === activePath);
+    row.className = `ls-storage-volume${isActive ? " is-active" : ""}`;
+
+    const meta = document.createElement("div");
+    meta.className = "ls-storage-volume-meta";
+    const name = document.createElement("div");
+    name.className = "ls-storage-volume-name";
+    name.textContent = volume.name || volume.id;
+    const path = document.createElement("div");
+    path.className = "ls-storage-volume-path";
+    path.textContent = volume.host_path || volume.container_path || "";
+    const badge = document.createElement("span");
+    badge.className = `ls-storage-volume-badge is-${volume.status || "offline"}`;
+    badge.textContent = storageVolumeStatusLabel(volume.status);
+    meta.appendChild(name);
+    meta.appendChild(path);
+    meta.appendChild(badge);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ls-btn ls-btn-primary";
+    btn.textContent = isActive ? t("storage_active_btn") : t("storage_activate_btn");
+    btn.disabled = isActive || volume.status !== "available";
+    btn.addEventListener("click", () => activateStorage(volume));
+
+    row.appendChild(meta);
+    row.appendChild(btn);
+    els.storageVolumes.appendChild(row);
+  });
+}
+
+async function loadStorageStatus() {
+  try {
+    state.storage = await api("/api/storage/status");
+    renderStoragePanel();
+  } catch (error) {
+    if (els.storageStatus) {
+      els.storageStatus.textContent = String(error.message || error);
+    }
+  }
+}
+
+async function activateStorage(volume) {
+  if (!volume?.container_path) return;
+  try {
+    const result = await api("/api/storage/activate", {
+      method: "POST",
+      body: JSON.stringify({ container_path: volume.container_path }),
+    });
+    els.connectHelper.textContent = t("storage_activate_ok", {
+      path: result.active_host_path || result.active_root,
+    });
+    await loadCollections();
+  } catch (error) {
+    els.connectHelper.textContent = t("storage_activate_fail", { error: error.message || error });
   }
 }
 
@@ -1221,6 +1375,10 @@ function bindTimelineEvents() {
 els.connectForm.addEventListener("submit", loadDataset);
 els.collectionSelect.addEventListener("change", onCollectionChange);
 els.packageSelect.addEventListener("change", onPackageChange);
+els.storageRefreshBtn?.addEventListener("click", async () => {
+  await loadStorageStatus();
+  await loadCollections();
+});
 els.episodeSearch.addEventListener("input", renderEpisodeList);
 els.episodeStatusFilter?.addEventListener("change", renderEpisodeList);
 els.playPauseBtn.addEventListener("click", togglePlayback);
@@ -1256,6 +1414,7 @@ window.addEventListener("resize", drawCharts);
 window.addEventListener("keydown", onKeyboard);
 window.__laOnLocaleChange = () => {
   window.LA_I18N.applyStaticUI();
+  renderStoragePanel();
   renderEpisodeList();
   updatePlayhead();
   if (!state.playing) els.playPauseBtn.textContent = t("qc_btn_play");
@@ -1264,6 +1423,6 @@ window.__laOnLocaleChange = () => {
 bindTimelineEvents();
 window.LA_I18N?.init();
 readQueryParams();
-loadCollections().then(() => {
+loadStorageStatus().then(() => loadCollections()).then(() => {
   if (els.datasetPathInput.value.trim()) loadDataset();
 });

@@ -2,7 +2,14 @@
  * Pure hand-kp2d overlay logic (testable, no DOM).
  * Invariants: see .cursor/rules/hand-overlay.mdc
  */
-export const OVERLAY_VERSION = 21;
+export const OVERLAY_VERSION = 26;
+
+export const OVERLAY_RENDER_STYLE = Object.freeze({
+  CLASSIC: "classic",
+  RICH: "rich",
+});
+
+const HAND_IDS = Object.freeze({ left: 1, right: 2 });
 
 export const RENDER = {
   LINE_WIDTH: 2,
@@ -37,11 +44,64 @@ export const FRONT_CAMERA_SHORTS = [
   "camera_rear_right",
 ];
 
-/** Scheme A: skeleton only on front_left; front_right reserved for depth preview. */
+/** ego-standard viewer tab labels (station-topology viewer_labels_zh). */
+export const VIDEO_KEY_ZH_LABELS = {
+  "observation.images.camera_front_left": "前左",
+  "observation.images.camera_front_right": "前右",
+  "observation.images.camera_rear_left": "后左",
+  "observation.images.camera_rear_right": "后右",
+  "observation.images.camera_depth_left": "深度左",
+};
+
+const ZH_LABEL_AMBIGUOUS_PAIRS = [
+  ["前左", "前右"],
+  ["后左", "后右"],
+];
+
+/** Whitelist: cameras that receive hand skeleton overlay (SenseXperience path includes rear_right). */
+export const HAND_OVERLAY_VIDEO_KEYS = new Set([
+  "observation.images.camera_front_left",
+  "observation.images.camera_rear_right",
+]);
+
+/** @deprecated Prefer HAND_OVERLAY_VIDEO_KEYS whitelist. Kept for depth-preview / layout hints. */
 export const HAND_OVERLAY_EXCLUDE_VIDEO_KEYS = new Set([
   "observation.images.camera_front_right",
   "observation.images.camera_head_right",
 ]);
+
+export function isHandOverlayVideoKey(videoKey) {
+  return HAND_OVERLAY_VIDEO_KEYS.has(canonicalVideoKey(videoKey));
+}
+
+/** Resolve viewer render style: payload → URL → localStorage → preference → default rich. */
+export function resolveRenderStyle(ctx = {}) {
+  const fromPayload = ctx.payload?.render_style || ctx.rootPayload?.render_style;
+  if (fromPayload === OVERLAY_RENDER_STYLE.CLASSIC || fromPayload === OVERLAY_RENDER_STYLE.RICH) {
+    return fromPayload;
+  }
+  try {
+    const q = new URLSearchParams(ctx.search || "").get("hand_style");
+    if (q === OVERLAY_RENDER_STYLE.CLASSIC || q === OVERLAY_RENDER_STYLE.RICH) return q;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const stored = ctx.storage?.getItem?.("datalab-hand-render-style");
+    if (stored === OVERLAY_RENDER_STYLE.CLASSIC || stored === OVERLAY_RENDER_STYLE.RICH) {
+      return stored;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (
+    ctx.preference === OVERLAY_RENDER_STYLE.CLASSIC ||
+    ctx.preference === OVERLAY_RENDER_STYLE.RICH
+  ) {
+    return ctx.preference;
+  }
+  return OVERLAY_RENDER_STYLE.RICH;
+}
 
 export function cameraShortName(featureKey) {
   return (featureKey || "").split(".").pop() || "";
@@ -51,21 +111,46 @@ export function canonicalVideoKey(featureKey) {
   return LEGACY_TO_CANONICAL_VIDEO_KEY[featureKey] || featureKey;
 }
 
+function shortNameAmbiguous(text, short) {
+  for (const other of FRONT_CAMERA_SHORTS) {
+    if (other === short) continue;
+    if (text.indexOf(other) >= 0) return true;
+  }
+  return false;
+}
+
+function zhLabelAmbiguous(text, zh) {
+  for (const [a, b] of ZH_LABEL_AMBIGUOUS_PAIRS) {
+    const other = zh === a ? b : zh === b ? a : null;
+    if (other && text.indexOf(other) >= 0) return true;
+  }
+  return false;
+}
+
 export function featureMatchesText(text, featureKey) {
   if (!text) return false;
   if (text.indexOf(featureKey) >= 0) return true;
   const short = cameraShortName(featureKey);
-  if (!short || text.indexOf(short) < 0) return false;
-  for (const other of FRONT_CAMERA_SHORTS) {
-    if (other === short) continue;
-    if (text.indexOf(other) >= 0) return false;
+  if (short && text.indexOf(short) >= 0) {
+    return !shortNameAmbiguous(text, short);
   }
-  return true;
+  const zh = VIDEO_KEY_ZH_LABELS[canonicalVideoKey(featureKey)];
+  if (zh && text.indexOf(zh) >= 0) {
+    return !zhLabelAmbiguous(text, zh);
+  }
+  return false;
 }
 
 export function normalizeEpisodeNumber(ep) {
   const n = parseInt(String(ep), 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** v4 episode bucket key (e.g. 000001) → numeric index; authoritative over sidecar fields. */
+export function episodeIndexFromKey(epKey) {
+  if (epKey == null || epKey === "") return null;
+  const m = String(epKey).match(/(\d+)\s*$/);
+  return m ? normalizeEpisodeNumber(m[1]) : null;
 }
 
 export function parseEpisodeFromLabel(label) {
@@ -81,6 +166,107 @@ export function parseEpisodeFromLabel(label) {
   const mHash = label.match(/#\s*(\d+)\b/);
   if (mHash) return String(parseInt(mHash[1], 10));
   return null;
+}
+
+/** LeRobot title clock: `# 100:10` => 00:10, or `# 0 00:19` => 00:19. */
+export function parsePlaybackClockFromLabel(label) {
+  if (!label) return null;
+  const compact = label.match(/#\s*(\d)(\d{2})[:：](\d{2})/);
+  if (compact) {
+    return {
+      minutes: normalizeEpisodeNumber(compact[2]),
+      seconds: normalizeEpisodeNumber(compact[3]),
+    };
+  }
+  const spaced = label.match(/#\s*\d+\s+(\d{1,2})[:：](\d{2})(?:\s|[^\d]|$)/);
+  if (spaced) {
+    return {
+      minutes: normalizeEpisodeNumber(spaced[1]),
+      seconds: normalizeEpisodeNumber(spaced[2]),
+    };
+  }
+  const plain = label.match(/\b(\d{1,2})[:：](\d{2})\b/);
+  if (plain) {
+    return {
+      minutes: normalizeEpisodeNumber(plain[1]),
+      seconds: normalizeEpisodeNumber(plain[2]),
+    };
+  }
+  return null;
+}
+
+export function frameIndexFromPlaybackClock(clock, fps) {
+  if (!clock || !Number.isFinite(fps) || fps <= 0) return null;
+  const sec = clock.minutes * 60 + clock.seconds;
+  return Math.max(0, Math.round(sec * fps));
+}
+
+function clampFrameIndex(idx, payload) {
+  const frames = payload?.frame_index || [];
+  const maxIdx = frames.length ? Number(frames[frames.length - 1]) : null;
+  const n = Math.max(0, Math.floor(Number(idx) || 0));
+  if (maxIdx == null || !Number.isFinite(maxIdx)) return n;
+  return Math.min(n, maxIdx);
+}
+
+export function resolveFrameIndexFromHeaders(headerNodes, payload) {
+  const fps = Number(payload?.fps) || 30;
+  const frames = payload?.frame_index || [];
+  const maxIdx = frames.length ? Number(frames[frames.length - 1]) : null;
+  let best = null;
+  for (const node of headerNodes || []) {
+    const text = typeof node === "string" ? node : node.text;
+    const clock = parsePlaybackClockFromLabel(text);
+    if (!clock) continue;
+    const score = scoreHeaderNode(node);
+    if (!best || score > best.score) best = { clock, score };
+  }
+  if (!best) return null;
+  let idx = frameIndexFromPlaybackClock(best.clock, fps);
+  if (idx == null) return null;
+  if (maxIdx != null) idx = Math.min(idx, maxIdx);
+  return idx;
+}
+
+function frameIndexFromVideoTime(video, payload) {
+  const fps = Number(payload?.fps) || 30;
+  if (!video || !Number.isFinite(fps) || fps <= 0) return null;
+  const idx = Math.floor((Number(video.currentTime) || 0) * fps + 0.5);
+  return clampFrameIndex(idx, payload);
+}
+
+/** Prefer LeRobot transport clock when paused/in sync; during play trust video if header drifts. */
+export function resolveFrameIndexForVideo(video, payload, ctx = {}) {
+  if (!payload) return 0;
+  const fps = Number(payload.fps) || 30;
+  const fromHeader = resolveFrameIndexFromHeaders(ctx.headerNodes, payload);
+  const fromVideo = frameIndexFromVideoTime(video, payload);
+  const isPlaying = !!(video && video.paused === false && !video.ended);
+
+  if (fromHeader != null && fromVideo != null && isPlaying) {
+    const tolerance = Math.max(2, Math.ceil(fps / 15));
+    if (Math.abs(fromHeader - fromVideo) > tolerance) {
+      return fromVideo;
+    }
+  }
+
+  if (fromHeader != null) return clampFrameIndex(fromHeader, payload);
+
+  if (ctx.frameIndex != null && Number.isFinite(Number(ctx.frameIndex))) {
+    return clampFrameIndex(ctx.frameIndex, payload);
+  }
+
+  try {
+    const attr = ctx.doc?.documentElement?.getAttribute?.("data-datalab-playback-frame-index");
+    if (attr != null && attr !== "") {
+      return clampFrameIndex(Number(attr), payload);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  if (fromVideo != null) return fromVideo;
+  return 0;
 }
 
 export function episodeKeyCandidates(activeEpisodeIndex) {
@@ -144,7 +330,7 @@ export function buildEpisodeFingerprintIndex(rootPayload) {
     const fp =
       cam.session_fingerprint || sessionFingerprintFromStrings(cam.session_id, cam.task);
     if (!fp || byFingerprint[fp]) continue;
-    byFingerprint[fp] = String(normalizeEpisodeNumber(cam.episode_index ?? epKey));
+    byFingerprint[fp] = String(episodeIndexFromKey(epKey) ?? normalizeEpisodeNumber(epKey));
   }
   return { byFingerprint };
 }
@@ -291,6 +477,10 @@ export function cameraPayloadFromSub(sub, rootPayload) {
     episode_index: sub.episode_index,
     kp2d_source: sub.kp2d_source || rootPayload.kp2d_source || rootPayload.preview_source || null,
     preview_source: sub.preview_source || rootPayload.preview_source || sub.kp2d_source || null,
+    render_style:
+      sub.render_style ||
+      rootPayload.render_style ||
+      OVERLAY_RENDER_STYLE.RICH,
     reproj_threshold_px: reprojRight,
     reproj_threshold_px_left: reprojLeft,
     reproj_threshold_px_right: reprojRight,
@@ -430,7 +620,12 @@ export function handsToDraw(payload, frameIdx, lookup) {
       if (!shouldDrawHand(side, fq, re, payload, conf)) continue;
       const flat = h.kp2d[row];
       if (!isValidSkeleton(flat, 5, payload)) continue;
-      out.push({ side, flat, alpha: alphaForHand(side, h, row, payload) });
+      out.push({
+        side,
+        flat,
+        alpha: alphaForHand(side, h, row, payload),
+        handId: HAND_IDS[side],
+      });
     }
     if (out.length) return out;
   }
@@ -439,7 +634,12 @@ export function handsToDraw(payload, frameIdx, lookup) {
   const fqLegacy = payload.frame_quality ? payload.frame_quality[row] : undefined;
   const reLegacy = payload.reprojection_error ? payload.reprojection_error[row] : undefined;
   if (!shouldDrawHand("right", fqLegacy, reLegacy, payload, undefined)) return [];
-  return [{ side: "right", flat, alpha: blendAlphaForRow(fqLegacy, reLegacy, reprojThreshold(payload)) }];
+  return [{
+    side: "right",
+    flat,
+    alpha: blendAlphaForRow(fqLegacy, reLegacy, reprojThreshold(payload)),
+    handId: HAND_IDS.right,
+  }];
 }
 
 export function resolveEpisodeCameraPayloads(rootPayload, activeEpisodeIndex) {
@@ -453,18 +653,15 @@ export function resolveEpisodeCameraPayloads(rootPayload, activeEpisodeIndex) {
     const vkeys = rootPayload.video_keys || Object.keys(epMap);
     for (const vkRaw of vkeys) {
       const vk = canonicalVideoKey(vkRaw);
-      if (HAND_OVERLAY_EXCLUDE_VIDEO_KEYS.has(vk)) continue;
+      if (!isHandOverlayVideoKey(vk)) continue;
       const sub = epMap[vkRaw] || epMap[vk];
       if (!sub) continue;
-      if (
-        sub.episode_index !== undefined &&
-        normalizeEpisodeNumber(sub.episode_index) !== resolved.episodeNumber
-      ) {
-        continue;
-      }
       list.push({
         video_key: vk,
-        payload: cameraPayloadFromSub(sub, rootPayload),
+        payload: cameraPayloadFromSub(
+          { ...sub, episode_index: resolved.episodeNumber },
+          rootPayload,
+        ),
       });
     }
     return list;
@@ -515,8 +712,14 @@ export function validateOverlayPayload(rootPayload) {
         if (!usesMediapipe && !sub.reproj_threshold_px_left) {
           errors.push(`${epKey}/${vk}: missing reproj_threshold_px_left`);
         }
-        if (sub.episode_index !== undefined && normalizeEpisodeNumber(sub.episode_index) !== normalizeEpisodeNumber(epKey)) {
-          errors.push(`${epKey}/${vk}: episode_index mismatch ${sub.episode_index}`);
+        if (sub.episode_index !== undefined) {
+          const bucket = episodeIndexFromKey(epKey);
+          if (
+            bucket !== null &&
+            normalizeEpisodeNumber(sub.episode_index) !== bucket
+          ) {
+            errors.push(`${epKey}/${vk}: episode_index mismatch ${sub.episode_index}`);
+          }
         }
       }
     }

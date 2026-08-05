@@ -31,9 +31,18 @@ OLD_EFFECT = (
 )
 NEW_EFFECT = (
     "(0,q.useEffect)(()=>{if(V.size>0||!Y.length||pe.current)return;"
+    "if(typeof document<`u`&&document.documentElement.getAttribute(`data-datalab-collection-preview`)===`1`)return;"
     "if(X){var __z=__datalabDefaultJointIds(Y,X);H(new Set(__z.length>0?__z:Y));return}"
     "var __c=Y.filter(function(__id){return /^(mano_pose|state|mano_kp2d_uv|pose)\\[/.test(__id)});"
     "H(new Set(__c.length>0?__c:Y))},[Y,V.size,X])"
+)
+NEW_EFFECT_LIVE_GUARD = (
+    "pe.current)return;if(X){"
+)
+NEW_EFFECT_LIVE_GUARD_REPLACEMENT = (
+    "pe.current)return;"
+    "if(typeof document<`u`&&document.documentElement.getAttribute(`data-datalab-collection-preview`)===`1`)return;"
+    "if(X){"
 )
 
 ANCHOR = "function Ye(e,t){"
@@ -41,14 +50,21 @@ ANCHOR = "function Ye(e,t){"
 patched = 0
 for path in sorted(assets.glob("DockviewLayout-*.js")):
     text = path.read_text(encoding="utf-8")
-    if "__datalabDefaultJointIds" in text:
-        patched += 1
+    changed = False
+    if ANCHOR in text and "__datalabDefaultJointIds" not in text:
+        text = text.replace(ANCHOR, HELPER + ANCHOR, 1)
+        changed = True
+    if OLD_EFFECT in text:
+        text = text.replace(OLD_EFFECT, NEW_EFFECT, 1)
+        changed = True
+    elif (
+        NEW_EFFECT_LIVE_GUARD in text
+        and NEW_EFFECT_LIVE_GUARD_REPLACEMENT not in text
+    ):
+        text = text.replace(NEW_EFFECT_LIVE_GUARD, NEW_EFFECT_LIVE_GUARD_REPLACEMENT, 1)
+        changed = True
+    if not changed:
         continue
-    if ANCHOR not in text or OLD_EFFECT not in text:
-        print(f"skip (pattern missing): {path.name}")
-        continue
-    text = text.replace(ANCHOR, HELPER + ANCHOR, 1)
-    text = text.replace(OLD_EFFECT, NEW_EFFECT, 1)
     path.write_text(text, encoding="utf-8")
     print(f"patched scalar chart defaults: {path.name}")
     patched += 1

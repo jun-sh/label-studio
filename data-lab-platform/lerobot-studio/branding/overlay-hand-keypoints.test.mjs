@@ -5,6 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   OVERLAY_VERSION,
+  OVERLAY_RENDER_STYLE,
+  resolveRenderStyle,
+  HAND_OVERLAY_VIDEO_KEYS,
+  isHandOverlayVideoKey,
   cameraPayloadFromSub,
   handsToDraw,
   buildLookup,
@@ -13,6 +17,9 @@ import {
   resolveActiveEpisodeByFingerprint,
   buildEpisodeFingerprintIndex,
   scoreHeaderEpisodes,
+  parsePlaybackClockFromLabel,
+  resolveFrameIndexForVideo,
+  featureMatchesText,
   resolveEpisodeMap,
   resolveEpisodeCameraPayloads,
   shouldDrawHand,
@@ -25,7 +32,60 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 describe("overlay-hand-keypoints-lib", () => {
   it("exports stable overlay version", () => {
     assert.equal(typeof OVERLAY_VERSION, "number");
-    assert.ok(OVERLAY_VERSION >= 16);
+    assert.ok(OVERLAY_VERSION >= 26);
+  });
+
+  it("resolveRenderStyle defaults to rich and respects overrides", () => {
+    assert.equal(resolveRenderStyle({}), OVERLAY_RENDER_STYLE.RICH);
+    assert.equal(
+      resolveRenderStyle({ payload: { render_style: OVERLAY_RENDER_STYLE.CLASSIC } }),
+      OVERLAY_RENDER_STYLE.CLASSIC,
+    );
+    assert.equal(
+      resolveRenderStyle({ search: "?hand_style=classic" }),
+      OVERLAY_RENDER_STYLE.CLASSIC,
+    );
+    const storage = {
+      getItem: (k) => (k === "datalab-hand-render-style" ? OVERLAY_RENDER_STYLE.CLASSIC : null),
+    };
+    assert.equal(resolveRenderStyle({ storage }), OVERLAY_RENDER_STYLE.CLASSIC);
+  });
+
+  it("exports overlay render style enum", () => {
+    assert.equal(OVERLAY_RENDER_STYLE.CLASSIC, "classic");
+    assert.equal(OVERLAY_RENDER_STYLE.RICH, "rich");
+  });
+
+  it("handsToDraw includes handId for dual hands", () => {
+    const flatL = Array(42).fill(0);
+    flatL[0] = 100;
+    flatL[1] = 200;
+    flatL[2] = 110;
+    flatL[3] = 210;
+    flatL[4] = 120;
+    flatL[5] = 220;
+    const flatR = Array(42).fill(0);
+    flatR[0] = 300;
+    flatR[1] = 200;
+    flatR[2] = 310;
+    flatR[3] = 210;
+    flatR[4] = 320;
+    flatR[5] = 220;
+    const payload = {
+      kp2d_source: "mediapipe",
+      hands_mode: "both",
+      frame_index: [0],
+      hands: {
+        left: { kp2d: [flatL], hand_confidence: [0.9] },
+        right: { kp2d: [flatR], hand_confidence: [0.9] },
+      },
+    };
+    const hands = handsToDraw(payload, 0, new Map());
+    assert.equal(hands.length, 2);
+    const left = hands.find((h) => h.side === "left");
+    const right = hands.find((h) => h.side === "right");
+    assert.equal(left.handId, 1);
+    assert.equal(right.handId, 2);
   });
 
   it("mediapipe preview draws low-confidence hands with alpha", () => {
@@ -163,6 +223,74 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.equal(hands.length, 2);
     const sides = hands.map((h) => h.side).sort();
     assert.deepEqual(sides, ["left", "right"]);
+  });
+
+  it("parsePlaybackClockFromLabel decodes LeRobot compact and spaced clocks", () => {
+    assert.deepEqual(parsePlaybackClockFromLabel("# 100:10EGO-214"), {
+      minutes: 0,
+      seconds: 10,
+    });
+    assert.deepEqual(parsePlaybackClockFromLabel("# 0 00:19 EGO-214"), {
+      minutes: 0,
+      seconds: 19,
+    });
+  });
+
+  it("resolveFrameIndexForVideo prefers header clock over video time", () => {
+    const payload = {
+      fps: 30,
+      frame_index: Array.from({ length: 400 }, (_, i) => i),
+    };
+    const idx = resolveFrameIndexForVideo(
+      { currentTime: 0 },
+      payload,
+      {
+        headerNodes: [
+          {
+            text: "# 000:12EGO-214 · 532267ec",
+            tagName: "H2",
+            inMainContent: true,
+          },
+        ],
+      },
+    );
+    assert.equal(idx, 12 * 30);
+  });
+
+  it("resolveFrameIndexForVideo uses video time during play when header drifts", () => {
+    const payload = {
+      fps: 30,
+      frame_index: Array.from({ length: 400 }, (_, i) => i),
+    };
+    const idx = resolveFrameIndexForVideo(
+      { currentTime: 2, paused: false, ended: false },
+      payload,
+      {
+        headerNodes: [
+          {
+            text: "# 000:12EGO-214 · 532267ec",
+            tagName: "H2",
+            inMainContent: true,
+          },
+        ],
+      },
+    );
+    assert.equal(idx, 60);
+  });
+
+  it("featureMatchesText matches ego-standard Chinese panel labels", () => {
+    assert.equal(
+      featureMatchesText("前左 observation.images", "observation.images.camera_front_left"),
+      true,
+    );
+    assert.equal(
+      featureMatchesText("前左 前右", "observation.images.camera_front_left"),
+      false,
+    );
+    assert.equal(
+      featureMatchesText("后右", "observation.images.camera_rear_right"),
+      true,
+    );
   });
 
   it("parseEpisodeFromLabel decodes LeRobot #100:10 as episode 1", () => {
@@ -319,12 +447,49 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.ok(text.includes('type = "module"'), "must bootstrap module entry");
   });
 
+  it("overlay-hand-keypoints.mjs entry wires classic and rich draw layers", () => {
+    const mjsPath = path.join(__dirname, "overlay-hand-keypoints.mjs");
+    const text = fs.readFileSync(mjsPath, "utf8");
+    assert.ok(text.includes("drawHandLayerClassic"), "classic renderer");
+    assert.ok(text.includes("drawHandLayerRich"), "rich renderer");
+    assert.ok(text.includes("buildRichHandDrawPlan"), "rich plan builder");
+    assert.ok(text.includes("OVERLAY_RENDER_STYLE.RICH"), "rich style dispatch");
+  });
+
   it("overlay-hand-keypoints.mjs entry has no duplicate imports", () => {
     const mjsPath = path.join(__dirname, "overlay-hand-keypoints.mjs");
     const text = fs.readFileSync(mjsPath, "utf8");
     const imports = [...text.matchAll(/^\s{2}(\w+),/gm)].map((m) => m[1]);
     const dups = imports.filter((name, i) => imports.indexOf(name) !== i);
     assert.deepEqual(dups, [], `duplicate imports: ${dups.join(", ")}`);
+  });
+
+  it("resolveEpisodeCameraPayloads tolerates session-local episode_index in bucket", () => {
+    const root = {
+      version: 4,
+      kp2d_source: "mediapipe",
+      hands_mode: "both",
+      video_keys: ["observation.images.camera_front_left"],
+      episodes: {
+        "000001": {
+          "observation.images.camera_front_left": {
+            episode_index: 0,
+            hands_mode: "both",
+            kp2d_source: "mediapipe",
+            frame_index: [0],
+            hands: {
+              right: {
+                kp2d: [[118, 110, 120, 120, 130, 130, 140, 140]],
+                hand_confidence: [0.9],
+              },
+            },
+          },
+        },
+      },
+    };
+    const cams = resolveEpisodeCameraPayloads(root, "1");
+    assert.equal(cams.length, 1);
+    assert.equal(cams[0].payload.episode_index, 1);
   });
 
   it("resolveEpisodeCameraPayloads does not cross-wire episodes", () => {
@@ -358,12 +523,17 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.equal(ep1.hands.right.kp2d[0][0], 118);
   });
 
-  it("scheme A excludes camera_front_right from hand overlay", () => {
+  it("hand overlay whitelist includes rear_right and excludes front_right", () => {
+    assert.ok(isHandOverlayVideoKey("observation.images.camera_front_left"));
+    assert.ok(isHandOverlayVideoKey("observation.images.camera_rear_right"));
+    assert.ok(isHandOverlayVideoKey("observation.images.camera_02"));
+    assert.equal(isHandOverlayVideoKey("observation.images.camera_front_right"), false);
     const root = {
       version: 4,
       video_keys: [
         "observation.images.camera_front_left",
         "observation.images.camera_front_right",
+        "observation.images.camera_rear_right",
       ],
       episodes: {
         "000000": {
@@ -381,12 +551,23 @@ describe("overlay-hand-keypoints-lib", () => {
             frame_index: [0],
             hands: { left: { kp2d: [[5, 6]] }, right: { kp2d: [[7, 8]] } },
           },
+          "observation.images.camera_rear_right": {
+            episode_index: 0,
+            hands_mode: "both",
+            video_key: "observation.images.camera_rear_right",
+            frame_index: [0],
+            hands: { left: { kp2d: [[9, 10]] }, right: { kp2d: [[11, 12]] } },
+          },
         },
       },
     };
     const cams = resolveEpisodeCameraPayloads(root, "0");
-    assert.equal(cams.length, 1);
-    assert.equal(cams[0].video_key, "observation.images.camera_front_left");
+    const keys = cams.map((c) => c.video_key).sort();
+    assert.deepEqual(keys, [
+      "observation.images.camera_front_left",
+      "observation.images.camera_rear_right",
+    ]);
+    assert.ok(HAND_OVERLAY_VIDEO_KEYS.has("observation.images.camera_rear_right"));
   });
 });
 
@@ -403,9 +584,15 @@ describe("ego_214_hand_pose sample overlay (if present)", () => {
     assert.deepEqual(errors, []);
     const ep0 = payload.episodes["000000"]["observation.images.camera_front_left"];
     const ep1 = payload.episodes["000001"]["observation.images.camera_front_left"];
-    const w0 = ep0.hands.right.kp2d[50][0];
-    const w1 = ep1.hands.right.kp2d[50][0];
-    assert.ok(w0 > 1 || w1 > 1, "at least one episode should have visible right wrist at frame 50");
-    assert.notEqual(w0, w1, "episodes must not share identical skeleton at frame 50");
+    assert.equal(ep0.episode_index, 0);
+    assert.equal(ep1.episode_index, 1);
+    const conf0 = ep0.hand_confidence || ep0.hands.right.hand_confidence;
+    const conf1 = ep1.hand_confidence || ep1.hands.right.hand_confidence;
+    const idx0 = conf0.findIndex((c) => c > 0.5);
+    const idx1 = conf1.findIndex((c) => c > 0.5);
+    const w0 = ep0.hands.right.kp2d[idx0 >= 0 ? idx0 : 0][0];
+    const w1 = ep1.hands.right.kp2d[idx1 >= 0 ? idx1 : 0][0];
+    assert.ok(w0 > 1 && w1 > 1, "both episodes should have visible right wrist samples");
+    assert.notEqual(w0, w1, "episodes must not share identical skeleton");
   });
 });

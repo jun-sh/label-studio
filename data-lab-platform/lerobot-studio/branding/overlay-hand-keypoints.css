@@ -1,4 +1,4 @@
-/* HaMeR 2D hand keypoint overlay on LeRobot video panels */
+/* HaMeR / SenseXperience-style hand overlay on LeRobot video panels */
 
 html[data-datalab-hand-kp2d="1"] canvas.datalab-hand-kp2d-overlay {
   position: absolute;

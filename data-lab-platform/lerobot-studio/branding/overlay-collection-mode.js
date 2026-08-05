@@ -435,7 +435,6 @@
   var liveRawSnapshotObserver = null;
   var applyingLiveFeaturesPlaceholder = false;
   var livePauseGuardTimer = null;
-  var liveJointsGuardTimer = null;
 
   function clickAllFeaturesTab() {
     var buttons = document.querySelectorAll("button");
@@ -588,6 +587,24 @@
     return /^全部\s*joints$/i.test(label) || /^all\s*joints$/i.test(label);
   }
 
+  function jointsPickerIsPartial(gv) {
+    var label = jointsPickerSummaryText(gv);
+    return /^已选\s*\d+$/i.test(label) || /^\d+\s*selected$/i.test(label);
+  }
+
+  function finishLiveJointsBootstrap(gv) {
+    jointsBootstrapInFlight = false;
+    document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+    closeJointsPickerMenu();
+    if (gv) markJointsChartLiveCleared(gv);
+  }
+
+  function abortLiveJointsBootstrap() {
+    jointsBootstrapInFlight = false;
+    document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+    closeJointsPickerMenu();
+  }
+
   function findJointsPickerMenuRoot() {
     var inputs = document.querySelectorAll("input[placeholder]");
     for (var ii = 0; ii < inputs.length; ii++) {
@@ -614,8 +631,6 @@
   function markJointsChartLiveCleared(gv) {
     if (!gv) gv = findJointsChartGroupview();
     if (gv) gv.setAttribute("data-datalab-live-joints-cleared", "1");
-    document.documentElement.setAttribute("data-datalab-live-joints-none", "1");
-    closeJointsPickerMenu();
     g.__DATALAB_LIVE_JOINTS_CLEARED__ = true;
   }
 
@@ -623,29 +638,25 @@
     document.querySelectorAll("[data-datalab-live-joints-cleared]").forEach(function (node) {
       node.removeAttribute("data-datalab-live-joints-cleared");
     });
-    document.documentElement.removeAttribute("data-datalab-live-joints-none");
     document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
     delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
+    delete g.__DATALAB_LIVE_JOINTS_USER_OVERRIDE__;
   }
 
   var jointsBootstrapInFlight = false;
 
-  function bootstrapJointsSelectionForLive(attempt) {
+  function bootstrapJointsSelectionForLive(attempt, clearPass) {
     if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+    if (g.__DATALAB_LIVE_JOINTS_USER_OVERRIDE__ || g.__DATALAB_LIVE_JOINTS_CLEARED__) return;
     if (typeof attempt !== "number") attempt = 0;
-    if (g.__DATALAB_LIVE_JOINTS_CLEARED__ && jointsPickerIsNone(findJointsChartGroupview())) {
-      closeJointsPickerMenu();
-      return;
-    }
+    if (typeof clearPass !== "number") clearPass = 0;
     if (attempt === 0 && jointsBootstrapInFlight) return;
     if (attempt === 0) {
       jointsBootstrapInFlight = true;
       document.documentElement.setAttribute("data-datalab-live-joints-bootstrapping", "1");
     }
-    if (attempt >= 20) {
-      jointsBootstrapInFlight = false;
-      document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
-      closeJointsPickerMenu();
+    if (attempt >= 16) {
+      abortLiveJointsBootstrap();
       return;
     }
     dismissScalarSplitView();
@@ -653,14 +664,12 @@
     var gv = findJointsChartGroupview();
     if (!gv) {
       g.setTimeout(function () {
-        bootstrapJointsSelectionForLive(attempt + 1);
+        bootstrapJointsSelectionForLive(attempt + 1, clearPass);
       }, 150);
       return;
     }
     if (jointsPickerIsNone(gv)) {
-      jointsBootstrapInFlight = false;
-      document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
-      markJointsChartLiveCleared(gv);
+      finishLiveJointsBootstrap(gv);
       return;
     }
     var menu = findJointsPickerMenuRoot();
@@ -674,16 +683,20 @@
         }
       }
       g.setTimeout(function () {
-        bootstrapJointsSelectionForLive(attempt + 1);
+        bootstrapJointsSelectionForLive(attempt + 1, clearPass);
       }, 180);
       return;
     }
     var toggle = findJointsMenuSelectAllToggle(menu);
     if (!toggle) {
       g.setTimeout(function () {
-        bootstrapJointsSelectionForLive(attempt + 1);
+        bootstrapJointsSelectionForLive(attempt + 1, clearPass);
       }, 120);
       return;
+    }
+    var nextPass = clearPass;
+    if (!nextPass) {
+      nextPass = jointsPickerIsPartial(gv) ? 1 : 2;
     }
     try {
       toggle.click();
@@ -691,30 +704,55 @@
       /* ignore */
     }
     g.setTimeout(function () {
-      if (jointsPickerIsNone(findJointsChartGroupview())) {
-        jointsBootstrapInFlight = false;
-        document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
-        markJointsChartLiveCleared(gv);
+      var latest = findJointsChartGroupview();
+      if (jointsPickerIsNone(latest)) {
+        finishLiveJointsBootstrap(latest || gv);
         return;
       }
-      bootstrapJointsSelectionForLive(attempt + 1);
-    }, 200);
+      if (nextPass === 1) {
+        bootstrapJointsSelectionForLive(attempt, 2);
+        return;
+      }
+      bootstrapJointsSelectionForLive(attempt + 1, nextPass);
+    }, 220);
   }
 
   var jointsSelectionBootstrapToken = 0;
 
   function scheduleJointsSelectionBootstrap() {
+    if (g.__DATALAB_LIVE_JOINTS_CLEARED__ || g.__DATALAB_LIVE_JOINTS_USER_OVERRIDE__) return;
     jointsSelectionBootstrapToken += 1;
-    var token = jointsSelectionBootstrapToken;
     delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
+    delete g.__DATALAB_LIVE_JOINTS_USER_OVERRIDE__;
     clearJointsChartLiveClearedMark();
-    bootstrapJointsSelectionForLive(0);
-    g.setTimeout(function () {
-      if (token !== jointsSelectionBootstrapToken) return;
-      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
-      if (g.__DATALAB_LIVE_JOINTS_CLEARED__) return;
-      bootstrapJointsSelectionForLive(0);
-    }, 600);
+    bootstrapJointsSelectionForLive(0, 0);
+  }
+
+  function noteLiveJointsUserOverride(target) {
+    if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) return;
+    var gv = findJointsChartGroupview();
+    if (!gv) return;
+    var trigger = findJointsPickerTriggerButton(gv);
+    if (!trigger) return;
+    if (target !== trigger && !trigger.contains(target) && !findJointsPickerMenuRoot()) return;
+    g.__DATALAB_LIVE_JOINTS_USER_OVERRIDE__ = true;
+    jointsSelectionBootstrapToken += 1;
+    jointsBootstrapInFlight = false;
+    document.documentElement.removeAttribute("data-datalab-live-joints-bootstrapping");
+    gv.removeAttribute("data-datalab-live-joints-cleared");
+    delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
+  }
+
+  function installLiveJointsUserOverrideListener() {
+    if (g.__DATALAB_LIVE_JOINTS_USER_LISTENER__) return;
+    g.__DATALAB_LIVE_JOINTS_USER_LISTENER__ = true;
+    document.addEventListener(
+      "click",
+      function (event) {
+        noteLiveJointsUserOverride(event.target);
+      },
+      true,
+    );
   }
 
   function runRestoreJointsSelectionForReplay(attempt) {
@@ -775,28 +813,13 @@
   }
 
   function startLiveJointsSelectionGuard() {
+    installLiveJointsUserOverrideListener();
     scheduleJointsSelectionBootstrap();
-    if (liveJointsGuardTimer) return;
-    liveJointsGuardTimer = g.setInterval(function () {
-      if (collectionModeUi.mode !== "preview" || !previewModeAllowed()) {
-        stopLiveJointsSelectionGuard();
-        return;
-      }
-      if (jointsPickerIsNone(findJointsChartGroupview())) {
-        closeJointsPickerMenu();
-        return;
-      }
-      if (!g.__DATALAB_LIVE_JOINTS_CLEARED__ || jointsBootstrapInFlight) return;
-      bootstrapJointsSelectionForLive(0);
-    }, 2000);
   }
 
   function stopLiveJointsSelectionGuard() {
-    if (liveJointsGuardTimer) {
-      g.clearInterval(liveJointsGuardTimer);
-      liveJointsGuardTimer = null;
-    }
     jointsBootstrapInFlight = false;
+    jointsSelectionBootstrapToken += 1;
     closeJointsPickerMenu();
     restoreJointsSelectionForReplay();
     clearJointsChartLiveClearedMark();
@@ -976,7 +999,7 @@
   function clearLiveTransportFreeze() {
     stopLiveSeekBurst();
     stopLivePauseGuard();
-    stopLiveJointsFreeze();
+    stopLiveJointsSelectionGuard();
     stopLiveTransportObserver();
     stopLiveRawSnapshotObserver();
     unlockLiveTransportPlayButton();
@@ -1041,7 +1064,6 @@
       }
       dismissAutoplayDialog();
       ensureTransportPaused();
-      restoreJointsChartSnapshots();
       captureLiveFeaturesPlaceholder();
       applyLiveFeaturesPlaceholder();
       freezeTransportSliderPosition(findTransportSlider());
@@ -1068,7 +1090,6 @@
       captureLiveFeaturesPlaceholder();
       ensureTransportPaused();
       applyLiveFeaturesPlaceholder();
-      restoreJointsChartSnapshots();
       patchLiveTransportBar();
       ticks += 1;
       if (ticks >= 5) {
@@ -1092,7 +1113,8 @@
     clickAllFeaturesTab();
     bootstrapLiveFeaturesPlaceholder(0);
     applyLiveFeaturesPlaceholder();
-    startLiveJointsFreeze();
+    dismissScalarSplitView();
+    startLiveJointsSelectionGuard();
     lockLiveTransportPlayButton();
     freezeTransportSliderPosition(findTransportSlider());
     patchLiveTransportBar();
@@ -1256,6 +1278,8 @@
   }
 
   function connectCollectionPreviewStreams() {
+    delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
+    clearJointsChartLiveClearedMark();
     suspendReplayTransportForPreview();
     dismissScalarSplitView();
     ensureAllPreviewSlots();

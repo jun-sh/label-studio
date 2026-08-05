@@ -9,11 +9,32 @@
 <body>
   <div id="app" class="ls-app">
     <header class="ls-topbar">
-      <div class="ls-brand">
-        <span class="ls-brand-mark">DL</span>
-        <div>
-          <strong id="brandTitle">Data QC</strong>
-          <span class="ls-brand-sub" id="brandSub">Terminal inspection</span>
+      <div class="ls-topbar-left">
+        <a id="qcHomeBtn" class="ls-qc-home-btn" href="/qc" hidden aria-label="Home">
+          <svg class="ls-qc-home-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M2 7.25 8 2.5 14 7.25V13.5a.75.75 0 0 1-.75.75H3.25A.75.75 0 0 1 2.5 13.5V7.25Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M6.25 14.25V9.5h3.5v4.75"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <div class="ls-brand">
+          <span class="ls-brand-mark">DL</span>
+          <div>
+            <strong id="brandTitle">Data QC</strong>
+            <span class="ls-brand-sub" id="brandSub">Terminal inspection</span>
+          </div>
         </div>
       </div>
       <div class="ls-topbar-actions">
@@ -26,6 +47,15 @@
         Connect dataset
       </button>
       <form id="connectForm" class="ls-connect-body">
+        <section class="ls-storage-panel" id="storagePanel">
+          <div class="ls-storage-head">
+            <h3 id="storageTitle">External storage</h3>
+            <button type="button" class="ls-btn ls-btn-ghost" id="storageRefreshBtn">Refresh</button>
+          </div>
+          <p class="ls-helper" id="storageHint"></p>
+          <div class="ls-storage-status" id="storageStatus"></div>
+          <div class="ls-storage-volumes" id="storageVolumes"></div>
+        </section>
         <div class="ls-form-row">
           <label id="collectionLabel">
             Collection

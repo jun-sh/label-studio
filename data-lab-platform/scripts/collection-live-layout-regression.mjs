@@ -136,7 +136,19 @@ async function collectState(page) {
       jointRows: chartGv
         ? chartGv.querySelectorAll("[data-joint], [role=row]").length
         : 0,
-      jointsFrozen: Boolean(chartGv?.querySelector("[data-datalab-live-joints-frozen]")),
+      jointsCleared: Boolean(chartGv?.querySelector("[data-datalab-live-joints-cleared]")),
+      jointsNoneLabel: [...document.querySelectorAll("span.truncate, button span")]
+        .filter((el) => (el.textContent || "").trim() === "未选择")
+        .some((el) => {
+          const st = getComputedStyle(el);
+          const inChart = chartGv && chartGv.contains(el);
+          return (
+            inChart &&
+            st.visibility !== "hidden" &&
+            st.display !== "none" &&
+            el.offsetParent !== null
+          );
+        }),
       chartCanvasHash,
       transportLeaves,
       jointsLabelVisible: [...document.querySelectorAll("span, button")]
@@ -300,17 +312,14 @@ async function main() {
       detail: `nonZeroNumericLeaves=${live.featuresNonZero}`,
     },
     {
-      id: "joints-chart-frozen",
-      pass: live.jointsFrozen === true,
-      detail: `jointsFrozen=${live.jointsFrozen}`,
+      id: "joints-selection-cleared",
+      pass: live.jointsCleared === true,
+      detail: `jointsCleared=${live.jointsCleared}`,
     },
     {
-      id: "joints-canvas-stable",
-      pass:
-        live.chartCanvasHash !== null &&
-        live.chartCanvasHash !== 0 &&
-        liveMid.chartCanvasHash === live.chartCanvasHash,
-      detail: `hash mid=${liveMid.chartCanvasHash} late=${live.chartCanvasHash}`,
+      id: "joints-none-label",
+      pass: live.jointsNoneLabel === true,
+      detail: `jointsNoneLabel=${live.jointsNoneLabel}`,
     },
     {
       id: "transport-zero-labels",
@@ -343,8 +352,8 @@ async function main() {
     },
     {
       id: "joints-label-in-panel",
-      pass: live.jointsLabelVisible === true,
-      detail: `visible=${live.jointsLabelVisible}`,
+      pass: live.jointsNoneLabel === true,
+      detail: `visible=${live.jointsNoneLabel}`,
     },
     {
       id: "features-label-in-panel",

@@ -37,7 +37,7 @@ patch_file() {
     -e 's/languages:{zh:`中文`,en:`English`,ja:`日本語`}/languages:{zh:`中文`,en:`English`}/g' \
     -e 's/,{code:`ja`,labelKey:`common.languages.ja`}//g' \
     -e 's/无需上传，直接在浏览器中查看 LeRobot 数据集/无需上传，直接在浏览器中查看数据集/g' \
-    -e 's|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}return{kind:`unknown`,raw:t}}|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}|g' \
+    -e 's|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}return{kind:`unknown`,raw:t}}|if(t.startsWith(`sample://`)){let e=yo(t.replace(/^sample:\/\//,``));return{kind:`sample`,raw:t,sampleId:e,hint:e}}if(t.includes(`/api/stream/`)||t.includes(`/api/sample/`)&&t.includes(`/dataset/`)){let e=t.startsWith(`http`)?t:new URL(t,window.location.origin).href;return{kind:`httpDataset`,raw:e}}return{kind:`unknown`,raw:t}}|g' \
     -e 's|async openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`remoteArchive`)|async openFromUrl(e,t=`replace`){let n=vo(e||``);if(n.kind===`httpDataset`&&typeof window.__datalabOpenHttpDataset==`function`){this.deps.setWelcomeRequest(null),await window.__datalabOpenHttpDataset(this,n.raw,t);return}if(n.kind===`remoteArchive`)|g' \
     -e 's/selectAll:`全选`/selectAll:`显示全部通道`/g' \
     -e 's/selectAll:`Select All`/selectAll:`Show all channels`/g' \
@@ -53,5 +53,6 @@ sh "$(dirname "$0")/patch-dockview-scalar-chart.sh" "${ROOT}"
 sh "$(dirname "$0")/patch-playback-mode.sh" "${ROOT}"
 node "$(dirname "$0")/patch-lerobot-manifest.mjs" "${ROOT}" || true
 node "$(dirname "$0")/patch-lerobot-stream.mjs" "${ROOT}" || true
+node "$(dirname "$0")/patch-lerobot-sample-missing.mjs" "${ROOT}" || true
 
 echo "Branding patch applied under ${ROOT}"

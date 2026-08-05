@@ -40,9 +40,35 @@
     params.set("datalab_embed", "1");
     params.set("lang", lang || "en");
     if (datasetId) {
-      params.set("url", "sample://" + datasetId);
+      var httpUrl = datasetUrlOverrides[datasetId];
+      params.set("url", httpUrl || "sample://" + datasetId);
     }
     return "/lerobot/?" + params.toString();
+  }
+
+  var datasetUrlOverrides = {
+    ego_214_hand_pose: "/lerobot/api/sample/ego_214_hand_pose/dataset/",
+  };
+
+  function loadDatasetUrlOverrides() {
+    return fetch("/lerobot/api/datasets", { credentials: "same-origin" })
+      .then(function (response) {
+        if (!response.ok) return;
+        return response.json();
+      })
+      .then(function (items) {
+        if (!Array.isArray(items)) return;
+        items.forEach(function (entry) {
+          if (entry && entry.id && entry.httpDatasetUrl) {
+            datasetUrlOverrides[entry.id] = entry.httpDatasetUrl;
+          } else if (entry && entry.id && entry.url && String(entry.url).indexOf("/api/sample/") >= 0) {
+            datasetUrlOverrides[entry.id] = entry.url;
+          }
+        });
+      })
+      .catch(function () {
+        /* keep static fallback */
+      });
   }
 
   function normalizeDataVizUrl() {
@@ -61,7 +87,9 @@
   function bootstrapLocale(uiLocale) {
     normalizeDataVizUrl();
     var lang = applyPageLocale(uiLocale || readStoredUiLocale() || "en");
-    setIframeSrc(lang);
+    loadDatasetUrlOverrides().finally(function () {
+      setIframeSrc(lang);
+    });
   }
 
   bootstrapLocale(readStoredUiLocale());

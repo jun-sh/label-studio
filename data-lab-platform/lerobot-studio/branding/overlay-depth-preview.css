@@ -8,6 +8,7 @@
   z-index: 4;
   object-fit: contain;
   background: #0b0f14;
+  backface-visibility: hidden;
 }
 
 .datalab-depth-preview-pill {
@@ -21,5 +22,5 @@
   border: 1px solid rgba(96, 165, 250, 0.35);
   border-radius: 999px;
   padding: 4px 10px;
-  pointer-events: none;
+  cursor: pointer;
 }

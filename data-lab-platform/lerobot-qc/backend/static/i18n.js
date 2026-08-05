@@ -32,6 +32,21 @@
       camera_2: 'Camera 2',
       camera_main: 'Main view',
       btn_load: 'Load',
+      storage_title: 'External storage',
+      storage_hint: 'After reboot, pick the mounted BookDuo folder below. Disk label may be BookDuo_2 while Linux mounts it as BookDuo_21 if an empty BookDuo_2 folder already exists.',
+      storage_active: 'Active: {path}',
+      storage_inactive: 'No storage loaded. Activate a volume below to list collections.',
+      storage_saved_missing: 'Last used path is offline: {path}',
+      storage_volume_available: 'Ready',
+      storage_volume_empty: 'Empty folder',
+      storage_volume_offline: 'Offline (drive not connected)',
+      storage_activate_btn: 'Load storage',
+      storage_active_btn: 'Active',
+      storage_activate_ok: 'Storage loaded: {path}',
+      storage_activate_fail: 'Failed to load storage: {error}',
+      storage_no_volumes: 'No BookDuo volumes detected under /media/user01. Plug in the drive and refresh this page.',
+      storage_refresh_btn: 'Refresh',
+      collection_unavailable: ' (offline)',
       connect_helper_local: 'Local: enter the dataset directory below, then Load.',
       connect_helper_catalog: 'Select a collection and package, then Load.',
       connect_helper_job: 'Job: {name} · {count} episodes. Click Load.',
@@ -188,6 +203,7 @@
       qc_rebuild_poll_error: 'Status poll failed: {error}',
       qc_rebuild_stale_hint: 'Rebuild interrupted (service restarted). Close this dialog and start a new rebuild.',
       qc_rebuild_already_running: 'A rebuild is already running.',
+      qc_home_btn: 'Home',
       qc_reject_reason_prompt: 'Removal reason (required for audit):',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Instruction saved for episode {idx}',
@@ -224,6 +240,21 @@
       camera_2: '相机 2',
       camera_main: '主视角',
       btn_load: '加载',
+      storage_title: '外置硬盘',
+      storage_hint: '重启后请在下方选择已挂载的 BookDuo 目录。硬盘卷标可能是 BookDuo_2，但若系统里已有空的 BookDuo_2 文件夹，Linux 会挂载为 BookDuo_21。',
+      storage_active: '当前存储：{path}',
+      storage_inactive: '尚未加载存储。请先激活下方硬盘卷，再选择数据集集合。',
+      storage_saved_missing: '上次使用的路径已离线：{path}',
+      storage_volume_available: '可用',
+      storage_volume_empty: '空目录',
+      storage_volume_offline: '离线（硬盘未连接）',
+      storage_activate_btn: '加载硬盘',
+      storage_active_btn: '已加载',
+      storage_activate_ok: '已加载存储：{path}',
+      storage_activate_fail: '加载存储失败：{error}',
+      storage_no_volumes: '未在 /media/user01 下检测到 BookDuo 卷。请插入硬盘后刷新页面。',
+      storage_refresh_btn: '刷新',
+      collection_unavailable: '（离线）',
       connect_helper_local: '本地模式：填写下方数据集目录后点击「加载」。',
       connect_helper_catalog: '选择数据集集合与子包，然后点击「加载」。',
       connect_helper_job: '任务：{name} · {count} 条 episode。点击「加载」。',
@@ -380,6 +411,7 @@
       qc_rebuild_poll_error: '状态查询失败：{error}',
       qc_rebuild_stale_hint: '重建已中断（服务曾重启）。请关闭此对话框并重新发起重建。',
       qc_rebuild_already_running: '已有重建任务正在运行。',
+      qc_home_btn: '主页',
       qc_reject_reason_prompt: '移除原因（审计必填）：',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Episode {idx} 指令已保存',
@@ -450,6 +482,9 @@
     if (brandTitle) brandTitle.textContent = t(titleKey);
     if (brandSub) brandSub.textContent = t(subKey);
 
+    const qcHomeBtn = document.getElementById('qcHomeBtn');
+    if (qcHomeBtn) qcHomeBtn.setAttribute('aria-label', t('qc_home_btn'));
+
     const connectToggle = document.getElementById('connectToggle');
     if (connectToggle) connectToggle.textContent = t('connect_toggle');
 
@@ -468,6 +503,13 @@
 
     const loadBtn = document.querySelector('#connectForm button[type="submit"]');
     if (loadBtn) loadBtn.textContent = t('btn_load');
+
+    const storageTitle = document.getElementById('storageTitle');
+    if (storageTitle) storageTitle.textContent = t('storage_title');
+    const storageHint = document.getElementById('storageHint');
+    if (storageHint) storageHint.textContent = t('storage_hint');
+    const storageRefreshBtn = document.getElementById('storageRefreshBtn');
+    if (storageRefreshBtn) storageRefreshBtn.textContent = t('storage_refresh_btn');
 
     const epTitle = document.getElementById('episodesTitle') || document.querySelector('.ls-sidebar-head h2');
     if (epTitle) epTitle.textContent = t('episodes_title');

@@ -97,10 +97,17 @@ html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
   pointer-events: none !important;
 }
 
-/* Live: freeze Joints chart — restore grid/axes snapshot; block pointer hit-testing. */
+/* Live: joints cleared — grid only, no replay series. */
 html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"]
-  .dv-groupview[data-datalab-live-joints-frozen]
-  canvas {
+  .dv-groupview[data-datalab-live-joints-cleared]
+  .uplot {
+  pointer-events: none;
+}
+
+html[data-datalab-collection-embed="1"][data-datalab-collection-preview="1"][data-datalab-live-joints-bootstrapping="1"]
+  body
+  > [data-radix-popper-content-wrapper]:has(input[placeholder*="joint" i]) {
+  visibility: hidden !important;
   pointer-events: none !important;
 }
 

@@ -44,6 +44,7 @@
       "name": "Ego-214-Hand-Pose",
       "description": "LeRobot v3.0 · ego-lan-214 archive with offline HaMeR MANO (observation.mano_pose)",
       "archiveUrl": "/lerobot/bundled/ego_214_hand_pose.zip",
+      "httpDatasetUrl": "/lerobot/api/sample/ego_214_hand_pose/dataset/",
       "coverImageUrl": "/lerobot/bundled/covers/ego_214_hand_pose.webp",
       "version": "v3"
     }

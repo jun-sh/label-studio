@@ -11,11 +11,11 @@ import {
   displayVideoKeyCandidates,
   episodeKeyCandidates,
   featureMatchesText,
-  frameIndexForVideo,
   frameUrl,
   normalizeEpisodeNumber,
   resolveEpisodeEntry,
 } from "./overlay-depth-preview-lib.mjs";
+import { bindVideoFrameUpdates, frameIndexFromVideoTime } from "./overlay-video-sync.mjs";
 
 const g = globalThis;
 if (!g.__DATALAB_DEPTH_PREVIEW__) {
@@ -27,16 +27,30 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     episodeKey: "000000",
     slot: null,
     pill: null,
-    rafId: 0,
-    frameCache: new Map(),
+    enabled: true,
+    videoCleanup: null,
+    preloadCache: new Map(),
+    restartTimer: 0,
   };
+
+  function depthPreviewHasFrames(payload) {
+    const episodes = payload?.episodes || {};
+    return Object.values(episodes).some((entry) => Number(entry?.frames || 0) > 0);
+  }
+
+  function applyDepthEnabledDefault(payload) {
+    state.enabled = depthPreviewHasFrames(payload);
+  }
 
   function parseDatasetId() {
     try {
       const params = new URLSearchParams(g.location.search);
       const raw = params.get("url") || "";
-      const m = raw.match(/sample:\/\/([^/?#]+)/i);
-      return m ? decodeURIComponent(m[1]) : null;
+      const sampleMatch = raw.match(/sample:\/\/([^/?#]+)/i);
+      if (sampleMatch) return decodeURIComponent(sampleMatch[1]);
+      const httpMatch = raw.match(/\/api\/sample\/([^/?#]+)\/dataset\/?/i);
+      if (httpMatch) return decodeURIComponent(httpMatch[1]);
+      return null;
     } catch {
       return null;
     }
@@ -188,7 +202,10 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     wrap.setAttribute("data-datalab-depth-preview", "1");
     wrap.setAttribute("data-datalab-depth-preview-camera", displayPanelLabel(state.payload));
     wrap.setAttribute("data-datalab-depth-version", String(DEPTH_OVERLAY_VERSION));
-    applyDisplayPanelLabel(wrap);
+    if (!wrap.dataset.datalabDepthLabelApplied) {
+      applyDisplayPanelLabel(wrap);
+      wrap.dataset.datalabDepthLabelApplied = "1";
+    }
     if (g.getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
 
     video.classList.add("datalab-depth-preview-target-video");
@@ -217,9 +234,22 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
 
   function ensurePill() {
     if (state.pill?.isConnected) return state.pill;
-    const pill = document.createElement("div");
+    const pill = document.createElement("button");
+    pill.type = "button";
     pill.className = "datalab-depth-preview-pill";
+    pill.setAttribute("aria-pressed", state.enabled ? "true" : "false");
     pill.textContent = "depth preview";
+    pill.addEventListener("click", () => {
+      state.enabled = !state.enabled;
+      pill.setAttribute("aria-pressed", state.enabled ? "true" : "false");
+      updatePill();
+      if (state.slot?.img) {
+        state.slot.img.style.display = state.enabled ? "block" : "none";
+      }
+      if (state.enabled) {
+        paintFrame();
+      }
+    });
     document.body.appendChild(pill);
     state.pill = pill;
     return pill;
@@ -230,7 +260,60 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     const ep = state.episodeKey || "?";
     const backend = state.payload?.episodes?.[ep]?.backend || state.payload?.depth_kind || "relative";
     const label = displayPanelLabel(state.payload);
-    pill.textContent = `${label} · ep ${parseInt(ep, 10)} · ${backend}`;
+    const onOff = state.enabled ? (g.location.search.indexOf("lang=zh") >= 0 ? "开" : "on") : (g.location.search.indexOf("lang=zh") >= 0 ? "关" : "off");
+    pill.textContent = `${label} · ep ${parseInt(ep, 10)} · ${backend} · ${onOff}`;
+  }
+
+  function preloadAround(episodeKey, frameIdx, entry) {
+    const maxFrame = Math.max(0, Number(entry?.frames || 1) - 1);
+    for (let offset = 1; offset <= 5; offset += 1) {
+      const next = frameIdx + offset;
+      if (next <= maxFrame) loaderForUrl(frameUrl(state.payload, episodeKey, next));
+    }
+  }
+
+  function loaderForUrl(url) {
+    let loader = state.preloadCache.get(url);
+    if (!loader) {
+      loader = new Image();
+      loader.decoding = "async";
+      loader.src = url;
+      state.preloadCache.set(url, loader);
+      if (state.preloadCache.size > 128) {
+        const first = state.preloadCache.keys().next().value;
+        state.preloadCache.delete(first);
+      }
+    }
+    return loader;
+  }
+
+  function setFrameImage(img, url) {
+    if (!url || !img) return;
+    if (img.dataset.src === url) return;
+
+    const loader = loaderForUrl(url);
+    const apply = () => {
+      if (img.dataset.src === url) return;
+      const pending = img.dataset.pendingSrc;
+      if (pending && pending !== url) return;
+      img.dataset.src = url;
+      delete img.dataset.pendingSrc;
+      img.src = url;
+    };
+
+    if (loader.complete && loader.naturalWidth > 0) {
+      apply();
+      return;
+    }
+
+    img.dataset.pendingSrc = url;
+    loader.addEventListener(
+      "load",
+      () => {
+        apply();
+      },
+      { once: true },
+    );
   }
 
   function fetchDepthPreview(datasetId) {
@@ -244,64 +327,80 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
         state.datasetId = datasetId;
         state.payload = payload;
         state.episodeKey = detectEpisodeKey();
+        applyDepthEnabledDefault(payload);
         updatePill();
         return payload;
       });
   }
 
-  function setFrameImage(img, url) {
-    if (!url) return;
-    if (img.dataset.src === url) return;
-    img.dataset.src = url;
-    if (state.frameCache.has(url)) {
-      img.src = state.frameCache.get(url);
-      return;
-    }
-    img.src = url;
-    state.frameCache.set(url, url);
-  }
-
   function paintFrame() {
-    if (!state.payload || !state.slot) return;
+    if (!state.enabled || !state.payload || !state.slot) return;
     const { video, img, wrap } = state.slot;
     const entry = state.payload.episodes?.[state.episodeKey];
     if (!entry) return;
     syncOverlayToVideo(img, video, wrap);
-    const frameIdx = frameIndexForVideo(video, state.payload);
+    const fps = Number(state.payload?.fps) || 30;
+    const frameIdx = frameIndexFromVideoTime(video, fps);
     const maxFrame = Math.max(0, Number(entry.frames || 1) - 1);
     const clamped = Math.min(frameIdx, maxFrame);
     const url = frameUrl(state.payload, state.episodeKey, clamped);
     setFrameImage(img, url);
+    preloadAround(state.episodeKey, clamped, entry);
   }
 
-  function paintLoop() {
-    state.rafId = 0;
-    if (!state.payload) return;
-    if (!state.slot?.video?.isConnected) {
-      state.slot = ensureSlot();
+  function detachVideoSync() {
+    if (state.videoCleanup) {
+      state.videoCleanup();
+      state.videoCleanup = null;
     }
-    if (!state.slot) {
-      state.rafId = g.requestAnimationFrame(paintLoop);
-      return;
-    }
-    const nextEp = detectEpisodeKey();
-    if (nextEp !== state.episodeKey) {
-      state.episodeKey = nextEp;
-      updatePill();
-    }
-    paintFrame();
-    state.rafId = g.requestAnimationFrame(paintLoop);
+  }
+
+  function attachVideoSync() {
+    detachVideoSync();
+    const video = state.slot?.video;
+    if (!video) return;
+    const fps = Number(state.payload?.fps) || 30;
+    state.videoCleanup = bindVideoFrameUpdates(
+      video,
+      () => {
+        const nextEp = detectEpisodeKey();
+        if (nextEp !== state.episodeKey) {
+          state.episodeKey = nextEp;
+          updatePill();
+        }
+        paintFrame();
+      },
+      { fps },
+    );
   }
 
   function start() {
-    if (!state.rafId) state.rafId = g.requestAnimationFrame(paintLoop);
+    if (!state.slot?.video?.isConnected) {
+      state.slot = ensureSlot();
+    }
+    if (state.slot?.img) {
+      state.slot.img.style.display = state.enabled ? "block" : "none";
+    }
+    attachVideoSync();
+    paintFrame();
+  }
+
+  function warmPreload(payload) {
+    const episodes = payload?.episodes || {};
+    for (const [episodeKey, entry] of Object.entries(episodes)) {
+      const frames = Math.min(12, Number(entry?.frames || 0));
+      for (let i = 0; i < frames; i += 1) {
+        loaderForUrl(frameUrl(payload, episodeKey, i));
+      }
+    }
   }
 
   function boot() {
     const datasetId = parseDatasetId();
     if (!datasetId) return;
     fetchDepthPreview(datasetId)
-      .then(() => {
+      .then((payload) => {
+        warmPreload(payload);
         state.slot = ensureSlot();
         start();
       })
@@ -318,7 +417,14 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
 
   const observer = new MutationObserver(() => {
     if (!state.payload) return;
-    if (!state.slot?.video?.isConnected) state.slot = ensureSlot();
+    if (state.slot?.video?.isConnected) return;
+    if (state.restartTimer) return;
+    state.restartTimer = g.setTimeout(() => {
+      state.restartTimer = 0;
+      if (state.slot?.video?.isConnected) return;
+      state.slot = ensureSlot();
+      if (state.slot) start();
+    }, 250);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
 }

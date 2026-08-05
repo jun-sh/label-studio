@@ -358,6 +358,8 @@
       if (!raw) return null;
       var sample = raw.match(/^sample:\/\/([^/?#]+)/i);
       if (sample) return decodeURIComponent(sample[1]);
+      var httpSample = raw.match(/\/api\/sample\/([^/?#]+)\/dataset\/?/i);
+      if (httpSample) return decodeURIComponent(httpSample[1]);
     } catch (e) {
       /* ignore */
     }
@@ -390,7 +392,11 @@
       params.set("lang", pageLang().indexOf("zh") === 0 ? "zh" : "en");
     }
     if (datasetId) {
-      params.set("url", "sample://" + datasetId);
+      if (datasetId === "ego_214_hand_pose") {
+        params.set("url", "/lerobot/api/sample/ego_214_hand_pose/dataset/");
+      } else {
+        params.set("url", "sample://" + datasetId);
+      }
     } else {
       params.delete("url");
     }

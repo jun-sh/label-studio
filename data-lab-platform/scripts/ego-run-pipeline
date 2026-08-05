@@ -4,30 +4,26 @@
 set -euo pipefail
 
 STATION=""
-RESET=0
+RESET_MODE=""
 for arg in "$@"; do
   case "$arg" in
-    --reset) RESET=1 ;;
+    --reset|--reset-full) RESET_MODE="full" ;;
+    --reset-34) RESET_MODE="34" ;;
     -h|--help)
       cat <<'EOF'
-用法: ego-run-pipeline <station> [--reset]
+用法: ego-run-pipeline <station> [选项]
 
-  <station>       采集站 ID，如 ego-lan-214
-  默认（无 --reset）  增量模式：只处理未发布的 session，已完成的步骤自动跳过
-  --reset           整轮重来：全链路清理后从零处理（须确认）
+  <station>            采集站 ID，如 ego-lan-214
+  默认                 增量：只处理未发布 session，断点续跑
+  --reset-34           仅清 34（stream/pipeline/corpus/samples），保留 214 可重传
+  --reset-full         清 214 + 34 全链路（须确认）
+  --reset              同 --reset-full（兼容旧用法）
 
-典型流程（99% 场景）：
-  1. 214 手机录制 → ego-export
-  2. 214 Agent 上传（ecs-oak-upload-stack）或单段浏览器应急补传
-  3. ego-run-pipeline ego-lan-214
-     （默认 oak：hands + VIO track + language_annotate）
+对外交付请优先使用: ego-deliver <station>
 
-回滚旧管线（legacy ego-hand-pipeline）：
-  EGO_PIPELINE_BACKEND=legacy ego-run-pipeline ego-lan-214
-
-覆盖 oak 子模块默认（一般无需设置）：
-  EGO_OAK_MODE=hands EGO_OAK_TRACK_MODE=vio EGO_OAK_LANGUAGE_MODE=auto
-  EGO_HANDS_FORCE=1  # 强制重跑 kp2d（忽略已有 sidecar）
+环境变量（oak 子模块覆盖，一般无需设置）:
+  EGO_HANDS_FORCE=1
+  EGO_HAMER_BACKEND=geopavlakos
 EOF
       exit 0
       ;;
@@ -51,7 +47,7 @@ done
   exit 2
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
 PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
@@ -75,6 +71,7 @@ fi
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 WAIT_SH="${SCRIPT_DIR}/ego-lan-214-wait-ready-for-postprocess.sh"
 RESET_SH="${SCRIPT_DIR}/ego-lan-214-reset-for-rerun.sh"
+RESET_34_SH="${SCRIPT_DIR}/ego-lan-214-reset-34-only.sh"
 DEPLOY_SH="${DATALAB_ROOT}/data-lab-platform/deploy-local-datasets.sh"
 POSTPROCESS_SH="${PIPE_ROOT}/scripts/ego-postprocess.sh"
 
@@ -89,18 +86,53 @@ log() { echo "[pipeline] $*" | tee -a "$RUN_LOG"; }
 die() { echo "❌ $*" | tee -a "$RUN_LOG" >&2; exit 1; }
 
 _py() {
-  python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT" --backend "$PIPELINE_BACKEND"
+  PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT" --backend "$PIPELINE_BACKEND"
 }
 
-if [[ "$RESET" -eq 1 ]]; then
+_wait_session_parquet_ready() {
+  local timeout_sec="${WAIT_PARQUET_SEC:-1800}"
+  local interval_sec="${WAIT_PARQUET_INTERVAL_SEC:-5}"
+  local deadline=$((SECONDS + timeout_sec))
+  log "等待各 session derive parquet 就绪（超时 ${timeout_sec}s）…"
+  while (( SECONDS < deadline )); do
+    mapfile -t AWAITING < <(_py awaiting "$STATION" 2>/dev/null || true)
+    if [[ ${#AWAITING[@]} -eq 0 ]]; then
+      return 0
+    fi
+    if _py all-parquet-ready "$STATION" 2>/dev/null; then
+      log "全部待处理 session parquet 就绪: ${AWAITING[*]}"
+      return 0
+    fi
+    mapfile -t NOT_READY < <(comm -23 <(_py awaiting "$STATION" | sort) <(_py pending "$STATION" | sort) 2>/dev/null || true)
+    log "derive 进行中，待 parquet: ${NOT_READY[*]:-${AWAITING[*]}}"
+    sleep "$interval_sec"
+  done
+  die "等待 session parquet 超时（${timeout_sec}s）— 检查 derive-worker 日志"
+}
+
+if [[ "$RESET_MODE" == "34" ]]; then
+  log "重置模式：仅清 34 平台数据（保留 214 段文件可重传）"
+  if [[ "${EGO_RESET_YES:-}" != "1" ]]; then
+    echo "⚠️  将删除 34 上 stream / pipeline / corpus / samples。"
+    read -r -p "确认 --reset-34？[y/N] " ans
+    [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]] || { echo "已取消"; exit 0; }
+  fi
+  STATION_ID="$STATION" EGO_RESET_YES=1 bash "$RESET_34_SH" 2>&1 | tee -a "$RUN_LOG"
+  log "34 清场完成"
+elif [[ "$RESET_MODE" == "full" ]]; then
   log "重置模式：将清空 214 + 34 全链路数据后重新处理"
   if [[ "${EGO_RESET_YES:-}" != "1" ]]; then
     echo "⚠️  此操作会删除该站所有采集、后处理、Viewer 数据，无法撤销。"
-    read -r -p "确认 --reset？[y/N] " ans
+    read -r -p "确认 --reset-full？[y/N] " ans
     [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]] || { echo "已取消"; exit 0; }
   fi
   STATION_ID="$STATION" EGO_RESET_YES=1 bash "$RESET_SH" 2>&1 | tee -a "$RUN_LOG"
-  log "重置完成"
+  log "全链路重置完成"
+fi
+
+mapfile -t RECONCILED < <(_py reconcile-markers "$STATION" 2>/dev/null || true)
+if [[ ${#RECONCILED[@]} -gt 0 ]]; then
+  log "已清理陈旧 pipeline marker: ${RECONCILED[*]}"
 fi
 
 if [[ ! -d "$PIPE_ROOT" && "$PIPELINE_BACKEND" == "legacy" ]]; then
@@ -126,8 +158,22 @@ if [[ "$HAS_DATA" -eq 0 && ${#PENDING[@]} -eq 0 ]]; then
 fi
 
 if [[ "$HAS_DATA" -eq 1 ]]; then
+  STREAM_ROOT="${DATALAB_ROOT}/data-storage/stream/${STATION}"
+  INTR_CHECK="$(
+    PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" python3 -c "
+from pathlib import Path
+from ego_platform.lerobot.publish_gate import validate_stream_intrinsics
+r = validate_stream_intrinsics(Path('${STREAM_ROOT}'))
+if not r.get('ok'):
+    print('; '.join(r.get('errors') or ['intrinsics check failed']))
+" 2>/dev/null || true
+  )"
+  if [[ -n "$INTR_CHECK" ]]; then
+    die "stream 内参门禁未通过: ${INTR_CHECK}"
+  fi
   log "等待流数据合并完成（视频+表格就绪）…"
   STATION_ID="$STATION" bash "$WAIT_SH" 2>&1 | tee -a "$RUN_LOG"
+  _wait_session_parquet_ready 2>&1 | tee -a "$RUN_LOG"
 fi
 
 PROCESSED=0
@@ -187,6 +233,12 @@ if [[ -x "$DEPLOY_SH" ]]; then
   (cd "$DATALAB_ROOT" && bash "$DEPLOY_SH") 2>&1 | tee -a "$RUN_LOG"
 else
   die "找不到部署脚本: $DEPLOY_SH"
+fi
+
+GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
+if [[ -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
+  log "Viewer 发布门禁（内参 + rectify + B7）…"
+  EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
 fi
 
 echo ""

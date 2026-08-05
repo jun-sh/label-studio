@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BRANDING="${ROOT}/data-lab-platform/lerobot-studio/branding"
 
 echo "==> node overlay unit tests"
+node --test "${BRANDING}/overlay-hand-render-rich.test.mjs"
 node --test "${BRANDING}/overlay-hand-keypoints.test.mjs"
 node --test "${BRANDING}/overlay-depth-preview.test.mjs"
 node --test "${BRANDING}/overlay-camera-layout.test.mjs"

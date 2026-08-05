@@ -269,12 +269,15 @@ services:
       - ./data-storage/lerobot-qc/delivery:/data/qc-delivery
       - ./data-storage/lerobot-qc/collections.registry.json:/data/qc-collections.registry.json:ro
       - "${LEROBOT_QC_BOOKDUO_ROOT:-/media/user01/BookDuo_2}:/data/bookduo:ro"
+      - "${LEROBOT_QC_HOST_MEDIA:-/media/user01}:/host-media:ro"
       - ./data-lab-platform/lerobot-qc/backend:/app/backend:ro
     environment:
       - LEROBOT_QC_CACHE=/data/cache
       - LEROBOT_QC_SIDECAR=/data/qc-sidecar
       - LEROBOT_QC_DELIVERY=/data/qc-delivery
       - LEROBOT_QC_COLLECTIONS_REGISTRY=/data/qc-collections.registry.json
+      - LEROBOT_QC_HOST_MEDIA=/host-media
+      - LEROBOT_QC_HOST_MEDIA_HOST_PREFIX=/media/user01
       - PYTHONPATH=/app/backend
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7863/ >/dev/null || exit 1"]

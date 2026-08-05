@@ -3,6 +3,7 @@
  */
 import {
   OVERLAY_VERSION,
+  OVERLAY_RENDER_STYLE,
   HAND_COLORS_RGB,
   RENDER,
   buildLookup,
@@ -17,7 +18,15 @@ import {
   resolveActiveEpisodeIndex,
   resolveEpisodeCameraPayloads,
   resolveEpisodeMap,
+  resolveFrameIndexForVideo,
+  resolveRenderStyle,
 } from "./overlay-hand-keypoints-lib.mjs";
+import {
+  buildRichHandDrawPlan,
+  drawRichHandPlan,
+  scalePointsToCanvas,
+} from "./overlay-hand-render-rich.mjs";
+import { bindVideoFrameUpdates } from "./overlay-video-sync.mjs";
 
 const HAND_EDGES = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -51,10 +60,31 @@ function resolveVideoKeyCandidatesLocal(featureKey) {
 }
 
 const g = globalThis;
-if (g.__DATALAB_HAND_KP2D__) {
-  // already installed
-} else {
+
+if (!g.__DATALAB_HAND_KP2D__) {
   g.__DATALAB_HAND_KP2D__ = true;
+
+  const STORAGE_RENDER_STYLE_KEY = "datalab-hand-render-style";
+
+  function readStoredRenderStyle() {
+    try {
+      const stored = g.localStorage?.getItem(STORAGE_RENDER_STYLE_KEY);
+      if (stored === OVERLAY_RENDER_STYLE.CLASSIC || stored === OVERLAY_RENDER_STYLE.RICH) {
+        return stored;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function persistRenderStyle(style) {
+    try {
+      g.localStorage?.setItem(STORAGE_RENDER_STYLE_KEY, style);
+    } catch {
+      /* ignore */
+    }
+  }
 
   const state = {
     enabled: true,
@@ -64,13 +94,41 @@ if (g.__DATALAB_HAND_KP2D__) {
     userClickedEpisode: null,
     cameraStates: new Map(),
     slots: new Map(),
-    rafId: 0,
+    videoSyncCleanups: new Map(),
     observer: null,
     pill: null,
     loading: false,
     loadError: null,
     fetchPromise: null,
+    renderStylePreference: readStoredRenderStyle(),
   };
+
+  function activeRenderStyle(payload) {
+    return resolveRenderStyle({
+      payload,
+      rootPayload: state.payload,
+      search: g.location.search,
+      preference: state.renderStylePreference,
+      storage: g.localStorage,
+    });
+  }
+
+  function renderStyleLabel(style) {
+    if (style === OVERLAY_RENDER_STYLE.RICH) return isZh() ? "富样式" : "Rich";
+    return isZh() ? "经典" : "Classic";
+  }
+
+  function toggleRenderStyle() {
+    const next =
+      activeRenderStyle(state.payload) === OVERLAY_RENDER_STYLE.RICH
+        ? OVERLAY_RENDER_STYLE.CLASSIC
+        : OVERLAY_RENDER_STYLE.RICH;
+    state.renderStylePreference = next;
+    persistRenderStyle(next);
+    document.documentElement.setAttribute("data-datalab-hand-render-style", next);
+    updatePillLabel();
+    if (state.enabled) startPaintLoop();
+  }
 
   function pageLang() {
     try {
@@ -92,6 +150,8 @@ if (g.__DATALAB_HAND_KP2D__) {
       if (raw.indexOf("sample://") === 0) {
         return raw.replace(/^sample:\/\//, "").split("?")[0] || null;
       }
+      const httpMatch = raw.match(/\/api\/sample\/([^/?#]+)\/dataset\/?/i);
+      if (httpMatch) return decodeURIComponent(httpMatch[1]);
     } catch {
       /* ignore */
     }
@@ -279,6 +339,8 @@ if (g.__DATALAB_HAND_KP2D__) {
       });
     }
     document.documentElement.setAttribute("data-datalab-hand-kp2d-episode", state.episodeIndex);
+    const renderStyle = activeRenderStyle(state.payload);
+    document.documentElement.setAttribute("data-datalab-hand-render-style", renderStyle);
     const fp = activeSessionFingerprint();
     if (fp) document.documentElement.setAttribute("data-datalab-hand-kp2d-session", fp);
     else document.documentElement.removeAttribute("data-datalab-hand-kp2d-session");
@@ -403,12 +465,10 @@ if (g.__DATALAB_HAND_KP2D__) {
   }
 
   function frameIndexForVideo(video, payload) {
-    const fps = payload.fps || 30;
-    if (!video || !Number.isFinite(fps) || fps <= 0) return 0;
-    const idx = Math.floor((video.currentTime || 0) * fps + 0.5);
-    const frames = payload.frame_index || [];
-    const maxIdx = frames.length ? Number(frames[frames.length - 1]) : idx;
-    return Math.max(0, Math.min(idx, maxIdx));
+    return resolveFrameIndexForVideo(video, payload, {
+      headerNodes: collectHeaderNodes(),
+      doc: document,
+    });
   }
 
   function rgb(c) {
@@ -434,7 +494,7 @@ if (g.__DATALAB_HAND_KP2D__) {
     return pts;
   }
 
-  function drawHandLayer(bufCtx, pts, side, scale) {
+  function drawHandLayerClassic(bufCtx, pts, side, scale) {
     const colors = HAND_COLORS_RGB[side] || HAND_COLORS_RGB.unknown;
     if (!pts[0]?.ok) return;
     const lw = Math.max(1, RENDER.LINE_WIDTH * scale);
@@ -460,6 +520,13 @@ if (g.__DATALAB_HAND_KP2D__) {
       bufCtx.arc(pts[p].x, pts[p].y, p === 0 ? wristR : jointR, 0, Math.PI * 2);
       bufCtx.fill();
     }
+  }
+
+  function drawHandLayerRich(bufCtx, hand, scaleX, scaleY, scale) {
+    const pts = scalePointsToCanvas(hand.flat, scaleX, scaleY);
+    if (!pts[0]?.ok) return;
+    const plan = buildRichHandDrawPlan(pts, hand.side, scale, hand.alpha, hand.handId);
+    drawRichHandPlan(bufCtx, plan);
   }
 
   function compositeLayer(mainCtx, buffer, alpha) {
@@ -495,12 +562,19 @@ if (g.__DATALAB_HAND_KP2D__) {
     const bufCtx = offscreen.getContext("2d");
     if (!bufCtx) return;
     const scale = panelRenderScale(canvas);
+    const renderStyle = activeRenderStyle(payload);
+    wrap.setAttribute("data-datalab-hand-kp2d-render-style", renderStyle);
 
     for (const hand of hands) {
       bufCtx.clearRect(0, 0, offscreen.width, offscreen.height);
-      const pts = scalePoints(hand.flat, scaleX, scaleY);
-      drawHandLayer(bufCtx, pts, hand.side, scale);
-      compositeLayer(ctx, offscreen, hand.alpha);
+      if (renderStyle === OVERLAY_RENDER_STYLE.RICH) {
+        drawHandLayerRich(bufCtx, hand, scaleX, scaleY, scale);
+        compositeLayer(ctx, offscreen, 1);
+      } else {
+        const pts = scalePoints(hand.flat, scaleX, scaleY);
+        drawHandLayerClassic(bufCtx, pts, hand.side, scale);
+        compositeLayer(ctx, offscreen, hand.alpha);
+      }
     }
   }
 
@@ -522,38 +596,86 @@ if (g.__DATALAB_HAND_KP2D__) {
     return !!(slot?.canvas?.isConnected && slot?.video?.isConnected);
   }
 
-  function paintLoop() {
-    state.rafId = 0;
-    if (!state.payload || state.cameraStates.size === 0) return;
-
+  function refreshEpisodeIfNeeded() {
     const wantEp = normalizeEpisodeNumber(detectActiveEpisodeIndex());
     if (wantEp !== normalizeEpisodeNumber(state.episodeIndex)) {
       refreshCameraStates();
       ensureAllSlots();
       updatePillLabel();
+      return true;
     }
+    return false;
+  }
 
+  function ensureSlotsLive() {
     let needRefresh = false;
     for (const [videoKey] of state.cameraStates) {
       if (!slotIsLive(state.slots.get(videoKey))) needRefresh = true;
     }
-    if (needRefresh || state.slots.size !== state.cameraStates.size) ensureAllSlots();
-
-    for (const [videoKey, camState] of state.cameraStates) {
-      const slot = state.slots.get(videoKey);
-      if (slot) drawSkeleton(slot.canvas, slot.video, slot.wrap, camState.payload, camState.lookup);
+    if (needRefresh || state.slots.size !== state.cameraStates.size) {
+      ensureAllSlots();
+      return true;
     }
+    return false;
+  }
 
-    if (state.enabled) state.rafId = g.requestAnimationFrame(paintLoop);
+  function paintSlot(videoKey) {
+    const camState = state.cameraStates.get(videoKey);
+    const slot = state.slots.get(videoKey);
+    if (!camState || !slot) return;
+    drawSkeleton(slot.canvas, slot.video, slot.wrap, camState.payload, camState.lookup);
+  }
+
+  function paintAllSlots() {
+    if (!state.payload || state.cameraStates.size === 0) return;
+    if (state.slots.size < state.cameraStates.size) {
+      ensureAllSlots();
+      if (state.slots.size > 0) attachVideoSync();
+    }
+    for (const [videoKey] of state.cameraStates) {
+      paintSlot(videoKey);
+    }
+  }
+
+  function detachVideoSync() {
+    for (const cleanup of state.videoSyncCleanups.values()) {
+      cleanup();
+    }
+    state.videoSyncCleanups.clear();
+  }
+
+  function attachVideoSync() {
+    detachVideoSync();
+    if (!state.enabled || !state.payload) return;
+    const fps = Number(state.payload?.fps) || 30;
+    for (const [videoKey, slot] of state.slots) {
+      if (!slot?.video) continue;
+      const cleanup = bindVideoFrameUpdates(
+        slot.video,
+        () => {
+          const epChanged = refreshEpisodeIfNeeded();
+          const slotsChanged = ensureSlotsLive();
+          if (epChanged || slotsChanged) {
+            startPaintLoop();
+            return;
+          }
+          paintSlot(videoKey);
+        },
+        { fps },
+      );
+      state.videoSyncCleanups.set(videoKey, cleanup);
+    }
   }
 
   function startPaintLoop() {
-    if (!state.rafId) state.rafId = g.requestAnimationFrame(paintLoop);
+    refreshEpisodeIfNeeded();
+    ensureSlotsLive();
+    attachVideoSync();
+    paintAllSlots();
   }
 
   function stopPaintLoop() {
-    if (state.rafId) g.cancelAnimationFrame(state.rafId);
-    state.rafId = 0;
+    detachVideoSync();
   }
 
   function updatePillLabel() {
@@ -564,18 +686,19 @@ if (g.__DATALAB_HAND_KP2D__) {
     const ep = state.episodeIndex;
     const fp = activeSessionFingerprint();
     const epTag = fp ? `ep${ep} · ${fp}` : `ep${ep}`;
+    const styleTag = renderStyleLabel(activeRenderStyle(state.payload));
     label.textContent = isZh()
       ? on
         ? dual
-          ? `双手 2D · ${epTag}`
-          : `手部 2D · ${epTag}`
+          ? `双手 2D · ${styleTag} · ${epTag}`
+          : `手部 2D · ${styleTag} · ${epTag}`
         : dual
           ? "双手 2D（关）"
           : "手部 2D 标注（关）"
       : on
         ? dual
-          ? `Hand 2D · ${epTag}`
-          : `Hand 2D · ${epTag}`
+          ? `Hand 2D · ${styleTag} · ${epTag}`
+          : `Hand 2D · ${styleTag} · ${epTag}`
         : dual
           ? "Hand 2D off"
           : "Hand 2D overlay (off)";
@@ -587,9 +710,17 @@ if (g.__DATALAB_HAND_KP2D__) {
     pill.type = "button";
     pill.className = "datalab-hand-kp2d-pill";
     pill.setAttribute("aria-pressed", state.enabled ? "true" : "false");
+    pill.setAttribute(
+      "title",
+      isZh() ? "Shift+点击切换经典/富样式" : "Shift+click to toggle Classic/Rich style",
+    );
     pill.innerHTML =
       '<span class="datalab-hand-kp2d-pill-dot"></span><span class="datalab-hand-kp2d-pill-label"></span>';
-    pill.addEventListener("click", () => {
+    pill.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        toggleRenderStyle();
+        return;
+      }
       state.enabled = !state.enabled;
       pill.setAttribute("aria-pressed", state.enabled ? "true" : "false");
       updatePillLabel();
@@ -607,8 +738,10 @@ if (g.__DATALAB_HAND_KP2D__) {
 
   function deactivate() {
     stopPaintLoop();
+    g.clearInterval(scheduleSlotBootstrap._t);
     document.documentElement.removeAttribute("data-datalab-hand-kp2d");
     document.documentElement.removeAttribute("data-datalab-hand-kp2d-episode");
+    document.documentElement.removeAttribute("data-datalab-hand-render-style");
     state.pill?.remove();
     state.pill = null;
     state.slots = new Map();
@@ -619,6 +752,27 @@ if (g.__DATALAB_HAND_KP2D__) {
     state.userClickedEpisode = null;
   }
 
+  function scheduleSlotBootstrap() {
+    g.clearInterval(scheduleSlotBootstrap._t);
+    let attempts = 0;
+    scheduleSlotBootstrap._t = g.setInterval(() => {
+      attempts += 1;
+      if (!state.payload || !state.enabled || attempts > 24) {
+        g.clearInterval(scheduleSlotBootstrap._t);
+        return;
+      }
+      if (state.slots.size >= state.cameraStates.size) {
+        g.clearInterval(scheduleSlotBootstrap._t);
+        return;
+      }
+      ensureAllSlots();
+      if (state.slots.size > 0) {
+        attachVideoSync();
+        paintAllSlots();
+      }
+    }, 250);
+  }
+
   function activateForDataset(datasetId) {
     fetchHandKp2d(datasetId).then((payload) => {
       if (!payload) {
@@ -626,10 +780,15 @@ if (g.__DATALAB_HAND_KP2D__) {
         return;
       }
       document.documentElement.setAttribute("data-datalab-hand-kp2d", "1");
+      document.documentElement.setAttribute(
+        "data-datalab-hand-render-style",
+        activeRenderStyle(payload),
+      );
       ensurePill();
       refreshCameraStates();
       ensureAllSlots();
       updatePillLabel();
+      scheduleSlotBootstrap();
       startPaintLoop();
     });
   }
@@ -705,5 +864,13 @@ if (g.__DATALAB_HAND_KP2D__) {
     install();
   }
 
-  g.__DATALAB_HAND_KP2D_API__ = { OVERLAY_VERSION, state, refreshCameraStates, detectActiveEpisodeIndex };
+  g.__DATALAB_HAND_KP2D_API__ = {
+    OVERLAY_VERSION,
+    OVERLAY_RENDER_STYLE,
+    state,
+    refreshCameraStates,
+    detectActiveEpisodeIndex,
+    activeRenderStyle,
+    toggleRenderStyle,
+  };
 }

@@ -55,25 +55,9 @@ services:
       - "7862"
     volumes:
       - ./data-storage/stream:/srv/stream
-      - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
-      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
-      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
-      - ./data-lab-platform/lerobot-studio/lerobot-converter.mjs:/app/lerobot-converter.mjs:ro
-      - ./data-lab-platform/lerobot-studio/task-naming.mjs:/app/task-naming.mjs:ro
-      - ./data-lab-platform/lerobot-studio/vendor:/app/vendor:ro
-      - ./data-lab-platform/lerobot-studio/import-handlers.mjs:/app/import-handlers.mjs:ro
-      - ./data-lab-platform/lerobot-studio/derive-async.mjs:/app/derive-async.mjs:ro
-      - ./data-lab-platform/lerobot-studio/derive-pipeline.mjs:/app/derive-pipeline.mjs:ro
-      - ./data-lab-platform/lerobot-studio/session-markers.mjs:/app/session-markers.mjs:ro
-      - ./data-lab-platform/lerobot-studio/derive-lock.mjs:/app/derive-lock.mjs:ro
-      - ./data-lab-platform/lerobot-studio/ego-derive-run.mjs:/app/ego-derive-run.mjs:ro
-      - ./data-lab-platform/lerobot-studio/ego-derive-watch.mjs:/app/ego-derive-watch.mjs:ro
-      - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
-      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
-      - ./data-lab-platform/lerobot-studio/scripts/append-segment-parquet.py:/app/scripts/append-segment-parquet.py:ro
-      - ./data-lab-platform/lerobot-studio/scripts/extract-tar-zst.py:/app/scripts/extract-tar-zst.py:ro
-      - ./data-lab-platform/lerobot-studio/scripts/export-videos-from-parquet.py:/app/scripts/export-videos-from-parquet.py:ro
-      - ./data-lab-platform/lerobot-studio/scripts/test-mux-inject-env.mjs:/app/scripts/test-mux-inject-env.mjs:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
     user: "1000:1000"
     environment:
       - INGEST_PORT=7862

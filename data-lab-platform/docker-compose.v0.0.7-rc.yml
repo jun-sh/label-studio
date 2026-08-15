@@ -9,15 +9,32 @@
 services:
   stream-ingest:
     image: data-lab-lerobot-studio:v0.0.7-rc
-    volumes:
+    volumes: !reset
       - ./data-storage/stream:/srv/stream
+      - ./data-storage/ego-archive:/cold-archive:rw
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB_EGO_LAN_214=400
+      - DATALAB_STORAGE_QUOTA_GB=512
+      - STREAM_RETENTION_DAYS=7
+      - STREAM_WINDOW_MINUTES=30
+      - STREAM_SEGMENT_MINUTES=5
+      - STREAM_BACKGROUND_BATCH_MS=2000
+      - STREAM_SEGMENT_INGEST_BATCH_SIZE=2
+      - STREAM_DISK_HIGH_WATER=0.9
+      - STREAM_DISK_TARGET=0.75
+      - STREAM_CLEANUP_INTERVAL_MS=300000
+      - STREAM_CLEANUP_DEBOUNCE_MS=60000
+      - STREAM_STAGING_EMERGENCY_BYTES=268435456
+      - STREAM_ARCHIVE_PURGE_MAX=2
 
   lerobot:
     image: data-lab-lerobot-studio:v0.0.7-rc
-    volumes:
+    volumes: !reset
       - lerobot-studio-data:/srv/lerobot
       - lerobot-bundled-data:/srv/bundled
       - ./data-storage/stream:/srv/stream:rw

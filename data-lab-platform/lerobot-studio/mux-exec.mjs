@@ -129,7 +129,7 @@ export function buildMp4ConcatList(firstPath, secondPath, { firstDurationSec = n
   return lines.join("\n");
 }
 
-async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true } = {}) {
+async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true, fps = 30 } = {}) {
   const args = [
     "-y",
     "-hide_banner",
@@ -146,6 +146,8 @@ async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true
     args.push("-vf", "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'");
   }
   args.push(
+    "-r",
+    String(fps),
     "-c:v",
     "libx264",
     "-pix_fmt",
@@ -158,7 +160,7 @@ async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true
   return { ...res, ok: res.ok && fs.existsSync(destPath) };
 }
 
-async function encodeFromConcatListFluent(listPath, destPath, { withScale = true } = {}) {
+async function encodeFromConcatListFluent(listPath, destPath, { withScale = true, fps = 30 } = {}) {
   const ffmpeg = await loadFluent();
   return new Promise((resolve) => {
     let stderr = "";
@@ -170,7 +172,16 @@ async function encodeFromConcatListFluent(listPath, destPath, { withScale = true
       stderr += `${line}\n`;
     });
     cmd
-      .outputOptions(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+      .outputOptions([
+        "-r",
+        String(fps),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+      ])
       .on("end", () =>
         resolve({
           ok: fs.existsSync(destPath),

@@ -14,7 +14,11 @@ from ego_capture_studio.capture.camera_intrinsics import (
     load_camera_intrinsics_json,
 )
 from ego_capture_studio.capture.intrinsics_store import backfill_session_intrinsics_if_missing
-from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+from ego_capture_studio.capture.segment_store import (
+    list_closed_pending_segments,
+    purge_uploaded_segments,
+    wait_for_segment_deletes,
+)
 from ego_capture_studio.capture.segment_upload import (
     SegmentUploader,
     _resolve_archive_session,
@@ -217,6 +221,23 @@ def main() -> None:
                 )
         print(f"uploaded_segments={n}", file=sys.stderr, flush=True)
         if n > 0:
+            delete_after = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if delete_after:
+                wait_for_segment_deletes()
+                scope_session = None if use_ready else session_id
+                purged, failed = purge_uploaded_segments(root, scope_session)
+                if purged:
+                    print(f"本机已清理已上传段：{purged} 个", file=sys.stderr, flush=True)
+                if failed:
+                    print(
+                        f"⚠️ 本机段清理未完成：{failed} 个（upload_loop 将自动重试）",
+                        file=sys.stderr,
+                        flush=True,
+                    )
             kick = kick_derive_after_upload(uploader)
             if kick is None:
                 print(

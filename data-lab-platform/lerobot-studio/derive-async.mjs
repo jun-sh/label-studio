@@ -773,13 +773,20 @@ export function handleDeriveRetry(stationId, sessionId, segmentId) {
 }
 
 export function resumeDeriveQueuesForAllStations() {
+  void resumeDeriveQueuesForAllStationsAsync();
+}
+
+export async function resumeDeriveQueuesForAllStationsAsync() {
   if (!fs.existsSync(STREAM_ROOT)) return;
+  const yieldLoop = () => new Promise((resolve) => setImmediate(resolve));
+
   if (isDeriveStandalone()) {
     ensureIdleDeriveWatcher();
     for (const stationId of fs.readdirSync(STREAM_ROOT)) {
       if (stationId.startsWith(".")) continue;
       if (!isDeriveAsyncEnabled(stationId)) continue;
       evaluateAndKickIdleDerive(stationId, "startup");
+      await yieldLoop();
     }
     streamLog("system", "derive_standalone_resume", { hint: "ego-derive watch" });
     return;
@@ -790,6 +797,7 @@ export function resumeDeriveQueuesForAllStations() {
       if (stationId.startsWith(".")) continue;
       if (!isDeriveAsyncEnabled(stationId)) continue;
       evaluateAndKickIdleDerive(stationId, "startup");
+      await yieldLoop();
     }
     return;
   }
@@ -797,6 +805,7 @@ export function resumeDeriveQueuesForAllStations() {
     if (stationId.startsWith(".")) continue;
     if (!isDeriveAsyncEnabled(stationId)) continue;
     scheduleDerivePipeline(stationId);
+    await yieldLoop();
   }
 }
 

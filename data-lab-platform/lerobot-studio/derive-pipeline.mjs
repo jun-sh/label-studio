@@ -22,6 +22,8 @@ import {
   refreshSessionEpisodeFromInfo,
   rehydrateStagingFromRawSegments,
   resetMuxArtifactsForFullRemux,
+  resetMuxArtifactsForIncrementalRemux,
+  planMuxRemux,
   runSessionMuxOnceSync,
   stagingJpegCount,
   stagingNeedsRehydrate,
@@ -200,7 +202,16 @@ async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry 
     if (!diskBefore.parquetReady || diskBefore.fullyReady) return diskBefore;
 
     if (!parquetVideo) {
-      resetMuxArtifactsForFullRemux(stationId, root);
+      const plan = planMuxRemux(root);
+      if (plan.stagingFrames <= 0) {
+        streamLog(stationId, "mux_skip", { sessionId, reason: "no_staging", frames: 0, source: "derive_pipeline" });
+        return diskBefore;
+      }
+      if (plan.fullDatasetMux) {
+        resetMuxArtifactsForFullRemux(stationId, root);
+      } else {
+        resetMuxArtifactsForIncrementalRemux(stationId, root);
+      }
     }
 
     if (parquetVideo) {

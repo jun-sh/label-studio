@@ -34,6 +34,9 @@ SEGMENT_ASYNC_DELETE = os.environ.get("EGO_SEGMENT_ASYNC_DELETE", "1").strip().l
     "true",
     "yes",
 )
+SEGMENT_DELETE_RETRIES = max(1, int(os.environ.get("EGO_SEGMENT_DELETE_RETRIES", "5")))
+SEGMENT_DELETE_RETRY_BASE_S = float(os.environ.get("EGO_SEGMENT_DELETE_RETRY_BASE_S", "0.25"))
+SEGMENT_DELETE_FLUSH_TIMEOUT_S = float(os.environ.get("EGO_SEGMENT_DELETE_FLUSH_TIMEOUT_S", "30"))
 SEGMENT_AUTO_PURGE_PENDING = os.environ.get("SEGMENT_AUTO_PURGE_PENDING", "1").strip().lower() in (
     "1",
     "true",
@@ -857,7 +860,136 @@ def list_closed_pending_segments(root: Path, session_id: str) -> list[Path]:
 
 
 def _delete_segment_dir(segment_dir: Path) -> None:
-    shutil.rmtree(segment_dir, ignore_errors=True)
+    """Deprecated: use delete_segment_dir (returns bool)."""
+    delete_segment_dir(segment_dir)
+
+
+_delete_queue: queue.Queue[Path | None] | None = None
+_delete_worker: threading.Thread | None = None
+_delete_worker_lock = threading.Lock()
+
+
+def _log_segment_delete(event: str, segment_dir: Path, **extra: Any) -> None:
+    parts = [f"segment_delete_{event}", f"segment={segment_dir.name}"]
+    for key, val in extra.items():
+        parts.append(f"{key}={val}")
+    print(" ".join(parts), flush=True)
+
+
+def delete_segment_dir(segment_dir: Path) -> bool:
+    """Delete a closed segment directory with retries. Returns True if gone."""
+    segment_dir = segment_dir.resolve()
+    if not segment_dir.is_dir():
+        return True
+    last_err: OSError | None = None
+    for attempt in range(1, SEGMENT_DELETE_RETRIES + 1):
+        try:
+            for sub in (segment_dir / ".upload", segment_dir / "frames"):
+                if sub.is_dir():
+                    shutil.rmtree(sub)
+            shutil.rmtree(segment_dir)
+            return True
+        except OSError as exc:
+            last_err = exc
+            if attempt < SEGMENT_DELETE_RETRIES:
+                time.sleep(SEGMENT_DELETE_RETRY_BASE_S * attempt)
+    if segment_dir.is_dir():
+        _log_segment_delete(
+            "fail",
+            segment_dir,
+            err=str(last_err or "unknown")[:160],
+            attempts=SEGMENT_DELETE_RETRIES,
+        )
+        return False
+    return True
+
+
+def _delete_worker_loop() -> None:
+    assert _delete_queue is not None
+    while True:
+        item = _delete_queue.get()
+        try:
+            if item is None:
+                return
+            delete_segment_dir(item)
+        finally:
+            _delete_queue.task_done()
+
+
+def _ensure_delete_worker() -> queue.Queue[Path | None]:
+    global _delete_queue, _delete_worker
+    with _delete_worker_lock:
+        if _delete_queue is None:
+            _delete_queue = queue.Queue()
+            _delete_worker = threading.Thread(
+                target=_delete_worker_loop,
+                name="ego-seg-delete",
+                daemon=True,
+            )
+            _delete_worker.start()
+        return _delete_queue
+
+
+def schedule_segment_delete(segment_dir: Path) -> None:
+    segment_dir = segment_dir.resolve()
+    if not segment_dir.is_dir():
+        return
+    if SEGMENT_ASYNC_DELETE:
+        _ensure_delete_worker().put(segment_dir)
+        return
+    delete_segment_dir(segment_dir)
+
+
+def wait_for_segment_deletes(timeout_s: float | None = None) -> bool:
+    """Block until async delete queue drains (or timeout)."""
+    if _delete_queue is None:
+        return True
+    deadline = time.monotonic() + (timeout_s if timeout_s is not None else SEGMENT_DELETE_FLUSH_TIMEOUT_S)
+    while time.monotonic() < deadline:
+        if _delete_queue.unfinished_tasks == 0:
+            return True
+        time.sleep(0.05)
+    return _delete_queue.unfinished_tasks == 0
+
+
+def list_uploaded_segment_dirs(root: Path, session_id: str | None = None) -> list[Path]:
+    out: list[Path] = []
+    sessions_root = root / "sessions"
+    if not sessions_root.is_dir():
+        return out
+    if session_id:
+        session_dirs = [sessions_root / session_id]
+    else:
+        session_dirs = [p for p in sessions_root.iterdir() if p.is_dir()]
+    for sess_dir in session_dirs:
+        seg_root = sess_dir / "segments"
+        if not seg_root.is_dir():
+            continue
+        for child in sorted(seg_root.iterdir()):
+            if not child.is_dir():
+                continue
+            manifest_path = child / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                m = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if m.get("uploaded"):
+                out.append(child)
+    return out
+
+
+def purge_uploaded_segments(root: Path, session_id: str | None = None) -> tuple[int, int]:
+    """Delete segment dirs marked uploaded=true. Returns (purged, failed)."""
+    purged = 0
+    failed = 0
+    for seg_dir in list_uploaded_segment_dirs(root, session_id):
+        if delete_segment_dir(seg_dir):
+            purged += 1
+        else:
+            failed += 1
+    return purged, failed
 
 
 def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
@@ -867,12 +999,4 @@ def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
     m["uploadedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     manifest_path.write_text(json.dumps(m, separators=(",", ":")) + "\n", encoding="utf-8")
     if delete:
-        if SEGMENT_ASYNC_DELETE:
-            threading.Thread(
-                target=_delete_segment_dir,
-                args=(segment_dir,),
-                name=f"ego-seg-delete-{segment_dir.name}",
-                daemon=True,
-            ).start()
-        else:
-            _delete_segment_dir(segment_dir)
+        schedule_segment_delete(segment_dir)

@@ -162,10 +162,12 @@ def read_json(path: Path, default=None):
 def lerobot_owns_data(root: Path) -> bool:
     """Official LeRobot derive owns data/ and meta/episodes/ — sync must not rewrite them."""
     marker = read_json(root / "live" / "parquet_sync.json", {})
+    jsonl = root / "data" / "chunk-000" / "file-000.jsonl"
+    if jsonl.is_file():
+        return False
     if marker.get("lerobot_data_owned") is True:
         return True
     data_pq = root / "data" / "chunk-000" / "file-000.parquet"
-    jsonl = root / "data" / "chunk-000" / "file-000.jsonl"
     return data_pq.is_file() and not jsonl.is_file()
 
 
@@ -670,6 +672,10 @@ def main() -> int:
     ensure_annotations_skeleton(root)
     if not lerobot_owned:
         write_episodes_parquet(root, episodes, fps, task)
+        rows = read_jsonl(jsonl_path)
+        if rows:
+            write_data_parquet(root, rows, fps, episodes)
+            total_frames = len(rows)
     if lerobot_owned:
         sync_lerobot_info_frame_counts(root, info, episodes)
     if meta_only:
@@ -682,7 +688,7 @@ def main() -> int:
                     "episodes_tasks_list": True,
                     "episode_display_v4": True,
                     "episodes_count": episodes_key,
-                    "lerobot_data_owned": True,
+                    **({"lerobot_data_owned": True} if lerobot_owned else {}),
                 },
                 indent=2,
             )
@@ -691,7 +697,6 @@ def main() -> int:
         )
         return 0
 
-    # data/chunk parquet is owned by official LeRobot derive — never rebuild from jsonl.
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(
         json.dumps(
@@ -701,7 +706,7 @@ def main() -> int:
                 "episodes_tasks_list": True,
                 "episode_display_v4": True,
                 "episodes_count": episodes_key,
-                "lerobot_data_owned": True,
+                **({"lerobot_data_owned": True} if lerobot_owned else {}),
             },
             indent=2,
         )

@@ -4,16 +4,12 @@
  */
 import http from "node:http";
 import {
-  cleanupOrphanIncomingArchives,
-  ensurePeriodicDiskCleanupForAllStations,
-  ensureStreamViewerScaffoldForAllStations,
   handleStreamScaffoldRequest,
   handleStreamUploadRequest,
-  resumePendingStreamMuxForAllStations,
-  runDiskCleanupForAllStations,
   stationRoot,
   verifyStationUploadToken,
 } from "./stream-ingest.mjs";
+import { scheduleStreamIngestBackgroundStartup } from "./stream-ingest-startup.mjs";
 import { handleImportTaskGet, handleImportUpload } from "./import-handlers.mjs";
 import {
   getDeriveQueueStats,
@@ -21,8 +17,6 @@ import {
   handleDeriveRetry,
   handleDeriveStart,
   listSegmentStates,
-  resumeDeriveQueuesForAllStations,
-  ensureIdleDeriveWatcher,
 } from "./derive-async.mjs";
 
 const PORT = Number(process.env.INGEST_PORT || process.env.PORT || 7862);
@@ -201,14 +195,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Stream ingest on :${PORT} (upload ${BASE}/api/collection/stations/*/upload)`);
-  setImmediate(() => {
-    console.log("[stream-ingest] running startup disk cleanup for all stations…");
-    cleanupOrphanIncomingArchives();
-    runDiskCleanupForAllStations();
-    ensurePeriodicDiskCleanupForAllStations();
-    resumePendingStreamMuxForAllStations();
-    resumeDeriveQueuesForAllStations();
-    ensureIdleDeriveWatcher();
-    ensureStreamViewerScaffoldForAllStations();
-  });
+  scheduleStreamIngestBackgroundStartup();
 });

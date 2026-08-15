@@ -16,6 +16,7 @@ import {
   stationIdFromRoot,
 } from "./task-naming.mjs";
 import {
+  concatMp4Files,
   encodeFromConcatList,
   isFullMuxMode,
   probeMp4FrameCount as execProbeMp4FrameCount,
@@ -260,6 +261,10 @@ try {
 
 /** @type {Map<string, { timer: NodeJS.Timeout | null, running: boolean }>} */
 const muxQueue = new Map();
+/** @type {Map<string, { stagingFrames: number, metrics: object, fullDatasetMux: boolean }>} */
+const muxRunPlan = new Map();
+/** @type {Map<string, NodeJS.Timeout | null>} */
+const muxRetryTimers = new Map();
 /** Test hook: DERIVE_MUX_INJECT_FAIL_CAMERA + DERIVE_MUX_INJECT_FAIL_ONCE (default 1). */
 const muxInjectFailedCameras = new Set();
 /** Async derive: wait for one-shot session mux (no per-segment parquet rebuild). */
@@ -440,6 +445,117 @@ export function listRawSessionIds(root) {
     .filter((d) => !d.startsWith(".") && fs.statSync(path.join(rawRoot, d)).isDirectory());
 }
 
+function countCommittedSegmentsForSession(root, sessionId) {
+  if (!sessionId) return 0;
+  const dir = path.join(root, "live", "sessions", sessionId, "segments");
+  if (!fs.existsSync(dir)) return 0;
+  return fs.readdirSync(dir).filter((f) => f.endsWith(".done")).length;
+}
+
+function countStationCommittedSegments(root) {
+  const base = path.join(root, "live", "sessions");
+  if (!fs.existsSync(base)) return 0;
+  let total = 0;
+  for (const ent of fs.readdirSync(base, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    total += countCommittedSegmentsForSession(root, ent.name);
+  }
+  return total;
+}
+
+/** Async derive uses raw tar.zst markers; linear ingest uses jsonl↔parquet row parity. */
+export function isParquetReadyOnDisk(root, { rawTotal = 0, markers = 0, parquetRows = 0 } = {}) {
+  if (parquetRows <= 0) return false;
+  if (rawTotal > 0) {
+    return markers >= rawTotal;
+  }
+  const jsonlRows = readJsonlFrameMetrics(root).count;
+  if (jsonlRows > 0) {
+    return parquetRows >= jsonlRows - 1 && parquetRows <= jsonlRows + 1;
+  }
+  return parquetRows > 0;
+}
+
+function muxRetryStatePath(root) {
+  return path.join(root, "live", "derive", "mux_retry_state.json");
+}
+
+function muxLastFailurePath(root) {
+  return path.join(root, "live", "derive", "mux_last_failure.json");
+}
+
+function shouldMuxAutoRetry() {
+  const v = String(process.env.DERIVE_MUX_AUTO_RETRY ?? "1").trim().toLowerCase();
+  return v !== "0" && v !== "false" && v !== "no";
+}
+
+function muxMaxRetries() {
+  return Math.max(0, Number(process.env.DERIVE_MUX_MAX_RETRIES || 3));
+}
+
+function muxRetryBaseMs() {
+  return Math.max(1000, Number(process.env.DERIVE_MUX_RETRY_BASE_MS || 10_000));
+}
+
+function readMuxRetryAttempt(root) {
+  return Number(readJson(muxRetryStatePath(root), {}).attempt || 0);
+}
+
+function clearMuxRetryState(root) {
+  try {
+    fs.rmSync(muxRetryStatePath(root), { force: true });
+  } catch {
+    /* ignore */
+  }
+  try {
+    fs.rmSync(muxLastFailurePath(root), { force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+function maybeScheduleMuxRetry(stationId, sessionId) {
+  const root = stationRoot(stationId);
+  if (!shouldMuxAutoRetry()) return false;
+  if (stagingJpegCount(root) <= 0 && !hasUnreleasedStaging(root)) return false;
+  const attempt = readMuxRetryAttempt(root);
+  if (attempt >= muxMaxRetries()) {
+    writeJsonAtomic(muxLastFailurePath(root), {
+      sessionId,
+      attempt,
+      message: "mux_validation_failed",
+      at: new Date().toISOString(),
+    });
+    streamLog(stationId, "mux_retry_exhausted", {
+      sessionId,
+      attempt,
+      maxRetries: muxMaxRetries(),
+    });
+    return false;
+  }
+  const delayMs = muxRetryBaseMs() * 2 ** attempt;
+  writeJsonAtomic(muxRetryStatePath(root), {
+    sessionId,
+    attempt: attempt + 1,
+    nextRetryAt: new Date(Date.now() + delayMs).toISOString(),
+    lastError: "mux_validation_failed",
+  });
+  const prev = muxRetryTimers.get(stationId);
+  if (prev) clearTimeout(prev);
+  const timer = setTimeout(() => {
+    muxRetryTimers.delete(stationId);
+    scheduleMux(stationId);
+    streamLog(stationId, "mux_retry_scheduled", {
+      sessionId,
+      attempt: attempt + 1,
+      delayMs,
+      mode: "linear",
+    });
+  }, delayMs);
+  muxRetryTimers.set(stationId, timer);
+  return true;
+}
+
 /** Station-wide derive status (all sessions / episodes on disk). */
 export function computeStationDeriveStatusFromDisk(stationId) {
   const root = stationRoot(stationId);
@@ -450,23 +566,22 @@ export function computeStationDeriveStatusFromDisk(stationId) {
   const parquetRows = metrics.rowCount;
   const expectedMp4 = metrics.expectedMp4Frames;
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
-  let mp4Ok = false;
-  if (muxVal.ok && expectedMp4 > 0) {
-    const frameVals = Object.values(muxVal.frames || {});
-    mp4Ok =
-      frameVals.length > 0 &&
-      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+  let mp4Ok = evaluateMp4Readiness(root, metrics).ok;
+  if (!mp4Ok && muxVal.ok) {
+    mp4Ok = true;
   }
-  const parquetReady = rawTotal > 0 && markers >= rawTotal && parquetRows > 0;
+  const parquetReady = isParquetReadyOnDisk(root, { rawTotal, markers, parquetRows });
   const fullyReady = parquetReady && mp4Ok;
+  const committedTotal = countStationCommittedSegments(root);
+  const uploadTotal = rawTotal > 0 ? rawTotal : committedTotal;
   let phase = "IDLE";
   if (fullyReady) phase = "READY";
-  else if (rawTotal > 0) phase = "UPLOADED";
+  else if (uploadTotal > 0 || countJsonlRows(root) > 0) phase = "UPLOADED";
   return {
     stationId,
     sessionId: null,
     phase,
-    total: rawTotal,
+    total: uploadTotal,
     markers,
     parquetRows,
     frameIndexMin: metrics.frameIndexMin,
@@ -676,9 +791,12 @@ export function resolveDeriveFrameMetrics(root) {
   const info = readJson(path.join(root, "meta", "info.json"), {});
   const marker = readJson(path.join(root, "live", "parquet_sync.json"), {});
   const parquetPath = path.join(root, "data", "chunk-000", "file-000.parquet");
+  const jsonlPath = path.join(root, "data", "chunk-000", "file-000.jsonl");
+  const jsonlRows = fs.existsSync(jsonlPath) ? readJsonlFrameMetrics(root).count : 0;
   const lerobotOwned =
-    marker.lerobot_data_owned === true ||
-    (fs.existsSync(parquetPath) && !fs.existsSync(path.join(root, "data", "chunk-000", "file-000.jsonl")));
+    marker.lerobot_data_owned === true &&
+    jsonlRows === 0 &&
+    (fs.existsSync(parquetPath) && !fs.existsSync(jsonlPath));
   if (lerobotOwned) {
     const rowCount =
       readLeRobotDataParquetRows(root) ||
@@ -753,26 +871,21 @@ function probeVideoKeyTotalMp4Frames(root, videoKey) {
 export async function writeMuxValidatedSnapshot(stationId, sessionId) {
   const root = stationRoot(stationId);
   const metrics = resolveDeriveFrameMetrics(root);
-  const expected = metrics.expectedMp4Frames;
-  const frames = {};
-  for (const videoKey of ingestVideoKeys(root)) {
-    frames[videoKey] = probeVideoKeyTotalMp4Frames(root, videoKey);
-  }
-  // ffprobe nb_read_frames is often +1 vs staging count; allow 1-frame tolerance.
-  const ok =
-    expected > 0 &&
-    Object.values(frames).every((n) => Number(n) >= expected - 1 && Number(n) <= expected + 1);
+  const { ok, frames, targetFrames, minFrames } = evaluateMp4Readiness(root, metrics, {
+    forceProbe: true,
+  });
   writeJsonAtomic(path.join(root, "live", "derive", "mux_validated.json"), {
     sessionId,
-    expectedFrames: expected,
+    expectedFrames: targetFrames,
     expectedRowCount: metrics.rowCount,
     frameIndexMin: metrics.frameIndexMin,
     frameIndexMax: metrics.frameIndexMax,
     frames,
+    minFrames,
     ok,
     validatedAt: new Date().toISOString(),
   });
-  return { ok, expected, frames, metrics };
+  return { ok, expected: targetFrames, frames, metrics };
 }
 
 /** Disk-only derive status (UPLOADED vs READY). No memory flags. */
@@ -784,23 +897,22 @@ export function computeDeriveStatusFromDisk(stationId, sessionId) {
   const parquetRows = metrics.rowCount;
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
   const expectedMp4 = metrics.expectedMp4Frames;
-  let mp4Ok = false;
-  if (muxVal.ok && muxVal.sessionId === sessionId && expectedMp4 > 0) {
-    const frameVals = Object.values(muxVal.frames || {});
-    mp4Ok =
-      frameVals.length > 0 &&
-      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+  let mp4Ok = evaluateMp4Readiness(root, metrics).ok;
+  if (!mp4Ok && muxVal.ok && muxVal.sessionId === sessionId) {
+    mp4Ok = true;
   }
-  const parquetReady = rawTotal > 0 && markers >= rawTotal && parquetRows > 0;
+  const parquetReady = isParquetReadyOnDisk(root, { rawTotal, markers, parquetRows });
   const fullyReady = parquetReady && mp4Ok;
+  const committed = sessionId ? countCommittedSegmentsForSession(root, sessionId) : 0;
+  const uploadTotal = rawTotal > 0 ? rawTotal : committed;
   let phase = "IDLE";
   if (fullyReady) phase = "READY";
-  else if (rawTotal > 0) phase = "UPLOADED";
+  else if (uploadTotal > 0) phase = "UPLOADED";
   return {
     stationId,
     sessionId,
     phase,
-    total: rawTotal,
+    total: uploadTotal,
     markers,
     parquetRows,
     frameIndexMin: metrics.frameIndexMin,
@@ -1325,6 +1437,64 @@ function viewerScaffoldComplete(root) {
   return true;
 }
 
+function spawnScriptAsync(command, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...opts, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      reject(new Error(String(stderr || `exit ${code}`).slice(0, 500)));
+    });
+  });
+}
+
+async function runViewerScaffoldPythonAsync(root) {
+  const py = resolveParquetPython();
+  if (!py || !fs.existsSync(SYNC_SCRIPT)) return;
+  await spawnScriptAsync(py, [SYNC_SCRIPT, "--viewer-scaffold", root], parquetSpawnOptions());
+}
+
+export function listStreamStationIds() {
+  if (!fs.existsSync(STREAM_ROOT)) return [];
+  try {
+    return fs
+      .readdirSync(STREAM_ROOT, { withFileTypes: true })
+      .filter((ent) => ent.isDirectory() && !ent.name.startsWith("."))
+      .map((ent) => ent.name);
+  } catch {
+    return [];
+  }
+}
+
+/** Stagger disk cleanup so startup never blocks HTTP on a full-tree scan. */
+export function scheduleDiskCleanupForAllStationsStaggered({
+  intervalMs = Number(process.env.STREAM_STARTUP_CLEANUP_STAGGER_MS || 12_000),
+} = {}) {
+  const stationIds = listStreamStationIds();
+  stationIds.forEach((stationId, idx) => {
+    setTimeout(() => {
+      try {
+        runDiskCleanup(stationId);
+      } catch (err) {
+        console.warn(`[stream-ingest] cleanup failed station=${stationId}:`, err?.message || err);
+      }
+    }, idx * intervalMs);
+  });
+  if (stationIds.length > 0) {
+    streamLog("system", "disk_cleanup_stagger_scheduled", {
+      stations: stationIds.length,
+      intervalMs,
+    });
+  }
+}
+
 function repairStreamViewerScaffold(stationId) {
   const root = stationRoot(stationId);
   if (!fs.existsSync(root)) return false;
@@ -1337,6 +1507,18 @@ function repairStreamViewerScaffold(stationId) {
   writeViewerScaffoldSnapshot(root, 1);
   finalizeViewerScaffoldArtifacts(root);
   streamLog(stationId, "viewer_scaffold_repair", { total_frames: 1 });
+  return true;
+}
+
+export async function repairStreamViewerScaffoldAsync(stationId) {
+  const root = stationRoot(stationId);
+  if (!fs.existsSync(root)) return false;
+  if (!shouldRepairViewerScaffold(root)) return false;
+  saveEpisodesIndex(root, { version: 1, episodes: [] });
+  await runViewerScaffoldPythonAsync(root);
+  writeViewerScaffoldSnapshot(root, 1);
+  finalizeViewerScaffoldArtifacts(root);
+  streamLog(stationId, "viewer_scaffold_repair", { total_frames: 1, async: true });
   return true;
 }
 
@@ -2701,6 +2883,71 @@ export function resetMuxArtifactsForFullRemux(stationId, root) {
   streamLog(stationId, "mux_full_reset", { mode: "full" });
 }
 
+/** Incremental mux: keep existing MP4 shards; only clear transient mux state. */
+export function resetMuxArtifactsForIncrementalRemux(stationId, root) {
+  try {
+    fs.unlinkSync(muxStatePath(root));
+  } catch {
+    /* ignore */
+  }
+  streamLog(stationId, "mux_incremental_reset", { mode: "incremental" });
+}
+
+export function planMuxRemux(root) {
+  const stagingFrames = stagingJpegCount(root);
+  const metrics = resolveDeriveFrameMetrics(root);
+  const rowTarget = metrics.rowCount;
+  const fullDatasetMux =
+    rowTarget > 0 &&
+    stagingFrames >= rowTarget - 1 &&
+    stagingFrames <= rowTarget + 1;
+  return { stagingFrames, metrics, fullDatasetMux };
+}
+
+function probeStationVideoFrameCounts(root) {
+  const frames = {};
+  for (const videoKey of ingestVideoKeys(root)) {
+    frames[videoKey] = probeVideoKeyTotalMp4Frames(root, videoKey);
+  }
+  return frames;
+}
+
+/** MP4 readiness: jsonl row count (not index span). API path uses cache only — no ffprobe. */
+function evaluateMp4Readiness(root, metrics, { forceProbe = false } = {}) {
+  const target = metrics.rowCount > 0 ? metrics.rowCount : metrics.expectedMp4Frames;
+  const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
+  const cachedFrames = muxVal.frames && typeof muxVal.frames === "object" ? muxVal.frames : null;
+  if (cachedFrames && Object.keys(cachedFrames).length > 0) {
+    const vals = ingestVideoKeys(root).map((k) => Number(cachedFrames[k] || 0));
+    if (!vals.some((n) => n <= 0)) {
+      const minFrames = Math.min(...vals);
+      const maxFrames = Math.max(...vals);
+      const ok =
+        target > 0 &&
+        minFrames >= target - 1 &&
+        maxFrames <= target + 1 &&
+        maxFrames - minFrames <= 1;
+      return { ok: Boolean(muxVal.ok && ok), frames: cachedFrames, targetFrames: target, minFrames };
+    }
+  }
+  if (!forceProbe) {
+    return { ok: false, frames: cachedFrames || {}, targetFrames: target, minFrames: 0 };
+  }
+  const frames = probeStationVideoFrameCounts(root);
+  const vals = ingestVideoKeys(root).map((k) => Number(frames[k] || 0));
+  if (vals.some((n) => n <= 0)) {
+    return { ok: false, frames, targetFrames: target, minFrames: 0 };
+  }
+  const minFrames = Math.min(...vals);
+  const maxFrames = Math.max(...vals);
+  const ok =
+    target > 0 &&
+    minFrames >= target - 1 &&
+    maxFrames <= target + 1 &&
+    maxFrames - minFrames <= 1;
+  return { ok, frames, targetFrames: target, minFrames };
+}
+
 /**
  * Rebuild staging JPEGs from raw tar.zst (parquet/jsonl unchanged).
  * Used when full mux runs after incremental purge left staging empty.
@@ -2834,10 +3081,14 @@ export function isStagingPurgeBlockedByDerive(root, stationId) {
   const sessionId = getActiveSessionId(root);
   if (!sessionId) return false;
   if (hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) return true;
-  const rawTotal = countRawTarZstForSession(root, sessionId);
-  if (rawTotal <= 0) return false;
   const disk = computeDeriveStatusFromDisk(stationId, sessionId);
-  return !disk.fullyReady;
+  if (disk.fullyReady) return false;
+  const rawTotal = countRawTarZstForSession(root, sessionId);
+  if (rawTotal > 0) return true;
+  // Raw tar.zst may be purged after ingest; keep staging until MP4/parquet are READY.
+  if (readJsonlFrameMetrics(root).count > 0) return true;
+  if (hasUnreleasedStaging(root)) return true;
+  return false;
 }
 
 /** True when any camera still has staging JPEGs on disk. */
@@ -3706,7 +3957,7 @@ function encodeStagingToMp4(inDir, frameIndices, fps, destPath) {
   if (!listContent) return Promise.resolve({ ok: false, stderr: "empty_concat_list" });
   const listPath = `${destPath}.concat.txt`;
   writeFileAtomic(listPath, listContent);
-  return encodeFromConcatList(listPath, destPath, { withScale: true }).then((res) => {
+  return encodeFromConcatList(listPath, destPath, { withScale: true, fps }).then((res) => {
     try {
       fs.unlinkSync(listPath);
     } catch {
@@ -3743,11 +3994,15 @@ function muxOneCameraFull(stationId, root, videoKey, muxSessionId, range, inDir,
   if (!frameIndices.length) {
     return Promise.resolve({ ok: true, skipped: true, purgeThrough: -1 });
   }
+  const plan = muxRunPlan.get(stationId) || planMuxRemux(root);
+  const rowTarget = plan.metrics?.rowCount || resolveDeriveFrameMetrics(root).rowCount;
+  const preserveExisting = !plan.fullDatasetMux && fs.existsSync(outFile);
   for (const p of [
-    outFile,
     `${outFile}.segment.tmp.mp4`,
+    `${outFile}.muxing.tmp.mp4`,
     `${outFile}.muxing.tmp`,
     `${outFile}.concat.txt`,
+    `${outFile}.increment.concat.txt`,
   ]) {
     try {
       if (fs.existsSync(p)) fs.unlinkSync(p);
@@ -3755,51 +4010,103 @@ function muxOneCameraFull(stationId, root, videoKey, muxSessionId, range, inDir,
       /* ignore */
     }
   }
+  if (!preserveExisting) {
+    try {
+      if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
+    } catch {
+      /* ignore */
+    }
+  }
   ensureDir(path.dirname(outFile));
-  const metrics = resolveDeriveFrameMetrics(root);
-  const expectedMp4 = metrics.expectedMp4Frames;
-  return encodeStagingToMp4(inDir, frameIndices, DEFAULT_FPS, outFile).then((encRes) => {
+  const tmpOut = `${outFile}.muxing.tmp.mp4`;
+  return encodeStagingToMp4(inDir, frameIndices, DEFAULT_FPS, tmpOut).then(async (encRes) => {
     if (!encRes?.ok) {
       streamLog(stationId, "mux_fail", {
         sessionId: muxSessionId,
         videoKey,
         stage: "full_encode",
-        mode: "full",
+        mode: plan.fullDatasetMux ? "full" : "partial",
         ...muxExecFailPayload(encRes),
       });
+      try {
+        if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+      } catch {
+        /* ignore */
+      }
       return { ok: false, purgeThrough: -1 };
     }
-    const verifiedFrames = probeMp4FrameCount(outFile);
-    const minExpected = Math.max(frameIndices.length, expectedMp4) - 1;
+    const verifiedFrames = probeMp4FrameCount(tmpOut);
+    const stagingFrames = frameIndices.length;
+    const fullDatasetMux =
+      plan.fullDatasetMux ||
+      (rowTarget > 0 && stagingFrames >= rowTarget - 1 && stagingFrames <= rowTarget + 1);
+    const targetFrames = fullDatasetMux ? rowTarget : stagingFrames;
+    const minExpected = Math.max(targetFrames, 1) - 1;
     const okFrames =
       verifiedFrames >= minExpected ||
-      (expectedMp4 > 0 &&
-        verifiedFrames >= expectedMp4 - 1 &&
-        verifiedFrames <= expectedMp4 + 1);
+      (targetFrames > 0 &&
+        verifiedFrames >= targetFrames - 1 &&
+        verifiedFrames <= targetFrames + 1);
     if (!okFrames) {
       setChunkArtifactStatus(root, videoArtifactRel(videoKey), "writing", verifiedFrames);
       streamLog(stationId, "mux_fail", {
         sessionId: muxSessionId,
         videoKey,
         stage: "full_verify",
-        mode: "full",
+        mode: fullDatasetMux ? "full" : "partial",
         expectedMinFrames: minExpected,
         verifiedFrames,
-        stagingFrames: frameIndices.length,
+        stagingFrames,
+        datasetExpectedFrames: rowTarget,
       });
+      try {
+        if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+      } catch {
+        /* ignore */
+      }
       return { ok: false, purgeThrough: -1 };
     }
-    setChunkArtifactStatus(root, videoArtifactRel(videoKey), "finished", verifiedFrames);
+    let publishedFrames = verifiedFrames;
+    const incrementalAppend = !fullDatasetMux && preserveExisting;
+    if (incrementalAppend) {
+      const listPath = `${outFile}.increment.concat.txt`;
+      const concatRes = await concatMp4Files(outFile, tmpOut, outFile, listPath);
+      try {
+        if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+      } catch {
+        /* ignore */
+      }
+      if (!concatRes?.ok) {
+        streamLog(stationId, "mux_fail", {
+          sessionId: muxSessionId,
+          videoKey,
+          stage: "incremental_concat",
+          mode: "partial",
+          ...muxExecFailPayload(concatRes),
+        });
+        return { ok: false, purgeThrough: -1 };
+      }
+      publishedFrames = probeMp4FrameCount(outFile);
+    } else {
+      try {
+        if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
+      } catch {
+        /* ignore */
+      }
+      fs.renameSync(tmpOut, outFile);
+    }
+    setChunkArtifactStatus(root, videoArtifactRel(videoKey), "finished", publishedFrames);
     streamLog(stationId, "mux_camera_done", {
       sessionId: muxSessionId,
       videoKey,
       frameMin: frameIndices[0],
       frameMax: frameIndices[frameIndices.length - 1],
-      verifiedFrames,
+      verifiedFrames: publishedFrames,
       segmentFrameCount: frameIndices.length,
-      mode: "full",
+      mode: fullDatasetMux ? "full" : "partial",
+      incrementalAppend,
     });
-    return { ok: true, removed: 0, purgeThrough: range.max, fullMux: true };
+    return { ok: true, removed: 0, purgeThrough: range.max, fullMux: fullDatasetMux };
   });
 }
 
@@ -3836,10 +4143,17 @@ function runMux(stationId) {
     muxQueue.set(stationId, state);
     return;
   }
+
+  const root = stationRoot(stationId);
+  const plan = planMuxRemux(root);
+  if (plan.stagingFrames <= 0) {
+    streamLog(stationId, "mux_skip", { reason: "no_staging", frames: 0 });
+    return;
+  }
+
   state.running = true;
   muxQueue.set(stationId, state);
 
-  const root = stationRoot(stationId);
   let lockFd = null;
   const lockPath = path.join(locksDir(root), "mux.lock");
   try {
@@ -3851,20 +4165,42 @@ function runMux(stationId) {
     return;
   }
 
+  muxRunPlan.set(stationId, plan);
   markMuxArtifactsWriting(root);
   const muxSessionId = getActiveSessionId(root);
-  resetMuxArtifactsForFullRemux(stationId, root);
+  if (plan.fullDatasetMux) {
+    resetMuxArtifactsForFullRemux(stationId, root);
+  } else {
+    resetMuxArtifactsForIncrementalRemux(stationId, root);
+  }
   streamLog(stationId, "mux_start", {
     sessionId: muxSessionId,
-    frames: stagingJpegCount(root),
-    mode: "full",
+    frames: plan.stagingFrames,
+    mode: plan.fullDatasetMux ? "full" : "partial",
   });
 
   const jobs = runMuxCamerasSerial(stationId, root, muxSessionId);
 
-  jobs.finally(() => {
-    releaseFileLock(lockPath, lockFd);
-    streamLog(stationId, "mux_done", { sessionId: muxSessionId, frames: countStagingFrames(root) });
+  jobs
+    .then(async (muxResult) => {
+      if (muxResult?.allOk && muxResult?.anyWorked) {
+        clearMuxRetryState(root);
+        try {
+          await writeMuxValidatedSnapshot(stationId, muxSessionId);
+        } catch (err) {
+          streamLog(stationId, "mux_snapshot_fail", {
+            sessionId: muxSessionId,
+            message: String(err?.message || err).slice(0, 200),
+          });
+        }
+      } else if (!muxResult?.allOk) {
+        maybeScheduleMuxRetry(stationId, muxSessionId);
+      }
+    })
+    .finally(() => {
+      muxRunPlan.delete(stationId);
+      releaseFileLock(lockPath, lockFd);
+      streamLog(stationId, "mux_done", { sessionId: muxSessionId, frames: countStagingFrames(root) });
     const s = muxQueue.get(stationId) || { timer: null, running: false };
     s.running = false;
     s.timer = null;
@@ -4313,20 +4649,43 @@ export function ensureStreamViewerScaffold(stationId) {
   return true;
 }
 
-/** Startup: empty viewer chrome for every station dir (uid 1000 only). */
+export async function ensureStreamViewerScaffoldAsync(stationId) {
+  const root = stationRoot(stationId);
+  if (!fs.existsSync(root)) return false;
+  const infoPath = path.join(root, "meta", "info.json");
+  if (fs.existsSync(infoPath)) return false;
+
+  ensureDir(path.join(root, "meta"));
+  const info = defaultInfo(stationId, {});
+  info.total_frames = 1;
+  info.total_episodes = 1;
+  info.splits = { train: "0:1" };
+  writeJsonAtomic(infoPath, info);
+  writeTasksJsonl(root);
+  saveEpisodesIndex(root, { version: 1, episodes: [] });
+  initChunksManifest(root, { resetViewer: true });
+
+  await runViewerScaffoldPythonAsync(root);
+  writeViewerScaffoldSnapshot(root, 1);
+  finalizeViewerScaffoldArtifacts(root);
+  streamLog(stationId, "viewer_scaffold", { total_frames: 1, async: true });
+  return true;
+}
+
+/** @deprecated Use scheduleStreamIngestBackgroundStartup(); kept for manual/ops calls. */
 export function ensureStreamViewerScaffoldForAllStations() {
   if (!mayMutateStreamFs()) return;
-  let entries;
-  try {
-    entries = fs.readdirSync(STREAM_ROOT, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const ent of entries) {
-    if (!ent.isDirectory() || ent.name.startsWith(".")) continue;
-    ensureStreamViewerScaffold(ent.name);
-    repairStreamViewerScaffold(ent.name);
-  }
+  void (async () => {
+    for (const stationId of listStreamStationIds()) {
+      try {
+        await ensureStreamViewerScaffoldAsync(stationId);
+        await repairStreamViewerScaffoldAsync(stationId);
+      } catch {
+        /* ignore per-station scaffold errors */
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  })();
 }
 
 export function handleStreamScaffoldRequest(stationId) {
@@ -4451,7 +4810,7 @@ export function resumePendingStreamMuxForAllStations() {
     const videosPending = Object.entries(manifest.publish || {}).some(
       ([rel, st]) => rel.startsWith("videos/") && st?.status !== "finished",
     );
-    const hasStaging = countStagingFramesScan(root) > 0;
+    const hasStaging = stagingJpegCount(root) > 0;
     if (videosPending || hasStaging) {
       scheduleMux(stationId);
     }

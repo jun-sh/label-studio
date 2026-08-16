@@ -341,10 +341,12 @@ def main() -> None:
                 pending = writer.pending_segment_count(fast=True)
                 pq = writer.persist_queue_depth()
                 dropped = writer.dropped_frame_count()
+                h264_stale = recorder.h264_stale_drop_count()
                 seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
                 print(
                     f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
                     f"pending_segments={pending} persist_q={pq} dropped={dropped} "
+                    f"h264_stale_drops={h264_stale} "
                     f"sync_mode=egoverse_30hz seg_max_frames={seg_frames} session={session_id}",
                     flush=True,
                 )

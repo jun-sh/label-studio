@@ -2,7 +2,7 @@
 
 **原则：** 130 采集与 34 派生解耦 · 手动上传 · segment_mp4 单主路径 · READY 后 Viewer 可播
 
-**版本配对：** 130 `v0.0.8-segment-mp4` + 34 `data-lab-lerobot-studio:v0.0.9.2`
+**版本配对：** 130 `v0.0.8-segment-mp4` + H264 FIFO（`OAK_H264_SEQUENTIAL=1`）+ 34 `data-lab-lerobot-studio:v0.0.12`（见 [STABLE-v0.0.12.md](STABLE-v0.0.12.md)）
 
 ---
 

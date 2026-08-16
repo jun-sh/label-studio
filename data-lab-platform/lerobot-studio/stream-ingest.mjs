@@ -38,6 +38,7 @@ import {
   isStreamFramePushEnabled,
   legacyStagingMuxEnabled,
   segmentHasStreamMp4,
+  validateSegmentMp4RowParity,
 } from "./segment-mp4-ingest.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2875,7 +2876,7 @@ export function isRemotePreviewAllowed(stationId) {
 function defaultInfo(stationId, shapes, episodeMeta = null, { intrinsics = null } = {}) {
   const features = {};
   for (const key of resolveVideoKeysForStation(stationId, { intrinsics, shapes })) {
-    const [h, w] = shapes[key] || [1200, 1920];
+    const [h, w] = shapes[key] || [800, 1280];
     features[key] = {
       dtype: "video",
       shape: [h, w, 3],
@@ -3186,8 +3187,13 @@ function probeStationVideoFrameCounts(root) {
 function mp4ReadinessOk(target, minFrames, maxFrames) {
   if (target <= 0 || minFrames <= 0) return false;
   if (isSegmentMp4PrimaryPath()) {
-    // Edge H264 segment shards often carry fewer packets than jsonl rows; require cross-camera consistency.
-    return minFrames >= Math.floor(target * 0.85) && maxFrames - minFrames <= 120;
+    const legacy =
+      String(process.env.STREAM_SEGMENT_MP4_LEGACY_TOLERANCE || "0").trim().toLowerCase() ===
+      "1";
+    if (legacy) {
+      return minFrames >= Math.floor(target * 0.85) && maxFrames - minFrames <= 120;
+    }
+    return minFrames >= target - 1 && maxFrames <= target + 1 && maxFrames - minFrames <= 1;
   }
   return minFrames >= target - 1 && maxFrames <= target + 1 && maxFrames - minFrames <= 1;
 }
@@ -3902,9 +3908,12 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+  const hasSegmentMp4 = isSegmentMp4PrimaryPath() && segmentHasStreamMp4(extractDir);
+  if (hasSegmentMp4) {
+    validateSegmentMp4RowParity(extractDir, rows.length);
+  }
   const images = {};
   const frames = [];
-  const hasSegmentMp4 = isSegmentMp4PrimaryPath() && segmentHasStreamMp4(extractDir);
   for (const row of rows) {
     const frameIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
     if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;

@@ -76,10 +76,32 @@ OAK_HW_PREVIEW_H264 = os.environ.get("OAK_HW_PREVIEW_H264", "0").strip().lower()
 )
 # Phase-2 POC: H.264 bitstream per cam (local segment only; ingest still expects JPEG upload).
 OAK_H264 = os.environ.get("OAK_H264", "0").strip().lower() in ("1", "true", "yes")
-OAK_H264_BITRATE_KBPS = int(os.environ.get("OAK_H264_BITRATE_KBPS", "8000"))
+OAK_H264_BITRATE_KBPS = int(os.environ.get("OAK_H264_BITRATE_KBPS", "6000"))
+_h264_seq_env = os.environ.get("OAK_H264_SEQUENTIAL", "").strip().lower()
+OAK_H264_SEQUENTIAL = (
+    _h264_seq_env in ("1", "true", "yes")
+    if _h264_seq_env
+    else OAK_H264
+)
+OAK_H264_KEYFRAME_FREQUENCY = max(
+    1,
+    int(os.environ.get("OAK_H264_KEYFRAME_FREQUENCY", str(OAK_DEVICE_FPS))),
+)
+OAK_CAM_QUEUE_MAX = max(4, int(os.environ.get("OAK_CAM_QUEUE_MAX", "32" if OAK_H264 else "8")))
+OAK_PREVIEW_QUEUE_MAX = max(2, int(os.environ.get("OAK_PREVIEW_QUEUE_MAX", "4")))
 # Phase-2: depth socket capture rate divisor vs RGB (1=every frame, 2=half, etc.)
 OAK_DEPTH_FRAME_DIVISOR = max(1, int(os.environ.get("OAK_DEPTH_FRAME_DIVISOR", "1")))
-EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
+
+
+def ego_frame_interval_ns() -> int:
+    """Grid interval aligned to OAK_DEVICE_FPS (default 30 Hz = 33.333ms)."""
+    ms_override = os.environ.get("EGO_FRAME_INTERVAL_MS", "").strip()
+    if ms_override:
+        return int(ms_override) * 1_000_000
+    return 1_000_000_000 // max(1, OAK_DEVICE_FPS)
+
+
+EGO_FRAME_INTERVAL_MS = ego_frame_interval_ns() // 1_000_000
 EGO_IMU_INTERPOLATE = os.environ.get("EGO_IMU_INTERPOLATE", "1").strip().lower() in (
     "1",
     "true",
@@ -347,6 +369,10 @@ class Oak4pEgoRecorder:
         self._imu_flush_accel_idx = 0
         self._pending_imu_raw: list[dict[str, Any]] = []
         self._strict_imu_buf: Any = None
+        self._h264_stale_drops = 0
+
+    def h264_stale_drop_count(self) -> int:
+        return int(self._h264_stale_drops)
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -469,6 +495,50 @@ class Oak4pEgoRecorder:
             pool = within
         return min(pool, key=lambda s: abs(int(s.ts_ns) - target))
 
+    def _consume_h264_ring_sample(
+        self,
+        ring: deque[_CamRingSample],
+        oak_socket: str,
+        target_ts_ns: int,
+    ) -> _CamRingSample | None:
+        """FIFO H264 packet pick — preserves encoder GOP order (no subsample gaps)."""
+        if not ring:
+            return None
+        target = int(target_ts_ns)
+        limit = self._strict_max_offset_ns_for_oak(oak_socket)
+        while len(ring) > 1:
+            first = ring[0]
+            if int(first.ts_ns) < target - limit:
+                ring.popleft()
+                self._h264_stale_drops += 1
+            else:
+                break
+        if not ring:
+            return None
+        sample = ring[0]
+        if abs(int(sample.ts_ns) - target) > limit:
+            return None
+        ring.popleft()
+        return sample
+
+    def _ring_sample_for_yield(
+        self,
+        ring: deque[_CamRingSample],
+        oak_socket: str,
+        target_ts_ns: int,
+    ) -> _CamRingSample | None:
+        if self._hw_h264 and OAK_H264_SEQUENTIAL:
+            return self._consume_h264_ring_sample(ring, oak_socket, target_ts_ns)
+        if self._uses_causal_primary_lock(oak_socket):
+            return self._ring_sample_locked_to_primary(ring, target_ts_ns)
+        max_off = self._strict_max_offset_ns_for_oak(oak_socket)
+        return self._strict_ring_sample(
+            ring,
+            target_ts_ns,
+            max_off,
+            prefer_at_or_after=True,
+        )
+
     @staticmethod
     def _align_epoch_to_device(ts_ns: int, interval_ns: int) -> int:
         ts = int(ts_ns)
@@ -588,7 +658,7 @@ class Oak4pEgoRecorder:
         device.startPipeline(pipeline)
 
         self._cam_queues = {
-            name: device.getOutputQueue(name=name, maxSize=8, blocking=False)
+            name: device.getOutputQueue(name=name, maxSize=OAK_CAM_QUEUE_MAX, blocking=False)
             for name in self._cam_list
         }
         self._preview_queues = {}
@@ -600,7 +670,7 @@ class Oak4pEgoRecorder:
                 if props.get("color"):
                     stream = f"{name}_preview"
                     self._preview_queues[name] = device.getOutputQueue(
-                        name=stream, maxSize=4, blocking=False
+                        name=stream, maxSize=OAK_PREVIEW_QUEUE_MAX, blocking=False
                     )
         self._imu_queue = (
             device.getOutputQueue("imu", maxSize=50, blocking=False) if imu_on else None
@@ -609,9 +679,12 @@ class Oak4pEgoRecorder:
         pv_w, pv_h = self._preview_wh
         print(
             f"oak_pipeline=sensor_1200p isp_scale={OAK_ISP_SCALE_NUM}/{OAK_ISP_SCALE_DEN} "
-            f"hw_jpeg={int(self._hw_jpeg)} hw_h264={int(self._hw_h264)} imagemanip={int(OAK_USE_IMAGEMANIP)} "
+            f"hw_jpeg={int(self._hw_jpeg)} hw_h264={int(self._hw_h264)} h264_seq={int(OAK_H264_SEQUENTIAL)} "
+            f"h264_kf={OAK_H264_KEYFRAME_FREQUENCY} cam_q={OAK_CAM_QUEUE_MAX} "
+            f"imagemanip={int(OAK_USE_IMAGEMANIP)} "
             f"gpio_fsync={int(OAK_GPIO_FSYNC)} device_fps={self.device_fps} "
-            f"capture={cap_w}x{cap_h} preview={pv_w}x{pv_h} mjpeg_q={OAK_MJPEG_QUALITY}",
+            f"capture={cap_w}x{cap_h} preview={pv_w}x{pv_h} mjpeg_q={OAK_MJPEG_QUALITY} "
+            f"h264_kbps={OAK_H264_BITRATE_KBPS}",
             flush=True,
         )
 
@@ -698,7 +771,7 @@ class Oak4pEgoRecorder:
         except Exception:
             pass
         try:
-            enc.setKeyframeFrequency(self.device_fps)
+            enc.setKeyframeFrequency(OAK_H264_KEYFRAME_FREQUENCY)
         except Exception:
             pass
         return enc
@@ -1129,8 +1202,8 @@ class Oak4pEgoRecorder:
         from ego_capture_studio.capture.imu_align import imu6_at_timestamp
         from ego_capture_studio.capture.lerobot_episode import _buffers_to_numpy
 
-        ms = int(interval_ms if interval_ms is not None else EGO_FRAME_INTERVAL_MS)
-        interval_ns = int(ms) * 1_000_000
+        ms = int(interval_ms if interval_ms is not None else (ego_frame_interval_ns() // 1_000_000))
+        interval_ns = int(interval_ms) * 1_000_000 if interval_ms is not None else ego_frame_interval_ns()
         interval_s = interval_ns / 1e9
         use_imu_interp = EGO_IMU_INTERPOLATE if imu_interpolate is None else bool(imu_interpolate)
 
@@ -1154,6 +1227,7 @@ class Oak4pEgoRecorder:
         pending_reanchor = False
         reanchor_warmup_ticks = 0
         sync_miss_streak = 0
+        self._h264_stale_drops = 0
 
         def _strict_sync_miss() -> None:
             nonlocal sync_miss_streak, global_idx
@@ -1231,8 +1305,8 @@ class Oak4pEgoRecorder:
                 continue
 
             t_grid_ns = int(epoch_ns) + global_idx * interval_ns
-            primary_sample = self._nearest_ring_sample(
-                cam_rings[PRIMARY_OAK_SOCKET], t_grid_ns
+            primary_sample = self._ring_sample_for_yield(
+                cam_rings[PRIMARY_OAK_SOCKET], PRIMARY_OAK_SOCKET, t_grid_ns
             )
             if primary_sample is None:
                 _strict_sync_miss()
@@ -1245,8 +1319,8 @@ class Oak4pEgoRecorder:
                 if oak == PRIMARY_OAK_SOCKET:
                     sample = primary_sample
                 else:
-                    sample = self._nearest_ring_sample(
-                        cam_rings[oak], primary_ts_ns
+                    sample = self._ring_sample_for_yield(
+                        cam_rings[oak], oak, primary_ts_ns
                     )
                 if sample is None:
                     break

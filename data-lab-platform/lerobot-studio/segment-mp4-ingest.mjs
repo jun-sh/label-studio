@@ -4,7 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { concatMp4Files, probeMp4FrameCount } from "./mux-exec.mjs";
+import { concatMp4Files, probeMp4FrameCount, probeMp4Resolution } from "./mux-exec.mjs";
 
 const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 30);
 
@@ -50,6 +50,55 @@ export function listSegmentStreamMp4s(extractDir) {
 
 export function segmentHasStreamMp4(extractDir) {
   return listSegmentStreamMp4s(extractDir).length > 0;
+}
+
+function segmentMp4StrictParityEnabled() {
+  return String(process.env.STREAM_SEGMENT_MP4_STRICT || "1").trim().toLowerCase() !== "0";
+}
+
+/** Fail when segment rows.jsonl and per-camera MP4 packet counts diverge. */
+export function validateSegmentMp4RowParity(extractDir, rowCount) {
+  const shards = listSegmentStreamMp4s(extractDir);
+  if (!shards.length) {
+    return { ok: false, reason: "no_segment_mp4", videoFrames: 0, rowCount };
+  }
+  const counts = shards.map(({ videoKey, absPath }) => ({
+    videoKey,
+    frames: probeMp4FrameCount(absPath, { defaultFps: DEFAULT_FPS }),
+  }));
+  const vals = counts.map((c) => c.frames).filter((n) => n > 0);
+  if (!vals.length) {
+    return { ok: false, reason: "mp4_probe_empty", videoFrames: 0, rowCount, counts };
+  }
+  const minFrames = Math.min(...vals);
+  const maxFrames = Math.max(...vals);
+  const spread = maxFrames - minFrames;
+  const target = Math.min(rowCount, minFrames);
+  if (segmentMp4StrictParityEnabled()) {
+    if (spread > 1) {
+      throw new Error(
+        `segment_mp4_camera_spread spread=${spread} counts=${JSON.stringify(counts)}`,
+      );
+    }
+    if (Math.abs(rowCount - minFrames) > 1) {
+      const rowsPath = path.join(extractDir, "rows.jsonl");
+      if (rowCount > target && fs.existsSync(rowsPath)) {
+        const lines = fs
+          .readFileSync(rowsPath, "utf8")
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (lines.length > target) {
+          fs.writeFileSync(rowsPath, `${lines.slice(0, target).join("\n")}\n`);
+        }
+      } else if (rowCount < minFrames - 1) {
+        throw new Error(
+          `segment_mp4_row_parity_mismatch rows=${rowCount} video=${minFrames} counts=${JSON.stringify(counts)}`,
+        );
+      }
+    }
+  }
+  return { ok: true, videoFrames: target, rowCount: target, counts, spread };
 }
 
 /** v0.0.9+: primary path rejects archives without segment MP4 (no staging fallback). */
@@ -122,6 +171,24 @@ export async function ingestSegmentMp4Shards(
         ? probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS })
         : 0;
       if (fs.existsSync(outFile)) {
+        const existingRes = probeMp4Resolution(outFile);
+        const shardRes = probeMp4Resolution(absPath);
+        if (
+          existingRes &&
+          shardRes &&
+          (existingRes.width !== shardRes.width || existingRes.height !== shardRes.height)
+        ) {
+          streamLog(stationId, "segment_mp4_resolution_reset", {
+            sessionId,
+            segmentId,
+            videoKey,
+            existing: `${existingRes.width}x${existingRes.height}`,
+            shard: `${shardRes.width}x${shardRes.height}`,
+          });
+          fs.unlinkSync(outFile);
+          fs.copyFileSync(absPath, outFile);
+          publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
+        } else {
         const listPath = `${outFile}.segment.${segmentId}.concat.txt`;
         const tmpOut = `${outFile}.concat.${segmentId}.tmp.mp4`;
         try {
@@ -151,12 +218,17 @@ export async function ingestSegmentMp4Shards(
         }
         fs.renameSync(tmpOut, outFile);
         publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
+        }
       } else {
         fs.copyFileSync(absPath, outFile);
         publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
       }
-      const minExpected = beforeFrames + Math.max(1, Math.floor(shardFrames * 0.85));
-      if (beforeFrames > 0 && publishedFrames < minExpected) {
+      const legacyTolerance =
+        String(process.env.STREAM_SEGMENT_MP4_LEGACY_TOLERANCE || "0").trim().toLowerCase() === "1";
+      const minExpected = legacyTolerance
+        ? beforeFrames + Math.max(1, Math.floor(shardFrames * 0.85))
+        : beforeFrames + shardFrames;
+      if (beforeFrames > 0 && publishedFrames < minExpected - (legacyTolerance ? 0 : 1)) {
         streamLog(stationId, "segment_mp4_concat_short", {
           sessionId,
           segmentId,

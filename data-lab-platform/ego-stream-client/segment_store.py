@@ -182,6 +182,7 @@ class _OpenSegmentWriter:
         self._rows_path = segment_dir / "rows.jsonl"
         self._rows_fp: TextIO = open(self._rows_path, "a", encoding="utf-8", buffering=256 * 1024)
         self._row_lines: list[str] = []
+        self._row_count = 0
         self._imu_raw_path = segment_dir / "imu_raw.jsonl"
         self._imu_raw_fp: TextIO | None = None
         self._imu_raw_lines: list[str] = []
@@ -219,6 +220,7 @@ class _OpenSegmentWriter:
             camera_ts_offset_ns=job.camera_ts_offset_ns,
         )
         self._row_lines.append(json.dumps(row, separators=(",", ":")) + "\n")
+        self._row_count += 1
         if job.imu_raw_batch:
             self._append_imu_raw_records(job.imu_raw_batch)
         if len(self._row_lines) >= SEGMENT_ROWS_BUFFER_LINES:
@@ -255,6 +257,16 @@ class _OpenSegmentWriter:
         self._row_lines.clear()
 
     def close(self) -> None:
+        self._flush_rows()
+        self._flush_imu_raw()
+        row_count = int(self._row_count)
+        self._rows_fp.flush()
+        if SEGMENT_FSYNC_ON_CLOSE:
+            try:
+                os.fsync(self._rows_fp.fileno())
+            except OSError:
+                pass
+        self._rows_fp.close()
         if SEGMENT_H264 and not SEGMENT_H264_LEGACY_APPEND and self._h264_buffers:
             from ego_capture_studio.capture.segment_h264_mux import (
                 SEGMENT_H264_STRICT,
@@ -262,8 +274,34 @@ class _OpenSegmentWriter:
             )
 
             try:
-                mux_h264_buffers_to_mp4(self.segment_dir, self._h264_buffers)
+                mux_h264_buffers_to_mp4(
+                    self.segment_dir,
+                    self._h264_buffers,
+                    expected_rows=row_count,
+                )
                 self._h264_buffers.clear()
+                try:
+                    self._row_count = sum(
+                        1
+                        for line in self._rows_path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    )
+                except OSError:
+                    pass
+                manifest_path = self.segment_dir / "manifest.json"
+                if manifest_path.is_file() and self._row_count > 0:
+                    try:
+                        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                        manifest["frame_count"] = int(self._row_count)
+                        manifest["end_frame_index"] = int(manifest.get("start_frame_index", 0)) + int(
+                            self._row_count
+                        ) - 1
+                        manifest_path.write_text(
+                            json.dumps(manifest, separators=(",", ":")) + "\n",
+                            encoding="utf-8",
+                        )
+                    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                        pass
             except Exception as exc:
                 print(
                     f"segment_h264_mux close failed segment={self.segment_dir.name}: {exc}",
@@ -271,9 +309,6 @@ class _OpenSegmentWriter:
                 )
                 if SEGMENT_H264_STRICT:
                     raise
-        self._flush_rows()
-        self._flush_imu_raw()
-        self._rows_fp.flush()
         if self._imu_raw_fp is not None:
             self._imu_raw_fp.flush()
             if SEGMENT_FSYNC_ON_CLOSE:
@@ -283,12 +318,6 @@ class _OpenSegmentWriter:
                     pass
             self._imu_raw_fp.close()
             self._imu_raw_fp = None
-        if SEGMENT_FSYNC_ON_CLOSE:
-            try:
-                os.fsync(self._rows_fp.fileno())
-            except OSError:
-                pass
-        self._rows_fp.close()
         if SEGMENT_FSYNC_ON_CLOSE:
             try:
                 fd = os.open(self.segment_dir, os.O_RDONLY)

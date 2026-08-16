@@ -63,7 +63,7 @@ data-lab-platform/scripts/rc-acceptance.sh
 RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh   # 断言 READY
 ```
 
-运维手册：[ego-001-runbook.md](ego-001-runbook.md)
+运维手册：[ego-001-runbook.md](ego-001-runbook.md) · [LeRobot vendor 扩展迁移](ego-lerobot-vendor-ext-migration.md)
 
 RC 脚本走 **手动** `upload_segments`，与生产路径一致。
 

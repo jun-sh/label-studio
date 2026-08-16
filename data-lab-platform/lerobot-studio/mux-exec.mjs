@@ -98,6 +98,37 @@ export function probeMp4DurationSec(filePath, fallbackFps = 30) {
   return 0;
 }
 
+export function probeMp4Resolution(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  const res = spawnSync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=width,height",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { encoding: "utf8" },
+  );
+  if (res.status !== 0) return null;
+  try {
+    const stream = JSON.parse(res.stdout || "{}")?.streams?.[0];
+    const width = Number(stream?.width);
+    const height = Number(stream?.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return null;
+    }
+    return { width: Math.floor(width), height: Math.floor(height) };
+  } catch {
+    return null;
+  }
+}
+
 export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return 0;
   const stream = probeMp4StreamJson(filePath);
@@ -287,6 +318,20 @@ export async function concatMp4FromList(listPath, destPath, codecMode = "copy") 
 export async function concatMp4Files(firstPath, secondPath, destPath, listPath, options = {}) {
   const segmentMp4 = Boolean(options.segmentMp4);
   const useDuration = !segmentMp4 && deriveMuxBackend() === "fluent";
+  if (segmentMp4) {
+    const existing = probeMp4Resolution(firstPath);
+    const shard = probeMp4Resolution(secondPath);
+    if (
+      existing &&
+      shard &&
+      (existing.width !== shard.width || existing.height !== shard.height)
+    ) {
+      return {
+        ok: false,
+        stderr: `segment_mp4_resolution_mismatch existing=${existing.width}x${existing.height} shard=${shard.width}x${shard.height}`,
+      };
+    }
+  }
   const listContent = buildMp4ConcatListPaths([firstPath, secondPath], {
     firstDurationSec: probeMp4DurationSec(firstPath),
     useDuration,
@@ -295,6 +340,12 @@ export async function concatMp4Files(firstPath, secondPath, destPath, listPath, 
   try {
     let res = await concatMp4FromList(listPath, destPath, "copy");
     if (res.ok) return res;
+    if (segmentMp4) {
+      return {
+        ok: false,
+        stderr: `segment_mp4_concat_copy_failed: ${String(res.stderr || "").slice(0, 500)}`,
+      };
+    }
     res = await concatMp4FromList(listPath, destPath, "reencode");
     return res;
   } finally {

@@ -429,6 +429,19 @@ def _upload_one_segment(
     uploader: SegmentUploader,
 ) -> bool:
     segment_id = segment_dir.name
+    if os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes"):
+        from ego_capture_studio.capture.segment_h264_mux import verify_segment_stream_mp4s
+
+        try:
+            verify_segment_stream_mp4s(segment_dir)
+        except Exception as exc:
+            _log(
+                "segment_skip",
+                session_id=session_id,
+                segment_id=segment_id,
+                reason=f"h264_streams_invalid:{exc}",
+            )
+            return False
     status = UploadStatusWriter.get_default()
     for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         t0 = time.monotonic()

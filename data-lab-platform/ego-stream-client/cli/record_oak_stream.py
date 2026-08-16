@@ -241,6 +241,10 @@ def main() -> None:
 
     device_fps = int(os.environ.get("OAK_DEVICE_FPS", "30"))
     storage_h264 = os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes")
+    if storage_h264:
+        from ego_capture_studio.capture.segment_h264_mux import preflight_segment_h264_capture
+
+        preflight_segment_h264_capture()
     recorder = Oak4pEgoRecorder(
         fps=args.fps,
         device_fps=device_fps,

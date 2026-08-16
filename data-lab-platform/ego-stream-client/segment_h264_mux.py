@@ -8,6 +8,16 @@ import subprocess
 from pathlib import Path
 
 SEGMENT_H264_FPS = int(os.environ.get("OAK_DEVICE_FPS", "30"))
+SEGMENT_H264_MIN_MP4 = max(1, int(os.environ.get("SEGMENT_H264_MIN_MP4", "4")))
+SEGMENT_H264_STRICT = os.environ.get("SEGMENT_H264_STRICT", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _segment_h264_enabled() -> bool:
+    return os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes")
 
 
 def resolve_ffmpeg() -> str:
@@ -21,6 +31,37 @@ def resolve_ffmpeg() -> str:
             "ffmpeg not found on capture host; install ffmpeg or set FFMPEG=/path/to/ffmpeg"
         )
     return found
+
+
+def preflight_segment_h264_capture() -> str:
+    """Startup check when SEGMENT_H264=1 (requires ffmpeg on capture host)."""
+    if not _segment_h264_enabled():
+        return ""
+    path = resolve_ffmpeg()
+    print(f"segment_h264_preflight ok ffmpeg={path}", flush=True)
+    return path
+
+
+def verify_segment_stream_mp4s(
+    segment_dir: Path,
+    *,
+    min_mp4: int | None = None,
+) -> list[Path]:
+    """Raise if segment H264 outputs are missing or undersized."""
+    if not _segment_h264_enabled():
+        return []
+    streams_dir = Path(segment_dir) / "streams"
+    mp4s = sorted(streams_dir.glob("*.mp4")) if streams_dir.is_dir() else []
+    need = SEGMENT_H264_MIN_MP4 if min_mp4 is None else max(1, int(min_mp4))
+    if len(mp4s) < need:
+        raise RuntimeError(
+            f"segment_stream_mp4_insufficient segment={Path(segment_dir).name} "
+            f"got={len(mp4s)} need>={need}"
+        )
+    for mp4_path in mp4s:
+        if mp4_path.stat().st_size < 1024:
+            raise RuntimeError(f"segment_stream_mp4_empty path={mp4_path}")
+    return mp4s
 
 
 def mux_h264_buffers_to_mp4(
@@ -79,4 +120,5 @@ def mux_h264_buffers_to_mp4(
             except OSError:
                 pass
         mp4_paths.append(mp4_path)
+    verify_segment_stream_mp4s(segment_dir, min_mp4=len(mp4_paths) if mp4_paths else SEGMENT_H264_MIN_MP4)
     return mp4_paths

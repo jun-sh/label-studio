@@ -256,18 +256,21 @@ class _OpenSegmentWriter:
 
     def close(self) -> None:
         if SEGMENT_H264 and not SEGMENT_H264_LEGACY_APPEND and self._h264_buffers:
-            from ego_capture_studio.capture.segment_h264_mux import mux_h264_buffers_to_mp4
+            from ego_capture_studio.capture.segment_h264_mux import (
+                SEGMENT_H264_STRICT,
+                mux_h264_buffers_to_mp4,
+            )
 
             try:
                 mux_h264_buffers_to_mp4(self.segment_dir, self._h264_buffers)
+                self._h264_buffers.clear()
             except Exception as exc:
-                # Do not kill persist workers: rows/imu must flush; operator can retry mux.
                 print(
                     f"segment_h264_mux close failed segment={self.segment_dir.name}: {exc}",
                     flush=True,
                 )
-            else:
-                self._h264_buffers.clear()
+                if SEGMENT_H264_STRICT:
+                    raise
         self._flush_rows()
         self._flush_imu_raw()
         self._rows_fp.flush()
@@ -752,8 +755,23 @@ class SegmentCaptureWriter:
                     if isinstance(work, _SegmentCloseJob):
                         writer = self._open_writers.pop(work.segment_id, None)
                         active_dir = self._active_segments_dir() / work.segment_id
-                        if writer is not None:
-                            writer.close()
+                        try:
+                            if writer is not None:
+                                writer.close()
+                        except Exception as exc:
+                            print(
+                                f"segment_close_failed segment={work.segment_id}: {exc}",
+                                flush=True,
+                            )
+                            fail_marker = active_dir / ".h264_close_failed"
+                            try:
+                                fail_marker.write_text(
+                                    f"{exc}\n",
+                                    encoding="utf-8",
+                                )
+                            except OSError:
+                                pass
+                            continue
                         if active_dir.is_dir():
                             self._enqueue_finalize(work.segment_id, active_dir)
                     else:

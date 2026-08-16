@@ -56,3 +56,14 @@ docker-compose ... -f data-lab-platform/docker-compose.v0.0.8.yml up -d stream-i
 
 - 删除 bin→staging mux 死代码（需确认无 legacy tar 待导入）
 - 拆分 `stream-ingest.mjs` legacy 模块
+
+## v0.0.9.1（采集/部署加固）
+
+| 项 | 说明 |
+|----|------|
+| 130 preflight | 采集启动检查 `ffmpeg`（`preflight_segment_h264_capture`） |
+| 关段校验 | `verify_segment_stream_mp4s`（默认 ≥4 路 MP4） |
+| 上传门禁 | `SEGMENT_H264=1` 时段无 MP4 则 skip，不打包上传 |
+| RC 脚本 | `rc-acceptance.sh` 验 `segment_mp4` 主路径，不再测 staging mux |
+| 130 部署 | `scripts/ego-130-provision.sh` 从仓库 rsync + systemd |
+| derive | compose 显式 `DERIVE_ASYNC_*=0` |

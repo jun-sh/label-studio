@@ -4,7 +4,7 @@
 
 | 项 | 要求 |
 |----|------|
-| tar.zst 成员 | `manifest.json`、`rows.jsonl`、`imu_raw.jsonl`、`frames/*.bin` **必须保留** |
+| tar.zst 成员 | `manifest.json`、`rows.jsonl`、`imu_raw.jsonl`；H264 生产路径 **`streams/*.mp4` 必须**；`frames/*.bin` 仅 legacy/staging_mux |
 | 段内 MP4 | `streams/*.mp4` 为预览/QC 快路径，**不替代** raw 归档 |
 | 后处理 | `ego-hand-pipeline` / rectify **仍在 READY 门禁之后**，接口不变 |
 | LeRobot v3 | `meta/` + `data/*.parquet` + `videos/*.mp4` 三件套不变 |
@@ -25,7 +25,7 @@
 - `STREAM_PRIMARY_PATH=segment_mp4` — 禁止 _staging JPEG 主路径 mux
 - `STREAM_ARCHIVE_PURGE_MAX=0` + `STREAM_RAW_RETAIN_UNTIL_READY=1` — raw tar.zst 保留至后处理
 
-**遗留回退：** 无 `streams/*.mp4` 的旧段仍从 `frames/*.bin` 解码 → staging mux（仅过渡）。
+**遗留回退（v0.0.8）：** 无 `streams/*.mp4` 的旧段仍从 `frames/*.bin` 解码 → staging mux。**v0.0.9+ 已移除该回退**，见 [RELEASE-v0.0.9.md](RELEASE-v0.0.9.md)。
 
 ## 部署（34）
 

@@ -32,6 +32,7 @@ import {
 } from "./lerobot-converter.mjs";
 import {
   archiveSegmentTarZst,
+  assertSegmentMp4Archive,
   ingestSegmentMp4Shards,
   isSegmentMp4PrimaryPath,
   isStreamFramePushEnabled,
@@ -2373,6 +2374,23 @@ async function processSegmentIngestJob(stationId, job) {
   }
 
   const useSegmentMp4 = Boolean(job.segmentMp4 && job.extractDir);
+  if (useSegmentMp4 && job.extractDir) {
+    const mp4Res = await ingestSegmentMp4Shards(root, stationId, sessionId, segmentId, job.extractDir, {
+      videoArtifactRel,
+      setChunkArtifactStatus,
+      streamLog,
+    });
+    if (!mp4Res.ok) {
+      streamLog(stationId, "segment_mp4_fail", {
+        sessionId,
+        segmentId,
+        reason: mp4Res.reason || "ingest_failed",
+        cameras: mp4Res.cameras ?? 0,
+      });
+      throw new Error(`segment_mp4_ingest_failed: ${mp4Res.reason || "unknown"}`);
+    }
+  }
+
   let committed = 0;
   let maxFrame = info.total_frames || 0;
   let minFrame = null;
@@ -2426,37 +2444,11 @@ async function processSegmentIngestJob(stationId, job) {
     }
   }
 
-  if (useSegmentMp4 && job.extractDir) {
-    const mp4Res = await ingestSegmentMp4Shards(root, stationId, sessionId, segmentId, job.extractDir, {
-      videoArtifactRel,
-      setChunkArtifactStatus,
-      streamLog,
-    });
-    if (!mp4Res.ok) {
-      streamLog(stationId, "segment_mp4_fallback_staging", {
-        sessionId,
-        segmentId,
-        reason: mp4Res.reason || "ingest_failed",
-      });
-      for (const f of frames) {
-        const frameIndex = Number(f.frameIndex ?? f.frame_index ?? -1);
-        if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
-        const frameImages = {};
-        for (const videoKey of ingestVideoKeys(root)) {
-          const buf = resolveFrameImage(images, frameIndex, videoKey);
-          if (buf) frameImages[videoKey] = buf;
-        }
-        if (Object.keys(frameImages).length > 0) {
-          stageFrameImages(root, frameIndex, frameImages);
-        }
-      }
-      scheduleMux(stationId);
-    } else {
-      try {
-        await writeMuxValidatedSnapshot(stationId, sessionId);
-      } catch {
-        /* ignore */
-      }
+  if (useSegmentMp4) {
+    try {
+      await writeMuxValidatedSnapshot(stationId, sessionId);
+    } catch {
+      /* ignore */
     }
   }
 
@@ -2533,9 +2525,13 @@ function pumpSegmentIngestQueue(stationId) {
         job._onComplete?.(null, result);
       } catch (err) {
         streamLog(stationId, "segment_commit_error", {
+          sessionId: job.sessionId,
           segmentId: job.segmentId,
           message: String(err?.message || err),
         });
+        if (job.sessionId && job.segmentId) {
+          markSegmentIngestError(stationRoot(stationId), job.sessionId, job.segmentId, err);
+        }
         job._onComplete?.(err);
       }
       n += 1;
@@ -3697,6 +3693,7 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
   if (!fs.existsSync(manifestPath) || !fs.existsSync(rowsPath)) {
     throw new Error("extracted segment missing manifest.json or rows.jsonl");
   }
+  assertSegmentMp4Archive(extractDir);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const episodeMeta = prepareSegmentEpisodeMeta(manifest, stationId);
   const rows = fs

@@ -47,6 +47,16 @@ export function segmentHasStreamMp4(extractDir) {
   return listSegmentStreamMp4s(extractDir).length > 0;
 }
 
+/** v0.0.9+: primary path rejects archives without segment MP4 (no staging fallback). */
+export function assertSegmentMp4Archive(extractDir) {
+  if (!isSegmentMp4PrimaryPath()) return;
+  if (!segmentHasStreamMp4(extractDir)) {
+    throw new Error(
+      "segment_mp4_required: tar.zst must contain streams/*.mp4 when STREAM_PRIMARY_PATH=segment_mp4",
+    );
+  }
+}
+
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }

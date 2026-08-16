@@ -67,6 +67,23 @@ def test_pack_segment_tar_zst_roundtrip(tmp_path: Path, mini_segment: Path) -> N
     assert (extract / "frames" / "00000000.bin").is_file()
 
 
+@pytest.mark.skipif(zstd is None, reason="zstandard not installed")
+def test_pack_includes_streams_mp4(tmp_path: Path, mini_segment: Path) -> None:
+    streams = mini_segment / "streams"
+    streams.mkdir()
+    (streams / "observation_images_camera_front_left.mp4").write_bytes(b"\x00" * 64)
+    out = tmp_path / "seg.tar.zst"
+    pack_segment_tar_zst(mini_segment, out)
+    extract = tmp_path / "extract"
+    extract.mkdir()
+    raw = zstd.ZstdDecompressor().decompress(out.read_bytes())
+    tar_path = tmp_path / "seg.tar"
+    tar_path.write_bytes(raw)
+    with tarfile.open(tar_path, "r") as tar:
+        tar.extractall(extract, filter="data")
+    assert (extract / "streams" / "observation_images_camera_front_left.mp4").is_file()
+
+
 def test_pack_requires_zstd_or_cli(tmp_path: Path, mini_segment: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     out = tmp_path / "seg.tar.zst"
     import segment_tar_zst as mod

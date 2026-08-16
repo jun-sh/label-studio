@@ -49,7 +49,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
   && python3 -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; from lerobot.datasets.video_utils import encode_video_frames" \
   && python3 -c "from mcap.reader import make_reader; from mcap_ros2.writer import Writer"
 
-COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs stream-ingest-startup.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
+COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs stream-ingest-startup.mjs segment-mp4-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
 COPY vendor/ /app/vendor/
 COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
 COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py

@@ -68,8 +68,8 @@ OAK_HW_PREVIEW = os.environ.get("OAK_HW_PREVIEW", "0").strip().lower() in (
     "true",
     "yes",
 )
-# Low-res MJPEG sidecar for collection UI when main path is H.264.
-OAK_HW_PREVIEW_H264 = os.environ.get("OAK_HW_PREVIEW_H264", "1").strip().lower() in (
+# Low-res MJPEG sidecar for collection UI when main path is H.264 (off by default: extra encoders/USB).
+OAK_HW_PREVIEW_H264 = os.environ.get("OAK_HW_PREVIEW_H264", "0").strip().lower() in (
     "1",
     "true",
     "yes",

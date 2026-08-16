@@ -1,4 +1,4 @@
-"""One-shot upload: segments/ pending (Agent) or export/ready/*.tar.zst — with progress status file."""
+"""[DEPRECATED v0.0.8] Use `python -m ego_capture_studio.cli.upload_segments` (tar.zst) instead."""
 
 from __future__ import annotations
 

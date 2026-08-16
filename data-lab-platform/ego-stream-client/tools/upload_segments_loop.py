@@ -169,6 +169,14 @@ def _trim_for_disk_quota(session_id: str, pending: int) -> int:
     return pending
 
 
+def _upload_mode() -> str:
+    """production = manual upload only; debug = background dequeue loop."""
+    mode = os.environ.get("EGO_UPLOAD_MODE", "production").strip().lower()
+    if mode in ("production", "debug"):
+        return mode
+    return "production"
+
+
 def _foreground_upload_active() -> bool:
     """True when manual ego-upload owns the status file (do not clobber from loop)."""
     st = read_status()
@@ -182,6 +190,14 @@ def _foreground_upload_active() -> bool:
 
 
 def main() -> None:
+    if _upload_mode() != "debug":
+        print(
+            "[upload_loop] EGO_UPLOAD_MODE=production：自动上传已禁用。"
+            "请手动执行：python -m ego_capture_studio.cli.upload_segments",
+            flush=True,
+        )
+        sys.exit(0)
+
     writer = UploadStatusWriter.get_default()
     print(
         f"upload_loop start keep_pending_below={KEEP_PENDING_BELOW} "

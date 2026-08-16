@@ -30,6 +30,13 @@ import {
   parseManifestToEpisodeMeta,
   prepareSegmentEpisodeMeta,
 } from "./lerobot-converter.mjs";
+import {
+  archiveSegmentTarZst,
+  ingestSegmentMp4Shards,
+  isSegmentMp4PrimaryPath,
+  isStreamFramePushEnabled,
+  segmentHasStreamMp4,
+} from "./segment-mp4-ingest.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1564,9 +1571,30 @@ function countStagingFrames(root) {
   return countStagingFramesScan(root);
 }
 
-/** Physical JPG count in staging (min across cameras; 0 if any camera missing). */
-export function stagingJpegCount(root) {
+/** Physical JPG count in staging (min across cameras that have staging; inactive cameras skipped). */
+export function stagingActiveVideoKeys(root) {
   const keys = ingestVideoKeys(root);
+  const withStaging = keys.filter((videoKey) => stagingFrameRange(stagingDir(root, videoKey)));
+  return withStaging.length > 0 ? withStaging : keys;
+}
+
+/** Cameras that participate in mux/readiness (staging, MP4 shards, or prior validation). */
+export function activeMuxVideoKeys(root, { probeMp4 = false } = {}) {
+  const keys = ingestVideoKeys(root);
+  const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
+  const validated =
+    muxVal.frames && typeof muxVal.frames === "object" ? muxVal.frames : {};
+  const active = keys.filter((videoKey) => {
+    if (stagingFrameRange(stagingDir(root, videoKey))) return true;
+    if (Number(validated[videoKey] || 0) > 0) return true;
+    if (probeMp4 && probeVideoKeyTotalMp4Frames(root, videoKey) > 0) return true;
+    return false;
+  });
+  return active.length > 0 ? active : keys;
+}
+
+export function stagingJpegCount(root) {
+  const keys = stagingActiveVideoKeys(root);
   if (!keys.length) return 0;
   let minCount = Infinity;
   for (const videoKey of keys) {
@@ -2295,7 +2323,9 @@ function scheduleBackgroundTasks(stationId) {
     st.pending = false;
     const depth = (segmentIngestQueues.get(stationId)?.queue.length) || 0;
     streamLog(stationId, "background_batch", { ingestDepth: depth });
-    scheduleMux(stationId);
+    if (!isSegmentMp4PrimaryPath()) {
+      scheduleMux(stationId);
+    }
     scheduleViewerPublish(stationId);
     scheduleParquetSync(stationId);
     if (depth > 0) {
@@ -2312,7 +2342,7 @@ function getSegmentIngestState(stationId) {
   return segmentIngestQueues.get(stationId);
 }
 
-function processSegmentIngestJob(stationId, job) {
+async function processSegmentIngestJob(stationId, job) {
   const root = stationRoot(stationId);
   if (isViewerScaffold(root)) {
     clearViewerScaffold(root, stationId);
@@ -2342,6 +2372,7 @@ function processSegmentIngestJob(stationId, job) {
     }
   }
 
+  const useSegmentMp4 = Boolean(job.segmentMp4 && job.extractDir);
   let committed = 0;
   let maxFrame = info.total_frames || 0;
   let minFrame = null;
@@ -2352,10 +2383,12 @@ function processSegmentIngestJob(stationId, job) {
     if (isFrameCommitted(root, sessionId, frameIndex)) continue;
 
     const frameImages = {};
-    const keys = ingestVideoKeys(root);
-    for (const videoKey of keys) {
-      const buf = resolveFrameImage(images, frameIndex, videoKey);
-      if (buf) frameImages[videoKey] = buf;
+    if (!useSegmentMp4) {
+      const keys = ingestVideoKeys(root);
+      for (const videoKey of keys) {
+        const buf = resolveFrameImage(images, frameIndex, videoKey);
+        if (buf) frameImages[videoKey] = buf;
+      }
     }
     const row = buildCanonicalFrameRow(
       {
@@ -2369,7 +2402,9 @@ function processSegmentIngestJob(stationId, job) {
       },
       info,
     );
-    stageFrameImages(root, frameIndex, frameImages);
+    if (!useSegmentMp4) {
+      stageFrameImages(root, frameIndex, frameImages);
+    }
     appendSegmentScratchRow(root, sessionId, segmentId, row);
     markFrameCommitted(root, sessionId, frameIndex);
     committed += 1;
@@ -2385,6 +2420,40 @@ function processSegmentIngestJob(stationId, job) {
     if (fs.existsSync(scratch)) {
       try {
         fs.unlinkSync(scratch);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  if (useSegmentMp4 && job.extractDir) {
+    const mp4Res = await ingestSegmentMp4Shards(root, stationId, sessionId, segmentId, job.extractDir, {
+      videoArtifactRel,
+      setChunkArtifactStatus,
+      streamLog,
+    });
+    if (!mp4Res.ok) {
+      streamLog(stationId, "segment_mp4_fallback_staging", {
+        sessionId,
+        segmentId,
+        reason: mp4Res.reason || "ingest_failed",
+      });
+      for (const f of frames) {
+        const frameIndex = Number(f.frameIndex ?? f.frame_index ?? -1);
+        if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
+        const frameImages = {};
+        for (const videoKey of ingestVideoKeys(root)) {
+          const buf = resolveFrameImage(images, frameIndex, videoKey);
+          if (buf) frameImages[videoKey] = buf;
+        }
+        if (Object.keys(frameImages).length > 0) {
+          stageFrameImages(root, frameIndex, frameImages);
+        }
+      }
+      scheduleMux(stationId);
+    } else {
+      try {
+        await writeMuxValidatedSnapshot(stationId, sessionId);
       } catch {
         /* ignore */
       }
@@ -2430,6 +2499,10 @@ function processSegmentIngestJob(stationId, job) {
   }
   touchHeartbeat(root, stationId, host || live.host || null);
 
+  if (!useSegmentMp4 && committed > 0) {
+    scheduleMux(stationId);
+  }
+
   streamLog(stationId, "segment_committed", {
     sessionId,
     segmentId,
@@ -2443,13 +2516,13 @@ function pumpSegmentIngestQueue(stationId) {
   const state = getSegmentIngestState(stationId);
   if (state.workerRunning || state.queue.length === 0) return;
   state.workerRunning = true;
-  setImmediate(() => {
+  setImmediate(async () => {
     let n = 0;
     while (state.queue.length > 0 && n < SEGMENT_INGEST_BATCH_SIZE) {
       const job = state.queue.shift();
       const t0 = Date.now();
       try {
-        const result = processSegmentIngestJob(stationId, job);
+        const result = await processSegmentIngestJob(stationId, job);
         const ms = Date.now() - t0;
         streamLog(stationId, "segment_commit_ms", {
           sessionId: job.sessionId,
@@ -2833,6 +2906,9 @@ function purgeExpiredSessionMarkers(root, activeSessionId) {
 }
 
 function purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes) {
+  if (String(process.env.STREAM_RAW_RETAIN_UNTIL_READY || "0").trim() === "1") {
+    return 0;
+  }
   let usage = cachedDiskUsageBytes(root);
   if (usage == null) usage = dirSizeBytes(root);
   if (usage <= quotaBytes * DISK_HIGH_WATER_RATIO) return 0;
@@ -2918,7 +2994,8 @@ function evaluateMp4Readiness(root, metrics, { forceProbe = false } = {}) {
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
   const cachedFrames = muxVal.frames && typeof muxVal.frames === "object" ? muxVal.frames : null;
   if (cachedFrames && Object.keys(cachedFrames).length > 0) {
-    const vals = ingestVideoKeys(root).map((k) => Number(cachedFrames[k] || 0));
+    const muxKeys = activeMuxVideoKeys(root);
+    const vals = muxKeys.map((k) => Number(cachedFrames[k] || 0));
     if (!vals.some((n) => n <= 0)) {
       const minFrames = Math.min(...vals);
       const maxFrames = Math.max(...vals);
@@ -2934,7 +3011,8 @@ function evaluateMp4Readiness(root, metrics, { forceProbe = false } = {}) {
     return { ok: false, frames: cachedFrames || {}, targetFrames: target, minFrames: 0 };
   }
   const frames = probeStationVideoFrameCounts(root);
-  const vals = ingestVideoKeys(root).map((k) => Number(frames[k] || 0));
+  const muxKeys = activeMuxVideoKeys(root, { probeMp4: true });
+  const vals = muxKeys.map((k) => Number(frames[k] || 0));
   if (vals.some((n) => n <= 0)) {
     return { ok: false, frames, targetFrames: target, minFrames: 0 };
   }
@@ -3629,16 +3707,19 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
     .map((line) => JSON.parse(line));
   const images = {};
   const frames = [];
+  const hasSegmentMp4 = isSegmentMp4PrimaryPath() && segmentHasStreamMp4(extractDir);
   for (const row of rows) {
     const frameIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
     if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
-    const binPath = path.join(extractDir, "frames", `${String(frameIndex).padStart(8, "0")}.bin`);
-    if (!fs.existsSync(binPath)) {
-      throw new Error(`missing frame bin: ${binPath}`);
-    }
-    const cameraJpegs = unpackFrameBin(fs.readFileSync(binPath));
-    for (const [videoKey, jpeg] of Object.entries(cameraJpegs)) {
-      images[segmentImageKey(frameIndex, videoKey)] = jpeg;
+    if (!hasSegmentMp4) {
+      const binPath = path.join(extractDir, "frames", `${String(frameIndex).padStart(8, "0")}.bin`);
+      if (!fs.existsSync(binPath)) {
+        throw new Error(`missing frame bin: ${binPath}`);
+      }
+      const cameraJpegs = unpackFrameBin(fs.readFileSync(binPath));
+      for (const [videoKey, jpeg] of Object.entries(cameraJpegs)) {
+        images[segmentImageKey(frameIndex, videoKey)] = jpeg;
+      }
     }
     frames.push({
       frameIndex,
@@ -3660,6 +3741,8 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
     images,
     host: null,
     episodeMeta,
+    extractDir,
+    segmentMp4: hasSegmentMp4,
   };
 }
 
@@ -3743,6 +3826,7 @@ export async function processTarZstFromFile(filePath, stationId, options = {}) {
     onStatus?.("extracting");
     await extractTarZstArchive(archivePath, extractDir, { expectedSha256: actualSha });
     body = buildSegmentBodyFromExtractedDir(extractDir, stationId);
+    archiveSegmentTarZst(root, body.sessionId, body.segmentId, archivePath);
     if (expectSessionId && body.sessionId !== expectSessionId) {
       throw new Error("manifest session/segment mismatch with upload headers");
     }
@@ -4471,6 +4555,8 @@ export async function handleStreamUpload(stationId, body) {
       ingestSource: body.ingestSource || "stream",
       episodeMeta: body.episodeMeta || null,
       deferSessionPublish: shouldDeferSessionPublish(stationId),
+      extractDir: body.extractDir || null,
+      segmentMp4: Boolean(body.segmentMp4),
     };
 
     if (body.ingestSource === "import" || body.ingestSource === "edge") {
@@ -4521,6 +4607,14 @@ export async function handleStreamUpload(stationId, body) {
   }
 
   if (action === "frame") {
+    if (!isStreamFramePushEnabled()) {
+      streamLog(stationId, "frame_push_rejected", {
+        sessionId: body.sessionId,
+        frameIndex: body.frameIndex,
+        reason: "STREAM_FRAME_PUSH=0",
+      });
+      throw new Error("frame_push disabled; use tar.zst segment upload");
+    }
     if (isStationImportActive(stationId)) {
       enqueueDeferredStreamFrame(stationId, body);
       const frameIndex = Number(body.frameIndex ?? 0);

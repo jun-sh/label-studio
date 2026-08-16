@@ -258,8 +258,16 @@ class _OpenSegmentWriter:
         if SEGMENT_H264 and not SEGMENT_H264_LEGACY_APPEND and self._h264_buffers:
             from ego_capture_studio.capture.segment_h264_mux import mux_h264_buffers_to_mp4
 
-            mux_h264_buffers_to_mp4(self.segment_dir, self._h264_buffers)
-            self._h264_buffers.clear()
+            try:
+                mux_h264_buffers_to_mp4(self.segment_dir, self._h264_buffers)
+            except Exception as exc:
+                # Do not kill persist workers: rows/imu must flush; operator can retry mux.
+                print(
+                    f"segment_h264_mux close failed segment={self.segment_dir.name}: {exc}",
+                    flush=True,
+                )
+            else:
+                self._h264_buffers.clear()
         self._flush_rows()
         self._flush_imu_raw()
         self._rows_fp.flush()

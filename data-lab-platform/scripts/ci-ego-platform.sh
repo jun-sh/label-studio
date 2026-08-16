@@ -30,4 +30,7 @@ if [[ "${MJS_MOUNTS}" -gt 0 ]]; then
 fi
 log "derive-worker mounts ok (no .mjs bind-mount)"
 
+log "=== rc-staging-inert ==="
+bash "${ROOT}/data-lab-platform/scripts/rc-staging-inert.sh"
+
 log "=== CI ego-platform PASSED ==="

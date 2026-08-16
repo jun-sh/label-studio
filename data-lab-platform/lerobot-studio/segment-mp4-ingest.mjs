@@ -23,6 +23,11 @@ export function isStreamFramePushEnabled() {
   return v === "1" || v === "true" || v === "yes";
 }
 
+/** Legacy bin→staging JPEG mux; disabled when STREAM_PRIMARY_PATH=segment_mp4 (production). */
+export function legacyStagingMuxEnabled() {
+  return streamPrimaryPath() === "staging_mux";
+}
+
 /** observation_images_camera_front_left → observation.images.camera_front_left */
 export function videoKeyFromStreamSafeName(filename) {
   const base = String(filename || "").replace(/\.mp4$/i, "");

@@ -36,6 +36,7 @@ import {
   ingestSegmentMp4Shards,
   isSegmentMp4PrimaryPath,
   isStreamFramePushEnabled,
+  legacyStagingMuxEnabled,
   segmentHasStreamMp4,
 } from "./segment-mp4-ingest.mjs";
 
@@ -2100,6 +2101,7 @@ function segmentScratchJsonlPath(root, sessionId, segmentId) {
 }
 
 function stageFrameImages(root, frameIndex, images) {
+  if (!legacyStagingMuxEnabled()) return;
   const inflight = frameInflightDir(root, frameIndex);
   ensureDir(inflight);
   for (const videoKey of ingestVideoKeys(root)) {
@@ -3187,6 +3189,9 @@ export function resetMuxArtifactsForIncrementalRemux(stationId, root) {
 }
 
 export function planMuxRemux(root) {
+  if (!legacyStagingMuxEnabled()) {
+    return { stagingFrames: 0, metrics: {}, fullDatasetMux: false };
+  }
   const stagingFrames = stagingJpegCount(root);
   const metrics = resolveDeriveFrameMetrics(root);
   const rowTarget = metrics.rowCount;

@@ -81,6 +81,27 @@ if [ -d "${SAMPLES}" ]; then
       cp -a "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" "${BUNDLED}/overlays/" || true
     fi
   fi
+  copy_if_newer "${SAMPLES}/egodome.zip" "${BUNDLED}/egodome.zip" || true
+  if [ -d "${SAMPLES}/egodome/dataset" ]; then
+    mkdir -p "${BUNDLED}/egodome"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/egodome/dataset/" "${BUNDLED}/egodome/" || true
+    else
+      rm -rf "${BUNDLED}/egodome"
+      cp -a "${SAMPLES}/egodome/dataset" "${BUNDLED}/egodome" || true
+    fi
+  fi
+  copy_if_newer "${SAMPLES}/egodome_hand_kp2d.json" "${BUNDLED}/overlays/egodome_hand_kp2d.json" || true
+  copy_if_newer "${SAMPLES}/egodome_depth_preview.json" "${BUNDLED}/overlays/egodome_depth_preview.json" || true
+  if [ -d "${SAMPLES}/egodome_depth_preview_frames" ]; then
+    mkdir -p "${BUNDLED}/overlays/egodome_depth_preview_frames"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/egodome_depth_preview_frames/" "${BUNDLED}/overlays/egodome_depth_preview_frames/" || true
+    else
+      rm -rf "${BUNDLED}/overlays/egodome_depth_preview_frames"
+      cp -a "${SAMPLES}/egodome_depth_preview_frames" "${BUNDLED}/overlays/" || true
+    fi
+  fi
   if [ -f "${SAMPLES}/DualPiper Pulling.zip" ]; then
     copy_if_newer "${SAMPLES}/DualPiper Pulling.zip" "${BUNDLED}/dualpiper_pulling.zip" || true
   elif [ -f "${SAMPLES}/DualPiper Pulling.tar" ]; then
@@ -105,6 +126,7 @@ fi
 # --- Cover images (static .webp, same as io-ai.tech) ---
 fetch_cover "sensexperience_ego.webp"
 fetch_cover "ego_214_hand_pose.webp" || copy_if_newer "${SAMPLES}/ego_214_hand_pose.webp" "${BUNDLED}/covers/ego_214_hand_pose.webp" || true
+fetch_cover "egodome.webp" || copy_if_newer "${SAMPLES}/egodome.webp" "${BUNDLED}/covers/egodome.webp" || copy_if_newer "${SAMPLES}/ego_214_hand_pose.webp" "${BUNDLED}/covers/egodome.webp" || true
 fetch_cover "sensexperience_umi.webp"
 fetch_cover "lerobot_dataset_dualairbot_fold.webp"
 fetch_cover "lerobot_dataset_dualpiper_pulling.webp"

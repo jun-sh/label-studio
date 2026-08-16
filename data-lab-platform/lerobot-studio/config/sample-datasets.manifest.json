@@ -47,6 +47,16 @@
       "httpDatasetUrl": "/lerobot/api/sample/ego_214_hand_pose/dataset/",
       "coverImageUrl": "/lerobot/bundled/covers/ego_214_hand_pose.webp",
       "version": "v3"
+    },
+    {
+      "id": "egodome",
+      "title": "EgoDome",
+      "name": "EgoDome",
+      "description": "LeRobot v3.0 · ego-001 with rectify, monocular depth, and hand pose",
+      "archiveUrl": "/lerobot/bundled/egodome.zip",
+      "httpDatasetUrl": "/lerobot/api/sample/egodome/dataset/",
+      "coverImageUrl": "/lerobot/bundled/covers/egodome.webp",
+      "version": "v3"
     }
   ]
 }

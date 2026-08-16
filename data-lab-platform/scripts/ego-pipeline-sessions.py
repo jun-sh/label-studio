@@ -259,6 +259,7 @@ def all_awaiting_parquet_ready(
 def station_slug(pipe_root: Path, station: str) -> str:
     defaults = {
         "ego-lan-214": "ego_214_hand_pose",
+        "ego-001": "egodome",
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
     }

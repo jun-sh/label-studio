@@ -12,7 +12,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
     is_intrinsics_valid,
     load_camera_intrinsics_json,
 )
-from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments, wait_for_segment_deletes
 from ego_capture_studio.capture.segment_upload import SegmentUploader, upload_pending_segments
 
 try:
@@ -103,6 +103,8 @@ def main() -> None:
             limit=limit,
         )
         print(f"uploaded_segments={n}", flush=True)
+        if n > 0:
+            wait_for_segment_deletes()
     finally:
         uploader.close()
 

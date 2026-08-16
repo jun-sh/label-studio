@@ -4196,6 +4196,7 @@ export async function handleStreamUploadRequest(stationId, req) {
 }
 
 function scheduleMux(stationId) {
+  if (isSegmentMp4PrimaryPath()) return;
   const state = muxQueue.get(stationId) || { timer: null, running: false };
   if (state.timer) clearTimeout(state.timer);
   state.timer = setTimeout(() => runMux(stationId), MUX_DEBOUNCE_MS);
@@ -4443,6 +4444,7 @@ async function runMuxCamerasSerial(stationId, root, muxSessionId) {
 }
 
 function runMux(stationId) {
+  if (isSegmentMp4PrimaryPath()) return;
   const state = muxQueue.get(stationId) || { timer: null, running: false };
   if (state.running) {
     state.timer = setTimeout(() => runMux(stationId), MUX_DEBOUNCE_MS);

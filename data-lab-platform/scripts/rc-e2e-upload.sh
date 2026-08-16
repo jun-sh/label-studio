@@ -95,6 +95,26 @@ UPLOAD_SESSION="${UPLOAD_SESSION//$'\n'/}"
 UPLOAD_SESSION="${UPLOAD_SESSION##*$'\n'}"
 UPLOAD_SESSION="${UPLOAD_SESSION//[[:space:]]/}"
 fi
+if [[ "${SKIP_UPLOAD}" == "1" ]]; then
+  if [[ -z "${UPLOAD_SESSION}" && -n "${SESSION}" ]]; then
+    UPLOAD_SESSION="${SESSION}"
+  fi
+  if [[ -z "${UPLOAD_SESSION}" ]]; then
+    UPLOAD_SESSION="$(STREAM_ROOT="${STREAM_ROOT}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+station = os.environ.get("RC_STATION", "ego-001")
+root = Path(os.environ["STREAM_ROOT"]) / station
+live = root / "live" / "session.json"
+if live.is_file():
+    sid = json.loads(live.read_text()).get("sessionId") or ""
+    if sid:
+        print(sid)
+PY
+)"
+  fi
+fi
 if [[ -z "${UPLOAD_SESSION}" ]]; then
   echo "FAIL: no session (set RC_SESSION or RC_SKIP_UPLOAD=0 for upload)"
   exit 1

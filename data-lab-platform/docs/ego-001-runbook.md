@@ -113,6 +113,12 @@ STATION_ID=ego-001 data-lab-platform/scripts/ego-derive run --station ego-001 --
 # 容器 + 主路径
 RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
 
+# 平台 CI 门禁（rc-acceptance + derive READY，无 130 SSH）
+RC_STATION=ego-001 data-lab-platform/scripts/ci-ego-platform.sh
+
+# H264 包数 vs jsonl 审计（≥85%，跨相机差 ≤120）
+RC_STATION=ego-001 data-lab-platform/scripts/ego-130-h264-packet-audit.sh
+
 # 130 上传 + READY（自动发现 session，默认 3 段）
 RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh
 

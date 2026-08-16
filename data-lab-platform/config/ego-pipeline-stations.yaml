@@ -1,0 +1,54 @@
+# Canonical ego pipeline station registry (mirror for data-lab git).
+# Deploy copy to: ../ego-hand-pipeline/configs/stations.yaml
+
+defaults:
+  datalab_root: ../data-lab
+  stream_relpath: data-storage/stream
+  hamer_backend: geopavlakos
+  hamer_device: cuda:0
+  cameras: front_left,front_right
+  video_keys:
+    - observation.images.camera_front_left
+    - observation.images.camera_front_right
+  hands_mode: both
+  detect_backend: mediapipe
+  mediapipe_min_conf: 0.75
+  mediapipe_yolo_fallback: false
+  skip_smooth: false
+  reproj_threshold_px: 12.0
+  reproj_threshold_px_right: 12.0
+  reproj_threshold_px_left: 96.0
+  min_hand_area_ratio: 0.40
+  min_hand_area_ratio_right: 0.40
+  min_hand_area_ratio_left: 0.22
+  yolo_model: models/yolo11n.pt
+  min_free_gb: 5
+
+stations:
+  ego-lan-214:
+    title: Ego-214-Hand-Pose
+    dataset_slug: ego_214_hand_pose
+    aggregate_dir_name: Ego-214-Hand-Pose
+    manifest_id: ego_214_hand_pose
+    cover_webp: ego_214_hand_pose.webp
+
+  ego-001:
+    title: EgoDome
+    dataset_slug: egodome
+    aggregate_dir_name: EgoDome
+    manifest_id: egodome
+    cover_webp: egodome.webp
+
+  ego-lab-01:
+    title: Ego-Lab-01-Hand-Pose
+    dataset_slug: ego_lab_01_hand_pose
+    aggregate_dir_name: Ego-Lab-01-Hand-Pose
+    manifest_id: ego_lab_01_hand_pose
+    cover_webp: ego_lab_01_hand_pose.webp
+
+  ego-field-02:
+    title: Ego-Field-02-Hand-Pose
+    dataset_slug: ego_field_02_hand_pose
+    aggregate_dir_name: Ego-Field-02-Hand-Pose
+    manifest_id: ego_field_02_hand_pose
+    cover_webp: ego_field_02_hand_pose.webp

@@ -1,0 +1,28 @@
+name: ego-platform-rc
+
+on:
+  push:
+    paths:
+      - "data-lab-platform/lerobot-studio/**"
+      - "data-lab-platform/scripts/rc-*.sh"
+      - "data-lab-platform/scripts/ci-ego-platform.sh"
+      - "data-lab-platform/docker-compose*.yml"
+  pull_request:
+    paths:
+      - "data-lab-platform/lerobot-studio/**"
+      - "data-lab-platform/scripts/rc-*.sh"
+      - "data-lab-platform/scripts/ci-ego-platform.sh"
+  workflow_dispatch:
+
+jobs:
+  rc-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip — requires self-hosted 34 stack
+        run: |
+          echo "ego-platform-rc targets self-hosted runners with stream-ingest up."
+          echo "On 34: RC_STATION=ego-001 bash data-lab-platform/scripts/ci-ego-platform.sh"
+          exit 0

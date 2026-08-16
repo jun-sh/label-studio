@@ -119,6 +119,9 @@ RC_STATION=ego-001 data-lab-platform/scripts/ci-ego-platform.sh
 # H264 包数 vs jsonl 审计（≥85%，跨相机差 ≤120）
 RC_STATION=ego-001 data-lab-platform/scripts/ego-130-h264-packet-audit.sh
 
+# 130 可选：H264 remux genpts 调优（新 session 前 A/B 对比）
+bash data-lab-platform/scripts/ego-130-h264-tuning.sh server@10.10.10.130 status
+
 # 130 上传 + READY（自动发现 session，默认 3 段）
 RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh
 

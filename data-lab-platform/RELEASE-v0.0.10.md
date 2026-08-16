@@ -44,5 +44,5 @@ docker-compose ... -f data-lab-platform/docker-compose.dev-mjs-bind.yml up -d st
 
 ## 未纳入本版（后续）
 
-- 删除 `stream-ingest.mjs` 内 legacy staging mux 实现体（仅 hard-disable 调度）
-- 130 编码侧 GOP/关键帧对齐（需 130 实验）
+- 删除 `stream-ingest.mjs` 内 legacy staging mux 实现体（segment_mp4 下已全部禁用调度入口）
+- 130 `genpts` 调优需新 session A/B 验证（`ego-130-h264-tuning.sh enable`）

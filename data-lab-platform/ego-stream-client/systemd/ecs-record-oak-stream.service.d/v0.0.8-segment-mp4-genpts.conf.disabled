@@ -1,0 +1,6 @@
+# Optional 130 tuning: regenerate PTS on H264→MP4 remux (may improve packet/frame alignment on 34).
+# Enable on 130 after baseline capture is verified:
+#   ln -sf v0.0.8-segment-mp4-genpts.conf.disabled v0.0.8-segment-mp4-genpts.conf
+#   systemctl --user daemon-reload && systemctl --user restart ecs-record-oak-stream
+[Service]
+Environment=SEGMENT_H264_FFMPEG_INPUT_FLAGS=-fflags +genpts -avoid_negative_ts make_zero

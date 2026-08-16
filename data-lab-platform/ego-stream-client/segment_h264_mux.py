@@ -87,23 +87,26 @@ def mux_h264_buffers_to_mp4(
         mp4_path = out_dir / f"{safe}.mp4"
         h264_path.write_bytes(b"".join(chunks))
         try:
+            input_flags = os.environ.get("SEGMENT_H264_FFMPEG_INPUT_FLAGS", "").strip().split()
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                *input_flags,
+                "-f",
+                "h264",
+                "-r",
+                str(rate),
+                "-i",
+                str(h264_path),
+                "-c",
+                "copy",
+                str(mp4_path),
+            ]
             subprocess.run(
-                [
-                    ffmpeg,
-                    "-y",
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "h264",
-                    "-r",
-                    str(rate),
-                    "-i",
-                    str(h264_path),
-                    "-c",
-                    "copy",
-                    str(mp4_path),
-                ],
+                cmd,
                 check=True,
                 timeout=180,
             )

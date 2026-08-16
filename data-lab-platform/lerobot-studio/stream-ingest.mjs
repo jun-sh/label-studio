@@ -1971,7 +1971,9 @@ export function finalizeSessionPublish(stationId, sessionId) {
   });
   syncInfoEpisodeCount(root);
   streamLog(stationId, "session_finalize_start", { sessionId });
-  scheduleMux(stationId);
+  if (!isSegmentMp4PrimaryPath()) {
+    scheduleMux(stationId);
+  }
 }
 
 function onSessionFinalizeParquetDone(stationId) {
@@ -5128,12 +5130,15 @@ export function refreshStreamEpisodesCatalog(stationId) {
     publishSessionProgressive(stationId);
     return;
   }
-  scheduleMux(stationId);
+  if (!isSegmentMp4PrimaryPath()) {
+    scheduleMux(stationId);
+  }
   runParquetSync(stationId);
 }
 
 /** Resume video mux for stations that still have staging jpgs or unfinished mp4 publish flags. */
 export function resumePendingStreamMuxForAllStations() {
+  if (isSegmentMp4PrimaryPath()) return;
   if (!fs.existsSync(STREAM_ROOT)) return;
   for (const stationId of fs.readdirSync(STREAM_ROOT)) {
     const root = stationRoot(stationId);

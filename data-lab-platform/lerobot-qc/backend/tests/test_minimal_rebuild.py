@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -166,7 +167,18 @@ def _prepare_store(dataset_root: Path, sidecar_base: Path) -> QcStore:
     return store
 
 
-def test_minimal_rebuild_preserves_schema_videos_and_payload(minimal_dataset: tuple[Path, Path], tmp_path: Path) -> None:
+@patch("video_delivery.keep_episodes_from_video")
+def test_minimal_rebuild_preserves_schema_videos_and_payload(
+    mock_reencode,
+    minimal_dataset: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    def _fake_reencode(src: Path, dst: Path, ranges, fps, vcodec, pix_fmt) -> None:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+
+    mock_reencode.side_effect = _fake_reencode
+
     dataset_root, sidecar_base = minimal_dataset
     store = _prepare_store(dataset_root, sidecar_base)
     state = load_local_dataset(str(dataset_root))
@@ -185,6 +197,9 @@ def test_minimal_rebuild_preserves_schema_videos_and_payload(minimal_dataset: tu
     assert result["removed_episodes"] == 1
     assert result["rebuild_mode"] == "minimal"
 
+    assert result["videos_reencoded"] == 2
+    assert result["videos_copied"] == 0
+
     orig_ep = pq.read_table(dataset_root / "meta/episodes/chunk-000/file-000.parquet").to_pandas()
     reb_ep = pq.read_table(output_root / "meta/episodes/chunk-000/file-000.parquet").to_pandas()
     assert list(orig_ep.columns) == list(reb_ep.columns)
@@ -197,8 +212,10 @@ def test_minimal_rebuild_preserves_schema_videos_and_payload(minimal_dataset: tu
     assert reb_ep.iloc[1]["dataset_to_index"] == 10
     assert reb_ep.iloc[0]["tasks"] == ["place the cube on the plate"]
     assert reb_ep.iloc[0]["videos/observation.images.top/from_timestamp"] == 0.0
-    # Second kept row is original episode 2 (episode 1 was removed).
-    assert reb_ep.iloc[1]["videos/observation.images.top/from_timestamp"] == 2.0
+    assert reb_ep.iloc[0]["videos/observation.images.top/to_timestamp"] == 1.0
+    # Mixed shared file is re-indexed after removing episode 1.
+    assert reb_ep.iloc[1]["videos/observation.images.top/from_timestamp"] == 1.0
+    assert reb_ep.iloc[1]["videos/observation.images.top/to_timestamp"] == 2.0
 
     orig_data = pq.read_table(dataset_root / "data/chunk-000/file-000.parquet").to_pandas()
     reb_data = pq.read_table(output_root / "data/chunk-000/file-000.parquet").to_pandas()
@@ -215,10 +232,9 @@ def test_minimal_rebuild_preserves_schema_videos_and_payload(minimal_dataset: tu
     assert info["total_frames"] == 10
     assert info["splits"] == {"train": "0:2"}
 
-    assert (output_root / "videos/observation.images.top/chunk-000/file-000.mp4").read_bytes() == b"shared-rgb"
-    assert (output_root / "videos/observation.images.depth/chunk-000/file-000.mkv").read_bytes() == b"shared-depth"
-    assert list((output_root / "videos").rglob("*.mp4"))
-    assert list((output_root / "videos").rglob("*.mkv"))
+    assert mock_reencode.call_count == 2
+    assert (output_root / "videos/observation.images.top/chunk-000/file-000.mp4").exists()
+    assert (output_root / "videos/observation.images.depth/chunk-000/file-000.mkv").exists()
     assert not (output_root / "qc_report.txt").exists()
     assert not (output_root / "removed_episodes.txt").exists()
     report_path = store.sidecar_root / "delivery_reports" / "testbatch.txt"

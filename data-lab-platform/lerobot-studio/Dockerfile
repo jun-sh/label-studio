@@ -46,8 +46,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
        pip3 install --break-system-packages --no-cache-dir --default-timeout=600 \
          -i https://pypi.tuna.tsinghua.edu.cn/simple "lerobot==0.4.4" --no-deps; \
      fi \
-  && python3 -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; from lerobot.datasets.video_utils import encode_video_frames" \
-  && python3 -c "from mcap.reader import make_reader; from mcap_ros2.writer import Writer"
+  && python3 -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; from lerobot.datasets.video_utils import encode_video_frames"
 
 COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs stream-ingest-startup.mjs segment-mp4-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
 COPY vendor/ /app/vendor/
@@ -56,10 +55,8 @@ COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
 COPY session-markers.mjs derive-lock.mjs ego-derive-run.mjs ego-derive-watch.mjs /app/
 COPY scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py
 COPY scripts/export-videos-from-parquet.py /app/scripts/export-videos-from-parquet.py
-COPY scripts/export_segment_to_mcap.py /app/scripts/export_segment_to_mcap.py
-COPY scripts/validate_mcap_export.py /app/scripts/validate_mcap_export.py
-COPY scripts/package_delivery_sample.py /app/scripts/package_delivery_sample.py
-COPY scripts/ego_mcap/ /app/scripts/ego_mcap/
+COPY scripts/ingest-imu-high-freq.py /app/scripts/ingest-imu-high-freq.py
+COPY scripts/sync-vendor-annotations.py /app/scripts/sync-vendor-annotations.py
 COPY patches/apply-branding.sh /app/patches/apply-branding.sh
 COPY patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
 COPY patches/patch-playback-mode.sh /app/patches/patch-playback-mode.sh
@@ -81,8 +78,6 @@ ENV LEROBOT_DATASETS_JSON=/app/config/datasets.json
 ENV NODE_ENV=production
 ENV DERIVE_PARQUET_BACKEND=lerobot
 ENV DERIVE_VIDEO_EXPORT_BACKEND=lerobot
-ENV DERIVE_MCAP_EXPORT=0
-ENV DERIVE_MCAP_VALIDATE=1
 
 EXPOSE 7860
 

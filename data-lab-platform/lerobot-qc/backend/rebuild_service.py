@@ -20,6 +20,8 @@ import pyarrow.parquet as pq
 from dataset_manager import DatasetState, _load_tasks_map
 from qc_metrics import read_episode_frames
 from qc_store import QcStore
+from stats_service import recompute_dataset_stats
+from video_delivery import format_video_progress, selective_process_videos
 from video_service import expected_video_duration, trim_video_for_delivery
 
 CHUNKS_SIZE_DEFAULT = 1000
@@ -219,7 +221,13 @@ def _build_episode_mapping(
     return kept, {old: new for new, old in enumerate(kept)}
 
 
-def _copy_dataset_tree(src_root: Path, dst_root: Path) -> None:
+def _copy_dataset_tree(src_root: Path, dst_root: Path, *, skip_videos: bool = False) -> None:
+    if skip_videos:
+        def _ignore_videos(_dir: str, names: list[str]) -> list[str]:
+            return ["videos"] if "videos" in names else []
+
+        shutil.copytree(src_root, dst_root, ignore=_ignore_videos, dirs_exist_ok=False)
+        return
     shutil.copytree(src_root, dst_root, dirs_exist_ok=False)
 
 
@@ -247,8 +255,9 @@ def _filter_episodes_parquet(
     kept: list[int],
     old_to_new: dict[int, int],
     store: QcStore,
+    video_metadata: dict[int, dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
-    """Preserve original columns; patch episode_index, dataset bounds, and tasks overrides."""
+    """Preserve original columns; patch episode_index, dataset bounds, tasks, and video refs."""
     rows: list[pd.Series] = []
     global_offset = 0
     for original_index in kept:
@@ -256,9 +265,13 @@ def _filter_episodes_parquet(
         src = _patch_episode_tasks(src, store, original_index)
         length = int(src["length"]) if "length" in src.index and pd.notna(src["length"]) else 0
         patched = src.copy()
-        patched["episode_index"] = old_to_new[original_index]
+        new_index = old_to_new[original_index]
+        patched["episode_index"] = new_index
         patched["dataset_from_index"] = global_offset
         patched["dataset_to_index"] = global_offset + length
+        if video_metadata:
+            for key, value in (video_metadata.get(new_index) or {}).items():
+                patched[key] = value
         global_offset += length
         rows.append(patched)
 
@@ -306,30 +319,6 @@ def _filter_data_parquet(
     return len(df)
 
 
-def _update_stats_frame_counts(stats: dict[str, Any], old_total: int, new_total: int) -> None:
-    for section in stats.values():
-        if not isinstance(section, dict):
-            continue
-        count = section.get("count")
-        if isinstance(count, list) and len(count) == 1 and count[0] == old_total:
-            section["count"] = [new_total]
-        elif count == old_total:
-            section["count"] = new_total
-
-
-def _recompute_global_stats(output_root: Path, *, old_total_frames: int, new_total_frames: int) -> None:
-    stats_path = output_root / "meta" / "stats.json"
-    if not stats_path.is_file():
-        return
-    try:
-        stats = json.loads(stats_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    if old_total_frames > 0 and new_total_frames != old_total_frames:
-        _update_stats_frame_counts(stats, old_total_frames, new_total_frames)
-    _write_json(stats_path, stats)
-
-
 def _write_delivery_report(
     store: QcStore,
     *,
@@ -352,19 +341,28 @@ def _delivery_report_lines(
     kept: list[int],
     removed: set[int],
     store: QcStore,
+    video_stats: dict[str, int] | None = None,
 ) -> list[str]:
-    return [
+    lines = [
         "LeRobot QC Delivery Report",
         f"Generated: {_utc_now()}",
         f"Source dataset: {state.dataset_root}",
         f"Output dataset: {output_root}",
         f"Batch ID: {batch_id}",
-        f"Rebuild mode: minimal",
+        f"Rebuild mode: minimal (selective re-encode)",
         f"Original episodes: {len(all_indices)}",
         f"Removed episodes: {len(removed)}",
         f"Delivered episodes: {len(kept)}",
         f"Instruction corrections: {len(store.manifest.get('instruction_overrides') or {})}",
     ]
+    if video_stats:
+        lines.append(
+            "Video files: "
+            f"{video_stats.get('copied', 0)} copied, "
+            f"{video_stats.get('reencoded', 0)} re-encoded, "
+            f"{video_stats.get('skipped', 0)} skipped"
+        )
+    return lines
 
 
 def _try_finalize(output_root: Path) -> tuple[bool, str | None]:
@@ -480,13 +478,12 @@ def _rebuild_minimal_delivery_dataset(
     removed = store.removed_episode_indices()
     all_indices = [int(x) for x in state.episodes_df["episode_index"].tolist()]
     kept, old_to_new = _build_episode_mapping(all_indices, removed)
-    old_total_frames = int(state.info.get("total_frames") or 0)
 
     if output_root.exists():
         raise ValueError(f"Output directory already exists: {output_root}")
 
     _sync_job(job_id, store, progress="copying dataset", status="running")
-    _copy_dataset_tree(state.dataset_root, output_root)
+    _copy_dataset_tree(state.dataset_root, output_root, skip_videos=True)
 
     total_frames = 0
     data_files = sorted((state.dataset_root / "data").rglob("*.parquet"))
@@ -507,6 +504,35 @@ def _rebuild_minimal_delivery_dataset(
             old_to_new=old_to_new,
         )
 
+    def _report_video_progress(
+        current: int,
+        total: int,
+        action: str,
+        video_key: str,
+        chunk_index: int,
+        file_index: int,
+    ) -> None:
+        _sync_job(
+            job_id,
+            store,
+            progress=format_video_progress(action, video_key, chunk_index, file_index),
+            progress_current=current,
+            progress_total=total,
+            status="running",
+        )
+
+    video_metadata, video_stats = selective_process_videos(
+        info=state.info,
+        episodes_df=state.episodes_df,
+        video_keys=state.video_keys(),
+        src_root=state.dataset_root,
+        dst_root=output_root,
+        kept_episode_indices=kept,
+        old_to_new=old_to_new,
+        fps=state.fps,
+        on_progress=_report_video_progress,
+    )
+
     episode_files = sorted((state.dataset_root / "meta" / "episodes").rglob("*.parquet"))
     for index, src_parquet in enumerate(episode_files, start=1):
         rel = src_parquet.relative_to(state.dataset_root / "meta" / "episodes")
@@ -524,6 +550,7 @@ def _rebuild_minimal_delivery_dataset(
             kept=kept,
             old_to_new=old_to_new,
             store=store,
+            video_metadata=video_metadata,
         )
         schema = pq.read_schema(src_parquet)
         _atomic_write_parquet(
@@ -537,7 +564,10 @@ def _rebuild_minimal_delivery_dataset(
     info["codebase_version"] = "v3.0"
     _update_splits(info, len(kept))
     _write_json(output_root / "meta" / "info.json", info)
-    _recompute_global_stats(output_root, old_total_frames=old_total_frames, new_total_frames=total_frames)
+    _sync_job(job_id, store, progress="recomputing stats", status="running")
+    stats_recomputed = recompute_dataset_stats(output_root, info)
+    if not stats_recomputed:
+        logger.warning("Failed to fully recompute stats.json for %s", output_root)
 
     report_path = _write_delivery_report(
         store,
@@ -550,6 +580,7 @@ def _rebuild_minimal_delivery_dataset(
             kept=kept,
             removed=removed,
             store=store,
+            video_stats=video_stats,
         ),
     )
 
@@ -560,6 +591,9 @@ def _rebuild_minimal_delivery_dataset(
         "finalized": False,
         "rebuild_mode": "minimal",
         "report_path": str(report_path),
+        "videos_copied": video_stats.get("copied", 0),
+        "videos_reencoded": video_stats.get("reencoded", 0),
+        "stats_recomputed": stats_recomputed,
     }
 
 

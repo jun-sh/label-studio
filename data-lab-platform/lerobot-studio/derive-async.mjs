@@ -582,6 +582,8 @@ export function getDeriveStatusSummary(stationId, { sessionId: sessionFilter } =
         : 0;
 
   const muxRetry = readJson(path.join(root, "live", "derive", "mux_retry_state.json"), {});
+  const imuHighFreq = readJson(path.join(root, "live", "derive", "imu_high_freq.json"), {});
+  const vendorAnnotations = readJson(path.join(root, "live", "derive", "vendor_annotations.json"), {});
 
   const summary = {
     version: 3,
@@ -617,6 +619,19 @@ export function getDeriveStatusSummary(stationId, { sessionId: sessionFilter } =
       UPLOADED: "Raw tar.zst verified on disk; derive in progress until READY",
       READY: "Parquet rows + MP4 frames validated on disk",
     },
+    highFreqImu: imuHighFreq.ok
+      ? {
+          path: imuHighFreq.path || null,
+          rows: imuHighFreq.rows ?? imuHighFreq.record_count ?? null,
+          rateHz: imuHighFreq.imu_hz_nominal ?? 200,
+        }
+      : null,
+    vendorAnnotations: vendorAnnotations.ok
+      ? {
+          subtaskSegmentsRows: vendorAnnotations.subtask_segments_rows ?? 0,
+          contactPixelRows: vendorAnnotations.contact_pixel_rows ?? 0,
+        }
+      : null,
   };
 
   if (shouldExposeInternalDeriveApi()) {

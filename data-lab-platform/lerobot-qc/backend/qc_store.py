@@ -343,17 +343,31 @@ class QcStore:
             entries.append(json.loads(line))
         return entries
 
-    def review_summary(self, all_episode_indices: list[int]) -> dict[str, Any]:
+    def review_summary(
+        self,
+        all_episode_indices: list[int] | None = None,
+        *,
+        total_episodes: int | None = None,
+    ) -> dict[str, Any]:
+        total = total_episodes if total_episodes is not None else len(all_episode_indices or [])
         counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
-        for ep_idx in all_episode_indices:
-            status = self.get_review(ep_idx).get("status") or "pending"
+        reviews = self.manifest.get("reviews") or {}
+        reviewed_indices: set[int] = set()
+        for key, record in reviews.items():
+            try:
+                ep_idx = int(key)
+            except (TypeError, ValueError):
+                continue
+            reviewed_indices.add(ep_idx)
+            status = record.get("status") or "pending"
             if status not in counts:
                 status = "pending"
             counts[status] += 1
-        visible = len(self.visible_episode_indices(all_episode_indices))
+        counts["pending"] += max(0, total - len(reviewed_indices))
+        visible = total - len(self.removed_episode_indices())
         return {
-            "total": len(all_episode_indices),
+            "total": total,
             "visible": visible,
-            "removed_preview": len(all_episode_indices) - visible,
+            "removed_preview": total - visible,
             **counts,
         }

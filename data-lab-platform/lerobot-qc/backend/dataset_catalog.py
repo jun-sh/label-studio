@@ -367,15 +367,11 @@ def allowed_dataset_roots() -> list[Path]:
         if storage_path.is_dir():
             roots.add(storage_path)
 
-    for collection in list_collections():
-        for pkg in collection.get("packages") or []:
-            local_path = pkg.get("local_path")
-            if not local_path:
-                continue
-            pkg_root = Path(str(local_path)).expanduser().resolve()
-            roots.add(pkg_root)
-            if pkg_root.parent.is_dir():
-                roots.add(pkg_root.parent)
+    host_media = os.environ.get("LEROBOT_QC_HOST_MEDIA", "").strip()
+    if host_media:
+        host_root = Path(host_media).expanduser().resolve()
+        if host_root.is_dir():
+            roots.add(host_root)
 
     return sorted(roots)
 

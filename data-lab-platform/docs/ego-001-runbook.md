@@ -163,5 +163,6 @@ docker-compose ... -f data-lab-platform/docker-compose.v0.0.9.yml up -d stream-i
 ## 相关文档
 
 - [RELEASE-v0.0.9.2.md](../RELEASE-v0.0.9.2.md) — 变更与部署
+- [ego-lerobot-vendor-ext-migration.md](ego-lerobot-vendor-ext-migration.md) — MCAP 剥离 + high_freq IMU 商用扩展
 - [ego-130-upload-policy.md](ego-130-upload-policy.md) — 上传策略
 - [RELEASE-v0.0.8.md](../RELEASE-v0.0.8.md) — tar.zst 契约

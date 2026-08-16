@@ -21,7 +21,7 @@ import {
   isFullMuxMode,
   probeMp4FrameCount as execProbeMp4FrameCount,
 } from "./mux-exec.mjs";
-import { hasSessionMarker, SESSION_MARKERS, markSessionMcapFailed } from "./session-markers.mjs";
+import { hasSessionMarker, SESSION_MARKERS } from "./session-markers.mjs";
 import {
   attachEpisodeMetaToIndexEntry,
   bootstrapDatasetSchema,
@@ -866,50 +866,6 @@ export function spawnFinalizeSessionEpisodeSync(root, sessionId) {
   }
 }
 
-const EXPORT_MCAP_SCRIPT = path.join(__dirname, "scripts", "export_segment_to_mcap.py");
-
-export function mcapExportEnabled() {
-  return String(process.env.DERIVE_MCAP_EXPORT || "0").trim() === "1";
-}
-
-export function mcapValidateEnabled() {
-  const v = process.env.DERIVE_MCAP_VALIDATE;
-  if (v === undefined || v === null || String(v).trim() === "") return true;
-  const s = String(v).trim().toLowerCase();
-  return s !== "0" && s !== "false" && s !== "no";
-}
-
-export function spawnExportSegmentMcapSync(root, extractDir, sessionId, segmentId) {
-  const py = resolveParquetPython();
-  if (!py) throw new Error("no_python_for_mcap");
-  const outDir = path.join(root, "raw", "mcap", sessionId);
-  fs.mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, `${segmentId}.mcap`);
-  const intrinsicsPath = path.join(root, "meta", "camera_intrinsics.json");
-  const args = [EXPORT_MCAP_SCRIPT, extractDir, "-o", outPath];
-  if (fs.existsSync(intrinsicsPath)) {
-    args.push("--intrinsics", intrinsicsPath);
-  }
-  if (!mcapValidateEnabled()) {
-    args.push("--no-validate-imu");
-  }
-  const res = spawnSync(py, args, {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPATH: path.join(__dirname, "scripts"),
-    },
-  });
-  if (res.status !== 0) {
-    throw new Error(String(res.stderr || res.stdout || "mcap export failed").slice(0, 500));
-  }
-  try {
-    return JSON.parse(String(res.stdout || "{}").trim() || "{}");
-  } catch {
-    return { ok: true, out_path: outPath };
-  }
-}
-
 const EXPORT_VIDEOS_SCRIPT = path.join(__dirname, "scripts", "export-videos-from-parquet.py");
 
 /** Official LeRobot only — videos encoded by LeRobotDataset.save_episode(). */
@@ -981,7 +937,7 @@ function readJsonlFrameMetrics(root) {
   return { count, min, max, span: max - min + 1 };
 }
 
-/** Sum row counts across all official LeRobot data parquet shards (file-000, file-001, …). */
+/** Sum row counts across main LeRobot data parquet shards (excludes high_freq/). */
 function readLeRobotDataParquetRows(root) {
   const py = resolveParquetPython();
   if (!py) return 0;
@@ -989,7 +945,7 @@ function readLeRobotDataParquetRows(root) {
     py,
     [
       "-c",
-      "import sys, pyarrow.parquet as pq; from pathlib import Path; r=Path(sys.argv[1]); print(sum(pq.read_metadata(p).num_rows for p in sorted(r.glob('data/**/*.parquet'))))",
+      "import sys, pyarrow.parquet as pq; from pathlib import Path; r=Path(sys.argv[1]); shards=[p for p in sorted(r.glob('data/**/*.parquet')) if 'high_freq' not in p.parts]; print(sum(pq.read_metadata(p).num_rows for p in shards))",
       root,
     ],
     { ...parquetSpawnOptions(), encoding: "utf8" },
@@ -997,6 +953,48 @@ function readLeRobotDataParquetRows(root) {
   if (res.status !== 0) return 0;
   const n = Number(String(res.stdout || "").trim());
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+const IMU_HIGH_FREQ_SCRIPT = path.join(__dirname, "scripts", "ingest-imu-high-freq.py");
+
+/** imu_raw.jsonl (tar.zst) → data/chunk-000/high_freq/imu_200hz.parquet + vendor_meta. */
+export function spawnImuHighFreqIngestSync(root, sessionId) {
+  if (!sessionId || !fs.existsSync(IMU_HIGH_FREQ_SCRIPT)) return { ok: false, skipped: true };
+  const py = resolveParquetPython();
+  if (!py) throw new Error("no_python_for_imu_high_freq");
+  const res = spawnSync(py, [IMU_HIGH_FREQ_SCRIPT, root, "--session", sessionId], {
+    ...parquetSpawnOptions(),
+    encoding: "utf8",
+  });
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "imu high_freq ingest failed").slice(0, 500));
+  }
+  try {
+    return JSON.parse(String(res.stdout || "{}").trim() || "{}");
+  } catch {
+    return { ok: true };
+  }
+}
+
+const VENDOR_ANNOTATIONS_SCRIPT = path.join(__dirname, "scripts", "sync-vendor-annotations.py");
+
+/** meta/annotations.parquet → meta/vendor_annotations/* + vendor_meta.vendor_annotations. */
+export function spawnVendorAnnotationsSync(root) {
+  if (!fs.existsSync(VENDOR_ANNOTATIONS_SCRIPT)) return { ok: false, skipped: true };
+  const py = resolveParquetPython();
+  if (!py) throw new Error("no_python_for_vendor_annotations");
+  const res = spawnSync(py, [VENDOR_ANNOTATIONS_SCRIPT, root], {
+    ...parquetSpawnOptions(),
+    encoding: "utf8",
+  });
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "vendor_annotations sync failed").slice(0, 500));
+  }
+  try {
+    return JSON.parse(String(res.stdout || "{}").trim() || "{}");
+  } catch {
+    return { ok: true };
+  }
 }
 
 /**
@@ -1264,32 +1262,6 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
       deferSave: Boolean(append.defer_save),
       episodeSaved: append.episode_saved !== false,
     });
-    if (mcapExportEnabled()) {
-      try {
-        const mcapReport = spawnExportSegmentMcapSync(
-          root,
-          extractDir,
-          body.sessionId,
-          body.segmentId,
-        );
-        streamLog(stationId, "mcap_export_ok", {
-          sessionId: body.sessionId,
-          segmentId: body.segmentId,
-          outPath: mcapReport.out_path || null,
-          degradedImu: Boolean(mcapReport.degraded_imu),
-        });
-      } catch (mcapErr) {
-        const message = String(mcapErr?.message || mcapErr).slice(0, 300);
-        streamLog(stationId, "mcap_export_fail", {
-          sessionId: body.sessionId,
-          segmentId: body.segmentId,
-          message,
-        });
-        markSessionMcapFailed(root, body.sessionId, message, {
-          segmentId: body.segmentId,
-        });
-      }
-    }
     syncEpisodesMetaOnly(stationId);
     streamLog(stationId, "derive_segment_ok", {
       sessionId: body.sessionId,

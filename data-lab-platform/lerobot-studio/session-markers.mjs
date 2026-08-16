@@ -10,7 +10,6 @@ export const SESSION_MARKERS = {
   DERIVING: "session.DERIVING",
   READY: "session.READY",
   FAILED: "session.FAILED",
-  MCAP_FAILED: "session.MCAP_FAILED",
 };
 
 export function sessionStateDir(root, sessionId) {
@@ -86,13 +85,6 @@ export function markSessionFailed(root, sessionId, error, meta = {}) {
   clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
   writeSessionMarker(root, sessionId, SESSION_MARKERS.FAILED, {
     message: String(error || "derive_failed").slice(0, 500),
-    ...meta,
-  });
-}
-
-export function markSessionMcapFailed(root, sessionId, error, meta = {}) {
-  writeSessionMarker(root, sessionId, SESSION_MARKERS.MCAP_FAILED, {
-    message: String(error || "mcap_export_failed").slice(0, 500),
     ...meta,
   });
 }

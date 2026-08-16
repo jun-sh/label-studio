@@ -33,4 +33,7 @@ log "derive-worker mounts ok (no .mjs bind-mount)"
 log "=== rc-staging-inert ==="
 bash "${ROOT}/data-lab-platform/scripts/rc-staging-inert.sh"
 
+log "=== rc-high-freq-imu ==="
+bash "${ROOT}/data-lab-platform/scripts/rc-high-freq-imu.sh"
+
 log "=== CI ego-platform PASSED ==="

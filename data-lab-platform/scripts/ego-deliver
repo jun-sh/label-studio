@@ -104,7 +104,7 @@ if [[ "$uploaded" -eq 0 ]]; then
 fi
 REMOTE
 
-log "=== 2/3 等待 34 派生（LeRobot + MCAP + MP4）==="
+log "=== 2/3 等待 34 派生（LeRobot + MP4）==="
 deadline=$(( $(date +%s) + DERIVE_TIMEOUT_SEC ))
 STREAM="${DATALAB_ROOT}/data-storage/stream/${STATION}"
 last_pct=""

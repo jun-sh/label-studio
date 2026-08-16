@@ -193,6 +193,19 @@
     color: var(--color-neutral-content-subtle, #6b6860);
     word-break: break-all;
   }
+  #datalab-vendor-meta {
+    margin-left: 12px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--color-neutral-content-subtle, #6b6860);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: min(520px, 48vw);
+  }
+  #datalab-vendor-meta[hidden] {
+    display: none !important;
+  }
 </style>
 {% endblock %}
 
@@ -211,7 +224,6 @@
     var LIST_SRC = "/_datalab/collection-embed.html?v=11&lang=" + encodeURIComponent(LANG);
     var DEFAULT_DATASET_URL = "stream://ego-lan-214";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
-    var VIZ_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站 · 214{% else %}EGO station · 214{% endif %}";
     var LOADING_LABEL = "{% if user.ui_locale|slice:':2' == 'zh' %}正在连接采集站…{% else %}Connecting to station…{% endif %}";
     var LOADING_LAYER = "datalab-stream-loading-layer";
     var ZH = LANG.indexOf("zh") === 0;
@@ -285,6 +297,50 @@
         return raw.length > 100 ? raw.slice(0, 100) + "…" : raw;
       }
       return raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+    }
+
+    function formatVendorMetaLine(info, deriveData) {
+      var parts = [];
+      var imu = (info && info.vendor_meta && info.vendor_meta.high_freq && info.vendor_meta.high_freq.imu_200hz) || null;
+      if (!imu && deriveData && deriveData.highFreqImu) {
+        imu = {
+          rate_hz: deriveData.highFreqImu.rateHz,
+          record_count: deriveData.highFreqImu.rows,
+          path: deriveData.highFreqImu.path,
+        };
+      }
+      if (imu) {
+        var rows = imu.record_count != null ? imu.record_count : imu.rows;
+        var rateHz = imu.rate_hz;
+        if (rateHz == null && deriveData && deriveData.highFreqImu) {
+          rateHz = deriveData.highFreqImu.rateHz;
+        }
+        parts.push(
+          (ZH ? "IMU " : "IMU ") + (rateHz || "?") + "Hz · " + (rows != null ? rows : "—") + (ZH ? " 行" : " rows"),
+        );
+      }
+      var va =
+        (info && info.vendor_meta && info.vendor_meta.vendor_annotations) ||
+        (deriveData && deriveData.vendorAnnotations) ||
+        null;
+      if (va && va.subtask_segments && va.subtask_segments.row_count != null) {
+        parts.push((ZH ? "子任务 " : "subtasks ") + va.subtask_segments.row_count);
+      } else if (va && va.subtaskSegmentsRows != null) {
+        parts.push((ZH ? "子任务 " : "subtasks ") + va.subtaskSegmentsRows);
+      }
+      return parts.join(" · ");
+    }
+
+    function updateVendorMetaUi(el, info, deriveData) {
+      if (!el) return;
+      var line = formatVendorMetaLine(info, deriveData);
+      if (!line) {
+        el.hidden = true;
+        el.textContent = "";
+        return;
+      }
+      el.hidden = false;
+      el.textContent = line;
     }
 
     function updateDeriveProgressUi(stationId, rootEl, mode) {
@@ -415,6 +471,9 @@
           if (phase === "READY" && typeof g.__datalabCollectionStopDerivePoll === "function") {
             g.__datalabCollectionStopDerivePoll();
           }
+          if (typeof g.__datalabCollectionUpdateVendorMeta === "function") {
+            g.__datalabCollectionUpdateVendorMeta(null, data);
+          }
         })
         .catch(function () {
           /* keep last UI */
@@ -451,6 +510,19 @@
         stream: true,
         datasetUrl: "stream://" + stationId,
       };
+    }
+
+    function stationDisplayNameFromId(stationId) {
+      var id = String(stationId || "").trim();
+      if (!id) return ZH ? "EGO 采集站" : "EGO station";
+      return (ZH ? "EGO 采集站 · " : "EGO station · ") + id;
+    }
+
+    function stationDisplayName(station) {
+      if (!station) return stationDisplayNameFromId("");
+      if (!ZH && station.name_en) return station.name_en;
+      if (station.name) return station.name;
+      return stationDisplayNameFromId(station.id);
     }
 
     function buildLerobotSrc(datasetUrl, cacheBust) {
@@ -686,7 +758,10 @@
       notifyMenuReconcile();
     }
 
-    function mountStationShell(stationId, datasetUrl, stationOnline, datasetReady) {
+    function mountStationShell(station, datasetReady) {
+      var stationId = station.id;
+      var datasetUrl = station.datasetUrl || "stream://" + stationId;
+      var stationOnline = Boolean(station.online);
       removeLayer(LOADING_LAYER);
       removeLayer(COLLECTION_LAYER);
       removeLayer(VIZ_LAYER);
@@ -705,6 +780,7 @@
         '<button type="button" class="datalab-station-mode-seg" data-datalab-station-mode="dataset" role="tab"></button>' +
         "</div>" +
         '<span id="datalab-station-preview-hint" hidden></span>' +
+        '<span id="datalab-vendor-meta" hidden></span>' +
         '<div id="datalab-derive-progress" class="datalab-derive-progress" hidden role="status" aria-live="polite">' +
         '<div class="datalab-derive-progress__row">' +
         '<span class="datalab-derive-progress__badge"></span>' +
@@ -738,12 +814,23 @@
       var modeDatasetBtn = layer.querySelector('[data-datalab-station-mode="dataset"]');
       var modeStatusEl = layer.querySelector("#datalab-station-mode-status");
       var previewHintEl = layer.querySelector("#datalab-station-preview-hint");
+      var vendorMetaEl = layer.querySelector("#datalab-vendor-meta");
       var deriveProgressEl = layer.querySelector("#datalab-derive-progress");
       var themeLightBtn = layer.querySelector('[data-datalab-station-theme="light"]');
       var themeDarkBtn = layer.querySelector('[data-datalab-station-theme="dark"]');
       var stationShellEl = layer.querySelector("#datalab-station-shell");
 
-      if (toolbarTitleEl) toolbarTitleEl.textContent = VIZ_TITLE;
+      function setStationToolbarTitle(label) {
+        var text = label || stationDisplayNameFromId(stationId);
+        if (toolbarTitleEl) toolbarTitleEl.textContent = text;
+        if (vizFrame) vizFrame.title = text;
+      }
+
+      g.__datalabCollectionUpdateVendorMeta = function (info, deriveData) {
+        updateVendorMetaUi(vendorMetaEl, info, deriveData);
+      };
+
+      setStationToolbarTitle(stationDisplayName(station));
       if (modePreviewBtn) modePreviewBtn.textContent = LABEL_PREVIEW;
       if (modeDatasetBtn) modeDatasetBtn.textContent = LABEL_DATASET;
       if (themeLightBtn) themeLightBtn.textContent = LABEL_THEME_LIGHT;
@@ -966,7 +1053,7 @@
         if (!lerobotMounted || !vizFrame) {
           vizFrame = document.createElement("iframe");
           vizFrame.id = VIZ_FRAME;
-          vizFrame.title = VIZ_TITLE;
+          vizFrame.title = stationDisplayName(station);
           vizFrame.allow = "fullscreen";
           vizFrame.loading = "eager";
           vizFrame.src = src;
@@ -1135,6 +1222,10 @@
         updateParentModeChrome();
         syncOnlineToIframe();
       };
+      g.__datalabCollectionUpdateStationLabel = function (stationMeta) {
+        if (!stationMeta) return;
+        setStationToolbarTitle(stationDisplayName(stationMeta));
+      };
     }
 
     var stationPageStarted = false;
@@ -1146,9 +1237,8 @@
       }
       if (stationPageStarted) return;
       stationPageStarted = true;
-      var datasetUrl = station.datasetUrl || "stream://" + station.id;
       loadCollectionUi().then(function () {
-        mountStationShell(station.id, datasetUrl, Boolean(station.online), false);
+        mountStationShell(station, false);
         attachLayoutListeners();
 
         fetchWithTimeout(
@@ -1167,6 +1257,9 @@
                   captureState: detail.captureState || "unknown",
                   remotePreviewAllowed: Boolean(detail.remotePreviewAllowed),
                 });
+              }
+              if (typeof g.__datalabCollectionUpdateStationLabel === "function") {
+                g.__datalabCollectionUpdateStationLabel(detail);
               }
               if (typeof g.__datalabCollectionRefreshUi === "function") {
                 g.__datalabCollectionRefreshUi();
@@ -1206,8 +1299,20 @@
       }
       fetchWithTimeout(infoUrl, STREAM_INFO_TIMEOUT_MS)
         .then(function (res) {
+          if (!res.ok) {
+            if (g.__datalabCollectionSetDatasetReady) {
+              g.__datalabCollectionSetDatasetReady(false);
+            }
+            return null;
+          }
+          return res.json();
+        })
+        .then(function (info) {
           if (g.__datalabCollectionSetDatasetReady) {
-            g.__datalabCollectionSetDatasetReady(res.ok);
+            g.__datalabCollectionSetDatasetReady(Boolean(info));
+          }
+          if (info && g.__datalabCollectionUpdateVendorMeta) {
+            g.__datalabCollectionUpdateVendorMeta(info, null);
           }
         })
         .catch(function () {
@@ -1262,6 +1367,9 @@
       .then(function (station) {
         if (!station) return;
         applyCollectionUi(station);
+        if (typeof g.__datalabCollectionUpdateStationLabel === "function") {
+          g.__datalabCollectionUpdateStationLabel(station);
+        }
         if (typeof g.__datalabCollectionRefreshUi === "function") {
           g.__datalabCollectionRefreshUi();
         }

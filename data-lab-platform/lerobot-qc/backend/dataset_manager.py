@@ -163,10 +163,41 @@ class DatasetState:
         length = self.episode_length(row)
         return 0, length
 
-    def build_summary(self, visible_episode_indices: list[int] | None = None) -> dict[str, Any]:
+    def episode_preview(self, row: pd.Series) -> dict[str, Any]:
+        length = self.episode_length(row)
+        duration = length / self.fps if self.fps else 0.0
+        return {
+            "episode_index": int(row["episode_index"]),
+            "length": length,
+            "duration": duration,
+        }
+
+    def build_summary(
+        self,
+        visible_episode_indices: list[int] | None = None,
+        *,
+        include_episodes: bool = True,
+    ) -> dict[str, Any]:
         video_keys = self.video_keys()
         selected = self.video_key or (video_keys[0] if video_keys else None)
         episodes: list[dict[str, Any]] = []
+
+        if not include_episodes:
+            return {
+                "root": str(self.dataset_root),
+                "codebase_version": self.info.get("codebase_version"),
+                "robot_type": self.info.get("robot_type"),
+                "fps": self.fps,
+                "chunks_size": self.info.get("chunks_size", 1000),
+                "total_episodes": int(self.info.get("total_episodes") or len(self.episodes_df)),
+                "total_frames": int(self.info.get("total_frames") or 0),
+                "video_keys": video_keys,
+                "selected_video_key": selected,
+                "scalar_features": self.scalar_feature_keys(),
+                "episodes": [],
+                "vendor_meta": self.info.get("vendor_meta"),
+                "ego_capture": self.info.get("ego_capture"),
+            }
 
         for _, row in self.episodes_df.iterrows():
             ep_idx = int(row["episode_index"])
@@ -199,6 +230,8 @@ class DatasetState:
             "selected_video_key": selected,
             "scalar_features": self.scalar_feature_keys(),
             "episodes": episodes,
+            "vendor_meta": self.info.get("vendor_meta"),
+            "ego_capture": self.info.get("ego_capture"),
         }
 
 

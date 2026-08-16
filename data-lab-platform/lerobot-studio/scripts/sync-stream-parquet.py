@@ -626,11 +626,13 @@ def write_viewer_scaffold(root: Path) -> int:
     return 0
 
 
+def main_data_parquet_shards(root: Path) -> list[Path]:
+    return [p for p in sorted(root.glob("data/**/*.parquet")) if "high_freq" not in p.parts]
+
+
 def sync_lerobot_info_frame_counts(root: Path, info: dict, episodes: list[dict]) -> None:
     """Align info.json totals with official LeRobot data shards (multi-session safe)."""
-    shard_rows = sum(
-        pq.read_metadata(p).num_rows for p in sorted(root.glob("data/**/*.parquet"))
-    )
+    shard_rows = sum(pq.read_metadata(p).num_rows for p in main_data_parquet_shards(root))
     if shard_rows > 0:
         info["total_frames"] = shard_rows
         info["ingest_row_count"] = shard_rows

@@ -35,6 +35,8 @@ import {
   syncEpisodesMetaOnly,
   rebuildSessionJsonlFromRawIfEmpty,
   spawnParquetSyncFromJsonlSync,
+  spawnImuHighFreqIngestSync,
+  spawnVendorAnnotationsSync,
   useSessionSingleEpisode,
   usesParquetVideoExport,
   writeMuxValidatedSnapshot,
@@ -382,6 +384,17 @@ async function runLinearPipeline(stationId, { muxOnly = false, sessionId: forced
       try {
         spawnParquetSyncFromJsonlSync(root);
         streamLog(stationId, "derive_parquet_sync_ok", { sessionId });
+        const imuReport = spawnImuHighFreqIngestSync(root, sessionId);
+        streamLog(stationId, "derive_imu_high_freq_ok", {
+          sessionId,
+          rows: imuReport.rows ?? null,
+          path: imuReport.path ?? null,
+        });
+        const vaReport = spawnVendorAnnotationsSync(root);
+        streamLog(stationId, "derive_vendor_annotations_ok", {
+          sessionId,
+          subtaskRows: vaReport.subtask_segments_rows ?? null,
+        });
       } catch (err) {
         streamLog(stationId, "derive_parquet_sync_fail", {
           sessionId,

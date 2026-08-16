@@ -33,6 +33,7 @@ CACHE_ROOT = Path(os.environ.get("LEROBOT_QC_CACHE", "/tmp/lerobot_qc_cache"))
 SIDECAR_ROOT = Path(os.environ.get("LEROBOT_QC_SIDECAR", "/data/qc-sidecar"))
 DELIVERY_ROOT = Path(os.environ.get("LEROBOT_QC_DELIVERY", "/data/qc-delivery"))
 DEFAULT_OPERATOR = os.environ.get("LEROBOT_QC_OPERATOR", "anonymous")
+DEFAULT_EPISODE_PAGE_SIZE = max(50, min(500, int(os.environ.get("LEROBOT_QC_EPISODE_PAGE_SIZE", "200"))))
 
 configure_cache(CACHE_ROOT)
 
@@ -110,13 +111,99 @@ def require_session(
 
 
 def _attach_qc_summary(summary: dict[str, Any], ds: DatasetState, qc: QcStore) -> dict[str, Any]:
-    all_indices = [int(x) for x in ds.episodes_df["episode_index"].tolist()]
-    summary["review_summary"] = qc.review_summary(all_indices)
+    total = int(summary.get("total_episodes") or len(ds.episodes_df))
+    summary["review_summary"] = qc.review_summary(total_episodes=total)
     summary["datasets_root"] = str(datasets_root())
     active_job = get_active_rebuild_job(qc)
     if active_job:
         summary["active_rebuild_job"] = active_job
     return summary
+
+
+def _session_summary(ds: DatasetState, qc: QcStore, session: DatasetSession) -> dict[str, Any]:
+    summary = ds.build_summary(include_episodes=False)
+    summary["sidecar_root"] = str(qc.sidecar_root)
+    summary["removed_count"] = len(qc.removed_episode_indices())
+    summary["qc_state"] = {}
+    summary["session_path"] = session.local_path
+    return _attach_qc_summary(summary, ds, qc)
+
+
+def _list_episodes_page(
+    ds: DatasetState,
+    qc: QcStore,
+    *,
+    offset: int,
+    limit: int,
+    status_filter: str | None,
+) -> dict[str, Any]:
+    removed = qc.removed_episode_indices()
+    total = len(ds.episodes_df)
+    normalized_status = (status_filter or "all").strip().lower()
+    if normalized_status == "all":
+        normalized_status = None
+
+    if normalized_status is None:
+        if offset >= total:
+            return {
+                "items": [],
+                "offset": offset,
+                "limit": limit,
+                "total": total,
+                "total_matching": total,
+                "has_more": False,
+            }
+        end = min(offset + limit, total)
+        items: list[dict[str, Any]] = []
+        for _, row in ds.episodes_df.iloc[offset:end].iterrows():
+            ep_idx = int(row["episode_index"])
+            review = qc.get_review(ep_idx)
+            items.append(
+                {
+                    **ds.episode_preview(row),
+                    "review": review,
+                    "is_removed": ep_idx in removed,
+                }
+            )
+        return {
+            "items": items,
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "total_matching": total,
+            "has_more": end < total,
+        }
+
+    items = []
+    skipped = 0
+    total_matching = 0
+    for _, row in ds.episodes_df.iterrows():
+        ep_idx = int(row["episode_index"])
+        review_status = qc.get_review(ep_idx).get("status") or "pending"
+        if review_status != normalized_status:
+            continue
+        total_matching += 1
+        if skipped < offset:
+            skipped += 1
+            continue
+        if len(items) >= limit:
+            continue
+        review = qc.get_review(ep_idx)
+        items.append(
+            {
+                **ds.episode_preview(row),
+                "review": review,
+                "is_removed": ep_idx in removed,
+            }
+        )
+    return {
+        "items": items,
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "total_matching": total_matching,
+        "has_more": offset + len(items) < total_matching,
+    }
 
 
 def _resolve_operator_id(request_operator: str | None, store: QcStore) -> str:
@@ -133,10 +220,13 @@ def _episode_instruction(ds: DatasetState, qc: QcStore, episode_index: int) -> s
     return text
 
 
-def _qc_episode_map(ds: DatasetState, qc: QcStore) -> dict[str, Any]:
+def _qc_episode_map(ds: DatasetState, qc: QcStore, episode_indices: list[int] | None = None) -> dict[str, Any]:
     removed = qc.removed_episode_indices()
     payload: dict[str, Any] = {}
-    for ep_idx in ds.episodes_df["episode_index"].tolist():
+    indices = episode_indices
+    if indices is None:
+        indices = [int(x) for x in ds.episodes_df["episode_index"].tolist()]
+    for ep_idx in indices:
         ep_idx = int(ep_idx)
         review = qc.get_review(ep_idx)
         payload[str(ep_idx)] = {
@@ -173,24 +263,23 @@ def api_load_dataset(req: DatasetLoadRequest) -> JSONResponse:
     store = QcStore.open(loaded.dataset_root, SIDECAR_ROOT, operator_id=operator)
     hydrate_jobs_from_store(store)
     session = sessions.open(state=loaded, store=store, local_path=req.local_path)
-    summary = loaded.build_summary()
-    summary["sidecar_root"] = str(store.sidecar_root)
-    summary["removed_count"] = len(store.removed_episode_indices())
-    summary["qc_state"] = _qc_episode_map(loaded, store)
-    summary["session_path"] = session.local_path
-    return JSONResponse(_attach_qc_summary(summary, loaded, store))
+    return JSONResponse(_session_summary(loaded, store, session))
 
 
 @app.get("/api/dataset/info")
 def api_dataset_info(session: DatasetSession = Depends(require_session)) -> JSONResponse:
-    ds = session.state
-    qc = session.store
-    summary = ds.build_summary()
-    summary["sidecar_root"] = str(qc.sidecar_root)
-    summary["removed_count"] = len(qc.removed_episode_indices())
-    summary["qc_state"] = _qc_episode_map(ds, qc)
-    summary["session_path"] = session.local_path
-    return JSONResponse(_attach_qc_summary(summary, ds, qc))
+    return JSONResponse(_session_summary(session.state, session.store, session))
+
+
+@app.get("/api/episodes")
+def api_list_episodes(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(DEFAULT_EPISODE_PAGE_SIZE, ge=1, le=500),
+    status: str | None = Query(None),
+    session: DatasetSession = Depends(require_session),
+) -> JSONResponse:
+    page = _list_episodes_page(session.state, session.store, offset=offset, limit=limit, status_filter=status)
+    return JSONResponse(page)
 
 
 @app.get("/api/datasets/collections")
@@ -454,8 +543,8 @@ def api_import_screening(
 def api_qc_summary(session: DatasetSession = Depends(require_session)) -> JSONResponse:
     ds = session.state
     qc = session.store
-    all_indices = [int(x) for x in ds.episodes_df["episode_index"].tolist()]
-    return JSONResponse(qc.review_summary(all_indices))
+    total = int(ds.info.get("total_episodes") or len(ds.episodes_df))
+    return JSONResponse(qc.review_summary(total_episodes=total))
 
 
 @app.get("/api/qc/audit")

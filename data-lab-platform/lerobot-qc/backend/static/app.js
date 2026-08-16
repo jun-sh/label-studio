@@ -35,19 +35,33 @@ async function api(path, options = {}) {
   if (API_PREFIX && url.startsWith(`${API_PREFIX}/`)) {
     url = url.slice(API_PREFIX.length);
   }
-  const response = await fetch(`${API_PREFIX}${url}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...datasetContextHeaders(),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+  const { timeoutMs, ...fetchOptions } = options;
+  const timeout = timeoutMs ?? (path.includes("/api/dataset/load") ? 180000 : 60000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(`${API_PREFIX}${url}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...datasetContextHeaders(),
+        ...(fetchOptions.headers || {}),
+      },
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || `Request failed: ${response.status}`);
+    }
+    return response.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(t("connect_timeout"));
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return response.json();
 }
 
 const els = {
@@ -67,6 +81,7 @@ const els = {
   storageRefreshBtn: document.getElementById("storageRefreshBtn"),
   workspace: document.getElementById("workspace"),
   datasetMeta: document.getElementById("datasetMeta"),
+  vendorMeta: document.getElementById("vendorMeta"),
   reviewProgress: document.getElementById("reviewProgress"),
   episodeList: document.getElementById("episodeList"),
   episodeSearch: document.getElementById("episodeSearch"),
@@ -113,6 +128,8 @@ const state = {
   collections: [],
   storage: null,
   queryEpisode: null,
+  queryCollection: "",
+  queryPackage: "",
   currentEpisode: null,
   currentDetail: null,
   trajectory: null,
@@ -121,6 +138,14 @@ const state = {
   videoPanes: [],
   drag: null,
   episodeStatusFilter: "all",
+  episodePage: {
+    offset: 0,
+    limit: 200,
+    total: 0,
+    totalMatching: 0,
+    hasMore: false,
+    loading: false,
+  },
 };
 
 let videoLoadToken = 0;
@@ -139,6 +164,33 @@ function formatDuration(sec) {
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatVendorMetaLine(summary) {
+  const vm = summary?.vendor_meta;
+  if (!vm) return "";
+  const parts = [];
+  const imu = vm.high_freq?.imu_200hz;
+  if (imu) {
+    const rows = imu.record_count ?? imu.rows ?? "—";
+    parts.push(`IMU ${imu.rate_hz ?? "?"}Hz · ${rows} rows`);
+  }
+  const subtasks = vm.vendor_annotations?.subtask_segments?.row_count;
+  if (subtasks != null) {
+    parts.push(`subtasks ${subtasks}`);
+  }
+  return parts.length ? ` · ${parts.join(" · ")}` : "";
+}
+
+function renderDatasetMeta(summary) {
+  const base = `${summary.total_episodes} episodes · ${summary.fps} fps · ${summary.robot_type || "robot"}`;
+  els.datasetMeta.textContent = base + formatVendorMetaLine(summary);
+  if (els.vendorMeta) {
+    const imu = summary?.vendor_meta?.high_freq?.imu_200hz;
+    const path = imu?.path || "";
+    els.vendorMeta.textContent = path ? `high_freq: ${path}` : "";
+    els.vendorMeta.hidden = !path;
+  }
 }
 
 function reviewStatusLabel(status) {
@@ -269,6 +321,66 @@ function parseApiError(error) {
   return raw || "Unknown error";
 }
 
+function episodeStatusFilterValue() {
+  return els.episodeStatusFilter?.value || state.episodeStatusFilter || "all";
+}
+
+function mergeEpisodePageItems(page, replace = false) {
+  const items = page.items || [];
+  state.episodePage.offset = page.offset ?? 0;
+  state.episodePage.limit = page.limit ?? state.episodePage.limit;
+  state.episodePage.total = page.total ?? state.episodePage.total;
+  state.episodePage.totalMatching = page.total_matching ?? page.totalMatching ?? state.episodePage.total;
+  state.episodePage.hasMore = Boolean(page.has_more ?? page.hasMore);
+  state.episodes = replace ? items : [...state.episodes, ...items];
+  items.forEach((ep) => {
+    const review = ep.review || { status: "pending" };
+    state.qcState[String(ep.episode_index)] = {
+      review,
+      is_removed: Boolean(ep.is_removed),
+    };
+  });
+}
+
+async function loadEpisodePage(offset = 0, replace = true) {
+  if (!state.dataset) return null;
+  if (state.episodePage.loading) return null;
+  state.episodePage.loading = true;
+  try {
+    const status = episodeStatusFilterValue();
+    const statusParam = status && status !== "all" ? `&status=${encodeURIComponent(status)}` : "";
+    const page = await api(
+      `/api/episodes?offset=${offset}&limit=${state.episodePage.limit}${statusParam}`,
+    );
+    mergeEpisodePageItems(page, replace);
+    renderEpisodeList();
+    return page;
+  } finally {
+    state.episodePage.loading = false;
+  }
+}
+
+async function refreshReviewProgress() {
+  const summary = await api("/api/qc/summary");
+  renderReviewProgress(summary);
+  return summary;
+}
+
+function patchEpisodeReview(episodeIndex, review) {
+  const key = String(episodeIndex);
+  state.qcState[key] = {
+    ...(state.qcState[key] || {}),
+    review,
+    is_removed: review?.status === "rejected",
+  };
+  const episode = state.episodes.find((ep) => ep.episode_index === episodeIndex);
+  if (episode) {
+    episode.review = review;
+    episode.is_removed = review?.status === "rejected";
+  }
+  renderEpisodeList();
+}
+
 function renderReviewProgress(summary) {
   if (!summary) {
     els.reviewProgress.textContent = "";
@@ -279,17 +391,11 @@ function renderReviewProgress(summary) {
 
 function renderEpisodeList() {
   const filter = els.episodeSearch.value.trim();
-  const statusFilter = els.episodeStatusFilter?.value || state.episodeStatusFilter || "all";
   els.episodeList.innerHTML = "";
   state.episodes
-    .filter((ep) => {
-      if (!String(ep.episode_index).includes(filter)) return false;
-      if (statusFilter === "all") return true;
-      const review = state.qcState[String(ep.episode_index)]?.review?.status || "pending";
-      return review === statusFilter;
-    })
+    .filter((ep) => !filter || String(ep.episode_index).includes(filter))
     .forEach((ep) => {
-      const review = state.qcState[String(ep.episode_index)]?.review?.status || "pending";
+      const review = state.qcState[String(ep.episode_index)]?.review?.status || ep.review?.status || "pending";
       const li = document.createElement("li");
       li.dataset.status = reviewStatusClass(review);
 
@@ -316,6 +422,16 @@ function renderEpisodeList() {
       li.addEventListener("click", () => selectEpisode(ep.episode_index));
       els.episodeList.appendChild(li);
     });
+
+  if (state.dataset && state.episodePage.hasMore && !state.episodePage.loading) {
+    const loadMore = document.createElement("li");
+    loadMore.className = "ls-episode-load-more";
+    loadMore.textContent = t("episode_load_more");
+    loadMore.addEventListener("click", () => {
+      loadEpisodePage(state.episodes.length, false);
+    });
+    els.episodeList.appendChild(loadMore);
+  }
 }
 
 function renderMetrics(metrics) {
@@ -820,10 +936,10 @@ function assertDatasetContext(info) {
 async function refreshDatasetInfo() {
   const info = await api("/api/dataset/info");
   assertDatasetContext(info);
-  state.qcState = info.qc_state || {};
-  state.episodes = info.episodes || [];
+  state.dataset = info;
   renderReviewProgress(info.review_summary);
-  renderEpisodeList();
+  renderDatasetMeta(info);
+  await loadEpisodePage(0, true);
   return info;
 }
 
@@ -874,26 +990,27 @@ async function loadDataset(event) {
     });
     state.datasetPath = summary.session_path || summary.root || local_path;
     state.dataset = summary;
-    state.episodes = summary.episodes || [];
-    state.qcState = summary.qc_state || {};
+    state.episodes = [];
+    state.qcState = {};
+    state.episodePage.offset = 0;
+    state.episodePage.total = summary.total_episodes || 0;
     els.workspace.hidden = false;
     showWorkspace();
-    els.datasetMeta.textContent = `${summary.total_episodes} episodes · ${summary.fps} fps · ${summary.robot_type || "robot"}`;
+    renderDatasetMeta(summary);
     els.connectHelper.textContent = `Sidecar: ${summary.sidecar_root}`;
     els.rebuildBtn.disabled = false;
     els.screeningFileInput.disabled = false;
     renderReviewProgress(summary.review_summary);
-    renderEpisodeList();
+    await loadEpisodePage(0, true);
     if (summary.active_rebuild_job) {
       await resumeActiveRebuild(summary.active_rebuild_job);
     }
     const initialEpisode =
-      state.queryEpisode != null &&
-      state.episodes.some((ep) => ep.episode_index === state.queryEpisode)
+      state.queryEpisode != null && Number.isFinite(state.queryEpisode)
         ? state.queryEpisode
-        : state.episodes[0]?.episode_index;
+        : state.episodes[0]?.episode_index ?? 0;
     state.queryEpisode = null;
-    if (initialEpisode != null) await selectEpisode(initialEpisode);
+    await selectEpisode(initialEpisode);
     syncUrlQuery();
     setStatus(t("status_loaded", { name: summary.root?.split("/").pop() || "dataset" }), true);
   } catch (error) {
@@ -912,7 +1029,7 @@ async function postReview(status) {
   }
   setQcActionsBusy(true);
   try {
-    await api("/api/qc/review", {
+    const result = await api("/api/qc/review", {
       method: "POST",
       body: JSON.stringify({
         episode_index: state.currentEpisode,
@@ -921,14 +1038,9 @@ async function postReview(status) {
         operator_id: getOperatorId(),
       }),
     });
-    const info = await refreshDatasetInfo();
-    if (status === "rejected") {
-      await selectEpisode(state.currentEpisode);
-      setStatus(t("status_saved"), true);
-      return;
-    }
+    patchEpisodeReview(state.currentEpisode, result.review);
+    await refreshReviewProgress();
     await selectEpisode(state.currentEpisode);
-    renderReviewProgress(info.review_summary);
     setStatus(t("status_saved"), true);
   } catch (error) {
     const message = parseApiError(error);
@@ -958,7 +1070,8 @@ async function saveInstruction() {
         operator_id: getOperatorId(),
       }),
     });
-    await refreshDatasetInfo();
+    patchEpisodeReview(state.currentEpisode, result.review);
+    await refreshReviewProgress();
     await selectEpisode(state.currentEpisode);
     if (result.review?.status) {
       state.currentDetail.review = result.review;
@@ -1022,10 +1135,26 @@ function hideRebuildProgress() {
   if (els.rebuildOutputHint) els.rebuildOutputHint.textContent = "";
 }
 
+function parseVideoRebuildProgress(progress) {
+  const text = String(progress || "");
+  const match = text.match(/^processing videos\|(copy|reencode|skip)\|([^|]+)\|(\d+)\|(\d+)$/);
+  if (!match) return null;
+  const [, action, videoKey, chunkIndex, fileIndex] = match;
+  const shortVideo = videoKey.split(".").pop() || videoKey;
+  return {
+    action,
+    videoKey,
+    shortVideo,
+    chunkIndex,
+    fileIndex: String(fileIndex).padStart(3, "0"),
+  };
+}
+
 function localizeRebuildProgress(progress) {
   if (!progress) return "";
   const text = String(progress);
   if (text === "writing parquet files") return t("qc_rebuild_writing_parquet");
+  if (text === "recomputing stats") return t("qc_rebuild_recomputing_stats");
   return text;
 }
 
@@ -1045,11 +1174,22 @@ function renderRebuildProgress(status) {
   let pct = 0;
   let label = "";
   const progressText = localizeRebuildProgress(status.progress);
+  const videoProgress = parseVideoRebuildProgress(status.progress);
   const isEpisodeProgress = /^\d+\/\d+ episodes$/.test(String(status.progress || ""));
 
   if (status.progress_current != null && status.progress_total) {
     pct = Math.round((status.progress_current / status.progress_total) * 100);
-    if (isEpisodeProgress || !progressText) {
+    if (videoProgress) {
+      label = t("qc_rebuild_video_progress", {
+        current: status.progress_current,
+        total: status.progress_total,
+        pct,
+        action: t(`qc_rebuild_video_action_${videoProgress.action}`),
+        video: videoProgress.shortVideo,
+        chunk: String(videoProgress.chunkIndex).padStart(3, "0"),
+        file: videoProgress.fileIndex,
+      });
+    } else if (isEpisodeProgress || !progressText) {
       label = t("qc_rebuild_episode_progress", {
         current: status.progress_current,
         total: status.progress_total,
@@ -1205,7 +1345,13 @@ async function loadCollections() {
     }
     if (els.collectionSelect.value && !els.collectionSelect.selectedOptions[0]?.disabled) {
       await onCollectionChange();
-      if (state.queryPackage) els.packageSelect.value = state.queryPackage;
+      if (state.queryPackage) {
+        els.packageSelect.value = state.queryPackage;
+      } else {
+        const firstPkg = [...els.packageSelect.options].find((opt) => opt.value);
+        if (firstPkg) els.packageSelect.value = firstPkg.value;
+      }
+      if (els.packageSelect.value) await onPackageChange();
     } else {
       els.connectHelper.textContent = state.storage?.active_host_path
         ? t("connect_helper_catalog")
@@ -1380,7 +1526,10 @@ els.storageRefreshBtn?.addEventListener("click", async () => {
   await loadCollections();
 });
 els.episodeSearch.addEventListener("input", renderEpisodeList);
-els.episodeStatusFilter?.addEventListener("change", renderEpisodeList);
+els.episodeStatusFilter?.addEventListener("change", async () => {
+  if (!state.dataset) return;
+  await loadEpisodePage(0, true);
+});
 els.playPauseBtn.addEventListener("click", togglePlayback);
 els.stepBackBtn.addEventListener("click", () => setFrame(currentFrame() - 1));
 els.stepFwdBtn.addEventListener("click", () => setFrame(currentFrame() + 1));

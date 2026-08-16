@@ -65,6 +65,7 @@
     "ego-lan-220": { "topology_id": "ego-standard" },
     "ego-lan-221": { "topology_id": "ego-standard" },
     "ego-lan-222": { "topology_id": "ego-standard" },
-    "ego-lan-223": { "topology_id": "ego-standard" }
+    "ego-lan-223": { "topology_id": "ego-standard" },
+    "ego-001": { "topology_id": "ego-standard" }
   }
 }

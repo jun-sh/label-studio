@@ -67,3 +67,7 @@ docker-compose ... -f data-lab-platform/docker-compose.v0.0.8.yml up -d stream-i
 | RC 脚本 | `rc-acceptance.sh` 验 `segment_mp4` 主路径，不再测 staging mux |
 | 130 部署 | `scripts/ego-130-provision.sh` 从仓库 rsync + systemd |
 | derive | compose 显式 `DERIVE_ASYNC_*=0` |
+
+## v0.0.9.2（segment_mp4 derive 闭环 — ego-001 交付）
+
+见 [RELEASE-v0.0.9.2.md](RELEASE-v0.0.9.2.md)：多段 MP4 concat、拓扑同步、READY 探针与 compose 镜像化部署。

@@ -61,6 +61,32 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+const mp4ConcatLocks = new Map();
+
+function mp4ConcatLockKey(root, videoKey) {
+  return `${root}::${videoKey}`;
+}
+
+async function withMp4ConcatLock(root, videoKey, fn) {
+  const key = mp4ConcatLockKey(root, videoKey);
+  const prev = mp4ConcatLocks.get(key) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chain = prev.then(() => gate);
+  mp4ConcatLocks.set(key, chain);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (mp4ConcatLocks.get(key) === chain) {
+      mp4ConcatLocks.delete(key);
+    }
+  }
+}
+
 /**
  * Append segment MP4 shards to LeRobot per-camera video files.
  * @param {object} hooks - { videoArtifactRel, setChunkArtifactStatus, streamLog }
@@ -84,32 +110,64 @@ export async function ingestSegmentMp4Shards(
     const rel = videoArtifactRel(videoKey);
     const outFile = path.join(root, rel);
     ensureDir(path.dirname(outFile));
-    let publishedFrames = 0;
-    if (fs.existsSync(outFile)) {
-      const listPath = `${outFile}.segment.${segmentId}.concat.txt`;
-      const concatRes = await concatMp4Files(outFile, absPath, outFile, listPath);
-      try {
-        if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
-      } catch {
-        /* ignore */
+    const shardFrames = probeMp4FrameCount(absPath, { defaultFps: DEFAULT_FPS });
+    const ingestOne = async () => {
+      let publishedFrames = 0;
+      const beforeFrames = fs.existsSync(outFile)
+        ? probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS })
+        : 0;
+      if (fs.existsSync(outFile)) {
+        const listPath = `${outFile}.segment.${segmentId}.concat.txt`;
+        const tmpOut = `${outFile}.concat.${segmentId}.tmp.mp4`;
+        try {
+          if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+        } catch {
+          /* ignore */
+        }
+        const concatRes = await concatMp4Files(outFile, absPath, tmpOut, listPath, { segmentMp4: true });
+        try {
+          if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
+        } catch {
+          /* ignore */
+        }
+        if (!concatRes?.ok) {
+          try {
+            if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+          } catch {
+            /* ignore */
+          }
+          streamLog(stationId, "segment_mp4_concat_fail", {
+            sessionId,
+            segmentId,
+            videoKey,
+            stderr: String(concatRes?.stderr || "").slice(0, 200),
+          });
+          return { videoKey, ok: false };
+        }
+        fs.renameSync(tmpOut, outFile);
+        publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
+      } else {
+        fs.copyFileSync(absPath, outFile);
+        publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
       }
-      if (!concatRes?.ok) {
-        streamLog(stationId, "segment_mp4_concat_fail", {
+      const minExpected = beforeFrames + Math.max(1, Math.floor(shardFrames * 0.85));
+      if (beforeFrames > 0 && publishedFrames < minExpected) {
+        streamLog(stationId, "segment_mp4_concat_short", {
           sessionId,
           segmentId,
           videoKey,
-          stderr: String(concatRes?.stderr || "").slice(0, 200),
+          beforeFrames,
+          shardFrames,
+          publishedFrames,
+          minExpected,
         });
-        results.push({ videoKey, ok: false });
-        continue;
+        return { videoKey, ok: false, frames: publishedFrames };
       }
-      publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
-    } else {
-      fs.copyFileSync(absPath, outFile);
-      publishedFrames = probeMp4FrameCount(outFile, { defaultFps: DEFAULT_FPS });
-    }
-    setChunkArtifactStatus(root, rel, "finished", publishedFrames);
-    results.push({ videoKey, ok: true, frames: publishedFrames });
+      setChunkArtifactStatus(root, rel, "finished", publishedFrames);
+      return { videoKey, ok: true, frames: publishedFrames };
+    };
+    const row = await withMp4ConcatLock(root, videoKey, ingestOne);
+    results.push(row);
   }
 
   const ok = results.some((r) => r.ok);

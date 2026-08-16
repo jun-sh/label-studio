@@ -25,7 +25,7 @@ export PYTHONPATH=/home/server/workspace/ego-studio/src
 ```
 
 - `ego_upload` / 逐帧 multipart：**已废弃**，勿用。
-- 协议：`UPLOAD_PROTOCOL=tarzst`（manifest + rows + imu + frames/*.bin [+ streams/*.mp4]）。
+- 协议：`UPLOAD_PROTOCOL=tarzst`（manifest + rows + imu + `streams/*.mp4`；**无** `frames/*.bin`）。
 
 ## 切换模式
 
@@ -60,8 +60,10 @@ bash data-lab-platform/scripts/ego-130-upload-mode.sh status
 
 ```bash
 data-lab-platform/scripts/rc-acceptance.sh
-data-lab-platform/scripts/rc-e2e-upload.sh   # 通过 SSH 在 130 上跑单次 upload_segments
+RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh   # 断言 READY
 ```
+
+运维手册：[ego-001-runbook.md](ego-001-runbook.md)
 
 RC 脚本走 **手动** `upload_segments`，与生产路径一致。
 

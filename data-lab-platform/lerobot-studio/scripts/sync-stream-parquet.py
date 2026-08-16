@@ -61,6 +61,12 @@ VIDEO_KEYS = [
     "observation.images.camera_rear_right",
 ]
 
+
+def video_keys_from_info(info: dict) -> list[str]:
+    features = info.get("features") or {}
+    keys = [k for k, spec in features.items() if isinstance(spec, dict) and spec.get("dtype") == "video"]
+    return keys if keys else list(VIDEO_KEYS)
+
 LEGACY_PLACEHOLDER_TASK = (
     "Perform egocentric manipulation tasks at the laboratory workbench"
 )
@@ -431,7 +437,7 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
 
-def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> dict:
+def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict, info: dict) -> dict:
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
     to_idx = int(ep.get("dataset_to_index") or from_idx + length)
@@ -457,7 +463,7 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict) -> d
     for key in EPISODE_META_FLOAT_COLS:
         val = ep_meta.get(key)
         row[key] = float(val) if val is not None else float("nan")
-    for key in VIDEO_KEYS:
+    for key in video_keys_from_info(info):
         row[f"videos/{key}/chunk_index"] = 0
         row[f"videos/{key}/file_index"] = 0
         row[f"videos/{key}/from_timestamp"] = float(from_idx) / fps if fps > 0 else 0.0
@@ -495,7 +501,8 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
             }
         ]
 
-    rows = [_episode_row(ep, fps, task, meta_defaults) for ep in episodes]
+    info = read_json(root / "meta" / "info.json", {})
+    rows = [_episode_row(ep, fps, task, meta_defaults, info) for ep in episodes]
     columns: dict[str, pa.Array] = {}
     for key in rows[0]:
         if key == "tasks":
@@ -512,6 +519,7 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
 def write_empty_episodes_parquet(root: Path, fps: float, task: str) -> None:
     """Zero-row episodes table — layout-only scaffold (no sidebar #0)."""
     meta_defaults = load_episode_meta_defaults(root)
+    info = read_json(root / "meta" / "info.json", {})
     template = _episode_row(
         {
             "episode_index": 0,
@@ -523,6 +531,7 @@ def write_empty_episodes_parquet(root: Path, fps: float, task: str) -> None:
         fps,
         task,
         meta_defaults,
+        info,
     )
     columns: dict[str, pa.Array] = {}
     for key in template:
@@ -539,7 +548,7 @@ def write_placeholder_videos(root: Path, info: dict) -> None:
     fps = float(info.get("fps") or 30)
     duration = max(1.0 / fps, 0.04)
     features = info.get("features") or {}
-    for key in VIDEO_KEYS:
+    for key in video_keys_from_info(info):
         feat = features.get(key, {})
         shape = feat.get("shape") or [1200, 1920, 3]
         h, w = int(shape[0]), int(shape[1])

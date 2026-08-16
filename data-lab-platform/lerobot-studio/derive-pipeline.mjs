@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isFullMuxMode } from "./mux-exec.mjs";
+import { isSegmentMp4PrimaryPath } from "./segment-mp4-ingest.mjs";
 import {
   computeDeriveStatusFromDisk,
   computeStationDeriveStatusFromDisk,
@@ -32,6 +33,8 @@ import {
   spawnFinalizeSessionEpisodeSync,
   syncDataParquetFromJsonl,
   syncEpisodesMetaOnly,
+  rebuildSessionJsonlFromRawIfEmpty,
+  spawnParquetSyncFromJsonlSync,
   useSessionSingleEpisode,
   usesParquetVideoExport,
   writeMuxValidatedSnapshot,
@@ -191,6 +194,15 @@ function pickPrimarySessionId(stationId) {
 
 async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry = false } = {}) {
   const root = stationRoot(stationId);
+  if (isSegmentMp4PrimaryPath()) {
+    streamLog(stationId, "derive_mux_skip", {
+      sessionId,
+      reason: "segment_mp4_ingest",
+      source: "derive_pipeline",
+    });
+    await writeMuxValidatedSnapshot(stationId, sessionId);
+    return computeDeriveStatusFromDisk(stationId, sessionId);
+  }
   const parquetVideo = usesParquetVideoExport();
   const fullMux = isFullMuxMode() || parquetVideo;
   if (fullMux) inlineRetry = false;
@@ -358,6 +370,20 @@ async function runLinearPipeline(stationId, { muxOnly = false, sessionId: forced
         });
       } catch (err) {
         streamLog(stationId, "session_episode_finalize_error", {
+          sessionId,
+          message: String(err?.message || err).slice(0, 300),
+        });
+        throw err;
+      }
+    }
+
+    if (isSegmentMp4PrimaryPath()) {
+      await rebuildSessionJsonlFromRawIfEmpty(stationId, sessionId);
+      try {
+        spawnParquetSyncFromJsonlSync(root);
+        streamLog(stationId, "derive_parquet_sync_ok", { sessionId });
+      } catch (err) {
+        streamLog(stationId, "derive_parquet_sync_fail", {
           sessionId,
           message: String(err?.message || err).slice(0, 300),
         });

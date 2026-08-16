@@ -47,6 +47,13 @@ for d in /etc/systemd/system/ecs-record-oak-stream.service.d \
   echo '1' | sudo -S mkdir -p "\$d" 2>/dev/null || mkdir -p "\$d"
   echo '1' | sudo -S cp /tmp/v0.0.8-segment-mp4.conf "\$d/v0.0.8-segment-mp4.conf" 2>/dev/null \
     || cp /tmp/v0.0.8-segment-mp4.conf "\$d/v0.0.8-segment-mp4.conf"
+  for bad in z-production-egoverse.conf scheme-a.conf; do
+    if [[ -f "\$d/\$bad" ]]; then
+      echo '1' | sudo -S mv "\$d/\$bad" "\$d/\$bad.disabled" 2>/dev/null \
+        || mv "\$d/\$bad" "\$d/\$bad.disabled"
+      echo "disabled \$d/\$bad"
+    fi
+  done
 done
 
 mkdir -p "\$HOME/.config/ego-station.env.d"
@@ -57,6 +64,7 @@ EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION
 SEGMENT_H264=1
 SEGMENT_H264_STRICT=1
 SEGMENT_H264_MIN_MP4=4
+UPLOAD_PROTOCOL=tarzst
 EOF
 
 systemctl --user daemon-reload 2>/dev/null || true
@@ -69,6 +77,9 @@ ssh "${TARGET}" "bash /tmp/ego-130-upload-mode.sh production"
 
 echo "==> Verify ffmpeg"
 ssh "${TARGET}" "which ffmpeg && ffmpeg -version | head -1"
+
+echo "==> Verify H264 systemd path"
+"${ROOT}/scripts/ego-130-verify-h264.sh" "${TARGET}"
 
 echo ""
 echo "Done. Start capture: systemctl --user start ecs-record-oak-stream"

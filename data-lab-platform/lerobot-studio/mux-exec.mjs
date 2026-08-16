@@ -66,9 +66,9 @@ function probeMp4StreamJson(filePath) {
       "error",
       "-select_streams",
       "v:0",
+      "-count_packets",
       "-show_entries",
-      "stream=nb_frames,nb_read_frames,duration,r_frame_rate",
-      "-count_frames",
+      "stream=nb_frames,nb_read_frames,nb_read_packets,duration,r_frame_rate",
       "-of",
       "json",
       filePath,
@@ -102,7 +102,7 @@ export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return 0;
   const stream = probeMp4StreamJson(filePath);
   if (!stream) return 0;
-  const nb = Number(stream.nb_read_frames ?? stream.nb_frames);
+  const nb = Number(stream.nb_read_packets ?? stream.nb_read_frames ?? stream.nb_frames);
   if (Number.isFinite(nb) && nb > 0) return Math.floor(nb);
   const duration = Number(stream.duration);
   const rateParts = String(stream.r_frame_rate || "0/1").split("/");
@@ -118,15 +118,26 @@ export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
 
 /** Build ffconcat for MP4 concat with explicit duration on first segment (batch-2 drift fix). */
 export function buildMp4ConcatList(firstPath, secondPath, { firstDurationSec = null } = {}) {
+  return buildMp4ConcatListPaths([firstPath, secondPath], { firstDurationSec });
+}
+
+/** ffconcat list for one or more MP4 shards (segment_mp4 ingest uses this without duration hints). */
+export function buildMp4ConcatListPaths(paths, { firstDurationSec = null, useDuration = false } = {}) {
   const esc = (p) => String(p).replace(/'/g, "'\\''");
-  const dur =
-    Number.isFinite(firstDurationSec) && firstDurationSec > 0
-      ? firstDurationSec
-      : probeMp4DurationSec(firstPath);
-  const lines = ["ffconcat version 1.0", `file '${esc(firstPath)}'`];
-  if (dur > 0) lines.push(`duration ${dur}`);
-  lines.push(`file '${esc(secondPath)}'`);
-  return lines.join("\n");
+  const list = (paths || []).filter(Boolean);
+  if (!list.length) return "ffconcat version 1.0\n";
+  const lines = ["ffconcat version 1.0", `file '${esc(list[0])}'`];
+  if (useDuration && list.length > 1) {
+    const dur =
+      Number.isFinite(firstDurationSec) && firstDurationSec > 0
+        ? firstDurationSec
+        : probeMp4DurationSec(list[0]);
+    if (dur > 0) lines.push(`duration ${dur}`);
+  }
+  for (const p of list.slice(1)) {
+    lines.push(`file '${esc(p)}'`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true, fps = 30 } = {}) {
@@ -272,14 +283,14 @@ export async function concatMp4FromList(listPath, destPath, codecMode = "copy") 
   return concatMp4OnceLegacy(listPath, destPath, codecMode);
 }
 
-/** Concat two MP4 files; fluent backend uses duration-aware ffconcat. */
-export async function concatMp4Files(firstPath, secondPath, destPath, listPath) {
-  const useDuration = deriveMuxBackend() === "fluent";
-  const listContent = useDuration
-    ? buildMp4ConcatList(firstPath, secondPath, {
-        firstDurationSec: probeMp4DurationSec(firstPath),
-      })
-    : `file '${String(firstPath).replace(/'/g, "'\\''")}'\nfile '${String(secondPath).replace(/'/g, "'\\''")}'\n`;
+/** Concat two MP4 files; segment_mp4 ingest uses ffconcat without duration hints. */
+export async function concatMp4Files(firstPath, secondPath, destPath, listPath, options = {}) {
+  const segmentMp4 = Boolean(options.segmentMp4);
+  const useDuration = !segmentMp4 && deriveMuxBackend() === "fluent";
+  const listContent = buildMp4ConcatListPaths([firstPath, secondPath], {
+    firstDurationSec: probeMp4DurationSec(firstPath),
+    useDuration,
+  });
   fs.writeFileSync(listPath, listContent);
   try {
     let res = await concatMp4FromList(listPath, destPath, "copy");

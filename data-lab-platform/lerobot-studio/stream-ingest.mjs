@@ -80,9 +80,22 @@ const STATION_TOPOLOGY_PATH = path.join(__dirname, "config", "station-topology.j
 let _stationTopologyCache = null;
 
 function loadStationTopology() {
-  if (_stationTopologyCache) return _stationTopologyCache;
-  _stationTopologyCache = readJson(STATION_TOPOLOGY_PATH, {});
-  return _stationTopologyCache;
+  try {
+    const stat = fs.statSync(STATION_TOPOLOGY_PATH);
+    if (
+      _stationTopologyCache &&
+      _stationTopologyCache.mtimeMs === stat.mtimeMs &&
+      _stationTopologyCache.data
+    ) {
+      return _stationTopologyCache.data;
+    }
+    const data = readJson(STATION_TOPOLOGY_PATH, {});
+    _stationTopologyCache = { mtimeMs: stat.mtimeMs, data };
+    return data;
+  } catch {
+    _stationTopologyCache = { mtimeMs: 0, data: readJson(STATION_TOPOLOGY_PATH, {}) };
+    return _stationTopologyCache.data;
+  }
 }
 
 function topologyVideoKeys(topologyId) {
@@ -93,11 +106,55 @@ function topologyVideoKeys(topologyId) {
   return VIDEO_KEYS_V0;
 }
 
-function defaultVideoKeysForStation(stationId) {
+function defaultVideoKeysForStation(stationId, { intrinsics = null } = {}) {
+  const topoId = intrinsics?.topology?.topology_id;
+  if (topoId) return topologyVideoKeys(topoId);
   const registry = loadStationTopology();
   const entry = registry.stations?.[stationId];
   if (entry?.topology_id) return topologyVideoKeys(entry.topology_id);
   return VIDEO_KEYS_V1;
+}
+
+function resolveVideoKeysForStation(stationId, { intrinsics = null, shapes = null } = {}) {
+  const shapeKeys = Object.keys(shapes || {}).filter((k) => k.startsWith("observation.images."));
+  if (shapeKeys.length >= 4) return shapeKeys;
+  return defaultVideoKeysForStation(stationId, { intrinsics });
+}
+
+function infoVideoKeysMismatch(info, expectedKeys) {
+  const feats = info?.features || {};
+  const current = Object.keys(feats).filter((k) => k.startsWith("observation.images."));
+  if (!expectedKeys?.length || !current.length) return Boolean(expectedKeys?.length);
+  const expected = new Set(expectedKeys);
+  return current.length !== expected.size || current.some((k) => !expected.has(k));
+}
+
+function syncInfoVideoFeatures(info, stationId, shapes, { intrinsics = null, episodeMeta = null } = {}) {
+  const keys = resolveVideoKeysForStation(stationId, { intrinsics, shapes });
+  const next = { ...(info || {}) };
+  next.features = { ...(next.features || {}) };
+  for (const key of Object.keys(next.features)) {
+    if (key.startsWith("observation.images.")) delete next.features[key];
+  }
+  for (const key of keys) {
+    const [h, w] = shapes?.[key] || next.features[key]?.shape?.slice(0, 2) || [800, 1280];
+    next.features[key] = {
+      dtype: "video",
+      shape: [h, w, 3],
+      names: ["height", "width", "channels"],
+      info: {
+        "video.height": h,
+        "video.width": w,
+        "video.codec": "h264",
+        "video.pix_fmt": "yuv420p",
+        "video.is_depth_map": false,
+        "video.fps": DEFAULT_FPS,
+        "video.channels": 3,
+        has_audio: false,
+      },
+    };
+  }
+  return bootstrapDatasetSchema(next, episodeMeta);
 }
 
 function videoKeysFromIntrinsics(root) {
@@ -639,6 +696,156 @@ export function spawnAppendSegmentParquetSync(root, extractDir, { deferSave = fa
   }
 }
 
+/** Rebuild data/chunk jsonl from raw tar.zst rows (segment_mp4 path; no frames/*.bin). */
+export async function rebuildSessionJsonlFromRawIfEmpty(stationId, sessionId) {
+  const root = stationRoot(stationId);
+  const metrics = readJsonlFrameMetrics(root);
+  if (metrics.count > 0) return metrics.count;
+  if (!isSegmentMp4PrimaryPath()) return 0;
+
+  const rawDir = path.join(root, "raw", "segments", sessionId);
+  if (!fs.existsSync(rawDir)) return 0;
+  const archives = fs
+    .readdirSync(rawDir)
+    .filter((f) => f.endsWith(".tar.zst"))
+    .sort();
+  if (!archives.length) return 0;
+
+  streamLog(stationId, "derive_jsonl_rebuild_start", { sessionId, segments: archives.length });
+  let info = readJson(path.join(root, "meta", "info.json"));
+  if (!info) info = defaultInfo(stationId, {});
+  const jsonl = dataJsonlPath(root);
+  ensureDir(path.dirname(jsonl));
+  let rowsWritten = 0;
+
+  for (const archive of archives) {
+    const segmentId = archive.replace(/\.tar\.zst$/, "");
+    const archivePath = path.join(rawDir, archive);
+    const extractDir = path.join(
+      root,
+      ".upload",
+      "extract",
+      `jsonl_rebuild_${segmentId}_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`,
+    );
+    try {
+      await extractTarZstArchive(archivePath, extractDir);
+      const rowsPath = path.join(extractDir, "rows.jsonl");
+      if (!fs.existsSync(rowsPath)) continue;
+      const lines = fs
+        .readFileSync(rowsPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (!lines.length) continue;
+      withFileLock(root, "jsonl", () => {
+        for (const line of lines) {
+          const row = JSON.parse(line);
+          const frameIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
+          if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
+          const canonical = buildCanonicalFrameRow(
+            {
+              frame_index: frameIndex,
+              timestamp_ns: row.timestamp_ns ?? row.timestampNs ?? 0,
+              task: frameTaskValue(root, stationId, row.task),
+              "observation.state": row["observation.state"] || row.observationState || [0, 0, 0, 0, 0, 0],
+              "observation.pose": row["observation.pose"] || row.observationPose || [0, 0, 0, 0, 0, 0, 1],
+              "observation.hands": row["observation.hands"] || row.observationHands || new Array(63).fill(0),
+              action: row.action || row.actionVector || [0],
+            },
+            info,
+          );
+          fs.appendFileSync(jsonl, `${JSON.stringify(canonical)}\n`);
+          rowsWritten += 1;
+        }
+      });
+    } finally {
+      try {
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const total = readJsonlFrameMetrics(root).count;
+  streamLog(stationId, "derive_jsonl_rebuild_done", { sessionId, rowsWritten, total });
+  return total;
+}
+
+/** Scalar parquet + meta from committed jsonl (segment_mp4; videos already at ingest). */
+export function spawnParquetSyncFromJsonlSync(root) {
+  if (!fs.existsSync(SYNC_SCRIPT)) throw new Error("parquet sync script missing");
+  const py = resolveParquetPython();
+  if (!py) throw new Error("no_python_for_parquet");
+  markParquetArtifactsWriting(root);
+  const res = spawnSync(py, [SYNC_SCRIPT, root], parquetSpawnOptions());
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "parquet sync from jsonl failed").slice(0, 500));
+  }
+}
+
+async function processSegmentMp4DeriveFromExtract(
+  root,
+  stationId,
+  body,
+  { actualSha, ingestSource, t0 },
+) {
+  const { sessionId, segmentId } = body;
+  if (isSegmentParquetDerivedOnDisk(stationId, sessionId, segmentId)) {
+    return { body, skipped: true, duplicate: true };
+  }
+
+  ensureSessionForImport(stationId, body);
+  let info = readJson(path.join(root, "meta", "info.json"));
+  if (!info) info = defaultInfo(stationId, {});
+
+  let rowsMerged = 0;
+  for (const f of body.frames || []) {
+    const frameIndex = Number(f.frameIndex ?? f.frame_index ?? -1);
+    if (!Number.isInteger(frameIndex) || frameIndex < 0) continue;
+    if (isFrameCommitted(root, sessionId, frameIndex)) continue;
+    const row = buildCanonicalFrameRow(
+      {
+        frame_index: frameIndex,
+        timestamp_ns: f.timestampNs ?? f.timestamp_ns ?? 0,
+        task: frameTaskValue(root, stationId, f.task),
+        "observation.state": f.observationState || f["observation.state"] || [0, 0, 0, 0, 0, 0],
+        "observation.pose": f.observationPose || f["observation.pose"] || [0, 0, 0, 0, 0, 0, 1],
+        "observation.hands": f.observationHands || f.observationHands || new Array(63).fill(0),
+        action: f.actionVector || f.action || [0],
+      },
+      info,
+    );
+    appendSegmentScratchRow(root, sessionId, segmentId, row);
+    markFrameCommitted(root, sessionId, frameIndex);
+    rowsMerged += 1;
+  }
+  if (rowsMerged > 0) {
+    mergeSegmentScratchToJsonl(root, sessionId, segmentId);
+  }
+
+  const framesCommitted = Number(body.frames?.length ?? 0);
+  if (!isSegmentCommitted(root, sessionId, segmentId)) {
+    markSegmentCommitted(root, sessionId, segmentId);
+  }
+  writeSegmentDeriveMarker(root, sessionId, segmentId, {
+    sha256: actualSha,
+    framesCommitted,
+    backend: "segment_mp4_jsonl",
+    segmentMp4: true,
+    rowsMerged,
+  });
+
+  streamLog(stationId, "derive_segment_mp4_ok", {
+    sessionId,
+    segmentId,
+    elapsedMs: Date.now() - t0,
+    frames: framesCommitted,
+    rowsMerged,
+  });
+  return { body, skipped: false, segmentMp4: true, framesCommitted, rowsMerged };
+}
+
 /** Flush deferred session episode buffer to LeRobot parquet (one save_episode per session). */
 export function spawnFinalizeSessionEpisodeSync(root, sessionId) {
   const script = resolveAppendParquetScript();
@@ -989,6 +1196,17 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
     }
     if (isSegmentParquetDerivedOnDisk(stationId, body.sessionId, body.segmentId)) {
       return { body, skipped: true, duplicate: true };
+    }
+    const framesDir = path.join(extractDir, "frames");
+    const hasFrameBins =
+      fs.existsSync(framesDir) &&
+      fs.readdirSync(framesDir).some((f) => f.endsWith(".bin"));
+    if (body.segmentMp4 && !hasFrameBins) {
+      return processSegmentMp4DeriveFromExtract(root, stationId, body, {
+        actualSha,
+        ingestSource,
+        t0,
+      });
     }
     ensureSessionForImport(stationId, body);
     body.ingestSource = ingestSource;
@@ -2510,7 +2728,8 @@ function pumpSegmentIngestQueue(stationId) {
   state.workerRunning = true;
   setImmediate(async () => {
     let n = 0;
-    while (state.queue.length > 0 && n < SEGMENT_INGEST_BATCH_SIZE) {
+    const batchSize = isSegmentMp4PrimaryPath() ? 1 : SEGMENT_INGEST_BATCH_SIZE;
+    while (state.queue.length > 0 && n < batchSize) {
       const job = state.queue.shift();
       const t0 = Date.now();
       try {
@@ -2677,9 +2896,9 @@ export function isRemotePreviewAllowed(stationId) {
   return getStationCaptureState(stationId) === "idle";
 }
 
-function defaultInfo(stationId, shapes, episodeMeta = null) {
+function defaultInfo(stationId, shapes, episodeMeta = null, { intrinsics = null } = {}) {
   const features = {};
-  for (const key of defaultVideoKeysForStation(stationId)) {
+  for (const key of resolveVideoKeysForStation(stationId, { intrinsics, shapes })) {
     const [h, w] = shapes[key] || [1200, 1920];
     features[key] = {
       dtype: "video",
@@ -2985,22 +3204,28 @@ function probeStationVideoFrameCounts(root) {
 }
 
 /** MP4 readiness: jsonl row count (not index span). API path uses cache only — no ffprobe. */
+function mp4ReadinessOk(target, minFrames, maxFrames) {
+  if (target <= 0 || minFrames <= 0) return false;
+  if (isSegmentMp4PrimaryPath()) {
+    // Edge H264 segment shards often carry fewer packets than jsonl rows; require cross-camera consistency.
+    return minFrames >= Math.floor(target * 0.85) && maxFrames - minFrames <= 120;
+  }
+  return minFrames >= target - 1 && maxFrames <= target + 1 && maxFrames - minFrames <= 1;
+}
+
 function evaluateMp4Readiness(root, metrics, { forceProbe = false } = {}) {
   const target = metrics.rowCount > 0 ? metrics.rowCount : metrics.expectedMp4Frames;
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
   const cachedFrames = muxVal.frames && typeof muxVal.frames === "object" ? muxVal.frames : null;
-  if (cachedFrames && Object.keys(cachedFrames).length > 0) {
+  if (!forceProbe && cachedFrames && Object.keys(cachedFrames).length > 0) {
     const muxKeys = activeMuxVideoKeys(root);
     const vals = muxKeys.map((k) => Number(cachedFrames[k] || 0));
     if (!vals.some((n) => n <= 0)) {
       const minFrames = Math.min(...vals);
       const maxFrames = Math.max(...vals);
-      const ok =
-        target > 0 &&
-        minFrames >= target - 1 &&
-        maxFrames <= target + 1 &&
-        maxFrames - minFrames <= 1;
-      return { ok: Boolean(muxVal.ok && ok), frames: cachedFrames, targetFrames: target, minFrames };
+      const ok = mp4ReadinessOk(target, minFrames, maxFrames);
+      const cacheOk = isSegmentMp4PrimaryPath() ? ok : Boolean(muxVal.ok && ok);
+      return { ok: cacheOk, frames: cachedFrames, targetFrames: target, minFrames };
     }
   }
   if (!forceProbe) {
@@ -3014,11 +3239,7 @@ function evaluateMp4Readiness(root, metrics, { forceProbe = false } = {}) {
   }
   const minFrames = Math.min(...vals);
   const maxFrames = Math.max(...vals);
-  const ok =
-    target > 0 &&
-    minFrames >= target - 1 &&
-    maxFrames <= target + 1 &&
-    maxFrames - minFrames <= 1;
+  const ok = mp4ReadinessOk(target, minFrames, maxFrames);
   return { ok, frames, targetFrames: target, minFrames };
 }
 
@@ -3778,8 +3999,11 @@ async function ensureSessionForImport(stationId, body) {
     return;
   }
   const task = body.frames[0]?.task;
+  const intrinsics = body.cameraIntrinsics && typeof body.cameraIntrinsics === "object"
+    ? body.cameraIntrinsics
+    : null;
   const videoShapes = {};
-  for (const key of defaultVideoKeysForStation(stationId)) {
+  for (const key of resolveVideoKeysForStation(stationId, { intrinsics })) {
     videoShapes[key] = [800, 1280];
   }
   await handleStreamUpload(stationId, {
@@ -3788,6 +4012,7 @@ async function ensureSessionForImport(stationId, body) {
     task,
     videoShapes,
     episodeMeta: body.episodeMeta,
+    cameraIntrinsics: intrinsics,
   });
 }
 
@@ -4425,6 +4650,10 @@ export async function handleStreamUpload(stationId, body) {
   if (action === "session_start") {
     const sessionId = body.sessionId || `sess_${Date.now()}`;
     const shapes = body.videoShapes || {};
+    const intrinsics = body.cameraIntrinsics && typeof body.cameraIntrinsics === "object"
+      ? body.cameraIntrinsics
+      : null;
+    const expectedVideoKeys = resolveVideoKeysForStation(stationId, { intrinsics, shapes });
     const livePath = path.join(root, "live", "session.json");
     const prevLive = readJson(livePath, {});
     const sessionDir = sessionPath(root, sessionId);
@@ -4457,13 +4686,24 @@ export async function handleStreamUpload(stationId, body) {
         stationId,
         body.episodeMeta || parseManifestToEpisodeMeta(null, stationId),
       );
-      writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes, episodeMeta));
+      writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes, episodeMeta, { intrinsics }));
       writeTasksJsonl(root, task);
       initChunksManifest(root, { resetViewer: true });
       writeViewerInfoSnapshot(root, 0);
       setChunkArtifactStatus(root, "meta/info.json", "finished", 0);
+    } else if (infoVideoKeysMismatch(readJson(path.join(root, "meta", "info.json"), {}), expectedVideoKeys)) {
+      const info = syncInfoVideoFeatures(
+        readJson(path.join(root, "meta", "info.json"), {}),
+        stationId,
+        shapes,
+        { intrinsics, episodeMeta },
+      );
+      writeJson(path.join(root, "meta", "info.json"), info);
+      streamLog(stationId, "session_info_topology_sync", {
+        sessionId,
+        videoKeys: expectedVideoKeys,
+      });
     }
-    const intrinsics = body.cameraIntrinsics;
     if (intrinsics && typeof intrinsics === "object") {
       writeJson(path.join(root, "meta", "camera_intrinsics.json"), intrinsics);
       setChunkArtifactStatus(root, "meta/camera_intrinsics.json", "finished", 0);
@@ -4480,7 +4720,7 @@ export async function handleStreamUpload(stationId, body) {
     if (isResume && !fs.existsSync(chunksManifestPath(root))) {
       initChunksManifest(root, { resetViewer: false });
     }
-    const info = readJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes));
+    const info = readJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes, null, { intrinsics }));
     writeJson(livePath, {
       sessionId,
       startedAt: prevLive.startedAt || new Date().toISOString(),
@@ -4494,7 +4734,7 @@ export async function handleStreamUpload(stationId, body) {
     ensureDir(stagingTmpRoot(root));
     ensureDir(path.join(stagingTmpRoot(root), "inflight"));
     ensureDir(locksDir(root));
-    const stagingKeys = isResume ? ingestVideoKeys(root) : defaultVideoKeysForStation(stationId);
+    const stagingKeys = isResume ? ingestVideoKeys(root) : expectedVideoKeys;
     for (const key of stagingKeys) {
       ensureDir(stagingDir(root, key));
     }

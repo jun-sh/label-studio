@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Industry-standard ego hand pipeline (test branch only).
+# Enables EGO_HANDS_STANDARD=1 and related flags; does not affect main defaults.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
+
+export EGO_PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-oak}"
+export EGO_OAK_MODE="${EGO_OAK_MODE:-hands}"
+export EGO_HANDS_STANDARD="${EGO_HANDS_STANDARD:-1}"
+export EGO_HANDS_DETECT="${EGO_HANDS_DETECT:-mediapipe}"
+export EGO_HMR_BACKEND="${EGO_HMR_BACKEND:-hamer}"
+export EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-geopavlakos}"
+export EGO_HMR_STRICT="${EGO_HMR_STRICT:-0}"
+export EGO_HANDS_CLAHE="${EGO_HANDS_CLAHE:-1}"
+export EGO_HANDS_TRACK="${EGO_HANDS_TRACK:-1}"
+export EGO_HANDS_OCCLUSION_HARD="${EGO_HANDS_OCCLUSION_HARD:-1}"
+export EGO_HANDS_TOPOLOGY="${EGO_HANDS_TOPOLOGY:-1}"
+export EGO_HANDS_WRITE_PARQUET="${EGO_HANDS_WRITE_PARQUET:-1}"
+export EGO_B3_STRICT="${EGO_B3_STRICT:-0}"
+
+if [[ "${EGO_HMR_BACKEND}" == "wilor" ]]; then
+  _wilor_root="${WILOR_ROOT:-}"
+  if [[ -z "${_wilor_root}" || ! -d "${_wilor_root}/wilor" ]]; then
+    echo "❌ EGO_HMR_BACKEND=wilor requires WILOR_ROOT pointing at official WiLoR checkout (with wilor/)" >&2
+    exit 1
+  fi
+  export WILOR_IMPL="${WILOR_IMPL:-repo}"
+fi
+
+if [[ ! -d "$PLATFORM_ROOT" ]]; then
+  echo "❌ ego-platform not found: $PLATFORM_ROOT" >&2
+  exit 1
+fi
+
+branch="$(git -C "$PLATFORM_ROOT" branch --show-current 2>/dev/null || true)"
+if [[ "$branch" != "test/ego-standard-hand-pipeline" ]]; then
+  echo "⚠️  ego-platform branch '${branch:-?}' — expected test/ego-standard-hand-pipeline" >&2
+fi
+
+echo "[standard-pipeline] EGO_HANDS_STANDARD=$EGO_HANDS_STANDARD HMR=$EGO_HMR_BACKEND B3_STRICT=$EGO_B3_STRICT"
+exec "${SCRIPT_DIR}/ego-run-pipeline" "$@"

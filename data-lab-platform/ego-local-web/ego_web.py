@@ -27,6 +27,11 @@ PORT = int(os.environ.get("EGO_WEB_PORT", "8080"))
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
 STANDBY_STACK_TARGET = os.environ.get("EGO_STANDBY_STACK_TARGET", "ecs-oak-standby-stack.target")
+STANDBY_PREVIEW_UNIT = os.environ.get(
+    "EGO_STANDBY_PREVIEW_UNIT",
+    "ecs-preview-standby.service",
+)
+STANDBY_IDLE_STOP_S = float(os.environ.get("EGO_STANDBY_IDLE_STOP_S", "45"))
 STATION_HEARTBEAT_UNIT = os.environ.get(
     "EGO_STATION_HEARTBEAT_UNIT",
     "ecs-station-heartbeat.service",
@@ -53,9 +58,9 @@ PREVIEW_URL = os.environ.get(
     "http://127.0.0.1:8765/preview/front_left/jpg",
 )
 STORAGE_WARN_GB = float(os.environ.get("EGO_STORAGE_WARN_GB", "2"))
-START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "45"))
+START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "90"))
 STOP_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_STOP_TIMEOUT_S", "120"))
-ENSURE_STOPPED_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_ENSURE_STOPPED_S", "120"))
+STOP_DEACTIVATING_KILL_S = float(os.environ.get("EGO_CAPTURE_DEACTIVATING_KILL_S", "45"))
 MIN_ACTION_INTERVAL_S = float(os.environ.get("EGO_MIN_ACTION_INTERVAL_S", "3"))
 JOURNAL_CACHE_TTL_S = float(os.environ.get("EGO_JOURNAL_CACHE_TTL_S", "0.4"))
 STATUS_POLL_MS = int(os.environ.get("EGO_STATUS_POLL_MS", "300"))
@@ -67,7 +72,8 @@ _last_action_mono = 0.0
 _last_error = ""
 _capture_writing_since: float | None = None
 _journal_cache: tuple[float, float | None, bool] | None = None
-_idle_standby_last_try = 0.0
+_standby_preview_touch_mono = 0.0
+_last_preview_jpeg: bytes | None = None
 
 
 def _unit_active_since_epoch(unit: str) -> float | None:
@@ -147,8 +153,7 @@ def _shm_open_segment_bin_count(since_epoch: float | None) -> int:
     return best
 
 
-def _journal_capture_progress_since(since_epoch: float | None) -> bool:
-    """True when record unit logged capture-only start or recent captured= lines."""
+def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
     global _journal_cache
     if since_epoch is None:
         return False
@@ -160,7 +165,7 @@ def _journal_capture_progress_since(since_epoch: float | None) -> bool:
     ):
         return _journal_cache[2]
     since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
-    proc_tail = subprocess.run(
+    proc = subprocess.run(
         [
             "journalctl",
             "--user",
@@ -168,7 +173,7 @@ def _journal_capture_progress_since(since_epoch: float | None) -> bool:
             CAPTURE_RECORD_UNIT,
             f"--since={since_local}",
             "-n",
-            "40",
+            "200",
             "--no-pager",
             "-o",
             "cat",
@@ -178,45 +183,23 @@ def _journal_capture_progress_since(since_epoch: float | None) -> bool:
         timeout=5,
         check=False,
     )
-    if proc_tail.returncode == 0 and "captured=" in proc_tail.stdout:
-        _journal_cache = (now, since_epoch, True)
-        return True
-    proc_grep = subprocess.run(
-        [
-            "journalctl",
-            "--user",
-            "-u",
-            CAPTURE_RECORD_UNIT,
-            f"--since={since_local}",
-            "-g",
-            "capture-only session=",
-            "--no-pager",
-            "-o",
-            "cat",
-            "-n",
-            "1",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=8,
-        check=False,
-    )
-    result = proc_grep.returncode == 0 and proc_grep.stdout.strip() != ""
+    if proc.returncode != 0:
+        _journal_cache = (now, since_epoch, False)
+        return False
+    text = proc.stdout
+    result = "capture-only session=" in text or "captured=" in text
     _journal_cache = (now, since_epoch, result)
     return result
 
 
 def _capture_frames_writing() -> bool:
+    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    if rec in ("deactivating", "inactive", "failed", ""):
+        return False
     since = _capture_run_since_epoch()
     if _shm_open_segment_bin_count(since) > 0:
         return True
-    if _journal_capture_progress_since(since):
-        return True
-    cp = _read_checkpoint()
-    try:
-        return int(cp.get("nextFrameIndex", 0) or 0) > 0
-    except (TypeError, ValueError):
-        return False
+    return _journal_has_capture_only_since(since)
 
 
 def _new_session_id() -> str:
@@ -293,14 +276,9 @@ def _capture_unit_state(unit: str = CAPTURE_RECORD_UNIT) -> str:
 
 def _capture_active() -> bool:
     rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
-    if rec in ("active", "activating", "deactivating"):
+    if rec in ("active", "activating"):
         return True
     return _capture_unit_state(CAPTURE_TARGET) == "active"
-
-
-def _capture_stopping() -> bool:
-    state = _capture_unit_state(CAPTURE_RECORD_UNIT)
-    return state in ("activating", "deactivating")
 
 
 def _preview_port_in_use(port: int = 8765) -> bool:
@@ -314,14 +292,22 @@ def _preview_port_in_use(port: int = 8765) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() != ""
 
 
-def _wait_preview_port_free(timeout_s: float = 20.0, port: int = 8765) -> bool:
-    """Standby preview holds :8765; capture record must bind the same port."""
+def _wait_preview_port_free(timeout_s: float = 25.0, port: int = 8765) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if not _preview_port_in_use(port):
             return True
         time.sleep(0.25)
     return False
+
+
+def _capture_fully_idle() -> bool:
+    return _capture_unit_state(CAPTURE_RECORD_UNIT) in ("inactive", "failed", "")
+
+
+def _capture_stopping() -> bool:
+    state = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    return state in ("activating", "deactivating")
 
 
 def _ensure_capture_fully_stopped(timeout_s: float = 25.0) -> bool:
@@ -339,10 +325,40 @@ def _ensure_capture_fully_stopped(timeout_s: float = 25.0) -> bool:
     return False
 
 
+def _touch_standby_preview_activity() -> None:
+    global _standby_preview_touch_mono
+    _standby_preview_touch_mono = time.monotonic()
+
+
+def _wake_standby_preview_if_idle() -> None:
+    """Start low-FPS standby preview when user browses (OAK off otherwise)."""
+    if _capture_active() or _capture_stopping():
+        return
+    _touch_standby_preview_activity()
+    if _capture_unit_state(STANDBY_PREVIEW_UNIT) != "active":
+        _systemctl("start", STANDBY_PREVIEW_UNIT, timeout=20)
+
+
+def _maybe_stop_idle_standby_preview() -> None:
+    """Stop standby preview after no browse/preview traffic."""
+    global _standby_preview_touch_mono
+    with _lock:
+        busy = _busy
+    if _capture_active() or busy or _capture_stopping():
+        return
+    if _standby_preview_touch_mono <= 0:
+        return
+    if time.monotonic() - _standby_preview_touch_mono < STANDBY_IDLE_STOP_S:
+        return
+    if _capture_unit_state(STANDBY_PREVIEW_UNIT) == "active":
+        _systemctl("stop", STANDBY_PREVIEW_UNIT, timeout=10)
+        _standby_preview_touch_mono = 0.0
+
+
 def _stop_standby_preview() -> None:
-    """Release :8765 and OAK before capture (keep short — blocks the HTTP start thread)."""
-    _systemctl("stop", STANDBY_STACK_TARGET, timeout=30)
-    _systemctl("stop", "ecs-preview-standby.service", timeout=15)
+    """Release :8765 and OAK before capture."""
+    _systemctl("stop", STANDBY_PREVIEW_UNIT, timeout=10)
+    _systemctl("stop", STANDBY_STACK_TARGET, timeout=10)
     subprocess.run(
         ["pkill", "-TERM", "-f", "preview_standby"],
         capture_output=True,
@@ -359,13 +375,24 @@ def _stop_standby_preview() -> None:
             check=False,
         )
         time.sleep(0.5)
-    if not _wait_preview_port_free(timeout_s=8.0):
+    if _preview_port_in_use():
+        subprocess.run(
+            ["fuser", "-k", "-KILL", "8765/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        time.sleep(0.3)
+    if not _wait_preview_port_free(timeout_s=15.0):
         print("warning: preview port 8765 still in use after standby stop", flush=True)
+    global _standby_preview_touch_mono
+    _standby_preview_touch_mono = 0.0
 
 
 def _start_standby_preview() -> None:
-    _systemctl("start", STANDBY_STACK_TARGET, timeout=60)
     _ensure_station_heartbeat()
+    _wake_standby_preview_if_idle()
 
 
 def _ensure_station_heartbeat() -> None:
@@ -373,21 +400,6 @@ def _ensure_station_heartbeat() -> None:
     if _systemctl("is-active", STATION_HEARTBEAT_UNIT, timeout=5).stdout.strip() == "active":
         return
     _systemctl("start", STATION_HEARTBEAT_UNIT, timeout=20)
-
-
-def _maybe_ensure_standby_preview() -> None:
-    """130 on-demand preview: gateway on :8765; OAK wakes when preview HTTP is polled."""
-    global _idle_standby_last_try
-    if _capture_active():
-        return
-    now = time.monotonic()
-    if now - _idle_standby_last_try < 20.0:
-        return
-    _idle_standby_last_try = now
-    state = _systemctl("is-active", STANDBY_STACK_TARGET, timeout=5).stdout.strip()
-    if state == "active":
-        return
-    threading.Thread(target=_start_standby_preview, name="ego-web-standby", daemon=True).start()
 
 
 def _format_free_gb(path: Path) -> str:
@@ -433,14 +445,13 @@ def _build_status() -> dict[str, Any]:
         err = _last_error
 
     active = _capture_active()
-    stopping = _capture_stopping()
-    if not active and not busy:
-        _maybe_ensure_standby_preview()
-    frames_writing = active and not stopping and _capture_frames_writing()
+    rec_state = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    frames_writing = active and rec_state not in ("deactivating",) and _capture_frames_writing()
 
     if not active:
         _capture_writing_since = None
         _journal_cache = None
+        _maybe_stop_idle_standby_preview()
 
     duration = 0
     if active and frames_writing:
@@ -458,19 +469,22 @@ def _build_status() -> dict[str, Any]:
         msg = "正在启动采集服务，请稍候…"
     elif busy and busy_action == "stop":
         state = "stopping"
-        msg = "正在保存数据，请勿断电…"
-    elif stopping and not frames_writing:
-        state = "stopping"
-        msg = "正在保存数据，完成后可再次开始录制"
-    elif err and not (active and frames_writing):
-        state = "error"
-        msg = err
+        rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+        if rec == "active" and frames_writing:
+            msg = "正在停止采集，请稍候…"
+        elif rec == "deactivating":
+            msg = "正在写入磁盘，请勿断电（段数已不再增加）"
+        else:
+            msg = "正在保存数据，请勿断电…"
     elif active and frames_writing:
         state = "recording"
-        msg = ""
+        msg = err if err else ""
     elif active:
         state = "warming"
-        msg = "开始写入数据后计时"
+        msg = err or "开始写入数据后计时"
+    elif err:
+        state = "error"
+        msg = err
     else:
         state = "idle"
         msg = ""
@@ -487,79 +501,100 @@ def _build_status() -> dict[str, Any]:
     }
 
 
-def _do_capture_action(action: str) -> tuple[bool, str]:
-    """Run start/stop work (caller owns _busy lifecycle)."""
-    global _last_error
+def _run_capture_action(action: str) -> tuple[bool, str]:
+    global _busy, _busy_action, _last_error, _last_action_mono
 
-    if action == "start":
-        if _capture_active() and _capture_unit_state(CAPTURE_RECORD_UNIT) == "active":
-            return True, "采集已在运行"
-        if _capture_stopping():
-            if not _ensure_capture_fully_stopped(timeout_s=ENSURE_STOPPED_TIMEOUT_S):
-                _last_error = "上一段采集仍在退出，请稍后再试"
+    now = time.monotonic()
+    with _lock:
+        if _busy:
+            return False, "操作进行中，请稍候"
+        if now - _last_action_mono < MIN_ACTION_INTERVAL_S:
+            return False, "操作过快，请稍后再试"
+        _busy = True
+        _busy_action = action
+        _last_error = ""
+
+    try:
+        if action == "start":
+            if _capture_active():
+                return True, "采集已在运行"
+            if _capture_stopping():
+                if not _ensure_capture_fully_stopped():
+                    _last_error = "上一段采集仍在退出，请稍后再试"
+                    return False, _last_error
+            elif not _ensure_capture_fully_stopped():
+                _last_error = "采集服务未能完全停止，请稍后再试"
                 return False, _last_error
-        elif not _ensure_capture_fully_stopped(timeout_s=ENSURE_STOPPED_TIMEOUT_S):
-            _last_error = "采集服务未能完全停止，请稍后再试"
-            return False, _last_error
-        _begin_new_capture_session()
-        _stop_standby_preview()
-        proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "启动失败").strip()
-            _last_error = f"无法启动采集：{detail}"
+            cached = _grab_preview_bytes()
+            if cached:
+                global _last_preview_jpeg
+                _last_preview_jpeg = cached
+            _stop_standby_preview()
+            if _preview_port_in_use():
+                _last_error = "预览端口 8765 未释放，请等待 10 秒后重试"
+                _start_standby_preview()
+                return False, _last_error
+            _begin_new_capture_session()
+            proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "启动失败").strip()
+                _last_error = f"无法启动采集：{detail}"
+                _start_standby_preview()
+                return False, _last_error
+            deadline = time.monotonic() + START_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if (
+                    _capture_unit_state(CAPTURE_RECORD_UNIT) == "active"
+                    and _capture_active()
+                ):
+                    return True, ""
+                time.sleep(0.5)
+            _last_error = "相机启动超时，请检查 OAK 设备是否连接"
+            _systemctl("stop", CAPTURE_TARGET, timeout=30)
             _start_standby_preview()
             return False, _last_error
-        deadline = time.monotonic() + START_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if _capture_active() and _capture_unit_state(CAPTURE_RECORD_UNIT) == "active":
-                return True, ""
-            time.sleep(0.5)
-        _last_error = "相机启动超时，请检查 OAK 设备是否连接"
-        _systemctl("stop", CAPTURE_TARGET, timeout=30)
-        _start_standby_preview()
-        return False, _last_error
 
-    if action == "stop":
-        if not _capture_active():
-            _last_error = ""
-            _start_standby_preview()
-            return True, ""
-        proc = _systemctl("stop", CAPTURE_TARGET, timeout=STOP_TIMEOUT_S)
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "停止失败").strip()
-            _last_error = f"无法停止采集：{detail}"
-            return False, _last_error
-        deadline = time.monotonic() + STOP_TIMEOUT_S
-        ok = False
-        while time.monotonic() < deadline:
+        if action == "stop":
             if not _capture_active():
                 ok = True
-                break
-            time.sleep(0.5)
-        if not ok:
-            _systemctl("stop", CAPTURE_RECORD_UNIT, timeout=STOP_TIMEOUT_S)
-            deadline = time.monotonic() + 90.0
-            while time.monotonic() < deadline:
-                if not _capture_active():
-                    ok = True
-                    break
-                time.sleep(0.5)
-        if not ok:
-            _last_error = "停止超时，请稍后刷新页面查看状态"
-            return False, _last_error
-        _last_error = ""
-        _start_standby_preview()
-        return True, ""
+            else:
+                _systemctl("stop", CAPTURE_RECORD_UNIT, timeout=30)
+                _systemctl("stop", CAPTURE_TARGET, timeout=15)
+                deadline = time.monotonic() + STOP_TIMEOUT_S
+                ok = False
+                deactivating_since: float | None = None
+                while time.monotonic() < deadline:
+                    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+                    if rec == "deactivating":
+                        if deactivating_since is None:
+                            deactivating_since = time.monotonic()
+                        elif time.monotonic() - deactivating_since >= STOP_DEACTIVATING_KILL_S:
+                            _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
+                            deactivating_since = time.monotonic()
+                    else:
+                        deactivating_since = None
+                    if _capture_fully_idle():
+                        ok = True
+                        break
+                    time.sleep(0.5)
+                if not ok:
+                    _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
+                    deadline = time.monotonic() + 45.0
+                    while time.monotonic() < deadline:
+                        if _capture_fully_idle():
+                            ok = True
+                            break
+                        time.sleep(0.5)
+                if not ok:
+                    _last_error = "停止超时，请再次点击结束录制"
+                    return False, _last_error
+            _start_standby_preview()
+            return True, ""
 
-    return False, "未知操作"
-
-
-def _capture_action_worker(action: str) -> None:
-    global _busy, _busy_action, _last_action_mono, _last_error
-    try:
-        ok, msg = _do_capture_action(action)
-        if not ok and msg:
-            _last_error = msg
+        return False, "未知操作"
+    except Exception as exc:
+        _last_error = f"操作异常：{exc}"
+        return False, _last_error
     finally:
         with _lock:
             _busy = False
@@ -567,47 +602,31 @@ def _capture_action_worker(action: str) -> None:
             _last_action_mono = time.monotonic()
 
 
-def _dispatch_capture_action(action: str) -> tuple[bool, str, bool]:
-    """Queue start/stop on a worker thread. Returns (success, msg, accepted_async)."""
-    global _busy, _busy_action, _last_error
-
-    now = time.monotonic()
-    with _lock:
-        if _busy:
-            return False, "操作进行中，请稍候", False
-        if now - _last_action_mono < MIN_ACTION_INTERVAL_S:
-            return False, "操作过快，请稍后再试", False
-
-    if action == "start":
-        rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
-        if rec == "active":
-            return True, "采集已在运行", False
-    elif action == "stop":
-        if not _capture_active():
-            ok, msg = _do_capture_action("stop")
-            return ok, msg, False
-
-    with _lock:
-        _busy = True
-        _busy_action = action
-        _last_error = ""
-
-    threading.Thread(
-        target=_capture_action_worker,
-        args=(action,),
-        name=f"ego-web-{action}",
-        daemon=True,
-    ).start()
-    return True, "", True
+def _grab_preview_bytes() -> bytes | None:
+    req = urllib.request.Request(PREVIEW_URL, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = resp.read()
+            if len(data) > 100:
+                return data
+    except (urllib.error.URLError, TimeoutError, OSError, urllib.error.HTTPError):
+        pass
+    return None
 
 
 def _fetch_preview() -> tuple[bytes | None, str]:
-    req = urllib.request.Request(PREVIEW_URL, method="GET")
-    try:
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return resp.read(), resp.headers.get("Content-Type", "image/jpeg")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return None, "image/jpeg"
+    global _last_preview_jpeg
+    if not _capture_active() and not _capture_stopping():
+        _wake_standby_preview_if_idle()
+    data = _grab_preview_bytes()
+    if data:
+        _last_preview_jpeg = data
+        return data, "image/jpeg"
+    with _lock:
+        busy_start = _busy and _busy_action == "start"
+    if _last_preview_jpeg and (_capture_active() or _capture_stopping() or busy_start):
+        return _last_preview_jpeg, "image/jpeg"
+    return None, "image/jpeg"
 
 
 INDEX_HTML = """<!DOCTYPE html>
@@ -616,26 +635,23 @@ INDEX_HTML = """<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#f0f2f5" />
+  <meta name="theme-color" content="#EEF4FF" />
   <title>EGO 采集</title>
   <style>
     :root {
-      --bg: #f0f2f5;
-      --text: #1a1a1a;
-      --muted: #8a8a8a;
-      --accent: #6da9d6;
-      --accent-dark: #4a8fc4;
-      --preview-bg: #ebf4fb;
-      --dot-idle: #f5a623;
-      --dot-rec: #22c55e;
-      --dot-warn: #d97706;
-      --dot-err: #dc2626;
-      --btn-start: #6da9d6;
-      --btn-stop: #e57373;
-      --value: #6da9d6;
+      --bg: #f4f3ef;
+      --text: #1a1a18;
+      --muted: #6b6b66;
+      --idle-bg: #EEF4FF;
+      --idle-text: #1E3A8A;
+      --idle-border: #BFDBFE;
+      --rec: #1f8a4c;
+      --err: #c0392b;
       --warn: #b45309;
-      --radius: 20px;
-      --card-shadow: 0 4px 20px rgba(0,0,0,.06);
+      --btn-idle: #2563eb;
+      --btn-stop: #dc2626;
+      --radius: 16px;
+      --shadow: 0 8px 28px rgba(0,0,0,.12);
     }
     * { box-sizing: border-box; }
     html, body {
@@ -646,250 +662,151 @@ INDEX_HTML = """<!DOCTYPE html>
     }
     .app {
       max-width: 480px; margin: 0 auto;
-      padding: 14px 16px calc(20px + env(safe-area-inset-bottom));
-      display: flex; flex-direction: column; gap: 14px;
+      padding: 12px 16px calc(20px + env(safe-area-inset-bottom));
+      display: flex; flex-direction: column; gap: 16px;
     }
-
-    .status-card {
-      background: #fff;
+    .status {
       border-radius: var(--radius);
-      padding: 16px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      box-shadow: var(--card-shadow);
-    }
-    .status-body {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      flex: 1;
-      min-width: 0;
-    }
-    .status-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      margin-top: 6px;
-      flex-shrink: 0;
-      background: var(--dot-idle);
-      transition: background .25s;
-    }
-    .status-card[data-state="idle"] .spinner { display: none !important; visibility: hidden; }
-    .status-card[data-state="idle"] .status-dot { background: var(--dot-idle); }
-    .status-card[data-state="recording"] .status-dot { background: var(--dot-rec); }
-    .status-card[data-state="starting"] .status-dot,
-    .status-card[data-state="warming"] .status-dot,
-    .status-card[data-state="stopping"] .status-dot { background: var(--dot-warn); }
-    .status-card[data-state="error"] .status-dot { background: var(--dot-err); }
-    .status-text { flex: 1; min-width: 0; }
-    .status-title-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 1.05rem;
-      font-weight: 700;
-      line-height: 1.35;
-      color: var(--text);
-    }
-    .status-sub {
-      margin-top: 4px;
-      font-size: .82rem;
-      color: var(--muted);
-      line-height: 1.4;
-    }
-    .status-sub:empty { display: none; }
-    .status-card[data-state="recording"] .status-sub { color: var(--dot-rec); }
-    .status-wifi {
-      width: 22px; height: 22px;
-      flex-shrink: 0;
-      color: var(--accent);
-      opacity: .85;
-    }
-  .status-card[data-state="error"] .status-wifi { color: var(--dot-err); }
-    .spinner {
-      display: inline-block; width: 16px; height: 16px;
-      border: 2px solid rgba(0,0,0,.12);
-      border-top-color: var(--dot-warn);
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-      flex-shrink: 0;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .preview-wrap {
-      background: var(--preview-bg);
-      border-radius: var(--radius);
-      overflow: hidden;
-      aspect-ratio: 4/3;
-      position: relative;
-      box-shadow: var(--card-shadow);
-    }
-    .preview-wrap img {
-      width: 100%; height: 100%;
-      object-fit: cover; display: block;
-      background: var(--preview-bg);
-    }
-    .preview-placeholder {
-      position: absolute; inset: 0;
+      padding: 0 16px;
+      min-height: 96px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      padding: 20px;
       text-align: center;
-      color: var(--muted);
-      font-size: .88rem;
-      line-height: 1.45;
+      box-shadow: var(--shadow);
+      transition: background .25s, color .25s;
     }
-    .preview-camera-icon {
-      width: 72px; height: 72px;
-      color: var(--accent);
-      opacity: .75;
+    .status[data-state="idle"] {
+      background: var(--idle-bg);
+      color: var(--idle-text);
+      border: 1px solid var(--idle-border);
     }
-    .preview-timer {
-      position: absolute;
-      top: 12px; left: 12px;
-      background: rgba(255,255,255,.92);
-      border-radius: 10px;
-      padding: 6px 12px;
-      font-size: .95rem;
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-      color: var(--text);
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
-      z-index: 2;
+    .status[data-state="recording"] { background: var(--rec); color: #fff; padding: 18px 16px; }
+    .status[data-state="starting"],
+    .status[data-state="warming"],
+    .status[data-state="stopping"] {
+      background: #b8860b;
+      color: #fff;
+      padding: 18px 16px;
     }
-    .preview-rec {
-      position: absolute;
-      top: 12px; right: 12px;
-      background: rgba(255,255,255,.92);
-      border-radius: 10px;
-      padding: 6px 10px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: .78rem;
+    .status[data-state="error"] { background: var(--err); color: #fff; padding: 18px 16px; }
+    .status-title {
+      font-size: 1.5rem;
       font-weight: 700;
-      color: #e53935;
-      box-shadow: 0 2px 8px rgba(0,0,0,.08);
-      z-index: 2;
-    }
-    .rec-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #e53935;
-      animation: rec-pulse 1.2s ease-in-out infinite;
-    }
-    @keyframes rec-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: .35; }
-    }
-
-    .btn-main {
-      width: 100%; min-height: 58px;
-      border: none; border-radius: 999px;
-      font-size: 1.15rem; font-weight: 700;
-      color: #fff; cursor: pointer;
-      box-shadow: var(--card-shadow);
+      letter-spacing: .04em;
+      line-height: 1.3;
+      width: 100%;
+      margin: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
+      gap: 6px;
+    }
+    .status[data-state="idle"] .status-title {
+      font-size: 1.6rem;
+      line-height: 1.25;
+      padding: 0;
+    }
+  /* 待机无副文案：主标题在条内垂直正中 */
+    .status[data-state="idle"].status--solo .status-title {
+      min-height: 96px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .status-sub {
+      margin: 0;
+      padding: 0 0 14px;
+      font-size: .95rem;
+      width: 100%;
+    }
+    .status-sub:empty {
+      display: none;
+      min-height: 0;
+      padding: 0;
+    }
+    .status[data-state="idle"] .status-sub:not(:empty) {
+      color: #3B5B9A;
+      opacity: .9;
+      padding-bottom: 16px;
+    }
+    .status:not([data-state="idle"]) .status-sub {
+      margin-top: 6px;
+      padding-bottom: 14px;
+      opacity: .95;
+    }
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.35);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .8s linear infinite;
+      vertical-align: -3px; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .preview-wrap {
+      background: #111; border-radius: var(--radius);
+      overflow: hidden; aspect-ratio: 4/3;
+      position: relative; box-shadow: var(--shadow);
+    }
+    .preview-wrap img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      background: #222;
+    }
+    .preview-placeholder {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #aaa; font-size: .95rem; padding: 16px; text-align: center;
+    }
+
+    .btn-main {
+      width: 100%; min-height: 64px;
+      border: none; border-radius: 999px;
+      font-size: 1.35rem; font-weight: 700;
+      color: #fff; cursor: pointer;
+      box-shadow: var(--shadow);
       transition: transform .1s, opacity .2s, background .2s;
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
     }
     .btn-main:active:not(:disabled) { transform: scale(.98); }
     .btn-main:disabled { opacity: .55; cursor: not-allowed; }
-    .btn-main[data-mode="start"] { background: var(--btn-start); }
+    .btn-main[data-mode="start"] { background: var(--btn-idle); }
     .btn-main[data-mode="stop"] { background: var(--btn-stop); }
-    .btn-icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 22px; height: 22px;
-    }
-    .btn-icon svg { width: 20px; height: 20px; display: block; }
 
     .info {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     }
     .info-card {
-      background: #fff;
-      border-radius: 16px;
-      padding: 14px 16px;
-      box-shadow: var(--card-shadow);
+      background: #fff; border-radius: 12px; padding: 12px 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.06);
     }
     .info-label { font-size: .78rem; color: var(--muted); }
-    .info-value {
-      font-size: 1.45rem;
-      font-weight: 700;
-      margin-top: 6px;
-      color: var(--value);
-      line-height: 1.2;
-    }
+    .info-value { font-size: 1.1rem; font-weight: 600; margin-top: 4px; }
     .info-value.warn { color: var(--warn); }
 
-    .hints {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 0 4px;
-    }
-    .hint-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      font-size: .78rem;
-      color: var(--muted);
-      line-height: 1.45;
-    }
-    .hint-icon {
-      width: 16px; height: 16px;
-      flex-shrink: 0;
-      margin-top: 1px;
-      color: #b0b0b0;
+    .hint {
+      font-size: .8rem; color: var(--muted); text-align: center; line-height: 1.5;
+      padding: 0 8px;
     }
   </style>
 </head>
 <body>
   <div class="app">
-    <header class="status-card" id="statusBar" data-state="idle">
-      <div class="status-body">
-        <span class="status-dot" id="statusDot" aria-hidden="true"></span>
-        <div class="status-text">
-          <div class="status-title-row">
-            <span class="spinner" id="statusSpinner" hidden></span>
-            <span id="statusTitleText">设备待机中</span>
-          </div>
-          <div class="status-sub" id="statusSub"></div>
-        </div>
+    <header class="status" id="statusBar" data-state="idle">
+      <div class="status-title" id="statusTitle">
+        <span class="spinner" id="statusSpinner" hidden></span><span id="statusTitleText">设备待机中</span>
       </div>
-      <svg class="status-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.42a6 6 0 0 1 7 0"/><path d="M12 20h.01"/>
-      </svg>
+      <div class="status-sub" id="statusSub"></div>
     </header>
 
     <section class="preview-wrap" aria-label="实时预览">
       <img id="previewImg" alt="" hidden />
-      <div class="preview-placeholder" id="previewPh">
-        <svg class="preview-camera-icon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <rect x="8" y="18" width="48" height="34" rx="4"/>
-          <circle cx="32" cy="35" r="10"/>
-          <path d="M22 18l4-8h20l4 8"/>
-        </svg>
-        <span>开始录制后显示实时画面</span>
-      </div>
-      <div class="preview-timer" id="previewTimer" hidden>00:00:00</div>
-      <div class="preview-rec" id="previewRec" hidden><span class="rec-dot"></span>REC</div>
+      <div class="preview-placeholder" id="previewPh">开始录制后显示实时画面</div>
     </section>
 
-    <button type="button" class="btn-main" id="mainBtn" data-mode="start">
-      <span class="btn-icon" id="mainBtnIcon" aria-hidden="true"></span>
-      <span id="mainBtnLabel">开始录制</span>
-    </button>
+    <button type="button" class="btn-main" id="mainBtn" data-mode="start">开始录制</button>
 
     <section class="info">
       <div class="info-card">
@@ -898,81 +815,41 @@ INDEX_HTML = """<!DOCTYPE html>
       </div>
       <div class="info-card">
         <div class="info-label">已生成段数</div>
-        <div class="info-value" id="segmentCount">0 段</div>
+        <div class="info-value" id="segmentCount">0</div>
       </div>
     </section>
 
-    <div class="hints">
-      <div class="hint-row">
-        <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.42a6 6 0 0 1 7 0"/><path d="M12 20h.01"/>
-        </svg>
-        <span>录制前请保持 WiFi 连接</span>
-      </div>
-      <div class="hint-row">
-        <svg class="hint-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
-        </svg>
-        <span>手机断开不影响数据写入</span>
-      </div>
-    </div>
+    <p class="hint">结束录制前请保持与本设备的 WiFi 连接。<br />录制过程中手机断开不影响数据写入。</p>
   </div>
   <script>
 (function () {
   var statusBar = document.getElementById("statusBar");
+  var statusTitle = document.getElementById("statusTitle");
   var statusSpinner = document.getElementById("statusSpinner");
   var statusTitleText = document.getElementById("statusTitleText");
   var statusSub = document.getElementById("statusSub");
   var mainBtn = document.getElementById("mainBtn");
-  var mainBtnIcon = document.getElementById("mainBtnIcon");
-  var mainBtnLabel = document.getElementById("mainBtnLabel");
   var previewImg = document.getElementById("previewImg");
   var previewPh = document.getElementById("previewPh");
-  var previewTimer = document.getElementById("previewTimer");
-  var previewRec = document.getElementById("previewRec");
   var storageFree = document.getElementById("storageFree");
   var segmentCount = document.getElementById("segmentCount");
 
   var pollTimer = null;
-  var previewPollTimer = null;
+  var previewTimer = null;
   var idlePreviewTimer = null;
   var actionInFlight = false;
-
-  var ICON_PLAY = "<svg viewBox=\\"0 0 24 24\\" fill=\\"currentColor\\"><path d=\\"M8 5v14l11-7z\\"/></svg>";
-  var ICON_STOP = "<svg viewBox=\\"0 0 24 24\\" fill=\\"currentColor\\"><rect x=\\"6\\" y=\\"6\\" width=\\"12\\" height=\\"12\\" rx=\\"1\\"/></svg>";
+  var previewWantLive = false;
+  var previewHasFrame = false;
 
   function formatDuration(sec) {
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
+    var m = Math.floor(sec / 60);
     var s = sec % 60;
-    return (h < 10 ? "0" : "") + h + ":" +
-      (m < 10 ? "0" : "") + m + ":" +
-      (s < 10 ? "0" : "") + s;
+    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
   }
 
   function setStatusTitle(showSpinner, text) {
     statusSpinner.hidden = !showSpinner;
     statusTitleText.textContent = text;
-  }
-
-  function setMainBtn(mode) {
-    mainBtn.setAttribute("data-mode", mode);
-    if (mode === "stop") {
-      mainBtnLabel.textContent = "结束录制";
-      mainBtnIcon.innerHTML = ICON_STOP;
-    } else {
-      mainBtnLabel.textContent = "开始录制";
-      mainBtnIcon.innerHTML = ICON_PLAY;
-    }
-  }
-
-  function setPreviewOverlay(st, duration) {
-    var showOverlay = st === "recording" || st === "warming";
-    previewTimer.hidden = !showOverlay;
-    previewRec.hidden = st !== "recording";
-    if (showOverlay) {
-      previewTimer.textContent = formatDuration(duration || 0);
-    }
   }
 
   function applyStatus(data) {
@@ -982,54 +859,65 @@ INDEX_HTML = """<!DOCTYPE html>
     if (st === "idle") {
       setStatusTitle(false, "设备待机中");
       statusSub.textContent = data.msg || "";
-      setMainBtn("start");
+      mainBtn.textContent = "开始录制";
+      mainBtn.setAttribute("data-mode", "start");
+      if (data.msg) {
+        statusBar.classList.remove("status--solo");
+      } else {
+        statusBar.classList.add("status--solo");
+      }
+      startIdlePreview();
     } else if (st === "warming") {
-      setStatusTitle(true, "设备已连接");
-      statusSub.textContent = data.msg || "相机初始化中";
-      setMainBtn("stop");
+      statusBar.classList.remove("status--solo");
+      setStatusTitle(true, "相机初始化中");
+      statusSub.textContent = data.msg || "开始写入数据后计时";
+      mainBtn.textContent = "结束录制";
+      mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "recording") {
-      setStatusTitle(false, "设备已连接");
-      statusSub.textContent = "正在录制中";
-      setMainBtn("stop");
+      statusBar.classList.remove("status--solo");
+      setStatusTitle(false, "正在录制中");
+      statusSub.textContent = formatDuration(data.duration || 0);
+      mainBtn.textContent = "结束录制";
+      mainBtn.setAttribute("data-mode", "stop");
     } else if (st === "starting") {
+      statusBar.classList.remove("status--solo");
       setStatusTitle(true, "正在启动相机");
-      statusSub.textContent = data.msg || "正在释放预览并启动采集，请稍候…";
+      statusSub.textContent = data.msg || "请稍候，约需数秒";
       mainBtn.disabled = true;
+      stopIdlePreview();
+      startPreview();
     } else if (st === "stopping") {
+      statusBar.classList.remove("status--solo");
       setStatusTitle(true, "正在保存数据");
-      statusSub.textContent = data.msg || "请勿断电，保存完成后可再次开始";
-      setMainBtn("stop");
+      statusSub.textContent = data.msg || "请勿断电";
+      mainBtn.textContent = "保存中…";
+      mainBtn.setAttribute("data-mode", "saving");
       mainBtn.disabled = true;
       stopIdlePreview();
       stopPreview();
+      showPreviewPlaceholder("正在写入磁盘，请勿断电…");
     } else if (st === "error") {
+      statusBar.classList.remove("status--solo");
       setStatusTitle(false, "出现问题");
       statusSub.textContent = data.msg || "请稍后重试";
-      setMainBtn(data.capture_active ? "stop" : "start");
+      mainBtn.textContent = data.capture_active ? "结束录制" : "开始录制";
+      mainBtn.setAttribute("data-mode", data.capture_active ? "stop" : "start");
     }
 
     if (st !== "starting" && st !== "stopping" && !actionInFlight) {
       mainBtn.disabled = false;
-    } else if (st === "stopping") {
-      mainBtn.disabled = true;
     }
-
-    setPreviewOverlay(st, data.duration);
 
     storageFree.textContent = data.storage_free || "—";
     storageFree.className = "info-value" + (data.storage_warn ? " warn" : "");
-    var seg = data.segment_count != null ? data.segment_count : 0;
-    segmentCount.textContent = seg + " 段";
+    segmentCount.textContent = String(data.segment_count != null ? data.segment_count : 0);
 
     if (st === "recording" || st === "warming") {
       stopIdlePreview();
       startPreview();
-    } else if (st === "idle") {
-      stopPreview();
-      startIdlePreview();
     } else if (st !== "starting") {
       stopPreview();
-      stopIdlePreview();
+      if (st !== "idle" && st !== "stopping") stopIdlePreview();
     }
   }
 
@@ -1041,37 +929,63 @@ INDEX_HTML = """<!DOCTYPE html>
         statusBar.setAttribute("data-state", "error");
         setStatusTitle(false, "无法连接设备");
         statusSub.textContent = "请确认已连接 EGO WiFi";
-        setPreviewOverlay("idle", 0);
       });
   }
 
-  function tickPreview() {
-    if (previewImg.hidden) {
-      previewImg.hidden = false;
-      previewPh.hidden = true;
+  function showPreviewPlaceholder(text) {
+    previewPh.textContent = text;
+    previewPh.hidden = false;
+    if (!previewHasFrame) {
+      previewImg.hidden = true;
     }
+  }
+
+  function tickPreview() {
     previewImg.src = "/api/preview/main.jpg?t=" + Date.now();
   }
 
+  previewImg.addEventListener("load", function () {
+    previewHasFrame = true;
+    previewImg.hidden = false;
+    previewPh.hidden = true;
+  });
+
+  previewImg.addEventListener("error", function () {
+    if (previewWantLive) {
+      if (!previewHasFrame) {
+        showPreviewPlaceholder("预览连接中…");
+      } else {
+        previewPh.hidden = true;
+      }
+    } else if (!previewHasFrame) {
+      showPreviewPlaceholder("开始录制后显示实时画面");
+    }
+  });
+
   function startPreview() {
-    if (previewPollTimer) return;
+    previewWantLive = true;
+    if (previewTimer) return;
     tickPreview();
-    previewPollTimer = setInterval(tickPreview, 400);
+    previewTimer = setInterval(tickPreview, 400);
   }
 
   function stopPreview() {
-    if (previewPollTimer) {
-      clearInterval(previewPollTimer);
-      previewPollTimer = null;
+    previewWantLive = false;
+    if (previewTimer) {
+      clearInterval(previewTimer);
+      previewTimer = null;
     }
     if (!idlePreviewTimer) {
+      previewHasFrame = false;
       previewImg.hidden = true;
       previewPh.hidden = false;
+      previewPh.textContent = "开始录制后显示实时画面";
       previewImg.removeAttribute("src");
     }
   }
 
   function startIdlePreview() {
+    previewWantLive = false;
     if (idlePreviewTimer) return;
     tickPreview();
     idlePreviewTimer = setInterval(tickPreview, 2000);
@@ -1082,11 +996,6 @@ INDEX_HTML = """<!DOCTYPE html>
       clearInterval(idlePreviewTimer);
       idlePreviewTimer = null;
     }
-    if (!previewPollTimer) {
-      previewImg.hidden = true;
-      previewPh.hidden = false;
-      previewImg.removeAttribute("src");
-    }
   }
 
   function doAction(path) {
@@ -1094,19 +1003,14 @@ INDEX_HTML = """<!DOCTYPE html>
     actionInFlight = true;
     mainBtn.disabled = true;
     if (path === "/api/capture/stop") {
-      stopIdlePreview();
       statusBar.setAttribute("data-state", "stopping");
       setStatusTitle(true, "正在保存数据");
-      statusSub.textContent = "请勿断电，保存完成后可再次开始";
-      setPreviewOverlay("stopping", 0);
+      statusSub.textContent = "请勿断电";
+      stopIdlePreview();
       stopPreview();
     } else if (path === "/api/capture/start") {
       stopIdlePreview();
-      stopPreview();
-      statusBar.setAttribute("data-state", "starting");
-      setStatusTitle(true, "正在启动相机");
-      statusSub.textContent = "正在释放预览并启动采集，请稍候…";
-      mainBtn.disabled = true;
+      startPreview();
     }
     fetch(path, { method: "POST", cache: "no-store" })
       .then(function (r) { return r.json(); })
@@ -1118,19 +1022,14 @@ INDEX_HTML = """<!DOCTYPE html>
         }
         return fetchStatus();
       })
-      .catch(function () {
-        statusBar.setAttribute("data-state", "error");
-        setStatusTitle(false, "操作失败");
-        statusSub.textContent = "网络异常，请重试";
-      })
       .finally(function () {
         actionInFlight = false;
       });
   }
 
-  setMainBtn("start");
   mainBtn.addEventListener("click", function () {
     var mode = mainBtn.getAttribute("data-mode");
+    if (mode === "saving") return;
     if (mode === "stop") {
       doAction("/api/capture/stop");
     } else {
@@ -1156,6 +1055,7 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
+            _wake_standby_preview_if_idle()
             body = INDEX_HTML.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1191,26 +1091,20 @@ class EgoWebHandler(BaseHTTPRequestHandler):
             _ = self.rfile.read(length)
 
         if path == "/api/capture/start":
-            ok, msg, accepted = _dispatch_capture_action("start")
-            payload: dict[str, Any] = {"success": ok, "msg": msg}
-            if accepted:
-                payload["accepted"] = True
+            ok, msg = _run_capture_action("start")
             _json_response(
                 self,
                 HTTPStatus.OK if ok else HTTPStatus.CONFLICT,
-                payload,
+                {"success": ok, "msg": msg},
             )
             return
 
         if path == "/api/capture/stop":
-            ok, msg, accepted = _dispatch_capture_action("stop")
-            payload = {"success": ok, "msg": msg}
-            if accepted:
-                payload["accepted"] = True
+            ok, msg = _run_capture_action("stop")
             _json_response(
                 self,
                 HTTPStatus.OK if ok else HTTPStatus.CONFLICT,
-                payload,
+                {"success": ok, "msg": msg},
             )
             return
 

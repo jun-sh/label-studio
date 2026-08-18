@@ -171,10 +171,13 @@ services:
       - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
       - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
     environment:
       - PORT=7860
       - NODE_ENV=production
-      - COLLECTION_REMOTE_PREVIEW=${COLLECTION_REMOTE_PREVIEW:-0}
+      - COLLECTION_REMOTE_PREVIEW=${COLLECTION_REMOTE_PREVIEW:-1}
+      - COLLECTION_REMOTE_PREVIEW_SNAPSHOT_MS=${COLLECTION_REMOTE_PREVIEW_SNAPSHOT_MS:-500}
+      - PREVIEW_PROXY_TIMEOUT_MS=${PREVIEW_PROXY_TIMEOUT_MS:-45000}
       - LEROBOT_STUDIO_ROOT=/srv/lerobot
       - LEROBOT_STUDIO_UPSTREAM=${LEROBOT_STUDIO_UPSTREAM:-https://io-ai.tech}
       - DATALAB_SAMPLES_DIR=/datalab-samples

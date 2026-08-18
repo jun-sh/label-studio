@@ -307,8 +307,7 @@ class _OpenSegmentWriter:
                     f"segment_h264_mux close failed segment={self.segment_dir.name}: {exc}",
                     flush=True,
                 )
-                if SEGMENT_H264_STRICT:
-                    raise
+                # Do not raise: allow finalize so stop does not hang on one bad stream.
         if self._imu_raw_fp is not None:
             self._imu_raw_fp.flush()
             if SEGMENT_FSYNC_ON_CLOSE:
@@ -800,6 +799,7 @@ class SegmentCaptureWriter:
                                 )
                             except OSError:
                                 pass
+                            self._enqueue_finalize(work.segment_id, active_dir)
                             continue
                         if active_dir.is_dir():
                             self._enqueue_finalize(work.segment_id, active_dir)

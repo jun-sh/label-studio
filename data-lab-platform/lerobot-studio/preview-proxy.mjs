@@ -37,6 +37,40 @@ function releasePreviewSlot(stationId) {
   else previewInflight.set(stationId, active - 1);
 }
 
+export function proxyStationPreviewWake(req, res, station, { send, corsHeaders }) {
+  if (!station || station.scope !== "lan" || !station.host) {
+    return send(res, 404, "station_not_found\n", { "Content-Type": "text/plain" });
+  }
+  const stationId = station.id || station.host;
+  const captureState = getStationCaptureState(stationId);
+  if (captureState !== "idle") {
+    return send(res, 403, "preview_capture_active\n", {
+      "Content-Type": "text/plain",
+      "X-Capture-State": captureState,
+      ...corsHeaders(),
+    });
+  }
+  const upstream = `http://${station.host}:${PREVIEW_PORT}/preview/wake`;
+  const proxyReq = http.get(upstream, { timeout: PREVIEW_PROXY_TIMEOUT_MS }, (upstreamRes) => {
+      const chunks = [];
+      upstreamRes.on("data", (c) => chunks.push(c));
+      upstreamRes.on("end", () => {
+        const body = Buffer.concat(chunks);
+        send(res, upstreamRes.statusCode || 202, body.length ? body : '{"waking":true}', {
+          "Content-Type": upstreamRes.headers["content-type"] || "application/json",
+          ...corsHeaders(),
+        });
+      });
+  });
+  proxyReq.on("error", () => {
+    send(res, 502, "preview_wake_error\n", { "Content-Type": "text/plain" });
+  });
+  proxyReq.on("timeout", () => {
+    proxyReq.destroy();
+    send(res, 504, "preview_wake_timeout\n", { "Content-Type": "text/plain" });
+  });
+}
+
 export function proxyStationPreview(req, res, station, cam, format, { send, corsHeaders }) {
   if (!station || station.scope !== "lan" || !station.host) {
     return send(res, 404, "station_not_found\n", { "Content-Type": "text/plain" });

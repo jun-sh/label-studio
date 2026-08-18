@@ -18,7 +18,10 @@ SKIP_UPLOAD="${RC_SKIP_UPLOAD:-0}"
 JSONL="${STREAM_ROOT}/${STATION}/data/chunk-000/file-000.jsonl"
 ROWS_BEFORE=0
 [[ -f "${JSONL}" ]] && ROWS_BEFORE=$(wc -l < "${JSONL}")
-MP4_BEFORE=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+MP4_BEFORE=0
+if [[ -d "${STREAM_ROOT}/${STATION}/videos" ]]; then
+  MP4_BEFORE=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+fi
 
 echo "=== RC-1 upload ${LIMIT} segment(s) from ${CAPTURE_HOST} station=${STATION} ==="
 UPLOAD_SESSION="${SESSION}"
@@ -136,7 +139,10 @@ done
 
 ROWS_AFTER=0
 [[ -f "${JSONL}" ]] && ROWS_AFTER=$(wc -l < "${JSONL}")
-MP4_COUNT=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+MP4_COUNT=0
+if [[ -d "${STREAM_ROOT}/${STATION}/videos" ]]; then
+  MP4_COUNT=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+fi
 
 echo "jsonl rows: ${ROWS_BEFORE} -> ${ROWS_AFTER}"
 echo "mp4 files: ${MP4_BEFORE} -> ${MP4_COUNT}"
@@ -146,7 +152,10 @@ test "${MP4_COUNT}" -gt 0 || { echo "FAIL: no MP4 after upload"; exit 1; }
 fi
 
 if [[ "${SKIP_UPLOAD}" == "1" ]]; then
-  MP4_COUNT=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+  MP4_COUNT=0
+  if [[ -d "${STREAM_ROOT}/${STATION}/videos" ]]; then
+    MP4_COUNT=$(find "${STREAM_ROOT}/${STATION}/videos" -name '*.mp4' 2>/dev/null | wc -l)
+  fi
   test "${MP4_COUNT}" -gt 0 || { echo "FAIL: no MP4 on disk"; exit 1; }
 fi
 

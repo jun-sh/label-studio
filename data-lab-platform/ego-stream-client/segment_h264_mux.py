@@ -108,12 +108,28 @@ def verify_segment_stream_mp4s(
     *,
     min_mp4: int | None = None,
 ) -> list[Path]:
-    """Raise if segment H264 outputs are missing or undersized."""
+    """Raise if segment video streams are missing or undersized (MP4 or legacy H264 append)."""
     if not _segment_h264_enabled():
         return []
     streams_dir = Path(segment_dir) / "streams"
-    mp4s = sorted(streams_dir.glob("*.mp4")) if streams_dir.is_dir() else []
     need = SEGMENT_H264_MIN_MP4 if min_mp4 is None else max(1, int(min_mp4))
+    legacy_append = os.environ.get("SEGMENT_H264_LEGACY_APPEND", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if legacy_append:
+        h264s = sorted(streams_dir.glob("*.h264")) if streams_dir.is_dir() else []
+        if len(h264s) < need:
+            raise RuntimeError(
+                f"segment_stream_h264_insufficient segment={Path(segment_dir).name} "
+                f"got={len(h264s)} need>={need}"
+            )
+        for h264_path in h264s:
+            if h264_path.stat().st_size < 1024:
+                raise RuntimeError(f"segment_stream_h264_empty path={h264_path}")
+        return h264s
+    mp4s = sorted(streams_dir.glob("*.mp4")) if streams_dir.is_dir() else []
     if len(mp4s) < need:
         raise RuntimeError(
             f"segment_stream_mp4_insufficient segment={Path(segment_dir).name} "
@@ -235,9 +251,11 @@ def _mux_one_camera(
     *,
     rate: int,
     expected_frames: int,
+    mode: str | None = None,
 ) -> None:
+    mux_mode = (mode or SEGMENT_H264_MUX_MODE).strip().lower()
     input_flags = _ffmpeg_input_flags()
-    if SEGMENT_H264_MUX_MODE == "parity":
+    if mux_mode == "parity":
         cmd = [
             ffmpeg,
             "-y",
@@ -284,6 +302,37 @@ def _mux_one_camera(
     subprocess.run(cmd, check=True, timeout=300)
 
 
+def _mux_one_camera_with_fallback(
+    ffmpeg: str,
+    h264_path: Path,
+    mp4_path: Path,
+    *,
+    rate: int,
+    expected_frames: int,
+) -> None:
+    try:
+        _mux_one_camera(
+            ffmpeg,
+            h264_path,
+            mp4_path,
+            rate=rate,
+            expected_frames=expected_frames,
+            mode=SEGMENT_H264_MUX_MODE,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        if SEGMENT_H264_MUX_MODE == "copy":
+            _mux_one_camera(
+                ffmpeg,
+                h264_path,
+                mp4_path,
+                rate=rate,
+                expected_frames=expected_frames,
+                mode="parity",
+            )
+        else:
+            raise
+
+
 def mux_h264_buffers_to_mp4(
     segment_dir: Path,
     streams: dict[str, list[bytes]],
@@ -310,6 +359,7 @@ def mux_h264_buffers_to_mp4(
         raise RuntimeError(f"segment_h264_mux_no_frames segment={segment_dir.name}")
 
     mp4_paths: list[Path] = []
+    skipped: list[str] = []
     for key, chunks in streams.items():
         if not chunks:
             continue
@@ -323,7 +373,7 @@ def mux_h264_buffers_to_mp4(
         mp4_path = out_dir / f"{safe}.mp4"
         h264_path.write_bytes(b"".join(chunks))
         try:
-            _mux_one_camera(
+            _mux_one_camera_with_fallback(
                 ffmpeg,
                 h264_path,
                 mp4_path,
@@ -332,18 +382,28 @@ def mux_h264_buffers_to_mp4(
             )
         except (subprocess.CalledProcessError, OSError) as exc:
             print(
-                f"segment_h264_mux FAIL camera={key} segment={segment_dir.name} "
-                f"mode={SEGMENT_H264_MUX_MODE} frames={expected_frames} "
-                f"h264_bytes={h264_path.stat().st_size} err={exc}",
+                f"segment_h264_mux SKIP camera={key} segment={segment_dir.name} "
+                f"frames={expected_frames} h264_bytes={h264_path.stat().st_size} err={exc}",
                 flush=True,
             )
-            raise
+            skipped.append(key)
+            try:
+                mp4_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         if delete_raw:
             try:
                 h264_path.unlink()
             except OSError:
                 pass
-        mp4_paths.append(mp4_path)
+        if mp4_path.is_file():
+            mp4_paths.append(mp4_path)
+
+    if len(mp4_paths) < SEGMENT_H264_MIN_MP4:
+        raise RuntimeError(
+            f"segment_h264_mux_insufficient_mp4 segment={segment_dir.name} "
+            f"got={len(mp4_paths)} need={SEGMENT_H264_MIN_MP4} skipped={skipped}"
+        )
 
     verify_segment_stream_mp4s(segment_dir, min_mp4=len(mp4_paths) if mp4_paths else SEGMENT_H264_MIN_MP4)
     _verify_segment_mp4_resolution(mp4_paths)

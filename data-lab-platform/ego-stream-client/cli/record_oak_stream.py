@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import signal
+import subprocess
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -26,6 +28,7 @@ from ego_capture_studio.capture.frame_jpeg_codec import (
     encode_camera_bgr_jpegs,
     log_jpeg_encoder_info,
 )
+from ego_capture_studio.capture.camera_map import PRIMARY_LEROBOT_VIDEO_KEY
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
 from ego_capture_studio.capture.preview_server import start_preview_stack
 from ego_capture_studio.capture.segment_store import SegmentCaptureWriter, new_session_id
@@ -89,6 +92,54 @@ def _persist_strict_emit_ts_ns(checkpoint_path: Path, ts_ns: int) -> None:
     tmp.replace(path)
 
 
+_H264_PREVIEW_MIN_INTERVAL_S = 1.0 / max(float(os.environ.get("PREVIEW_FPS", "8")), 1.0)
+_h264_preview_last_mono = 0.0
+
+
+def _h264_access_unit_to_jpeg(blob: bytes) -> bytes | None:
+    """Decode one H264 access unit to JPEG for live preview (fallback lane)."""
+    if len(blob) < 64:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "h264",
+                "-i",
+                "pipe:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "mjpeg",
+                "pipe:1",
+            ],
+            input=blob,
+            capture_output=True,
+            timeout=0.2,
+            check=False,
+        )
+        if proc.returncode == 0 and len(proc.stdout) > 128:
+            return proc.stdout
+    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _offer_h264_preview_fallback(preview_hub, primary_key: str, blob: bytes) -> None:
+    global _h264_preview_last_mono
+    now = time.monotonic()
+    if now - _h264_preview_last_mono < _H264_PREVIEW_MIN_INTERVAL_S:
+        return
+    jpeg = _h264_access_unit_to_jpeg(blob)
+    if jpeg:
+        _h264_preview_last_mono = now
+        preview_hub.offer_jpegs({primary_key: jpeg})
+
+
 def _append_visual_frame(
     writer: SegmentCaptureWriter,
     preview_hub,
@@ -104,6 +155,10 @@ def _append_visual_frame(
     if recorder.use_hw_h264:
         if preview_out:
             preview_hub.offer_jpegs(preview_out)
+        else:
+            primary_blob = capture_out.get(PRIMARY_LEROBOT_VIDEO_KEY)
+            if primary_blob:
+                _offer_h264_preview_fallback(preview_hub, PRIMARY_LEROBOT_VIDEO_KEY, primary_blob)
         writer.append_frame(
             timestamp_ns=timestamp_ns,
             camera_jpegs=capture_out,
@@ -354,11 +409,27 @@ def main() -> None:
         remaining_imu = recorder.flush_remaining_imu_raw()
         if remaining_imu:
             writer.append_imu_raw(remaining_imu)
-        try:
-            recorder.stop()
-        except Exception as exc:
-            print(f"recorder.stop warning: {exc}", flush=True)
-        writer.close()
+
+        def _run_stop(label: str, fn, timeout_s: float) -> None:
+            done = threading.Event()
+            err: list[BaseException] = []
+
+            def _worker() -> None:
+                try:
+                    fn()
+                except Exception as exc:
+                    err.append(exc)
+                finally:
+                    done.set()
+
+            threading.Thread(target=_worker, name=f"capture-{label}", daemon=True).start()
+            if not done.wait(timeout=timeout_s):
+                print(f"capture_shutdown {label} timeout after {timeout_s}s", flush=True)
+            elif err:
+                print(f"capture_shutdown {label} warning: {err[0]}", flush=True)
+
+        _run_stop("recorder.stop", recorder.stop, 15.0)
+        _run_stop("writer.close", writer.close, 90.0)
         if heartbeat is not None:
             heartbeat.stop_periodic_heartbeat()
 

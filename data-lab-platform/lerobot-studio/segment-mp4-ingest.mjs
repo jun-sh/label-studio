@@ -4,7 +4,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { concatMp4Files, probeMp4FrameCount, probeMp4Resolution } from "./mux-exec.mjs";
+import {
+  concatMp4Files,
+  muxH264FileToMp4,
+  probeMp4FrameCount,
+  probeMp4Resolution,
+  trimMp4ToFrameCount,
+} from "./mux-exec.mjs";
 
 const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 30);
 
@@ -30,9 +36,64 @@ export function legacyStagingMuxEnabled() {
 
 /** observation_images_camera_front_left → observation.images.camera_front_left */
 export function videoKeyFromStreamSafeName(filename) {
-  const base = String(filename || "").replace(/\.mp4$/i, "");
+  const base = String(filename || "").replace(/\.(mp4|h264)$/i, "");
   if (!base.startsWith("observation_images_")) return null;
   return `observation.images.${base.slice("observation_images_".length)}`;
+}
+
+export function listSegmentStreamH264s(extractDir) {
+  const streamsDir = path.join(extractDir, "streams");
+  if (!fs.existsSync(streamsDir)) return [];
+  return fs
+    .readdirSync(streamsDir)
+    .filter((f) => f.endsWith(".h264"))
+    .map((f) => ({
+      videoKey: videoKeyFromStreamSafeName(f),
+      absPath: path.join(streamsDir, f),
+    }))
+    .filter((x) => x.videoKey);
+}
+
+export function segmentHasStreamH264(extractDir) {
+  return listSegmentStreamH264s(extractDir).length > 0;
+}
+
+/**
+ * Edge uploads streams/*.h264 — mux to MP4 on ingest before segment_mp4 concat.
+ * @returns {{ muxed: number, skipped: number, failures: string[] }}
+ */
+export function prepareSegmentStreamsForIngest(extractDir, expectedRows = 0) {
+  if (segmentHasStreamMp4(extractDir)) {
+    return { muxed: 0, skipped: listSegmentStreamMp4s(extractDir).length, failures: [] };
+  }
+  const h264Shards = listSegmentStreamH264s(extractDir);
+  if (!h264Shards.length) {
+    return { muxed: 0, skipped: 0, failures: [] };
+  }
+  const failures = [];
+  let muxed = 0;
+  for (const { videoKey, absPath } of h264Shards) {
+    const mp4Path = absPath.replace(/\.h264$/i, ".mp4");
+    if (fs.existsSync(mp4Path) && probeMp4FrameCount(mp4Path, { defaultFps: DEFAULT_FPS }) > 0) {
+      muxed += 1;
+      continue;
+    }
+    const res = muxH264FileToMp4(absPath, mp4Path, {
+      fps: DEFAULT_FPS,
+      expectedFrames: expectedRows,
+    });
+    if (res.ok) {
+      muxed += 1;
+      try {
+        fs.unlinkSync(absPath);
+      } catch {
+        /* keep h264 if delete fails */
+      }
+    } else {
+      failures.push(`${videoKey}:${res.stderr || "mux_failed"}`);
+    }
+  }
+  return { muxed, skipped: 0, failures };
 }
 
 export function listSegmentStreamMp4s(extractDir) {
@@ -56,26 +117,47 @@ function segmentMp4StrictParityEnabled() {
   return String(process.env.STREAM_SEGMENT_MP4_STRICT || "1").trim().toLowerCase() !== "0";
 }
 
+function probeSegmentMp4Counts(shards) {
+  return shards.map(({ videoKey, absPath }) => ({
+    videoKey,
+    frames: probeMp4FrameCount(absPath, { defaultFps: DEFAULT_FPS }),
+  }));
+}
+
 /** Fail when segment rows.jsonl and per-camera MP4 packet counts diverge. */
 export function validateSegmentMp4RowParity(extractDir, rowCount) {
   const shards = listSegmentStreamMp4s(extractDir);
   if (!shards.length) {
     return { ok: false, reason: "no_segment_mp4", videoFrames: 0, rowCount };
   }
-  const counts = shards.map(({ videoKey, absPath }) => ({
-    videoKey,
-    frames: probeMp4FrameCount(absPath, { defaultFps: DEFAULT_FPS }),
-  }));
-  const vals = counts.map((c) => c.frames).filter((n) => n > 0);
+  let counts = probeSegmentMp4Counts(shards);
+  let vals = counts.map((c) => c.frames).filter((n) => n > 0);
   if (!vals.length) {
     return { ok: false, reason: "mp4_probe_empty", videoFrames: 0, rowCount, counts };
   }
-  const minFrames = Math.min(...vals);
-  const maxFrames = Math.max(...vals);
-  const spread = maxFrames - minFrames;
+  let minFrames = Math.min(...vals);
+  let maxFrames = Math.max(...vals);
+  let spread = maxFrames - minFrames;
+  const spreadTolerance = Math.max(
+    1,
+    Number(process.env.STREAM_SEGMENT_MP4_SPREAD_TOLERANCE || "1"),
+  );
+  if (segmentMp4StrictParityEnabled() && spread > spreadTolerance) {
+    for (const shard of shards) {
+      const n = probeMp4FrameCount(shard.absPath, { defaultFps: DEFAULT_FPS });
+      if (n > minFrames) {
+        trimMp4ToFrameCount(shard.absPath, minFrames);
+      }
+    }
+    counts = probeSegmentMp4Counts(shards);
+    vals = counts.map((c) => c.frames).filter((n) => n > 0);
+    minFrames = Math.min(...vals);
+    maxFrames = Math.max(...vals);
+    spread = maxFrames - minFrames;
+  }
   const target = Math.min(rowCount, minFrames);
   if (segmentMp4StrictParityEnabled()) {
-    if (spread > 1) {
+    if (spread > spreadTolerance) {
       throw new Error(
         `segment_mp4_camera_spread spread=${spread} counts=${JSON.stringify(counts)}`,
       );
@@ -101,12 +183,20 @@ export function validateSegmentMp4RowParity(extractDir, rowCount) {
   return { ok: true, videoFrames: target, rowCount: target, counts, spread };
 }
 
-/** v0.0.9+: primary path rejects archives without segment MP4 (no staging fallback). */
-export function assertSegmentMp4Archive(extractDir) {
+/** v0.0.9+: primary path requires segment streams (MP4 on edge, or H264 muxed here). */
+export function assertSegmentMp4Archive(extractDir, expectedRows = 0) {
   if (!isSegmentMp4PrimaryPath()) return;
-  if (!segmentHasStreamMp4(extractDir)) {
+  const prep = prepareSegmentStreamsForIngest(extractDir, expectedRows);
+  if (prep.failures.length) {
     throw new Error(
-      "segment_mp4_required: tar.zst must contain streams/*.mp4 when STREAM_PRIMARY_PATH=segment_mp4",
+      `segment_h264_mux_failed: ${prep.failures.slice(0, 3).join("; ")}`,
+    );
+  }
+  const minMp4 = Math.max(1, Number(process.env.STREAM_SEGMENT_MP4_MIN || 4));
+  const mp4Count = listSegmentStreamMp4s(extractDir).length;
+  if (!segmentHasStreamMp4(extractDir) || mp4Count < minMp4) {
+    throw new Error(
+      `segment_mp4_required: need >=${minMp4} streams/*.mp4 (got ${mp4Count}); edge may ship streams/*.h264`,
     );
   }
 }

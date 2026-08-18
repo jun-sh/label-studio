@@ -16,7 +16,7 @@ import {
   streamDatasetUrl,
   streamHttpDatasetUrl,
 } from "./stream-ingest.mjs";
-import { proxyStationPreview } from "./preview-proxy.mjs";
+import { proxyStationPreview, proxyStationPreviewWake } from "./preview-proxy.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.LEROBOT_STUDIO_ROOT || "/srv/lerobot";
@@ -363,13 +363,13 @@ function injectBranding(html, search = "") {
   }
   inject +=
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=70"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=71"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=7"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=70"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=71"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=26"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
@@ -587,6 +587,14 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 404, { error: "station_not_found" });
     }
     return sendJson(res, 200, { ...enrichStation(station), collectionUi: collectionUiPayload() });
+  }
+
+  const previewWakeMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/preview/wake$`),
+  );
+  if (previewWakeMatch && (req.method === "POST" || req.method === "GET")) {
+    const station = collectionStations.find((s) => s.id === decodeURIComponent(previewWakeMatch[1]));
+    return proxyStationPreviewWake(req, res, station, { send, corsHeaders });
   }
 
   const previewMatch = p.match(

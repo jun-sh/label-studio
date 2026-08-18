@@ -52,8 +52,8 @@ const VIDEO_KEYS_V0 = [
   "observation.images.camera_rear_right",
 ];
 
-/** ego-standard fleet topology (see config/camera_topology_standard.yaml). */
-const VIDEO_KEYS_V1 = [
+/** Pre-2026 depth_left slot layout — only for resumed sessions with camera_depth_left in info.json. */
+const VIDEO_KEYS_DEPTH_LEGACY = [
   "observation.images.camera_front_left",
   "observation.images.camera_rear_right",
   "observation.images.camera_depth_left",
@@ -104,7 +104,6 @@ function topologyVideoKeys(topologyId) {
   const registry = loadStationTopology();
   const spec = registry[topologyId];
   if (spec?.video_keys?.length) return spec.video_keys;
-  if (topologyId === "ego-standard") return VIDEO_KEYS_V1;
   return VIDEO_KEYS_V0;
 }
 
@@ -114,7 +113,7 @@ function defaultVideoKeysForStation(stationId, { intrinsics = null } = {}) {
   const registry = loadStationTopology();
   const entry = registry.stations?.[stationId];
   if (entry?.topology_id) return topologyVideoKeys(entry.topology_id);
-  return VIDEO_KEYS_V1;
+  return VIDEO_KEYS_V0;
 }
 
 function resolveVideoKeysForStation(stationId, { intrinsics = null, shapes = null } = {}) {
@@ -181,7 +180,7 @@ function ingestVideoKeys(root) {
     return LEGACY_VIDEO_KEYS;
   }
   if (feats["observation.images.camera_depth_left"]) {
-    return VIDEO_KEYS_V1;
+    return VIDEO_KEYS_DEPTH_LEGACY;
   }
   if (feats["observation.images.camera_rear_left"]) {
     return VIDEO_KEYS_V0;
@@ -3899,18 +3898,28 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
   if (!fs.existsSync(manifestPath) || !fs.existsSync(rowsPath)) {
     throw new Error("extracted segment missing manifest.json or rows.jsonl");
   }
-  assertSegmentMp4Archive(extractDir);
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const episodeMeta = prepareSegmentEpisodeMeta(manifest, stationId);
   const rows = fs
     .readFileSync(rowsPath, "utf8")
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+  assertSegmentMp4Archive(extractDir, rows.length);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const episodeMeta = prepareSegmentEpisodeMeta(manifest, stationId);
   const hasSegmentMp4 = isSegmentMp4PrimaryPath() && segmentHasStreamMp4(extractDir);
   if (hasSegmentMp4) {
     validateSegmentMp4RowParity(extractDir, rows.length);
+    const trimmedRows = fs
+      .readFileSync(rowsPath, "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    if (trimmedRows.length !== rows.length) {
+      rows.length = 0;
+      rows.push(...trimmedRows);
+    }
   }
   const images = {};
   const frames = [];

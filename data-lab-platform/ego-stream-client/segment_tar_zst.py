@@ -55,6 +55,8 @@ def _build_tar_bytes(segment_dir: Path) -> bytes:
         if streams.is_dir():
             for mp4_path in sorted(streams.glob("*.mp4")):
                 tar.add(mp4_path, arcname=f"streams/{mp4_path.name}", recursive=False)
+            for h264_path in sorted(streams.glob("*.h264")):
+                tar.add(h264_path, arcname=f"streams/{h264_path.name}", recursive=False)
     return buf.getvalue()
 
 

@@ -356,3 +356,105 @@ export async function concatMp4Files(firstPath, secondPath, destPath, listPath, 
     }
   }
 }
+
+/** Mux Annex-B H264 elementary stream to MP4 (copy, then libx264 fallback). */
+/** Trim MP4 to a frame budget (parity align after H264 mux on ingest). */
+export function trimMp4ToFrameCount(mp4Path, frameCount) {
+  const frames = Math.max(1, Math.floor(Number(frameCount) || 0));
+  if (!mp4Path || !fs.existsSync(mp4Path)) return false;
+  const tmp = `${mp4Path}.trim.${process.pid}.mp4`;
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    mp4Path,
+    "-frames:v",
+    String(frames),
+    "-c:v",
+    "libx264",
+    "-preset",
+    String(process.env.STREAM_SEGMENT_H264_PRESET || "veryfast"),
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    tmp,
+  ];
+  const res = spawnSync("ffmpeg", args, { encoding: "utf8" });
+  if (res.status !== 0 || !fs.existsSync(tmp)) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+  fs.renameSync(tmp, mp4Path);
+  return true;
+}
+
+export function muxH264FileToMp4(h264Path, mp4Path, { fps = 30, expectedFrames = 0 } = {}) {
+  if (!h264Path || !fs.existsSync(h264Path)) {
+    return { ok: false, stderr: "h264_missing" };
+  }
+  const rate = Number(fps) > 0 ? Number(fps) : 30;
+  const inputFlags = ["-fflags", "+genpts", "-avoid_negative_ts", "make_zero"];
+  const copyArgs = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    ...inputFlags,
+    "-f",
+    "h264",
+    "-r",
+    String(rate),
+    "-i",
+    h264Path,
+    "-c",
+    "copy",
+    mp4Path,
+  ];
+  let res = spawnSync("ffmpeg", copyArgs, { encoding: "utf8" });
+  if (res.status === 0 && fs.existsSync(mp4Path) && probeMp4FrameCount(mp4Path, { defaultFps: rate }) > 0) {
+    return { ok: true, mode: "copy", stderr: "" };
+  }
+  const frames = Number(expectedFrames) > 0 ? String(expectedFrames) : null;
+  const reencArgs = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    ...inputFlags,
+    "-f",
+    "h264",
+    "-r",
+    String(rate),
+    "-i",
+    h264Path,
+  ];
+  if (frames) {
+    reencArgs.push("-frames:v", frames);
+  }
+  reencArgs.push(
+    "-c:v",
+    "libx264",
+    "-preset",
+    String(process.env.STREAM_SEGMENT_H264_PRESET || "veryfast"),
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+    mp4Path,
+  );
+  res = spawnSync("ffmpeg", reencArgs, { encoding: "utf8" });
+  if (res.status === 0 && fs.existsSync(mp4Path) && probeMp4FrameCount(mp4Path, { defaultFps: rate }) > 0) {
+    return { ok: true, mode: "reencode", stderr: "" };
+  }
+  return {
+    ok: false,
+    stderr: String(res.stderr || res.stdout || "mux_h264_failed").trim().slice(0, 2000),
+  };
+}

@@ -1,0 +1,41 @@
+# v0.0.11.2: ego-standard four RGB keys + Plan B h264 ingest mux (no ego-legacy-v0).
+
+services:
+  stream-ingest:
+    image: data-lab-lerobot-studio:v0.0.11.2
+    volumes: !reset
+      - ./data-storage/stream:/srv/stream
+      - ./data-storage/ego-archive:/cold-archive:rw
+      - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STREAM_PRIMARY_PATH=segment_mp4
+      - STREAM_FRAME_PUSH=0
+      - DERIVE_ASYNC=0
+      - DERIVE_ASYNC_EGO_001=0
+      - STREAM_SEGMENT_INGEST_BATCH_SIZE=1
+      - STREAM_RAW_RETAIN_UNTIL_READY=1
+
+  derive-worker:
+    image: data-lab-lerobot-studio:v0.0.11.2
+    volumes: !reset
+      - ./data-storage/stream:/srv/stream
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=ego-001
+      - DERIVE_ASYNC=0
+      - STREAM_PRIMARY_PATH=segment_mp4
+      - STREAM_FRAME_PUSH=0
+      - STREAM_SESSION_SINGLE_EPISODE=1
+
+  lerobot:
+    image: data-lab-lerobot-studio:v0.0.11.2
+    volumes: !reset
+      - lerobot-studio-data:/srv/lerobot
+      - lerobot-bundled-data:/srv/bundled
+      - ./data-storage/stream:/srv/stream:rw
+      - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro

@@ -662,16 +662,19 @@ class Oak4pEgoRecorder:
             for name in self._cam_list
         }
         self._preview_queues = {}
-        preview_streams = (not self._hw_jpeg and OAK_USE_IMAGEMANIP) or (
+        preview_streams = (not self._hw_jpeg and not self._hw_h264 and OAK_USE_IMAGEMANIP) or (
             self._hw_jpeg and OAK_HW_PREVIEW
-        )
+        ) or (self._hw_h264 and OAK_HW_PREVIEW_H264)
         if preview_streams:
             for name, props in self._cam_list.items():
-                if props.get("color"):
-                    stream = f"{name}_preview"
-                    self._preview_queues[name] = device.getOutputQueue(
-                        name=stream, maxSize=OAK_PREVIEW_QUEUE_MAX, blocking=False
-                    )
+                if not props.get("color"):
+                    continue
+                if self._hw_h264 and OAK_HW_PREVIEW_H264 and name != PRIMARY_OAK_SOCKET:
+                    continue
+                stream = f"{name}_preview"
+                self._preview_queues[name] = device.getOutputQueue(
+                    name=stream, maxSize=OAK_PREVIEW_QUEUE_MAX, blocking=False
+                )
         self._imu_queue = (
             device.getOutputQueue("imu", maxSize=50, blocking=False) if imu_on else None
         )
@@ -813,7 +816,12 @@ class Oak4pEgoRecorder:
                     enc_cap = self._create_h264_encoder(pipeline)
                     cam.video.link(enc_cap.input)
                     enc_cap.bitstream.link(xout.input)
-                    if pv_w > 0 and pv_h > 0 and OAK_HW_PREVIEW_H264:
+                    if (
+                        pv_w > 0
+                        and pv_h > 0
+                        and OAK_HW_PREVIEW_H264
+                        and cam_name == PRIMARY_OAK_SOCKET
+                    ):
                         cam.setPreviewSize(pv_w, pv_h)
                         enc_pv = self._create_mjpeg_encoder(pipeline)
                         cam.preview.link(enc_pv.input)
@@ -929,7 +937,7 @@ class Oak4pEgoRecorder:
             self._pending_imu_raw.extend(batch)
 
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
-        if self._hw_jpeg:
+        if self._hw_jpeg or (self._hw_h264 and OAK_HW_PREVIEW_H264):
             last_preview: dict[str, bytes] = {}
             for cam_name, queue in self._preview_queues.items():
                 pkt = queue.tryGet()

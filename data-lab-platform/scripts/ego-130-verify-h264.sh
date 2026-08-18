@@ -32,8 +32,10 @@ systemctl --user show ecs-record-oak-stream -p Environment --no-pager 2>/dev/nul
   | tr ' ' '\n' | grep -E '^(SEGMENT_H264|SEGMENT_FRAME_BIN|OAK_H264|UPLOAD_PROTOCOL)=' || true
 
 seg_h264="$(systemctl --user show ecs-record-oak-stream -p Environment --no-pager 2>/dev/null | tr ' ' '\n' | grep '^SEGMENT_H264=' | cut -d= -f2 || true)"
+legacy_append="$(systemctl --user show ecs-record-oak-stream -p Environment --no-pager 2>/dev/null | tr ' ' '\n' | grep '^SEGMENT_H264_LEGACY_APPEND=' | cut -d= -f2 || true)"
 frame_bin="$(systemctl --user show ecs-record-oak-stream -p Environment --no-pager 2>/dev/null | tr ' ' '\n' | grep '^SEGMENT_FRAME_BIN=' | cut -d= -f2 || true)"
 [[ "${seg_h264}" == "1" ]] || die "SEGMENT_H264=${seg_h264:-unset} (expected 1)"
+[[ "${legacy_append}" == "1" ]] || die "SEGMENT_H264_LEGACY_APPEND=${legacy_append:-unset} (expected 1)"
 [[ "${frame_bin}" == "0" ]] || die "SEGMENT_FRAME_BIN=${frame_bin:-unset} (expected 0)"
 
 if ! command -v ffmpeg >/dev/null; then

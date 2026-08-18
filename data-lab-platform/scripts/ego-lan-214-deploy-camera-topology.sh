@@ -50,9 +50,9 @@ snap = topology_snapshot()
 assert snap["topology_id"] == "ego-standard", snap
 expected = {
     "CAM_A": "observation.images.camera_front_left",
-    "CAM_B": "observation.images.camera_depth_left",
-    "CAM_C": "observation.images.camera_rear_right",
-    "CAM_D": "observation.images.camera_front_right",
+    "CAM_B": "observation.images.camera_front_right",
+    "CAM_C": "observation.images.camera_rear_left",
+    "CAM_D": "observation.images.camera_rear_right",
 }
 assert OAK_SOCKET_TO_LEROBOT_VIDEO == expected, OAK_SOCKET_TO_LEROBOT_VIDEO
 print("topology_id:", snap["topology_id"])

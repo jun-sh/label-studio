@@ -1277,11 +1277,22 @@
     return hit;
   }
 
+  function wakeStationPreview(stationId) {
+    if (!stationId) return;
+    fetch(
+      "/lerobot/api/collection/stations/" + encodeURIComponent(stationId) + "/preview/wake",
+      { method: "GET", credentials: "same-origin", cache: "no-store" },
+    ).catch(function () {
+      /* best-effort warm-up */
+    });
+  }
+
   function connectCollectionPreviewStreams() {
     delete g.__DATALAB_LIVE_JOINTS_CLEARED__;
     clearJointsChartLiveClearedMark();
     suspendReplayTransportForPreview();
     dismissScalarSplitView();
+    wakeStationPreview(collectionModeUi.stationId || stationIdFromContext());
     ensureAllPreviewSlots();
     dismissScalarSplitView();
     startLiveSeekBurst();

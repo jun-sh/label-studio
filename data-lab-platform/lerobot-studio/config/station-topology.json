@@ -3,36 +3,22 @@
     "topology_file": "config/topologies/camera_topology_standard.json",
     "video_keys": [
       "observation.images.camera_front_left",
-      "observation.images.camera_rear_right",
-      "observation.images.camera_depth_left",
-      "observation.images.camera_front_right"
+      "observation.images.camera_front_right",
+      "observation.images.camera_rear_left",
+      "observation.images.camera_rear_right"
     ],
     "viewer_display_order": [
       "observation.images.camera_front_left",
-      "observation.images.camera_rear_right",
-      "observation.images.camera_depth_left",
-      "observation.images.camera_front_right"
+      "observation.images.camera_front_right",
+      "observation.images.camera_rear_left",
+      "observation.images.camera_rear_right"
     ],
     "viewer_labels_zh": {
       "observation.images.camera_front_left": "前左",
-      "observation.images.camera_rear_right": "后右",
-      "observation.images.camera_depth_left": "深度左",
-      "observation.images.camera_front_right": "前右"
+      "observation.images.camera_front_right": "前右",
+      "observation.images.camera_rear_left": "后左",
+      "observation.images.camera_rear_right": "后右"
     }
-  },
-  "ego-legacy-v0": {
-    "video_keys": [
-      "observation.images.camera_front_left",
-      "observation.images.camera_front_right",
-      "observation.images.camera_rear_left",
-      "observation.images.camera_rear_right"
-    ],
-    "viewer_display_order": [
-      "observation.images.camera_front_left",
-      "observation.images.camera_front_right",
-      "observation.images.camera_rear_left",
-      "observation.images.camera_rear_right"
-    ]
   },
   "ego-oak-4p-rgb": {
     "topology_file": "config/topologies/camera_topology_oak_4p_rgb.json",

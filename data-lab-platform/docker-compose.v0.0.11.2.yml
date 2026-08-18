@@ -1,4 +1,4 @@
-# v0.0.11.2: ego-standard four RGB keys + Plan B h264 ingest mux (no ego-legacy-v0).
+# v0.0.11.2: ego-standard four RGB; JPEG frame_bin → staging mux (Plan A).
 
 services:
   stream-ingest:
@@ -9,9 +9,11 @@ services:
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+      - ./data-lab-platform/lerobot-studio/segment-mp4-ingest.mjs:/app/segment-mp4-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
     environment:
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_PRIMARY_PATH=segment_mp4
+      - STREAM_PRIMARY_PATH=staging_mux
       - STREAM_FRAME_PUSH=0
       - DERIVE_ASYNC=0
       - DERIVE_ASYNC_EGO_001=0
@@ -22,11 +24,13 @@ services:
     image: data-lab-lerobot-studio:v0.0.11.2
     volumes: !reset
       - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/segment-mp4-ingest.mjs:/app/segment-mp4-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
     environment:
       - STREAM_DATA_ROOT=/srv/stream
       - STATION_ID=ego-001
       - DERIVE_ASYNC=0
-      - STREAM_PRIMARY_PATH=segment_mp4
+      - STREAM_PRIMARY_PATH=staging_mux
       - STREAM_FRAME_PUSH=0
       - STREAM_SESSION_SINGLE_EPISODE=1
 
@@ -39,3 +43,5 @@ services:
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+      - ./data-lab-platform/lerobot-studio/segment-mp4-ingest.mjs:/app/segment-mp4-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro

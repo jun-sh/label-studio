@@ -37,6 +37,9 @@ import {
   isSegmentMp4PrimaryPath,
   isStreamFramePushEnabled,
   legacyStagingMuxEnabled,
+  materializeStreamH264FromFrameBins,
+  prepareSegmentStreamsForIngest,
+  segmentHasFrameBins,
   segmentHasStreamMp4,
   validateSegmentMp4RowParity,
 } from "./segment-mp4-ingest.mjs";
@@ -1200,7 +1203,7 @@ export async function processTarZstDeriveSegment(archivePath, stationId, options
     const hasFrameBins =
       fs.existsSync(framesDir) &&
       fs.readdirSync(framesDir).some((f) => f.endsWith(".bin"));
-    if (body.segmentMp4 && !hasFrameBins) {
+    if (body.segmentMp4) {
       return processSegmentMp4DeriveFromExtract(root, stationId, body, {
         actualSha,
         ingestSource,
@@ -2073,7 +2076,6 @@ function segmentScratchJsonlPath(root, sessionId, segmentId) {
 }
 
 function stageFrameImages(root, frameIndex, images) {
-  if (!legacyStagingMuxEnabled()) return;
   const inflight = frameInflightDir(root, frameIndex);
   ensureDir(inflight);
   for (const videoKey of ingestVideoKeys(root)) {
@@ -3905,9 +3907,18 @@ function buildSegmentBodyFromExtractedDir(extractDir, stationId = "unknown") {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
   assertSegmentMp4Archive(extractDir, rows.length);
+  if (segmentHasFrameBins(extractDir) && !segmentHasStreamMp4(extractDir)) {
+    const mat = materializeStreamH264FromFrameBins(extractDir);
+    if (mat.ok && !mat.skipped && (mat.cameras ?? 0) > 0) {
+      const prep = prepareSegmentStreamsForIngest(extractDir, rows.length);
+      if (prep.failures.length) {
+        throw new Error(`segment_h264_mux_failed: ${prep.failures.slice(0, 3).join("; ")}`);
+      }
+    }
+  }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const episodeMeta = prepareSegmentEpisodeMeta(manifest, stationId);
-  const hasSegmentMp4 = isSegmentMp4PrimaryPath() && segmentHasStreamMp4(extractDir);
+  const hasSegmentMp4 = segmentHasStreamMp4(extractDir);
   if (hasSegmentMp4) {
     validateSegmentMp4RowParity(extractDir, rows.length);
     const trimmedRows = fs
@@ -4193,7 +4204,6 @@ export async function handleStreamUploadRequest(stationId, req) {
 }
 
 function scheduleMux(stationId) {
-  if (isSegmentMp4PrimaryPath()) return;
   const state = muxQueue.get(stationId) || { timer: null, running: false };
   if (state.timer) clearTimeout(state.timer);
   state.timer = setTimeout(() => runMux(stationId), MUX_DEBOUNCE_MS);
@@ -4441,7 +4451,6 @@ async function runMuxCamerasSerial(stationId, root, muxSessionId) {
 }
 
 function runMux(stationId) {
-  if (isSegmentMp4PrimaryPath()) return;
   const state = muxQueue.get(stationId) || { timer: null, running: false };
   if (state.running) {
     state.timer = setTimeout(() => runMux(stationId), MUX_DEBOUNCE_MS);

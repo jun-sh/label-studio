@@ -1,6 +1,6 @@
 {
-  "tag": "deploy-release-v0.0.7",
-  "snapshotted_at": "2026-08-18T14:06:56+08:00",
+  "tag": "deploy-release-v0.0.8",
+  "snapshotted_at": "2026-08-18T18:25:18+08:00",
   "note": "Nested repos vendored into main tree for deploy backup; local .git dirs preserved on disk.",
   "projects": [
     {"path": "ml-services/sam2", "remote": "https://github.com/facebookresearch/sam2.git", "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4", "checkpoints_excluded": "ml-services/sam2/checkpoints/*.pt"},

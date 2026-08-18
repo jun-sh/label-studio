@@ -25,8 +25,8 @@ Environment=EGO_CAPTURE_CHECKPOINT=/home/server/cache/ego-lan-214/segments/check
 Environment=DATALAB_JPEG_QUALITY=70
 Environment=OPENCV_NUM_THREADS=2
 Environment=CAPTURE_JPEG_MAX_EDGE=0
-Environment=PREVIEW_FPS=8
-Environment=PREVIEW_MAX_EDGE=640
+Environment=PREVIEW_FPS=15
+Environment=PREVIEW_MAX_EDGE=1280
 Environment=PREVIEW_JPEG_QUALITY=75
 
 ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \

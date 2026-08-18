@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { unpackFrameBin } from "./frame_bin_codec.mjs";
 import {
   concatMp4Files,
   muxH264FileToMp4,
@@ -56,6 +57,84 @@ export function listSegmentStreamH264s(extractDir) {
 
 export function segmentHasStreamH264(extractDir) {
   return listSegmentStreamH264s(extractDir).length > 0;
+}
+
+/** Edge JPEG production: frames/*.bin packed in tar.zst (mux on ingest via staging). */
+export function segmentHasFrameBins(extractDir) {
+  const framesDir = path.join(extractDir, "frames");
+  if (!fs.existsSync(framesDir)) return false;
+  return fs.readdirSync(framesDir).some((name) => name.endsWith(".bin"));
+}
+
+function isH264Payload(buf) {
+  return (
+    Buffer.isBuffer(buf) &&
+    buf.length >= 4 &&
+    buf[0] === 0 &&
+    buf[1] === 0 &&
+    buf[2] === 0 &&
+    buf[3] === 1
+  );
+}
+
+function streamSafeNameFromVideoKey(videoKey) {
+  return String(videoKey || "").replace(/\./g, "_");
+}
+
+/**
+ * DLB1 frame bins may carry per-camera H264 NALs (Plan B capture). Materialize streams/*.h264
+ * so prepareSegmentStreamsForIngest can mux segment MP4 shards before ingest.
+ * @returns {{ ok: boolean, reason?: string, cameras?: number, frames?: number, skipped?: boolean }}
+ */
+export function materializeStreamH264FromFrameBins(extractDir) {
+  if (!segmentHasFrameBins(extractDir)) {
+    return { ok: false, reason: "no_frame_bins" };
+  }
+  if (segmentHasStreamMp4(extractDir) || listSegmentStreamH264s(extractDir).length > 0) {
+    return { ok: true, skipped: true, cameras: listSegmentStreamMp4s(extractDir).length };
+  }
+  const framesDir = path.join(extractDir, "frames");
+  const streamsDir = path.join(extractDir, "streams");
+  ensureDir(streamsDir);
+  const binFiles = fs
+    .readdirSync(framesDir)
+    .filter((name) => name.endsWith(".bin"))
+    .sort((a, b) => {
+      const na = Number.parseInt(a.replace(/\D/g, ""), 10);
+      const nb = Number.parseInt(b.replace(/\D/g, ""), 10);
+      return na - nb;
+    });
+  /** @type {Map<string, Buffer[]>} */
+  const chunks = new Map();
+  let h264FrameBins = 0;
+  for (const binName of binFiles) {
+    const binPath = path.join(framesDir, binName);
+    let cameras;
+    try {
+      cameras = unpackFrameBin(fs.readFileSync(binPath));
+    } catch {
+      continue;
+    }
+    let sawH264 = false;
+    for (const [videoKey, payload] of Object.entries(cameras)) {
+      if (!isH264Payload(payload)) continue;
+      sawH264 = true;
+      const safe = streamSafeNameFromVideoKey(videoKey);
+      if (!safe) continue;
+      const list = chunks.get(safe) || [];
+      list.push(payload);
+      chunks.set(safe, list);
+    }
+    if (sawH264) h264FrameBins += 1;
+  }
+  if (!chunks.size) {
+    return { ok: false, reason: "no_h264_in_bins" };
+  }
+  for (const [safe, parts] of chunks.entries()) {
+    const h264Path = path.join(streamsDir, `${safe}.h264`);
+    fs.writeFileSync(h264Path, Buffer.concat(parts));
+  }
+  return { ok: true, cameras: chunks.size, frames: h264FrameBins };
 }
 
 /**
@@ -183,9 +262,10 @@ export function validateSegmentMp4RowParity(extractDir, rowCount) {
   return { ok: true, videoFrames: target, rowCount: target, counts, spread };
 }
 
-/** v0.0.9+: primary path requires segment streams (MP4 on edge, or H264 muxed here). */
+/** v0.0.9+: primary path requires segment streams (MP4/H264 on edge, or JPEG frame_bin muxed here). */
 export function assertSegmentMp4Archive(extractDir, expectedRows = 0) {
   if (!isSegmentMp4PrimaryPath()) return;
+  if (segmentHasFrameBins(extractDir)) return;
   const prep = prepareSegmentStreamsForIngest(extractDir, expectedRows);
   if (prep.failures.length) {
     throw new Error(

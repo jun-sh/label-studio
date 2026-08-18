@@ -104,7 +104,8 @@ const els = {
   speedSelect: document.getElementById("speedSelect"),
   frameReadout: document.getElementById("frameReadout"),
   actionChart: document.getElementById("actionChart"),
-  stateChart: document.getElementById("stateChart"),
+  gyroChart: document.getElementById("gyroChart"),
+  accelChart: document.getElementById("accelChart"),
   rebuildBtn: document.getElementById("rebuildBtn"),
   rebuildStatusInline: document.getElementById("rebuildStatusInline"),
   rebuildInlineProgress: document.getElementById("rebuildInlineProgress"),
@@ -920,10 +921,28 @@ function drawSeriesChart(canvas, seriesMap, defaultColor) {
   ctx.fillText(`${entries.length} dim`, plotRight - 36, plotTop + 2);
 }
 
+function splitImuStateSeries(observationState) {
+  const gyro = {};
+  const accel = {};
+  const axis = ["x", "y", "z"];
+  for (const [key, arr] of Object.entries(observationState || {})) {
+    if (!Array.isArray(arr) || !arr.length) continue;
+    const m = String(key).match(/dim_(\d+)/) || String(key).match(/^(\d+)$/);
+    const idx = m ? Number(m[1]) : NaN;
+    if (!Number.isFinite(idx) || idx < 0 || idx > 5) continue;
+    const label = idx < 3 ? `g${axis[idx]}` : `a${axis[idx - 3]}`;
+    if (idx < 3) gyro[label] = arr;
+    else accel[label] = arr;
+  }
+  return { gyro, accel };
+}
+
 function drawCharts() {
   if (!state.trajectory) return;
   drawSeriesChart(els.actionChart, state.trajectory.action, "#576cc9");
-  drawSeriesChart(els.stateChart, state.trajectory.observation_state, "#52a675");
+  const { gyro, accel } = splitImuStateSeries(state.trajectory.observation_state);
+  drawSeriesChart(els.gyroChart, gyro, "#52a675");
+  drawSeriesChart(els.accelChart, accel, "#d98b3a");
 }
 
 function assertDatasetContext(info) {

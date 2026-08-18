@@ -169,7 +169,8 @@
       qc_instruction_label: 'Language instruction',
       qc_btn_save_instruction: 'Save instruction',
       qc_chart_action: 'Action',
-      qc_chart_state: 'observation.state',
+      qc_chart_gyro: 'Gyro (rad/s)',
+      qc_chart_accel: 'Accel (m/s²)',
       qc_chart_timestamp: 'Timestamp',
       qc_btn_approve: 'Mark approved',
       qc_btn_reject: 'Mark remove',
@@ -384,7 +385,8 @@
       qc_instruction_label: '语言指令',
       qc_btn_save_instruction: '保存指令',
       qc_chart_action: 'Action',
-      qc_chart_state: 'observation.state',
+      qc_chart_gyro: '陀螺仪 (rad/s)',
+      qc_chart_accel: '加速度 (m/s²)',
       qc_chart_timestamp: 'Timestamp',
       qc_btn_approve: '标记通过',
       qc_btn_reject: '标记移除',
@@ -625,8 +627,10 @@
     if (saveInstructionBtn) saveInstructionBtn.textContent = t('qc_btn_save_instruction');
     const actionChartTitle = document.getElementById('actionChartTitle');
     if (actionChartTitle) actionChartTitle.textContent = t('qc_chart_action');
-    const stateChartTitle = document.getElementById('stateChartTitle');
-    if (stateChartTitle) stateChartTitle.textContent = t('qc_chart_state');
+    const gyroChartTitle = document.getElementById('gyroChartTitle');
+    if (gyroChartTitle) gyroChartTitle.textContent = t('qc_chart_gyro');
+    const accelChartTitle = document.getElementById('accelChartTitle');
+    if (accelChartTitle) accelChartTitle.textContent = t('qc_chart_accel');
     const approveBtn = document.getElementById('approveBtn');
     if (approveBtn) approveBtn.textContent = t('qc_btn_approve');
     const rejectBtn = document.getElementById('rejectBtn');

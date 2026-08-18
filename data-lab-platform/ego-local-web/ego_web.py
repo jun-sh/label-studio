@@ -64,6 +64,7 @@ STOP_DEACTIVATING_KILL_S = float(os.environ.get("EGO_CAPTURE_DEACTIVATING_KILL_S
 MIN_ACTION_INTERVAL_S = float(os.environ.get("EGO_MIN_ACTION_INTERVAL_S", "3"))
 JOURNAL_CACHE_TTL_S = float(os.environ.get("EGO_JOURNAL_CACHE_TTL_S", "0.4"))
 STATUS_POLL_MS = int(os.environ.get("EGO_STATUS_POLL_MS", "300"))
+PREVIEW_POLL_MS = int(os.environ.get("EGO_PREVIEW_POLL_MS", "200"))
 
 _lock = threading.Lock()
 _busy = False
@@ -332,6 +333,9 @@ def _touch_standby_preview_activity() -> None:
 
 def _wake_standby_preview_if_idle() -> None:
     """Start low-FPS standby preview when user browses (OAK off otherwise)."""
+    with _lock:
+        if _busy:
+            return
     if _capture_active() or _capture_stopping():
         return
     _touch_standby_preview_activity()
@@ -488,6 +492,7 @@ def _build_status() -> dict[str, Any]:
     else:
         state = "idle"
         msg = ""
+        _last_error = ""
 
     return {
         "state": state,
@@ -543,10 +548,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 return False, _last_error
             deadline = time.monotonic() + START_TIMEOUT_S
             while time.monotonic() < deadline:
-                if (
-                    _capture_unit_state(CAPTURE_RECORD_UNIT) == "active"
-                    and _capture_active()
-                ):
+                if _capture_active():
                     return True, ""
                 time.sleep(0.5)
             _last_error = "相机启动超时，请检查 OAK 设备是否连接"
@@ -616,8 +618,10 @@ def _grab_preview_bytes() -> bytes | None:
 
 def _fetch_preview() -> tuple[bytes | None, str]:
     global _last_preview_jpeg
-    if not _capture_active() and not _capture_stopping():
-        _wake_standby_preview_if_idle()
+    with _lock:
+        busy_start = _busy and _busy_action == "start"
+    if not (_capture_active() or _capture_stopping() or busy_start):
+        return None, "image/jpeg"
     data = _grab_preview_bytes()
     if data:
         _last_preview_jpeg = data
@@ -836,7 +840,7 @@ INDEX_HTML = """<!DOCTYPE html>
 
   var pollTimer = null;
   var previewTimer = null;
-  var idlePreviewTimer = null;
+  var previewPollMs = __PREVIEW_POLL_MS__;
   var actionInFlight = false;
   var previewWantLive = false;
   var previewHasFrame = false;
@@ -866,7 +870,10 @@ INDEX_HTML = """<!DOCTYPE html>
       } else {
         statusBar.classList.add("status--solo");
       }
-      startIdlePreview();
+      stopIdlePreview();
+      stopPreview();
+      previewHasFrame = false;
+      showPreviewPlaceholder("开始录制后显示实时画面");
     } else if (st === "warming") {
       statusBar.classList.remove("status--solo");
       setStatusTitle(true, "相机初始化中");
@@ -966,7 +973,7 @@ INDEX_HTML = """<!DOCTYPE html>
     previewWantLive = true;
     if (previewTimer) return;
     tickPreview();
-    previewTimer = setInterval(tickPreview, 400);
+    previewTimer = setInterval(tickPreview, previewPollMs);
   }
 
   function stopPreview() {
@@ -975,27 +982,15 @@ INDEX_HTML = """<!DOCTYPE html>
       clearInterval(previewTimer);
       previewTimer = null;
     }
-    if (!idlePreviewTimer) {
-      previewHasFrame = false;
-      previewImg.hidden = true;
-      previewPh.hidden = false;
-      previewPh.textContent = "开始录制后显示实时画面";
-      previewImg.removeAttribute("src");
-    }
-  }
-
-  function startIdlePreview() {
-    previewWantLive = false;
-    if (idlePreviewTimer) return;
-    tickPreview();
-    idlePreviewTimer = setInterval(tickPreview, 2000);
+    previewHasFrame = false;
+    previewImg.hidden = true;
+    previewPh.hidden = false;
+    previewPh.textContent = "开始录制后显示实时画面";
+    previewImg.removeAttribute("src");
   }
 
   function stopIdlePreview() {
-    if (idlePreviewTimer) {
-      clearInterval(idlePreviewTimer);
-      idlePreviewTimer = null;
-    }
+    /* no-op: idle standby preview disabled */
   }
 
   function doAction(path) {
@@ -1009,8 +1004,10 @@ INDEX_HTML = """<!DOCTYPE html>
       stopIdlePreview();
       stopPreview();
     } else if (path === "/api/capture/start") {
+      statusBar.setAttribute("data-state", "starting");
+      setStatusTitle(true, "正在启动相机");
+      statusSub.textContent = "请稍候，约需数秒";
       stopIdlePreview();
-      startPreview();
     }
     fetch(path, { method: "POST", cache: "no-store" })
       .then(function (r) { return r.json(); })
@@ -1055,8 +1052,9 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
-            _wake_standby_preview_if_idle()
-            body = INDEX_HTML.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).encode("utf-8")
+            body = INDEX_HTML.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).replace(
+                "__PREVIEW_POLL_MS__", str(PREVIEW_POLL_MS)
+            ).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

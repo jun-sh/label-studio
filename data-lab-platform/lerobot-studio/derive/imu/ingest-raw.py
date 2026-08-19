@@ -8,7 +8,6 @@ import json
 import math
 import os
 import sys
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +15,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 SENSOR_RAW_REL = "sensor_raw/imu/chunk-000/file-000.parquet"
-PAIR_TOLERANCE_NS = 500_000
+# Hardware accel/gyro skew: median ~1.3ms, p95 ~2.5ms (ego-001 field capture).
+PAIR_TOLERANCE_NS = 3_000_000
 EPISODE_INDEX_DEFAULT = 0
 
 
@@ -33,9 +33,46 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _max_match_pairs(
+    accels: list[tuple[int, list[float]]],
+    gyros: list[tuple[int, list[float]]],
+) -> list[tuple[int, int, int]]:
+    """Greedy 1:1 pairing by smallest |Δt| within PAIR_TOLERANCE_NS."""
+    edges: list[tuple[int, int, int]] = []
+    for i, (a_ts, _) in enumerate(accels):
+        for j, (g_ts, _) in enumerate(gyros):
+            dist = abs(g_ts - a_ts)
+            if dist <= PAIR_TOLERANCE_NS:
+                edges.append((dist, i, j))
+    edges.sort()
+    used_accel: set[int] = set()
+    used_gyro: set[int] = set()
+    pairs: list[tuple[int, int, int]] = []
+    for dist, i, j in edges:
+        if i in used_accel or j in used_gyro:
+            continue
+        used_accel.add(i)
+        used_gyro.add(j)
+        pairs.append((dist, i, j))
+    return pairs
+
+
+def _has_partner_within_tol(
+    ts_ns: int,
+    sensor: str,
+    accels: list[tuple[int, list[float]]],
+    gyros: list[tuple[int, list[float]]],
+) -> bool:
+    if sensor == "accel":
+        return any(abs(g_ts - ts_ns) <= PAIR_TOLERANCE_NS for g_ts, _ in gyros)
+    return any(abs(a_ts - ts_ns) <= PAIR_TOLERANCE_NS for a_ts, _ in accels)
+
+
 def pair_imu_records(lines: list[dict[str, Any]]) -> list[tuple[int, dict[str, list[float] | None]]]:
-    """Group accel/gyro by ts_ns with optional 0.5ms pairing tolerance."""
-    buckets: dict[int, dict[str, list[float] | None]] = defaultdict(lambda: {"accel": None, "gyro": None})
+    """Group accel/gyro into shared buckets when |Δt| ≤ PAIR_TOLERANCE_NS (1:1 max match)."""
+    accels: list[tuple[int, list[float]]] = []
+    gyros: list[tuple[int, list[float]]] = []
+
     for rec in lines:
         sensor = str(rec.get("sensor") or "")
         if sensor not in ("accel", "gyro"):
@@ -45,14 +82,41 @@ def pair_imu_records(lines: list[dict[str, Any]]) -> list[tuple[int, dict[str, l
             vec = [float(rec["x"]), float(rec["y"]), float(rec["z"])]
         except (KeyError, TypeError, ValueError):
             continue
-        placed = False
-        for candidate in (ts_ns, ts_ns - PAIR_TOLERANCE_NS, ts_ns + PAIR_TOLERANCE_NS):
-            if buckets[candidate][sensor] is None:
-                buckets[candidate][sensor] = vec
-                placed = True
-                break
-        if not placed:
-            buckets[ts_ns][sensor] = vec
+        if sensor == "accel":
+            accels.append((ts_ns, vec))
+        else:
+            gyros.append((ts_ns, vec))
+
+    accels.sort(key=lambda item: item[0])
+    gyros.sort(key=lambda item: item[0])
+    buckets: dict[int, dict[str, list[float] | None]] = {}
+
+    pairs = _max_match_pairs(accels, gyros)
+    matched_accel = {i for _d, i, _j in pairs}
+    matched_gyro = {j for _d, _i, j in pairs}
+
+    for _dist, i, j in pairs:
+        a_ts, a_vec = accels[i]
+        _g_ts, g_vec = gyros[j]
+        buckets[a_ts] = {"accel": a_vec, "gyro": g_vec}
+
+    for i, (a_ts, a_vec) in enumerate(accels):
+        if i in matched_accel:
+            continue
+        if _has_partner_within_tol(a_ts, "accel", accels, gyros):
+            continue
+        buckets[a_ts] = {"accel": a_vec, "gyro": None}
+
+    for j, (g_ts, g_vec) in enumerate(gyros):
+        if j in matched_gyro:
+            continue
+        if _has_partner_within_tol(g_ts, "gyro", accels, gyros):
+            continue
+        if g_ts in buckets and buckets[g_ts]["gyro"] is None:
+            buckets[g_ts]["gyro"] = g_vec
+            continue
+        buckets[g_ts] = {"accel": None, "gyro": g_vec}
+
     return sorted(buckets.items(), key=lambda item: item[0])
 
 
@@ -64,18 +128,19 @@ def jsonl_to_vector_rows(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ts_ns, parts in pair_imu_records(imu_lines):
-        accel = parts["accel"] or [float("nan")] * 3
-        gyro = parts["gyro"] or [float("nan")] * 3
-        rows.append(
-            {
-                "episode_index": episode_index,
-                "segment_id": segment_id,
-                "imu_timestamp": ts_ns / 1e9,
-                "accel": accel,
-                "gyro": gyro,
-                "mag": [0.0, 0.0, 0.0],
-            }
-        )
+        accel = parts["accel"]
+        gyro = parts["gyro"]
+        if accel and gyro:
+            rows.append(
+                {
+                    "episode_index": episode_index,
+                    "segment_id": segment_id,
+                    "imu_timestamp": ts_ns / 1e9,
+                    "accel": accel,
+                    "gyro": gyro,
+                    "mag": [0.0, 0.0, 0.0],
+                }
+            )
     return rows
 
 

@@ -122,7 +122,7 @@ describe("derive imu ingest-raw", () => {
       ],
       { encoding: "utf8" },
     );
-    assert.match(probe.stdout, /2 seg_000001/);
+    assert.match(probe.stdout, /1 seg_000001/);
   });
 });
 

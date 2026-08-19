@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   computeDeriveStatusFromDisk,
   computeStationDeriveStatusFromDisk,
+  countCommittedSegmentsForSession,
   countRawTarZstForSession,
   isMuxPipelineActive,
   isSegmentParquetDerivedOnDisk,
@@ -24,6 +25,7 @@ import {
 } from "./derive-pipeline.mjs";
 import {
   markSessionUploadDone,
+  markSessionReady,
   hasSessionMarker,
   SESSION_MARKERS,
 } from "./session-markers.mjs";
@@ -94,6 +96,40 @@ function kickStandaloneDeriveMarker(stationId, sessionId, source, extra = {}) {
   markSessionUploadDone(root, sessionId, { stationId, source, ...extra });
   streamLog(stationId, "derive_standalone_marker", { sessionId, source, marker: SESSION_MARKERS.DONE_UPLOAD });
   return { marked: true, sessionId, marker: SESSION_MARKERS.DONE_UPLOAD };
+}
+
+/** Align session.DONE_UPLOAD / session.READY markers with on-disk derive status. */
+export function syncSessionLifecycleMarkers(stationId, sessionId, source = "disk") {
+  if (!sessionId) return { synced: false, reason: "no_session" };
+  const root = stationRoot(stationId);
+  if (hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) {
+    return { synced: true, phase: "READY", sessionId, already: true };
+  }
+  const disk = computeDeriveStatusFromDisk(stationId, sessionId);
+  if (disk.total <= 0 && disk.committedSegments <= 0 && disk.parquetRows <= 0) {
+    return { synced: false, reason: "no_data", sessionId };
+  }
+  if (disk.committedSegments > 0 || disk.rawSegments > 0 || disk.markers > 0 || disk.parquetRows > 0) {
+    markSessionUploadDone(root, sessionId, {
+      stationId,
+      source,
+      committed: disk.committedSegments,
+      raw: disk.rawSegments,
+      total: disk.total,
+      parquetRows: disk.parquetRows,
+    });
+  }
+  if (disk.fullyReady || disk.phase === "READY") {
+    markSessionReady(root, sessionId, disk);
+    streamLog(stationId, "session_lifecycle_ready", { sessionId, source, markers: disk.markers, total: disk.total });
+    return { synced: true, phase: "READY", sessionId, disk };
+  }
+  return { synced: true, phase: disk.phase, sessionId, disk };
+}
+
+/** Called after session finalize / parquet sync — commercial READY contract. */
+export function markSessionSegmentsReady(stationId, sessionId) {
+  return syncSessionLifecycleMarkers(stationId, sessionId, "session_finalize");
 }
 
 /** Phase-1: auto-start derive when all session raw segments are on disk (34-side). */
@@ -179,13 +215,23 @@ function idleDeriveSeconds() {
 
 function isSessionUploadComplete(root, sessionId) {
   const rawTotal = countRawTarZstForSession(root, sessionId);
-  if (rawTotal <= 0) return false;
-  const verified = listSegmentStates(root, { sessionId, status: SEGMENT_STATUS.UPLOADED });
-  if (verified.length >= rawTotal) return true;
-  const rawDir = path.join(root, "raw", "segments", sessionId);
-  if (!fs.existsSync(rawDir)) return false;
-  const onDisk = fs.readdirSync(rawDir).filter((f) => f.endsWith(".tar.zst")).length;
-  return onDisk >= rawTotal && verified.length >= onDisk;
+  const committed = countCommittedSegmentsForSession(root, sessionId);
+  const expected = readExpectedSegmentTotal(root, sessionId);
+  const total = Math.max(rawTotal, committed, expected);
+  if (total <= 0) return false;
+
+  if (rawTotal > 0) {
+    const verified = listSegmentStates(root, { sessionId, status: SEGMENT_STATUS.UPLOADED });
+    if (verified.length >= rawTotal) return true;
+    const rawDir = path.join(root, "raw", "segments", sessionId);
+    if (!fs.existsSync(rawDir)) return false;
+    const onDisk = fs.readdirSync(rawDir).filter((f) => f.endsWith(".tar.zst")).length;
+    return onDisk >= rawTotal && verified.length >= onDisk;
+  }
+
+  // Committed-only path: live/sessions/.../*.done (no raw tar.zst on disk).
+  if (expected > 0) return committed >= expected;
+  return committed > 0 && committed >= total;
 }
 
 /**
@@ -582,8 +628,6 @@ export function getDeriveStatusSummary(stationId, { sessionId: sessionFilter } =
         : 0;
 
   const muxRetry = readJson(path.join(root, "live", "derive", "mux_retry_state.json"), {});
-  const imuHighFreq = readJson(path.join(root, "live", "derive", "imu_high_freq.json"), {});
-  const vendorAnnotations = readJson(path.join(root, "live", "derive", "vendor_annotations.json"), {});
 
   const summary = {
     version: 3,
@@ -619,19 +663,6 @@ export function getDeriveStatusSummary(stationId, { sessionId: sessionFilter } =
       UPLOADED: "Raw tar.zst verified on disk; derive in progress until READY",
       READY: "Parquet rows + MP4 frames validated on disk",
     },
-    highFreqImu: imuHighFreq.ok
-      ? {
-          path: imuHighFreq.path || null,
-          rows: imuHighFreq.rows ?? imuHighFreq.record_count ?? null,
-          rateHz: imuHighFreq.imu_hz_nominal ?? 200,
-        }
-      : null,
-    vendorAnnotations: vendorAnnotations.ok
-      ? {
-          subtaskSegmentsRows: vendorAnnotations.subtask_segments_rows ?? 0,
-          contactPixelRows: vendorAnnotations.contact_pixel_rows ?? 0,
-        }
-      : null,
   };
 
   if (shouldExposeInternalDeriveApi()) {
@@ -788,20 +819,13 @@ export function handleDeriveRetry(stationId, sessionId, segmentId) {
 }
 
 export function resumeDeriveQueuesForAllStations() {
-  void resumeDeriveQueuesForAllStationsAsync();
-}
-
-export async function resumeDeriveQueuesForAllStationsAsync() {
   if (!fs.existsSync(STREAM_ROOT)) return;
-  const yieldLoop = () => new Promise((resolve) => setImmediate(resolve));
-
   if (isDeriveStandalone()) {
     ensureIdleDeriveWatcher();
     for (const stationId of fs.readdirSync(STREAM_ROOT)) {
       if (stationId.startsWith(".")) continue;
       if (!isDeriveAsyncEnabled(stationId)) continue;
       evaluateAndKickIdleDerive(stationId, "startup");
-      await yieldLoop();
     }
     streamLog("system", "derive_standalone_resume", { hint: "ego-derive watch" });
     return;
@@ -812,7 +836,6 @@ export async function resumeDeriveQueuesForAllStationsAsync() {
       if (stationId.startsWith(".")) continue;
       if (!isDeriveAsyncEnabled(stationId)) continue;
       evaluateAndKickIdleDerive(stationId, "startup");
-      await yieldLoop();
     }
     return;
   }
@@ -820,7 +843,6 @@ export async function resumeDeriveQueuesForAllStationsAsync() {
     if (stationId.startsWith(".")) continue;
     if (!isDeriveAsyncEnabled(stationId)) continue;
     scheduleDerivePipeline(stationId);
-    await yieldLoop();
   }
 }
 

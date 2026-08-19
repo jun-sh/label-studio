@@ -66,9 +66,9 @@ function probeMp4StreamJson(filePath) {
       "error",
       "-select_streams",
       "v:0",
-      "-count_packets",
       "-show_entries",
-      "stream=nb_frames,nb_read_frames,nb_read_packets,duration,r_frame_rate",
+      "stream=nb_frames,nb_read_frames,duration,r_frame_rate",
+      "-count_frames",
       "-of",
       "json",
       filePath,
@@ -98,42 +98,11 @@ export function probeMp4DurationSec(filePath, fallbackFps = 30) {
   return 0;
 }
 
-export function probeMp4Resolution(filePath) {
-  if (!filePath || !fs.existsSync(filePath)) return null;
-  const res = spawnSync(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=width,height",
-      "-of",
-      "json",
-      filePath,
-    ],
-    { encoding: "utf8" },
-  );
-  if (res.status !== 0) return null;
-  try {
-    const stream = JSON.parse(res.stdout || "{}")?.streams?.[0];
-    const width = Number(stream?.width);
-    const height = Number(stream?.height);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      return null;
-    }
-    return { width: Math.floor(width), height: Math.floor(height) };
-  } catch {
-    return null;
-  }
-}
-
 export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return 0;
   const stream = probeMp4StreamJson(filePath);
   if (!stream) return 0;
-  const nb = Number(stream.nb_read_packets ?? stream.nb_read_frames ?? stream.nb_frames);
+  const nb = Number(stream.nb_read_frames ?? stream.nb_frames);
   if (Number.isFinite(nb) && nb > 0) return Math.floor(nb);
   const duration = Number(stream.duration);
   const rateParts = String(stream.r_frame_rate || "0/1").split("/");
@@ -149,29 +118,22 @@ export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
 
 /** Build ffconcat for MP4 concat with explicit duration on first segment (batch-2 drift fix). */
 export function buildMp4ConcatList(firstPath, secondPath, { firstDurationSec = null } = {}) {
-  return buildMp4ConcatListPaths([firstPath, secondPath], { firstDurationSec });
-}
-
-/** ffconcat list for one or more MP4 shards (segment_mp4 ingest uses this without duration hints). */
-export function buildMp4ConcatListPaths(paths, { firstDurationSec = null, useDuration = false } = {}) {
   const esc = (p) => String(p).replace(/'/g, "'\\''");
-  const list = (paths || []).filter(Boolean);
-  if (!list.length) return "ffconcat version 1.0\n";
-  const lines = ["ffconcat version 1.0", `file '${esc(list[0])}'`];
-  if (useDuration && list.length > 1) {
-    const dur =
-      Number.isFinite(firstDurationSec) && firstDurationSec > 0
-        ? firstDurationSec
-        : probeMp4DurationSec(list[0]);
-    if (dur > 0) lines.push(`duration ${dur}`);
-  }
-  for (const p of list.slice(1)) {
-    lines.push(`file '${esc(p)}'`);
-  }
-  return `${lines.join("\n")}\n`;
+  const dur =
+    Number.isFinite(firstDurationSec) && firstDurationSec > 0
+      ? firstDurationSec
+      : probeMp4DurationSec(firstPath);
+  const lines = ["ffconcat version 1.0", `file '${esc(firstPath)}'`];
+  if (dur > 0) lines.push(`duration ${dur}`);
+  lines.push(`file '${esc(secondPath)}'`);
+  return lines.join("\n");
 }
 
-async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true, fps = 30 } = {}) {
+async function encodeFromConcatListLegacy(
+  listPath,
+  destPath,
+  { withScale = true, fps = null, frameCount = null } = {},
+) {
   const args = [
     "-y",
     "-hide_banner",
@@ -187,22 +149,23 @@ async function encodeFromConcatListLegacy(listPath, destPath, { withScale = true
   if (withScale) {
     args.push("-vf", "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'");
   }
-  args.push(
-    "-r",
-    String(fps),
-    "-c:v",
-    "libx264",
-    "-pix_fmt",
-    "yuv420p",
-    "-movflags",
-    "+faststart",
-    destPath,
-  );
+  args.push("-c:v", "libx264", "-pix_fmt", "yuv420p");
+  if (Number.isFinite(fps) && fps > 0) {
+    args.push("-r", String(fps));
+  }
+  if (Number.isFinite(frameCount) && frameCount > 0) {
+    args.push("-frames:v", String(Math.floor(frameCount)));
+  }
+  args.push("-movflags", "+faststart", destPath);
   const res = await spawnFfmpeg(args);
   return { ...res, ok: res.ok && fs.existsSync(destPath) };
 }
 
-async function encodeFromConcatListFluent(listPath, destPath, { withScale = true, fps = 30 } = {}) {
+async function encodeFromConcatListFluent(
+  listPath,
+  destPath,
+  { withScale = true, fps = null, frameCount = null } = {},
+) {
   const ffmpeg = await loadFluent();
   return new Promise((resolve) => {
     let stderr = "";
@@ -210,20 +173,18 @@ async function encodeFromConcatListFluent(listPath, destPath, { withScale = true
     if (withScale) {
       cmd = cmd.videoFilters("scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'");
     }
+    const outputOpts = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"];
+    if (Number.isFinite(fps) && fps > 0) {
+      outputOpts.push("-r", String(fps));
+    }
+    if (Number.isFinite(frameCount) && frameCount > 0) {
+      outputOpts.push("-frames:v", String(Math.floor(frameCount)));
+    }
     cmd.on("stderr", (line) => {
       stderr += `${line}\n`;
     });
     cmd
-      .outputOptions([
-        "-r",
-        String(fps),
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-      ])
+      .outputOptions(outputOpts)
       .on("end", () =>
         resolve({
           ok: fs.existsSync(destPath),
@@ -314,38 +275,18 @@ export async function concatMp4FromList(listPath, destPath, codecMode = "copy") 
   return concatMp4OnceLegacy(listPath, destPath, codecMode);
 }
 
-/** Concat two MP4 files; segment_mp4 ingest uses ffconcat without duration hints. */
-export async function concatMp4Files(firstPath, secondPath, destPath, listPath, options = {}) {
-  const segmentMp4 = Boolean(options.segmentMp4);
-  const useDuration = !segmentMp4 && deriveMuxBackend() === "fluent";
-  if (segmentMp4) {
-    const existing = probeMp4Resolution(firstPath);
-    const shard = probeMp4Resolution(secondPath);
-    if (
-      existing &&
-      shard &&
-      (existing.width !== shard.width || existing.height !== shard.height)
-    ) {
-      return {
-        ok: false,
-        stderr: `segment_mp4_resolution_mismatch existing=${existing.width}x${existing.height} shard=${shard.width}x${shard.height}`,
-      };
-    }
-  }
-  const listContent = buildMp4ConcatListPaths([firstPath, secondPath], {
-    firstDurationSec: probeMp4DurationSec(firstPath),
-    useDuration,
-  });
+/** Concat two MP4 files; fluent backend uses duration-aware ffconcat. */
+export async function concatMp4Files(firstPath, secondPath, destPath, listPath) {
+  const useDuration = deriveMuxBackend() === "fluent";
+  const listContent = useDuration
+    ? buildMp4ConcatList(firstPath, secondPath, {
+        firstDurationSec: probeMp4DurationSec(firstPath),
+      })
+    : `file '${String(firstPath).replace(/'/g, "'\\''")}'\nfile '${String(secondPath).replace(/'/g, "'\\''")}'\n`;
   fs.writeFileSync(listPath, listContent);
   try {
     let res = await concatMp4FromList(listPath, destPath, "copy");
     if (res.ok) return res;
-    if (segmentMp4) {
-      return {
-        ok: false,
-        stderr: `segment_mp4_concat_copy_failed: ${String(res.stderr || "").slice(0, 500)}`,
-      };
-    }
     res = await concatMp4FromList(listPath, destPath, "reencode");
     return res;
   } finally {
@@ -355,106 +296,4 @@ export async function concatMp4Files(firstPath, secondPath, destPath, listPath, 
       /* ignore */
     }
   }
-}
-
-/** Mux Annex-B H264 elementary stream to MP4 (copy, then libx264 fallback). */
-/** Trim MP4 to a frame budget (parity align after H264 mux on ingest). */
-export function trimMp4ToFrameCount(mp4Path, frameCount) {
-  const frames = Math.max(1, Math.floor(Number(frameCount) || 0));
-  if (!mp4Path || !fs.existsSync(mp4Path)) return false;
-  const tmp = `${mp4Path}.trim.${process.pid}.mp4`;
-  const args = [
-    "-y",
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-i",
-    mp4Path,
-    "-frames:v",
-    String(frames),
-    "-c:v",
-    "libx264",
-    "-preset",
-    String(process.env.STREAM_SEGMENT_H264_PRESET || "veryfast"),
-    "-pix_fmt",
-    "yuv420p",
-    "-movflags",
-    "+faststart",
-    tmp,
-  ];
-  const res = spawnSync("ffmpeg", args, { encoding: "utf8" });
-  if (res.status !== 0 || !fs.existsSync(tmp)) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      /* ignore */
-    }
-    return false;
-  }
-  fs.renameSync(tmp, mp4Path);
-  return true;
-}
-
-export function muxH264FileToMp4(h264Path, mp4Path, { fps = 30, expectedFrames = 0 } = {}) {
-  if (!h264Path || !fs.existsSync(h264Path)) {
-    return { ok: false, stderr: "h264_missing" };
-  }
-  const rate = Number(fps) > 0 ? Number(fps) : 30;
-  const inputFlags = ["-fflags", "+genpts", "-avoid_negative_ts", "make_zero"];
-  const copyArgs = [
-    "-y",
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    ...inputFlags,
-    "-f",
-    "h264",
-    "-r",
-    String(rate),
-    "-i",
-    h264Path,
-    "-c",
-    "copy",
-    mp4Path,
-  ];
-  let res = spawnSync("ffmpeg", copyArgs, { encoding: "utf8" });
-  if (res.status === 0 && fs.existsSync(mp4Path) && probeMp4FrameCount(mp4Path, { defaultFps: rate }) > 0) {
-    return { ok: true, mode: "copy", stderr: "" };
-  }
-  const frames = Number(expectedFrames) > 0 ? String(expectedFrames) : null;
-  const reencArgs = [
-    "-y",
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    ...inputFlags,
-    "-f",
-    "h264",
-    "-r",
-    String(rate),
-    "-i",
-    h264Path,
-  ];
-  if (frames) {
-    reencArgs.push("-frames:v", frames);
-  }
-  reencArgs.push(
-    "-c:v",
-    "libx264",
-    "-preset",
-    String(process.env.STREAM_SEGMENT_H264_PRESET || "veryfast"),
-    "-pix_fmt",
-    "yuv420p",
-    "-movflags",
-    "+faststart",
-    mp4Path,
-  );
-  res = spawnSync("ffmpeg", reencArgs, { encoding: "utf8" });
-  if (res.status === 0 && fs.existsSync(mp4Path) && probeMp4FrameCount(mp4Path, { defaultFps: rate }) > 0) {
-    return { ok: true, mode: "reencode", stderr: "" };
-  }
-  return {
-    ok: false,
-    stderr: String(res.stderr || res.stdout || "mux_h264_failed").trim().slice(0, 2000),
-  };
 }

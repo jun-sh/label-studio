@@ -60,6 +60,6 @@ echo "==> Verify /data page (embed manifest + bundled datasets)"
 bash "${ROOT}/data-lab-platform/verify-data-page.sh" || exit 1
 
 echo "==> Live stream parquet helper (optional, during capture):"
-echo "    bash data-lab-platform/scripts/sync-stream-station.sh ego-lan-214"
+echo "    bash data-lab-platform/scripts/sync-stream-station.sh ego-001"
 
 echo "==> Done. Open http://10.10.10.34:8080/collection"

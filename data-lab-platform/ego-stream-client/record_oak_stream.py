@@ -6,8 +6,6 @@ import argparse
 import json
 import os
 import signal
-import subprocess
-import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -25,10 +23,8 @@ from ego_capture_studio.capture.intrinsics_store import (
 from ego_capture_studio.capture.ego_spec import OAK_CAPTURE_FPS, OAK_CAPTURE_IMU_HZ
 from ego_capture_studio.capture.frame_jpeg_codec import (
     configure_opencv_threads,
-    encode_camera_bgr_jpegs,
     log_jpeg_encoder_info,
 )
-from ego_capture_studio.capture.camera_map import PRIMARY_LEROBOT_VIDEO_KEY
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
 from ego_capture_studio.capture.preview_server import start_preview_stack
 from ego_capture_studio.capture.segment_store import SegmentCaptureWriter, new_session_id
@@ -92,52 +88,20 @@ def _persist_strict_emit_ts_ns(checkpoint_path: Path, ts_ns: int) -> None:
     tmp.replace(path)
 
 
-_H264_PREVIEW_MIN_INTERVAL_S = 1.0 / max(float(os.environ.get("PREVIEW_FPS", "8")), 1.0)
-_h264_preview_last_mono = 0.0
+def _env_flag(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
 
 
-def _h264_access_unit_to_jpeg(blob: bytes) -> bytes | None:
-    """Decode one H264 access unit to JPEG for live preview (fallback lane)."""
-    if len(blob) < 64:
-        return None
-    try:
-        proc = subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "h264",
-                "-i",
-                "pipe:0",
-                "-frames:v",
-                "1",
-                "-f",
-                "mjpeg",
-                "pipe:1",
-            ],
-            input=blob,
-            capture_output=True,
-            timeout=0.2,
-            check=False,
-        )
-        if proc.returncode == 0 and len(proc.stdout) > 128:
-            return proc.stdout
-    except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _offer_h264_preview_fallback(preview_hub, primary_key: str, blob: bytes) -> None:
-    global _h264_preview_last_mono
-    now = time.monotonic()
-    if now - _h264_preview_last_mono < _H264_PREVIEW_MIN_INTERVAL_S:
+def _require_jpeg_capture(recorder: Oak4pEgoRecorder) -> None:
+    """Production path: HW JPEG frame bins only (no H264 in DLB1)."""
+    if not _env_flag("EGO_CAPTURE_JPEG_ONLY", "1"):
         return
-    jpeg = _h264_access_unit_to_jpeg(blob)
-    if jpeg:
-        _h264_preview_last_mono = now
-        preview_hub.offer_jpegs({primary_key: jpeg})
+    if recorder.use_hw_h264 or not recorder.use_hw_jpeg:
+        raise SystemExit(
+            "capture codec must be HW JPEG (OAK_HW_JPEG=1, OAK_H264=0). "
+            f"got hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264}. "
+            "Fix ~/.config/ego-station.env.d/station.conf and restart capture."
+        )
 
 
 def _append_visual_frame(
@@ -152,43 +116,18 @@ def _append_visual_frame(
     camera_ts_offset_ns: dict[str, int] | None = None,
     imu_raw_batch: list | tuple | None = None,
 ) -> None:
-    if recorder.use_hw_h264:
-        if preview_out:
-            preview_hub.offer_jpegs(preview_out)
-        else:
-            primary_blob = capture_out.get(PRIMARY_LEROBOT_VIDEO_KEY)
-            if primary_blob:
-                _offer_h264_preview_fallback(preview_hub, PRIMARY_LEROBOT_VIDEO_KEY, primary_blob)
-        writer.append_frame(
-            timestamp_ns=timestamp_ns,
-            camera_jpegs=capture_out,
-            imu6=imu6,
-            camera_ts_offset_ns=camera_ts_offset_ns,
-            imu_raw_batch=imu_raw_batch,
-        )
-    elif recorder.use_hw_jpeg:
-        preview_hub.offer_jpegs(capture_out)
-        if preview_out:
-            preview_hub.offer_jpegs(preview_out)
-        writer.append_frame(
-            timestamp_ns=timestamp_ns,
-            camera_jpegs=capture_out,
-            imu6=imu6,
-            camera_ts_offset_ns=camera_ts_offset_ns,
-            imu_raw_batch=imu_raw_batch,
-        )
-    else:
-        camera_jpegs = encode_camera_bgr_jpegs(capture_out)
-        preview_hub.offer_jpegs(camera_jpegs)
-        if preview_out:
-            preview_hub.offer_jpegs(encode_camera_bgr_jpegs(preview_out))
-        writer.append_frame(
-            timestamp_ns=timestamp_ns,
-            camera_jpegs=camera_jpegs,
-            imu6=imu6,
-            camera_ts_offset_ns=camera_ts_offset_ns,
-            imu_raw_batch=imu_raw_batch,
-        )
+    if not recorder.use_hw_jpeg:
+        raise RuntimeError("only HW JPEG capture is supported")
+    preview_hub.offer_jpegs(capture_out)
+    if preview_out:
+        preview_hub.offer_jpegs(preview_out)
+    writer.append_frame(
+        timestamp_ns=timestamp_ns,
+        camera_jpegs=capture_out,
+        imu6=imu6,
+        camera_ts_offset_ns=camera_ts_offset_ns,
+        imu_raw_batch=imu_raw_batch,
+    )
 
 
 def _run_warmup_probe(recorder: Oak4pEgoRecorder) -> tuple[Any, float]:
@@ -233,12 +172,13 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description="OAK edge capture (Scheme A): segments on disk + MJPEG preview, no live upload.",
     )
+    _STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
     p.add_argument(
         "--heartbeat-url",
         type=str,
         default=os.environ.get(
             "DATALAB_HEARTBEAT_URL",
-            "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
+            f"http://10.10.10.34:8080/lerobot/api/collection/stations/{_STATION}/upload",
         ),
         help="Optional ingest URL for heartbeat only (station online in collection UI)",
     )
@@ -252,13 +192,13 @@ def main() -> None:
         type=str,
         default=os.environ.get(
             "EGO_CAPTURE_CHECKPOINT",
-            "/home/server/cache/ego-lan-214/segments/checkpoint.json",
+            f"/home/server/cache/{_STATION}/segments/checkpoint.json",
         ),
     )
     p.add_argument(
         "--segment-root",
         type=str,
-        default=os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"),
+        default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{_STATION}/segments"),
     )
     p.add_argument("--episode-seconds", type=float, default=600.0)
     p.add_argument("--fps", type=int, default=OAK_CAPTURE_FPS)
@@ -295,11 +235,6 @@ def main() -> None:
         heartbeat.session_id = session_id
 
     device_fps = int(os.environ.get("OAK_DEVICE_FPS", "30"))
-    storage_h264 = os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes")
-    if storage_h264:
-        from ego_capture_studio.capture.segment_h264_mux import preflight_segment_h264_capture
-
-        preflight_segment_h264_capture()
     recorder = Oak4pEgoRecorder(
         fps=args.fps,
         device_fps=device_fps,
@@ -308,6 +243,7 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
+    _require_jpeg_capture(recorder)
 
     resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
     if resumed_emit is not None:
@@ -354,7 +290,7 @@ def main() -> None:
             f"capture-only session={session_id} segment_root={args.segment_root} "
             f"fps_target={args.fps} device_fps={device_fps} imu_hz={args.imu_hz} "
             f"hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264} "
-            f"storage_h264={int(storage_h264)} sync_mode=egoverse_30hz "
+            f"sync_mode=egoverse_30hz "
             f"interval_ms={interval_ms} imu_interpolate={int(imu_interpolate)}",
             flush=True,
         )
@@ -396,12 +332,10 @@ def main() -> None:
                 pending = writer.pending_segment_count(fast=True)
                 pq = writer.persist_queue_depth()
                 dropped = writer.dropped_frame_count()
-                h264_stale = recorder.h264_stale_drop_count()
                 seg_frames = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
                 print(
                     f"captured={writer.next_frame_index} capture_fps={capture_fps:.2f} "
                     f"pending_segments={pending} persist_q={pq} dropped={dropped} "
-                    f"h264_stale_drops={h264_stale} "
                     f"sync_mode=egoverse_30hz seg_max_frames={seg_frames} session={session_id}",
                     flush=True,
                 )
@@ -409,27 +343,11 @@ def main() -> None:
         remaining_imu = recorder.flush_remaining_imu_raw()
         if remaining_imu:
             writer.append_imu_raw(remaining_imu)
-
-        def _run_stop(label: str, fn, timeout_s: float) -> None:
-            done = threading.Event()
-            err: list[BaseException] = []
-
-            def _worker() -> None:
-                try:
-                    fn()
-                except Exception as exc:
-                    err.append(exc)
-                finally:
-                    done.set()
-
-            threading.Thread(target=_worker, name=f"capture-{label}", daemon=True).start()
-            if not done.wait(timeout=timeout_s):
-                print(f"capture_shutdown {label} timeout after {timeout_s}s", flush=True)
-            elif err:
-                print(f"capture_shutdown {label} warning: {err[0]}", flush=True)
-
-        _run_stop("recorder.stop", recorder.stop, 15.0)
-        _run_stop("writer.close", writer.close, 90.0)
+        try:
+            recorder.stop()
+        except Exception as exc:
+            print(f"recorder.stop warning: {exc}", flush=True)
+        writer.close()
         if heartbeat is not None:
             heartbeat.stop_periodic_heartbeat()
 

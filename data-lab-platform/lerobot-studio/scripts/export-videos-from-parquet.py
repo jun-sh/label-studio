@@ -88,7 +88,7 @@ def export_videos(root: Path) -> dict:
     expected = sum(
         pq.read_metadata(p).num_rows
         for p in sorted(root.glob("data/**/*.parquet"))
-        if "high_freq" not in p.parts
+        if "sensor_raw" not in p.parts
     )
     if expected <= 0:
         expected = int(info.get("total_frames") or info.get("ingest_row_count") or 0)

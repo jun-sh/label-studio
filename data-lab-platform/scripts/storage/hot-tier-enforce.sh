@@ -8,7 +8,7 @@ if [ -f "$ENV_FILE" ]; then
   source "$ENV_FILE"
 fi
 
-STATION_ID="${STATION_ID:-ego-lan-214}"
+STATION_ID="${STATION_ID:-ego-001}"
 STATION_ROOT="${STATION_ROOT:?set STATION_ROOT in $ENV_FILE}"
 COLD_ROOT="${COLD_ROOT:?set COLD_ROOT in $ENV_FILE}"
 ARCHIVE="${STATION_ROOT}/archive"

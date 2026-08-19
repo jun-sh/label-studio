@@ -19,7 +19,7 @@
   var CATALOG_TIMEOUT_MS = 4_000;
 
   var STATION_NAME_EN = {
-    "ego-lan-214": "EGO station · Lab A (214)",
+    "ego-001": "EGO station · ego-001 (130)",
     "ego-lan-02": "EGO station · Lab B",
     "ego-wan-01": "EGO station · Public node",
   };

@@ -1,18 +1,5 @@
 [
   {
-    "id": "ego-lan-214",
-    "name": "EGO 采集站 · 实验室 A (214)",
-    "name_en": "EGO station · Lab A (214)",
-    "scope": "lan",
-    "host": "10.10.10.214",
-    "online": false,
-    "stream": true,
-    "datasetUrl": "stream://ego-lan-214",
-    "streamUrl": "/lerobot/api/collection/stations/ego-lan-214/stream",
-    "uploadUrl": "/lerobot/api/collection/stations/ego-lan-214/upload",
-    "viewerUrl": "/collection?station=ego-lan-214"
-  },
-  {
     "id": "ego-001",
     "name": "EGO 采集站 · ego-001",
     "name_en": "EGO station · ego-001",

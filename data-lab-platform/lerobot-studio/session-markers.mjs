@@ -69,22 +69,52 @@ export function markSessionDeriving(root, sessionId, meta = {}) {
   writeSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING, meta);
 }
 
-export function markSessionReady(root, sessionId, disk = {}) {
+export function markSessionReady(root, sessionId, payload = {}) {
   clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
   clearSessionMarker(root, sessionId, SESSION_MARKERS.FAILED);
+  const gate = payload.gate || payload.ready_gate;
+  const readyGate =
+    gate && typeof gate === "object"
+      ? {
+          version: 1,
+          checks_passed: gate.checksPassed ?? gate.checks_passed ?? 6,
+          checks_total: gate.checksTotal ?? gate.checks_total ?? 6,
+        }
+      : payload.ready_gate;
+  const { gate: _g, ready_gate: _rg, ...rest } = payload;
   writeSessionMarker(root, sessionId, SESSION_MARKERS.READY, {
     phase: "READY",
-    markers: disk.markers,
-    total: disk.total,
-    parquetRows: disk.parquetRows,
-    mp4Ok: disk.mp4Ok,
+    mp4Ok: payload.mp4Ok ?? true,
+    markers: payload.markers,
+    total: payload.total,
+    parquetRows: payload.parquetRows ?? payload.total,
+    ready_gate: readyGate,
+    ...rest,
   });
 }
 
-export function markSessionFailed(root, sessionId, error, meta = {}) {
+export function markSessionFailed(root, sessionId, reason, meta = {}) {
   clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+  let structured;
+  if (typeof reason === "object" && reason?.code) {
+    structured = {
+      code: reason.code,
+      message: String(reason.message || "derive_failed").slice(0, 500),
+      category: reason.category || "derive",
+    };
+  } else if (typeof reason === "object" && reason?.reason?.code) {
+    structured = reason.reason;
+  } else {
+    structured = {
+      code: meta.code || "DERIVE_FAILED",
+      message: String(reason || "derive_failed").slice(0, 500),
+      category: meta.category || "derive",
+    };
+  }
   writeSessionMarker(root, sessionId, SESSION_MARKERS.FAILED, {
-    message: String(error || "derive_failed").slice(0, 500),
+    phase: "FAILED",
+    mp4Ok: false,
+    reason: structured,
     ...meta,
   });
 }

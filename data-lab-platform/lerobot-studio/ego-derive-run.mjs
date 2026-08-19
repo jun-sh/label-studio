@@ -2,7 +2,7 @@
 /**
  * Standalone derive CLI — runs outside stream-ingest HTTP process.
  * Usage:
- *   node ego-derive-run.mjs run --station ego-lan-214 [--session sess_...] [--mux-only]
+ *   node ego-derive-run.mjs run --station ego-001 [--session sess_...] [--mux-only]
  */
 import process from "node:process";
 import { runDerivePipelineBlocking, pickPrimarySessionId } from "./derive-pipeline.mjs";
@@ -23,7 +23,7 @@ function parseArgs(argv) {
     else if (a === "--help" || a === "-h") args.help = true;
   }
   if (!args.station) {
-    args.station = process.env.STATION_ID || process.env.EGO_STATION_ID || "ego-lan-214";
+    args.station = process.env.STATION_ID || process.env.EGO_STATION_ID || "ego-001";
   }
   return args;
 }

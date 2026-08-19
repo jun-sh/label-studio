@@ -111,7 +111,7 @@
     var m = String(baseUrl || "").match(/\/api\/stream\/([^/]+)/);
     if (!m) return "EGO 采集站";
     var id = decodeURIComponent(m[1]);
-    if (id === "ego-lan-214") return "EGO 采集站 · 214";
+    if (id === "ego-001") return "EGO 采集站 · ego-001";
     return id.replace(/^ego-/i, "EGO ").replace(/-/g, " · ");
   }
 

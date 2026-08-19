@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -12,16 +13,14 @@ from pathlib import Path
 from ego_capture_studio.capture.segment_store import (
     list_closed_pending_segments,
     mark_segment_uploaded,
-    purge_uploaded_segments,
     segment_store_bytes,
-    wait_for_segment_deletes,
 )
 from ego_capture_studio.capture.upload_status import UploadStatusWriter, read_status, scan_skipped_segments
 
 # Hard cap on closed-unuploaded segments (local queue depth, not archive).
 KEEP_PENDING_BELOW = max(1, int(os.environ.get("EGO_UPLOAD_KEEP_PENDING_BELOW", "12")))
 TRIM_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_TRIM_BATCH", "3")))
-PURGE_INTERVAL_S = float(os.environ.get("EGO_UPLOAD_PURGE_INTERVAL_S", "300"))
+PURGE_INTERVAL_S = float(os.environ.get("EGO_UPLOAD_PURGE_INTERVAL_S", "3600"))
 POLL_INTERVAL_S = max(2.0, float(os.environ.get("EGO_UPLOAD_POLL_INTERVAL_S", "4")))
 UPLOAD_BATCH = max(1, int(os.environ.get("EGO_UPLOAD_BATCH", "1")))
 UPLOAD_TIMEOUT_S = max(30.0, float(os.environ.get("EGO_UPLOAD_SUBPROC_TIMEOUT_S", "300")))
@@ -32,9 +31,16 @@ FAIL_DEQUEUE = os.environ.get("EGO_UPLOAD_FAIL_DEQUEUE", "0").strip().lower() in
 )
 UPLOAD_URL = os.environ.get(
     "EGO_UPLOAD_URL",
-    "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
+    "http://10.10.10.34:8080/lerobot/api/collection/stations/"
+    + (os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001")
+    + "/upload",
 )
-SEGMENT_ROOT = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
+SEGMENT_ROOT = Path(
+    os.environ.get(
+        "EGO_SEGMENT_ROOT",
+        f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments",
+    )
+)
 QUOTA_BYTES = max(
     256 * 1024**2,
     int(float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "256")) * 1024**3),
@@ -109,18 +115,24 @@ def _upload_once(session_id: str, *, limit: int) -> int:
 
 def _purge_uploaded_segments(session_id: str) -> int:
     """Remove uploaded segments from disk to keep directory scans cheap."""
-    purged, failed = purge_uploaded_segments(SEGMENT_ROOT, session_id)
-    if failed:
-        print(
-            f"segment_delete_retry_pending session={session_id} failed={failed}",
-            flush=True,
-        )
-    return purged
-
-
-def _finalize_upload_deletes(session_id: str) -> int:
-    wait_for_segment_deletes()
-    return _purge_uploaded_segments(session_id)
+    seg_root = SEGMENT_ROOT / "sessions" / session_id / "segments"
+    if not seg_root.is_dir():
+        return 0
+    removed = 0
+    for seg in sorted(seg_root.iterdir()):
+        if not seg.is_dir():
+            continue
+        manifest_path = seg / "manifest.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            m = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if m.get("uploaded"):
+            shutil.rmtree(seg, ignore_errors=True)
+            removed += 1
+    return removed
 
 
 def _drop_oldest_pending(session_id: str, *, reason: str) -> bool:
@@ -169,14 +181,6 @@ def _trim_for_disk_quota(session_id: str, pending: int) -> int:
     return pending
 
 
-def _upload_mode() -> str:
-    """production = manual upload only; debug = background dequeue loop."""
-    mode = os.environ.get("EGO_UPLOAD_MODE", "production").strip().lower()
-    if mode in ("production", "debug"):
-        return mode
-    return "production"
-
-
 def _foreground_upload_active() -> bool:
     """True when manual ego-upload owns the status file (do not clobber from loop)."""
     st = read_status()
@@ -190,14 +194,6 @@ def _foreground_upload_active() -> bool:
 
 
 def main() -> None:
-    if _upload_mode() != "debug":
-        print(
-            "[upload_loop] EGO_UPLOAD_MODE=production：自动上传已禁用。"
-            "请手动执行：python -m ego_capture_studio.cli.upload_segments",
-            flush=True,
-        )
-        sys.exit(0)
-
     writer = UploadStatusWriter.get_default()
     print(
         f"upload_loop start keep_pending_below={KEEP_PENDING_BELOW} "
@@ -241,7 +237,7 @@ def main() -> None:
             phase=phase,
         )
         if PURGE_INTERVAL_S > 0 and now - last_purge >= PURGE_INTERVAL_S:
-            purged = _finalize_upload_deletes(session_id)
+            purged = _purge_uploaded_segments(session_id)
             if purged:
                 print(f"已清理本机已上传段目录：{purged} 个", flush=True)
             last_purge = now
@@ -256,9 +252,6 @@ def main() -> None:
             uploaded = _upload_once(session_id, limit=UPLOAD_BATCH)
             if uploaded > 0:
                 cached_pending[session_id] = max(0, n - uploaded)
-                purged = _finalize_upload_deletes(session_id)
-                if purged:
-                    print(f"已清理本机已上传段目录：{purged} 个", flush=True)
         else:
             print("全部待传段已上传完成（本机队列为空）", flush=True)
         time.sleep(POLL_INTERVAL_S)

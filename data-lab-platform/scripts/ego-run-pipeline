@@ -13,7 +13,7 @@ for arg in "$@"; do
       cat <<'EOF'
 用法: ego-run-pipeline <station> [选项]
 
-  <station>            采集站 ID，如 ego-lan-214
+  <station>            采集站 ID，如 ego-001
   默认                 增量：只处理未发布 session，断点续跑
   --reset-34           仅清 34（stream/pipeline/corpus/samples），保留 214 可重传
   --reset-full         清 214 + 34 全链路（须确认）
@@ -43,7 +43,7 @@ EOF
 done
 
 [[ -n "$STATION" ]] || {
-  echo "❌ 请指定采集站，例如: ego-run-pipeline ego-lan-214" >&2
+  echo "❌ 请指定采集站，例如: ego-run-pipeline ego-001" >&2
   exit 2
 }
 
@@ -69,9 +69,9 @@ if [[ -x "$_venv_py" ]]; then
   fi
 fi
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
-WAIT_SH="${SCRIPT_DIR}/ego-lan-214-wait-ready-for-postprocess.sh"
-RESET_SH="${SCRIPT_DIR}/ego-lan-214-reset-for-rerun.sh"
-RESET_34_SH="${SCRIPT_DIR}/ego-lan-214-reset-34-only.sh"
+WAIT_SH="${SCRIPT_DIR}/ego-wait-ready-for-postprocess.sh"
+RESET_SH="${SCRIPT_DIR}/ego-001-reset-for-rerun.sh"
+RESET_34_SH="${SCRIPT_DIR}/ego-reset-34-only.sh"
 DEPLOY_SH="${DATALAB_ROOT}/data-lab-platform/deploy-local-datasets.sh"
 POSTPROCESS_SH="${PIPE_ROOT}/scripts/ego-postprocess.sh"
 
@@ -181,7 +181,7 @@ FAILED=0
 if [[ ${#PENDING[@]} -gt 0 ]]; then
   log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE})"
   for SID in "${PENDING[@]}"; do
-    log ">>> 后处理 ${STATION} / ${SID}"
+    log ">>> 后处理 ${STATION} / ${SID} (IMU: sensor_raw/imu)"
     set +e
     if [[ "$PIPELINE_BACKEND" == "oak" ]]; then
       (

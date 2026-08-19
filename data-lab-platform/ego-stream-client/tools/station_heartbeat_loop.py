@@ -12,17 +12,18 @@ from pathlib import Path
 
 HEARTBEAT_URL = os.environ.get(
     "DATALAB_HEARTBEAT_URL",
-    "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
+    "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload",
 )
-CAPTURE_HOST = os.environ.get("DATALAB_CAPTURE_HOST", "10.10.10.214")
+CAPTURE_HOST = os.environ.get("DATALAB_CAPTURE_HOST", "10.10.10.130")
 STATION_TOKEN = os.environ.get("STATION_UPLOAD_TOKEN", "")
 INTERVAL_S = max(5.0, float(os.environ.get("DATALAB_HEARTBEAT_INTERVAL_S", "15")))
 TIMEOUT_S = max(1.0, float(os.environ.get("DATALAB_HEARTBEAT_TIMEOUT_S", "3")))
 NICE_LEVEL = int(os.environ.get("DATALAB_HEARTBEAT_NICE", "10"))
+_DEFAULT_STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
 CHECKPOINT_PATH = Path(
     os.environ.get(
         "EGO_CAPTURE_CHECKPOINT",
-        "/home/server/cache/ego-lan-214/segments/checkpoint.json",
+        f"/home/server/cache/{_DEFAULT_STATION}/segments/checkpoint.json",
     )
 )
 

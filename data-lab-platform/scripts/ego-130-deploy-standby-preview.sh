@@ -47,8 +47,8 @@ scp -q "${ECS_SRC}/systemd/ecs-record-oak-stream.service.d/no-standby-preview.co
   "${EDGE_HOST}:.config/systemd/user/ecs-record-oak-stream.service.d/no-standby-preview.conf" 2>/dev/null || true
 scp -q "${ECS_SRC}/systemd/ecs-record-oak-stream.service.d/capture-stack.conf" \
   "${EDGE_HOST}:.config/systemd/user/ecs-record-oak-stream.service.d/capture-stack.conf" 2>/dev/null || true
-scp -q "${ECS_SRC}/systemd/ecs-record-oak-stream.service.d/v0.0.8-segment-mp4.conf" \
-  "${EDGE_HOST}:.config/systemd/user/ecs-record-oak-stream.service.d/v0.0.8-segment-mp4.conf"
+scp -q "${ECS_SRC}/systemd/ecs-record-oak-stream.service.d/z-production-egoverse.conf" \
+  "${EDGE_HOST}:.config/systemd/user/ecs-record-oak-stream.service.d/z-production-egoverse.conf"
 
 log "=== reload + enable heartbeat only (preview on browse via ego-web) ==="
 ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<'REMOTE'

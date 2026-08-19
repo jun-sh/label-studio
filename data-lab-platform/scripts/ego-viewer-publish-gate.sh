@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 SLUG="${1:-}"
-STATION="${EGO_STATION:-ego-lan-214}"
+STATION="${EGO_STATION:-ego-001}"
 
 if [[ -z "$SLUG" ]]; then
   SLUG="$(python3 "$SESSIONS_PY" slug "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_214_hand_pose")"

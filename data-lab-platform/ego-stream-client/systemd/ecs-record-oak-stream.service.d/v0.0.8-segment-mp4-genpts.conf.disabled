@@ -1,4 +1,0 @@
-# Optional 130 tuning: regenerate PTS on H264→MP4 remux (may improve packet/frame alignment on 34).
-# Enable: EGO_SSH_PASSWORD=1 bash data-lab-platform/scripts/ego-130-h264-tuning.sh server@10.10.10.130 enable
-[Service]
-Environment="SEGMENT_H264_FFMPEG_INPUT_FLAGS=-fflags +genpts -avoid_negative_ts make_zero"

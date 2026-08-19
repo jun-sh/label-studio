@@ -1,5 +1,5 @@
 #!/bin/sh
-# Periodic parquet sync for stream stations (skips listed stations — Phase-1 ego-lan-214).
+# Periodic parquet sync for stream stations (ego-001 production).
 set -eu
 
 INTERVAL="${STREAM_SYNC_INTERVAL:-5}"

@@ -1,0 +1,37 @@
+# v0.0.13-rc.3 overlay: EGO-001 Phase3 ingest module (raw-first + segment state machine).
+services:
+  stream-ingest:
+    image: data-lab-lerobot-studio:v0.0.13-rc.3
+    volumes: !reset
+      - ./data-storage/stream:/srv/stream
+      - ./data-storage/ego-archive:/cold-archive:rw
+      - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - DERIVE_STANDALONE=1
+      - DERIVE_ASYNC=0
+      - DERIVE_ASYNC_EGO_001=0
+      - STREAM_SESSION_SINGLE_EPISODE=1
+
+  derive-worker:
+    image: data-lab-lerobot-studio:v0.0.13-rc.3
+    volumes: !reset
+      - ./data-storage/stream:/srv/stream
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=ego-001
+      - DERIVE_STANDALONE=1
+      - DERIVE_ASYNC=0
+      - STREAM_SESSION_SINGLE_EPISODE=1
+
+  lerobot:
+    image: data-lab-lerobot-studio:v0.0.13-rc.3
+    volumes: !reset
+      - lerobot-studio-data:/srv/lerobot
+      - lerobot-bundled-data:/srv/bundled
+      - ./data-storage/stream:/srv/stream:rw
+      - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro

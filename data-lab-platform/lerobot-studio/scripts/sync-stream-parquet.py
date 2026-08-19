@@ -627,7 +627,7 @@ def write_viewer_scaffold(root: Path) -> int:
 
 
 def main_data_parquet_shards(root: Path) -> list[Path]:
-    return [p for p in sorted(root.glob("data/**/*.parquet")) if "high_freq" not in p.parts]
+    return [p for p in sorted(root.glob("data/**/*.parquet")) if "sensor_raw" not in p.parts]
 
 
 def sync_lerobot_info_frame_counts(root: Path, info: dict, episodes: list[dict]) -> None:

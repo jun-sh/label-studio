@@ -8,7 +8,7 @@ if [ -f "$ENV_FILE" ]; then
   source "$ENV_FILE"
 fi
 
-STATION_ID="${STATION_ID:-ego-lan-214}"
+STATION_ID="${STATION_ID:-ego-001}"
 CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
 COLD_IN_CONTAINER="${COLD_IN_CONTAINER:-/cold-archive}"
 MODE="${1:-enforce}"

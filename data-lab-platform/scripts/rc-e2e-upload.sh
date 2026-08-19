@@ -129,7 +129,7 @@ if [[ "${SKIP_UPLOAD}" != "1" ]]; then
 echo "waiting for ingest (max 180s)..."
 for _ in $(seq 1 36); do
   LOGS=$(docker logs "${CID}" 2>&1 | tail -120)
-  if echo "${LOGS}" | grep -qE "segment_mp4_ingest|tarzst_segment_ok"; then
+  if echo "${LOGS}" | grep -qE "tarzst_segment_ok"; then
     if echo "${LOGS}" | grep -q "session=${UPLOAD_SESSION}"; then
       break
     fi
@@ -186,10 +186,18 @@ phase = disk.get("phase")
 mp4_ok = disk.get("mp4Ok")
 parquet = disk.get("parquetRows", 0)
 ready = d.get("sessionMarkers", {}).get("session.READY")
-print(f"phase={phase} mp4Ok={mp4_ok} parquet={parquet} READY_marker={ready is not None}")
-if phase != "READY" or not mp4_ok:
+ready_gate = ready.get("ready_gate") if isinstance(ready, dict) else None
+print(f"phase={phase} mp4Ok={mp4_ok} parquet={parquet} READY_marker={ready is not None} ready_gate={ready_gate}")
+if phase != "READY" or not mp4_ok or ready is None:
     sys.exit(1)
 PY
+
+  IMU_REL="${STREAM_ROOT}/${STATION}/sensor_raw/imu/chunk-000/file-000.parquet"
+  if [[ -f "${IMU_REL}" ]]; then
+    echo "RC-1b sensor_raw IMU parquet ok"
+  else
+    echo "WARN: sensor_raw IMU parquet missing (G5 would fail on re-derive)"
+  fi
   echo "RC-1b READY ok"
 fi
 

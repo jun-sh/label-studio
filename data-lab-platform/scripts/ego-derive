@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ego-derive — 独立派生 CLI（商用：上传与派生进程隔离）
 #
-#   ego-derive run [--station ego-lan-214] [--session sess_...] [--mux-only] [--json]
+#   ego-derive run [--station ego-001] [--session sess_...] [--mux-only] [--json]
 #   ego-derive watch
 #   ego-derive status [--json|--watch]
 set -euo pipefail
@@ -26,7 +26,7 @@ fi
 PLATFORM="${ROOT}/data-lab-platform"
 DERIVE_STATUS="${PLATFORM}/scripts/ego-derive-status"
 INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
-STATION="${STATION_ID:-ego-lan-214}"
+STATION="${STATION_ID:-ego-001}"
 
 usage() {
   sed -n '2,7p' "$0"
@@ -45,7 +45,7 @@ container_node() {
     -e EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}" \
     -e DERIVE_MUX_MODE="${DERIVE_MUX_MODE:-full}" \
     -e DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-fluent}" \
-    -e DERIVE_VIDEO_EXPORT_BACKEND=lerobot \
+    -e DERIVE_VIDEO_EXPORT_BACKEND="${DERIVE_VIDEO_EXPORT_BACKEND:-auto}" \
     -e DERIVE_PARQUET_BACKEND=lerobot \
     "${INGEST_CONTAINER}" \
     node "${script}" "$@"

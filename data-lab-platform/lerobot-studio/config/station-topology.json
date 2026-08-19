@@ -42,16 +42,6 @@
     }
   },
   "stations": {
-    "ego-lan-214": { "topology_id": "ego-oak-4p-rgb" },
-    "ego-lan-215": { "topology_id": "ego-standard" },
-    "ego-lan-216": { "topology_id": "ego-standard" },
-    "ego-lan-217": { "topology_id": "ego-standard" },
-    "ego-lan-218": { "topology_id": "ego-standard" },
-    "ego-lan-219": { "topology_id": "ego-standard" },
-    "ego-lan-220": { "topology_id": "ego-standard" },
-    "ego-lan-221": { "topology_id": "ego-standard" },
-    "ego-lan-222": { "topology_id": "ego-standard" },
-    "ego-lan-223": { "topology_id": "ego-standard" },
     "ego-001": { "topology_id": "ego-standard" }
   }
 }

@@ -9,7 +9,7 @@ import { listSessionsPendingDerive } from "./session-markers.mjs";
 import { readDeriverLock } from "./derive-lock.mjs";
 import { stationRoot, streamLog, STREAM_ROOT } from "./stream-ingest.mjs";
 
-const stationId = (process.env.STATION_ID || process.env.EGO_STATION_ID || "ego-lan-214").trim();
+const stationId = (process.env.STATION_ID || process.env.EGO_STATION_ID || "ego-001").trim();
 const pollMs = Math.max(3000, Number(process.env.DERIVE_WATCH_POLL_MS || 10_000));
 
 async function tick() {

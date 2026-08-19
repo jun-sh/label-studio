@@ -2,7 +2,7 @@
 # Data Lab storage / ingest alert (host 34). No core service code changes.
 set -euo pipefail
 
-STATION_ID="${STATION_ID:-ego-lan-214}"
+STATION_ID="${STATION_ID:-ego-001}"
 LOG="${STORAGE_ALERT_LOG:-/opt/datalab/log/storage-alert.log}"
 STATE="${STORAGE_ALERT_STATE:-/opt/datalab/log/storage-alert.state}"
 DISK_WARN="${DISK_WARN_PERCENT:-85}"

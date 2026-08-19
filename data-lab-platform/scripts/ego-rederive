@@ -25,7 +25,7 @@ else
   ROOT="$(cd "$(resolve_script_dir "${BASH_SOURCE[0]}")/../.." && pwd)"
 fi
 
-STATION="${STATION_ID:-ego-lan-214}"
+STATION="${STATION_ID:-ego-001}"
 STREAM_HOST="${ROOT}/data-storage/stream/${STATION}"
 SEG_JSON="${STREAM_HOST}/state/segments.json"
 COMPOSE="docker-compose -f ${ROOT}/docker-compose.yml -f ${ROOT}/data-lab-platform/docker-compose.platform.yml"

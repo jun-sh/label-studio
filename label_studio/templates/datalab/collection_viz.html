@@ -222,7 +222,7 @@
     var VIZ_FRAME = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
     var LIST_SRC = "/_datalab/collection-embed.html?v=11&lang=" + encodeURIComponent(LANG);
-    var DEFAULT_DATASET_URL = "stream://ego-lan-214";
+    var DEFAULT_DATASET_URL = "stream://ego-001";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
     var LOADING_LABEL = "{% if user.ui_locale|slice:':2' == 'zh' %}正在连接采集站…{% else %}Connecting to station…{% endif %}";
     var LOADING_LAYER = "datalab-stream-loading-layer";
@@ -301,7 +301,7 @@
 
     function formatVendorMetaLine(info, deriveData) {
       var parts = [];
-      var imu = (info && info.vendor_meta && info.vendor_meta.high_freq && info.vendor_meta.high_freq.imu_200hz) || null;
+      var imu = (info && info.sensor_raw && info.sensor_raw.imu) || null;
       if (!imu && deriveData && deriveData.highFreqImu) {
         imu = {
           rate_hz: deriveData.highFreqImu.rateHz,

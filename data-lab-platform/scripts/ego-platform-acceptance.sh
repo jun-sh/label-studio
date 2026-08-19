@@ -5,7 +5,7 @@ set -euo pipefail
 WORKSPACE="$(cd "$(dirname "$0")/../../.." && pwd)"
 EGO_PLATFORM="${WORKSPACE}/ego-platform"
 DATALAB="${WORKSPACE}/data-lab"
-STATION="${EGO_STATION:-ego-lan-214}"
+STATION="${EGO_STATION:-ego-001}"
 
 echo "==> ego-platform pytest"
 (cd "${EGO_PLATFORM}" && python3 -m pytest -q)
@@ -188,7 +188,7 @@ checks = {
 env = os.environ.copy()
 env.pop("EGO_PIPELINE_BACKEND", None)
 proc = subprocess.run(
-    [sys.executable, str(sessions_py), "pending", "ego-lan-214", "--datalab-root", "${DATALAB}"],
+    [sys.executable, str(sessions_py), "pending", "ego-001", "--datalab-root", "${DATALAB}"],
     capture_output=True,
     text=True,
     env=env,

@@ -32,6 +32,7 @@ def resolve_capture_state() -> str:
     """Best-effort state for 34 remote preview gating (fail-closed on capture stack)."""
     capture_on = _systemctl_is_active(CAPTURE_TARGET) or _systemctl_is_active(CAPTURE_RECORD_UNIT)
     if capture_on:
+        # Remote preview must stay off for the whole capture stack lifetime.
         return "recording"
     if _systemctl_is_active(STANDBY_PREVIEW_UNIT):
         return "idle"

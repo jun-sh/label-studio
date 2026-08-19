@@ -25,13 +25,6 @@ defaults:
   min_free_gb: 5
 
 stations:
-  ego-lan-214:
-    title: Ego-214-Hand-Pose
-    dataset_slug: ego_214_hand_pose
-    aggregate_dir_name: Ego-214-Hand-Pose
-    manifest_id: ego_214_hand_pose
-    cover_webp: ego_214_hand_pose.webp
-
   ego-001:
     title: EgoDome
     dataset_slug: egodome

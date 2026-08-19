@@ -39,11 +39,8 @@ def _handle_stop(signum: int, _frame) -> None:
 
 
 def _offer_preview(preview_hub, capture_out: dict, preview_out: dict, recorder: Oak4pEgoRecorder) -> None:
-    if recorder.use_hw_jpeg:
+    if recorder.use_hw_jpeg or recorder.use_hw_h264:
         preview_hub.offer_jpegs(capture_out)
-        if preview_out:
-            preview_hub.offer_jpegs(preview_out)
-    elif recorder.use_hw_h264:
         if preview_out:
             preview_hub.offer_jpegs(preview_out)
     else:

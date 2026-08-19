@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "session_id": "sess_example_human_demo",
   "segment_id": "seg_000001",
-  "station_id": "ego-lan-214",
+  "station_id": "ego-001",
   "embodiment": "human_demo",
   "task_id": "fold_towel_001",
   "extended_info": {

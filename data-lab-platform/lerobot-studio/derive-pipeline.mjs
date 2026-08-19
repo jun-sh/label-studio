@@ -7,24 +7,21 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isFullMuxMode } from "./mux-exec.mjs";
-import { isSegmentMp4PrimaryPath } from "./segment-mp4-ingest.mjs";
 import {
   computeDeriveStatusFromDisk,
   computeStationDeriveStatusFromDisk,
   countDeriveMarkersForSession,
   countRawTarZstForSession,
-  exportVideosFromParquetSync,
+  countCommittedSegmentsForSession,
   hasPendingSessionEpisode,
   isSegmentParquetDerivedOnDisk,
   listRawSessionIds,
+  listSessionIdsOnDisk,
+  prepareStagingForFullMux,
   processTarZstDeriveSegment,
   publishStreamViewer,
-  purgeAllStagingJpgs,
   refreshSessionEpisodeFromInfo,
-  rehydrateStagingFromRawSegments,
   resetMuxArtifactsForFullRemux,
-  resetMuxArtifactsForIncrementalRemux,
-  planMuxRemux,
   runSessionMuxOnceSync,
   stagingJpegCount,
   stagingNeedsRehydrate,
@@ -33,12 +30,8 @@ import {
   spawnFinalizeSessionEpisodeSync,
   syncDataParquetFromJsonl,
   syncEpisodesMetaOnly,
-  rebuildSessionJsonlFromRawIfEmpty,
-  spawnParquetSyncFromJsonlSync,
-  spawnImuHighFreqIngestSync,
-  spawnVendorAnnotationsSync,
   useSessionSingleEpisode,
-  usesParquetVideoExport,
+  deriveVideoExportBackend,
   writeMuxValidatedSnapshot,
   STREAM_ROOT,
 } from "./stream-ingest.mjs";
@@ -175,38 +168,54 @@ function listUploadedSegments(root, sessionId) {
 
 function pickPrimarySessionId(stationId) {
   const root = stationRoot(stationId);
-  const rawRoot = path.join(root, "raw", "segments");
-  if (!fs.existsSync(rawRoot)) return null;
-  const sessions = fs
-    .readdirSync(rawRoot)
-    .filter((d) => !d.startsWith(".") && fs.statSync(path.join(rawRoot, d)).isDirectory());
-  if (!sessions.length) return null;
-  for (const sid of sessions) {
-    const raw = countRawTarZstForSession(root, sid);
-    const markers = countDeriveMarkersForSession(root, sid);
-    if (raw > 0 && markers < raw) return sid;
+  const live = readJson(path.join(root, "live", "session.json"), {});
+  if (live.sessionId) {
+    const disk = computeDeriveStatusFromDisk(stationId, live.sessionId);
+    if (disk.total > 0 && !disk.fullyReady) return live.sessionId;
   }
-  for (const sid of sessions) {
+  for (const sid of listSessionIdsOnDisk(root)) {
     const disk = computeDeriveStatusFromDisk(stationId, sid);
-    if (disk.parquetReady && !disk.fullyReady) return sid;
+    if (disk.total > 0 && !disk.fullyReady) return sid;
   }
-  sessions.sort((a, b) => countRawTarZstForSession(root, b) - countRawTarZstForSession(root, a));
-  return sessions[0];
+  return live.sessionId || listSessionIdsOnDisk(root)[0] || null;
+}
+
+async function runStagingMuxDerive(stationId, sessionId, diskBefore, { muxOnly = false, inlineRetry = false, round = 0 } = {}) {
+  const root = stationRoot(stationId);
+  resetMuxArtifactsForFullRemux(stationId, root);
+  await prepareStagingForFullMux(stationId, sessionId);
+  const attempt = inlineRetry ? round : readMuxRetryAttempt(root);
+  if (muxOnly || round > 0) {
+    streamLog(stationId, "derive_mux_retry_start", {
+      sessionId,
+      attempt,
+      parquetRows: diskBefore.parquetRows,
+      inlineRetry,
+      backend: "staging",
+    });
+  } else {
+    streamLog(stationId, "derive_mux_once_start", {
+      sessionId,
+      parquetRows: diskBefore.parquetRows,
+      backend: "staging",
+    });
+  }
+  await runSessionMuxOnceSync(stationId);
+  await writeMuxValidatedSnapshot(stationId, sessionId);
+  const disk = computeDeriveStatusFromDisk(stationId, sessionId);
+  streamLog(stationId, muxOnly || round > 0 ? "derive_mux_retry_done" : "derive_mux_once_done", {
+    sessionId,
+    mp4Ok: disk.mp4Ok,
+    phase: disk.phase,
+    attempt: muxOnly || round > 0 ? attempt : undefined,
+    backend: "staging",
+  });
+  return disk;
 }
 
 async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry = false } = {}) {
   const root = stationRoot(stationId);
-  if (isSegmentMp4PrimaryPath()) {
-    streamLog(stationId, "derive_mux_skip", {
-      sessionId,
-      reason: "segment_mp4_ingest",
-      source: "derive_pipeline",
-    });
-    await writeMuxValidatedSnapshot(stationId, sessionId);
-    return computeDeriveStatusFromDisk(stationId, sessionId);
-  }
-  const parquetVideo = usesParquetVideoExport();
-  const fullMux = isFullMuxMode() || parquetVideo;
+  const fullMux = isFullMuxMode();
   if (fullMux) inlineRetry = false;
   const maxAttempts = fullMux ? 1 : inlineRetry ? muxMaxRetries() + 1 : 1;
   let lastDisk = computeDeriveStatusFromDisk(stationId, sessionId);
@@ -215,72 +224,19 @@ async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry 
     const diskBefore = computeDeriveStatusFromDisk(stationId, sessionId);
     if (!diskBefore.parquetReady || diskBefore.fullyReady) return diskBefore;
 
-    if (!parquetVideo) {
-      const plan = planMuxRemux(root);
-      if (plan.stagingFrames <= 0) {
-        streamLog(stationId, "mux_skip", { sessionId, reason: "no_staging", frames: 0, source: "derive_pipeline" });
-        return diskBefore;
-      }
-      if (plan.fullDatasetMux) {
-        resetMuxArtifactsForFullRemux(stationId, root);
-      } else {
-        resetMuxArtifactsForIncrementalRemux(stationId, root);
-      }
+    if (fullMux && stagingNeedsRehydrate(root)) {
+      streamLog(stationId, "mux_full_rehydrate_staging", {
+        sessionId,
+        stagingJpgs: stagingJpegCount(root),
+        expected: diskBefore.parquetRows,
+      });
+      await prepareStagingForFullMux(stationId, sessionId);
     }
 
-    if (parquetVideo) {
-      streamLog(stationId, "derive_video_export_start", {
-        sessionId,
-        parquetRows: diskBefore.parquetRows,
-        backend: "lerobot",
-      });
-      exportVideosFromParquetSync(stationId);
-      await writeMuxValidatedSnapshot(stationId, sessionId);
-      const disk = computeDeriveStatusFromDisk(stationId, sessionId);
-      streamLog(stationId, "derive_video_export_done", {
-        sessionId,
-        mp4Ok: disk.mp4Ok,
-        phase: disk.phase,
-      });
-      lastDisk = disk;
-      if (disk.fullyReady) clearMuxRetryState(root);
-      return disk;
-    }
-
-    if (fullMux) {
-      if (stagingNeedsRehydrate(root)) {
-        streamLog(stationId, "mux_full_rehydrate_staging", {
-          sessionId,
-          stagingJpgs: stagingJpegCount(root),
-          expected: diskBefore.parquetRows,
-        });
-        purgeAllStagingJpgs(root);
-        await rehydrateStagingFromRawSegments(stationId, sessionId);
-      }
-    }
-
-    const attempt = inlineRetry ? round : readMuxRetryAttempt(root);
-    if (muxOnly || round > 0) {
-      streamLog(stationId, "derive_mux_retry_start", {
-        sessionId,
-        attempt,
-        parquetRows: diskBefore.parquetRows,
-        inlineRetry,
-      });
-    } else {
-      streamLog(stationId, "derive_mux_once_start", {
-        sessionId,
-        parquetRows: diskBefore.parquetRows,
-      });
-    }
-    await runSessionMuxOnceSync(stationId);
-    await writeMuxValidatedSnapshot(stationId, sessionId);
-    const disk = computeDeriveStatusFromDisk(stationId, sessionId);
-    streamLog(stationId, muxOnly || round > 0 ? "derive_mux_retry_done" : "derive_mux_once_done", {
-      sessionId,
-      mp4Ok: disk.mp4Ok,
-      phase: disk.phase,
-      attempt: muxOnly || round > 0 ? attempt : undefined,
+    const disk = await runStagingMuxDerive(stationId, sessionId, diskBefore, {
+      muxOnly,
+      inlineRetry,
+      round,
     });
     lastDisk = disk;
     if (disk.fullyReady) {
@@ -299,7 +255,7 @@ async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry 
         continue;
       }
       if (!inlineRetry) {
-        scheduleMuxRetry(stationId, sessionId, attempt, "mux_validation_failed");
+        scheduleMuxRetry(stationId, sessionId, readMuxRetryAttempt(root), "mux_validation_failed");
       }
       return disk;
     }
@@ -309,127 +265,24 @@ async function runMuxStage(stationId, sessionId, { muxOnly = false, inlineRetry 
 }
 
 async function runLinearPipeline(stationId, { muxOnly = false, sessionId: forcedSessionId = null, inlineMuxRetry = false } = {}) {
-  const sessionId = forcedSessionId || pickPrimarySessionId(stationId);
-  if (!sessionId) return;
-  const root = stationRoot(stationId);
-  const segments = listUploadedSegments(root, sessionId);
-  streamLog(stationId, muxOnly ? "derive_pipeline_mux_only" : "derive_pipeline_start", {
-    sessionId,
-    segments: segments.length,
+  const { runDerivePipeline } = await import("./derive/pipeline.mjs");
+  const result = await runDerivePipeline(stationId, {
+    sessionId: forcedSessionId,
     muxOnly,
   });
-
-  if (!muxOnly) {
-    for (const seg of segments) {
-      const { sessionId: sid, segmentId, sha256 } = seg;
-      const archivePath = rawSegmentPath(root, sid, segmentId);
-      if (!fs.existsSync(archivePath)) {
-        streamLog(stationId, "derive_skip_missing_raw", { sessionId: sid, segmentId });
-        continue;
-      }
-      if (isSegmentParquetDerivedOnDisk(stationId, sid, segmentId)) {
-        streamLog(stationId, "derive_skip_done", { sessionId: sid, segmentId });
-        continue;
-      }
-      const segKey = `${sid}:${segmentId}`;
-      if (derivingSegments.has(segKey)) {
-        streamLog(stationId, "derive_skip_inflight", { sessionId: sid, segmentId });
-        continue;
-      }
-      derivingSegments.add(segKey);
-      streamLog(stationId, "derive_segment_start", { sessionId: sid, segmentId });
-      try {
-        await processTarZstDeriveSegment(archivePath, stationId, {
-          expectedSha: sha256,
-          sessionId: sid,
-          segmentId,
-          ingestSource: seg.source || "edge",
-        });
-      } finally {
-        derivingSegments.delete(segKey);
-      }
-    }
-
-    const allSegmentsDerived =
-      segments.length > 0 &&
-      segments.every((seg) =>
-        isSegmentParquetDerivedOnDisk(stationId, seg.sessionId, seg.segmentId),
-      );
-    if (
-      allSegmentsDerived &&
-      useSessionSingleEpisode(stationId) &&
-      hasPendingSessionEpisode(root, sessionId)
-    ) {
-      streamLog(stationId, "session_episode_finalize_start", { sessionId });
-      try {
-        const finalized = spawnFinalizeSessionEpisodeSync(root, sessionId);
-        streamLog(stationId, "session_episode_finalize_done", {
-          sessionId,
-          skipped: Boolean(finalized.skipped),
-          episodeIndex: finalized.episode_index,
-          framesCommitted: finalized.frames_committed,
-          totalRows: finalized.total_rows,
-        });
-      } catch (err) {
-        streamLog(stationId, "session_episode_finalize_error", {
-          sessionId,
-          message: String(err?.message || err).slice(0, 300),
-        });
-        throw err;
-      }
-    }
-
-    if (isSegmentMp4PrimaryPath()) {
-      await rebuildSessionJsonlFromRawIfEmpty(stationId, sessionId);
-      try {
-        spawnParquetSyncFromJsonlSync(root);
-        streamLog(stationId, "derive_parquet_sync_ok", { sessionId });
-        const imuReport = spawnImuHighFreqIngestSync(root, sessionId);
-        streamLog(stationId, "derive_imu_high_freq_ok", {
-          sessionId,
-          rows: imuReport.rows ?? null,
-          path: imuReport.path ?? null,
-        });
-        const vaReport = spawnVendorAnnotationsSync(root);
-        streamLog(stationId, "derive_vendor_annotations_ok", {
-          sessionId,
-          subtaskRows: vaReport.subtask_segments_rows ?? null,
-        });
-      } catch (err) {
-        streamLog(stationId, "derive_parquet_sync_fail", {
-          sessionId,
-          message: String(err?.message || err).slice(0, 300),
-        });
-        throw err;
-      }
-    }
+  if (result.reason === "no_session" || result.reason === "done_upload_missing" || result.reason === "empty_frame_map") {
+    streamLog(stationId, "derive_pipeline_skip", result);
+    return result;
   }
-
-  let disk = computeDeriveStatusFromDisk(stationId, sessionId);
-  if (!muxOnly && disk.markers >= disk.total && disk.total > 0) {
-    syncDataParquetFromJsonl(stationId);
-    refreshSessionEpisodeFromInfo(stationId, sessionId);
-    syncEpisodesMetaOnly(stationId);
-    streamLog(stationId, "session_episode_refreshed", {
-      sessionId,
-      parquetRows: disk.parquetRows,
-      frameIndexMin: disk.frameIndexMin,
-      frameIndexMax: disk.frameIndexMax,
-    });
-  }
-  if (disk.parquetReady && !disk.fullyReady) {
-    disk = await runMuxStage(stationId, sessionId, { muxOnly, inlineRetry: inlineMuxRetry });
-  }
-  streamLog(stationId, "derive_pipeline_done", {
-    sessionId,
-    phase: disk.phase,
-    markers: disk.markers,
-    total: disk.total,
+  streamLog(stationId, result.phase === "READY" ? "derive_pipeline_ready" : "derive_pipeline_failed", {
+    sessionId: result.sessionId,
+    phase: result.phase,
+    frames: result.frameMap?.length,
+    muxValidated: result.mux?.validated?.ok,
+    reasonCode: result.reason?.code,
     muxOnly,
   });
-  if (disk.fullyReady || disk.phase === "READY") {
-    publishStreamViewer(stationId);
-  }
+  return result;
 }
 
 export function scheduleDerivePipeline(stationId, { muxOnly = false } = {}) {
@@ -504,15 +357,18 @@ export async function runDerivePipelineBlocking(
     return { ok: false, reason: "no_session", stationId };
   }
   if (!muxOnly && !hasSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD)) {
-    const rawDir = path.join(root, "raw", "segments", sessionId);
-    const rawCount = fs.existsSync(rawDir)
-      ? fs.readdirSync(rawDir).filter((f) => f.endsWith(".tar.zst")).length
-      : 0;
-    if (rawCount <= 0) {
-      return { ok: false, reason: "upload_not_complete", sessionId, hint: "session.DONE_UPLOAD missing" };
+    const committed = countCommittedSegmentsForSession(root, sessionId);
+    const rawCount = countRawTarZstForSession(root, sessionId);
+    if (committed <= 0 && rawCount <= 0) {
+      return {
+        ok: false,
+        reason: "upload_not_complete",
+        sessionId,
+        hint: "session.DONE_UPLOAD missing",
+      };
     }
     const { markSessionUploadDone: markDone } = await import("./session-markers.mjs");
-    markDone(root, sessionId, { source: "cli_implicit", rawCount });
+    markDone(root, sessionId, { source: "cli_implicit", committed, rawCount });
   }
 
   acquireDeriverLock(root, { stationId, sessionId, muxOnly });
@@ -523,21 +379,27 @@ export async function runDerivePipelineBlocking(
       return { ok: false, reason: "pipeline_running_in_process", sessionId };
     }
     pipelineRunning.set(stationId, true);
-    await runLinearPipeline(stationId, {
+    const result = await runLinearPipeline(stationId, {
       muxOnly,
       sessionId,
       inlineMuxRetry: true,
     });
-    const disk = computeDeriveStatusFromDisk(stationId, sessionId);
-    if (disk.fullyReady || disk.phase === "READY") {
-      markSessionReady(root, sessionId, disk);
-      return { ok: true, phase: "READY", sessionId, disk };
+    if (result?.phase === "READY") {
+      return { ok: true, phase: "READY", sessionId, gate: result.gate, disk: computeDeriveStatusFromDisk(stationId, sessionId) };
     }
-    const errMsg = disk.mp4Ok === false ? "mux_validation_failed" : "derive_incomplete";
-    markSessionFailed(root, sessionId, errMsg, { disk });
-    return { ok: false, phase: disk.phase, sessionId, disk, error: errMsg };
+    if (result?.phase === "FAILED") {
+      return {
+        ok: false,
+        phase: "FAILED",
+        sessionId,
+        reason: result.reason,
+        gate: result.gate,
+        disk: computeDeriveStatusFromDisk(stationId, sessionId),
+      };
+    }
+    return { ok: Boolean(result?.ok), sessionId, ...result };
   } catch (err) {
-    markSessionFailed(root, sessionId, err?.message || err);
+    // Phase4: no session.FAILED marker (Phase5 ready-gate).
     throw err;
   } finally {
     pipelineRunning.set(stationId, false);

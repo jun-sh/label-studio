@@ -168,15 +168,15 @@ function formatDuration(sec) {
 }
 
 function formatVendorMetaLine(summary) {
-  const vm = summary?.vendor_meta;
-  if (!vm) return "";
+  const sr = summary?.sensor_raw?.imu;
+  if (!sr && !summary?.vendor_meta) return "";
   const parts = [];
-  const imu = vm.high_freq?.imu_200hz;
+  const imu = sr || summary?.sensor_raw?.imu;
   if (imu) {
     const rows = imu.record_count ?? imu.rows ?? "—";
     parts.push(`IMU ${imu.rate_hz ?? "?"}Hz · ${rows} rows`);
   }
-  const subtasks = vm.vendor_annotations?.subtask_segments?.row_count;
+  const subtasks = summary?.vendor_meta?.vendor_annotations?.subtask_segments?.row_count;
   if (subtasks != null) {
     parts.push(`subtasks ${subtasks}`);
   }
@@ -187,9 +187,9 @@ function renderDatasetMeta(summary) {
   const base = `${summary.total_episodes} episodes · ${summary.fps} fps · ${summary.robot_type || "robot"}`;
   els.datasetMeta.textContent = base + formatVendorMetaLine(summary);
   if (els.vendorMeta) {
-    const imu = summary?.vendor_meta?.high_freq?.imu_200hz;
+    const imu = summary?.sensor_raw?.imu;
     const path = imu?.path || "";
-    els.vendorMeta.textContent = path ? `high_freq: ${path}` : "";
+    els.vendorMeta.textContent = path ? `sensor_raw: ${path}` : "";
     els.vendorMeta.hidden = !path;
   }
 }

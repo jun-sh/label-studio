@@ -12,7 +12,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
     is_intrinsics_valid,
     load_camera_intrinsics_json,
 )
-from ego_capture_studio.capture.segment_store import list_closed_pending_segments, wait_for_segment_deletes
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
 from ego_capture_studio.capture.segment_upload import SegmentUploader, upload_pending_segments
 
 try:
@@ -26,18 +26,30 @@ def main() -> None:
     p.add_argument(
         "--upload-url",
         type=str,
-        required=True,
-        help="http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
+        default=os.environ.get(
+            "EGO_UPLOAD_URL",
+            "http://10.10.10.34:8080/lerobot/api/collection/stations/"
+            + (os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001")
+            + "/upload",
+        ),
     )
     p.add_argument(
         "--segment-root",
         type=str,
-        default=os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"),
+        default=os.environ.get(
+            "EGO_SEGMENT_ROOT",
+            f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments",
+        ),
     )
     p.add_argument("--session-id", type=str, default=os.environ.get("EGO_CAPTURE_SESSION_ID", ""))
     p.add_argument("--task", type=str, default="")
     p.add_argument("--limit", type=int, default=0, help="Max segments per run (0 = all pending)")
     p.add_argument("--ensure-session", action="store_true")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-upload closed segments even if manifest uploaded=true (e.g. after 34 reset)",
+    )
     args = p.parse_args()
 
     root = Path(args.segment_root)
@@ -67,8 +79,12 @@ def main() -> None:
         raw = json.loads(checkpoint.read_text(encoding="utf-8"))
         task = raw.get("task") or ""
 
-    pending = list_closed_pending_segments(root, session_id)
-    print(f"session={session_id} pending_segments={len(pending)}", flush=True)
+    pending = list_closed_pending_segments(
+        root,
+        session_id,
+        include_uploaded=args.force,
+    )
+    print(f"session={session_id} pending_segments={len(pending)} force={args.force}", flush=True)
     if not pending:
         return
 
@@ -101,10 +117,10 @@ def main() -> None:
             session_id=session_id,
             uploader=uploader,
             limit=limit,
+            include_uploaded=args.force,
+            force=args.force,
         )
         print(f"uploaded_segments={n}", flush=True)
-        if n > 0:
-            wait_for_segment_deletes()
     finally:
         uploader.close()
 

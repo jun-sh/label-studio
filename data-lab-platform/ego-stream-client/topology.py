@@ -10,6 +10,7 @@ from typing import Any
 
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 _DEFAULT_TOPOLOGY_JSON = _CONFIG_DIR / "camera_topology_standard.json"
+_LEGACY_TOPOLOGY_ID = "ego-legacy-v0"
 
 
 def _topology_path() -> Path:
@@ -128,3 +129,11 @@ def strict_causal_oak_sockets() -> frozenset[str]:
     sync = doc.get("strict_sync") or {}
     sockets = sync.get("causal_sockets") or []
     return frozenset(str(s).strip() for s in sockets if str(s).strip())
+
+
+LEGACY_V0_SOCKET_TO_LEROBOT: dict[str, str] = {
+    "CAM_A": "observation.images.camera_front_left",
+    "CAM_B": "observation.images.camera_front_right",
+    "CAM_C": "observation.images.camera_rear_left",
+    "CAM_D": "observation.images.camera_rear_right",
+}

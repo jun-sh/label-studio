@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild v3 parquet sidecars for a live stream station (run on Data Lab host).
 set -euo pipefail
-STATION_ID="${1:-ego-lan-214}"
+STATION_ID="${1:-ego-001}"
 CONTAINER="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"

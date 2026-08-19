@@ -9,9 +9,9 @@ import shutil
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 import numpy as np
 
@@ -23,21 +23,31 @@ from ego_capture_studio.capture.intrinsics_store import write_session_intrinsics
 from ego_capture_studio.capture.ego_spec import OBS_HANDS_DIM, OBS_POSE_DIM, OBS_STATE_DIM
 from ego_capture_studio.capture.lerobot_episode import identity_pose_xyzw
 
-SEGMENT_STORE_VERSION = 1
+SEGMENT_STORE_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 2
+
+SegmentStatus = Literal[
+    "RECORDING",
+    "CLOSED",
+    "UPLOADING",
+    "UPLOADED",
+    "UPLOAD_FAILED",
+    "CORRUPT",
+]
+
+UPLOADABLE_STATUSES: frozenset[str] = frozenset({"CLOSED", "UPLOAD_FAILED"})
+GC_ELIGIBLE_STATUS = "UPLOADED"
+
 # Larger segments + batched persist (manufacturer FPS + Scheme A IO).
 SEGMENT_MAX_FRAMES = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
 SEGMENT_MAX_SECONDS = float(os.environ.get("EGO_SEGMENT_MAX_SECONDS", "45"))
-SEGMENT_MAX_PENDING = int(os.environ.get("EGO_SEGMENT_MAX_PENDING", "10"))
+# Backpressure sleep threshold only — never triggers deletion of unuploaded segments.
+SEGMENT_BACKPRESSURE_PENDING_MAX = int(
+    os.environ.get("EGO_SEGMENT_BACKPRESSURE_PENDING_MAX")
+    or os.environ.get("EGO_SEGMENT_MAX_PENDING", "24")
+)
 PENDING_FAST_RESCAN_S = max(5.0, float(os.environ.get("EGO_PENDING_FAST_RESCAN_S", "30")))
 SEGMENT_ASYNC_DELETE = os.environ.get("EGO_SEGMENT_ASYNC_DELETE", "1").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
-SEGMENT_DELETE_RETRIES = max(1, int(os.environ.get("EGO_SEGMENT_DELETE_RETRIES", "5")))
-SEGMENT_DELETE_RETRY_BASE_S = float(os.environ.get("EGO_SEGMENT_DELETE_RETRY_BASE_S", "0.25"))
-SEGMENT_DELETE_FLUSH_TIMEOUT_S = float(os.environ.get("EGO_SEGMENT_DELETE_FLUSH_TIMEOUT_S", "30"))
-SEGMENT_AUTO_PURGE_PENDING = os.environ.get("SEGMENT_AUTO_PURGE_PENDING", "1").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -69,14 +79,9 @@ SEGMENT_FRAME_BIN = os.environ.get("SEGMENT_FRAME_BIN", "1").strip().lower() in 
     "true",
     "yes",
 )
+if not SEGMENT_FRAME_BIN:
+    raise RuntimeError("SEGMENT_FRAME_BIN=1 is required (JPEG DLB1 frame bins only)")
 SEGMENT_PERSIST_WORKERS = max(1, int(os.environ.get("SEGMENT_PERSIST_WORKERS", "2")))
-# Phase-2 POC: append H.264 elementary streams per camera (local only; upload still JPEG).
-SEGMENT_H264 = os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes")
-SEGMENT_H264_LEGACY_APPEND = os.environ.get("SEGMENT_H264_LEGACY_APPEND", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
 SEGMENT_FINALIZE_ASYNC = os.environ.get("SEGMENT_FINALIZE_ASYNC", "1").strip().lower() in (
     "1",
     "true",
@@ -91,6 +96,219 @@ SEGMENT_ACTIVE_ROOT = Path(
 
 def new_session_id() -> str:
     return f"sess_{uuid.uuid4().hex}"
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _default_upload_meta() -> dict[str, Any]:
+    return {
+        "attempts": 0,
+        "last_attempt_at": None,
+        "last_error": None,
+        "remote_ack_at": None,
+    }
+
+
+def _default_integrity_meta(*, ok: bool = True, issues: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "checked_at": _utc_now_iso(),
+        "ok": ok,
+        "issues": list(issues or []),
+    }
+
+
+def _count_jsonl_lines(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    count = 0
+    with path.open("r", encoding="utf-8") as fp:
+        for line in fp:
+            if line.strip():
+                count += 1
+    return count
+
+
+def manifest_status(manifest: dict[str, Any]) -> SegmentStatus:
+    """Resolve segment status from v2 or legacy v1 manifest fields."""
+    if int(manifest.get("manifest_schema_version") or 1) >= 2:
+        raw = str(manifest.get("status") or "RECORDING").strip().upper()
+        if raw in UPLOADABLE_STATUSES | {GC_ELIGIBLE_STATUS, "UPLOADING", "RECORDING", "CORRUPT"}:
+            return raw  # type: ignore[return-value]
+        return "RECORDING"
+    if not bool(manifest.get("closed")):
+        return "RECORDING"
+    if bool(manifest.get("uploaded")):
+        return "UPLOADED"
+    return "CLOSED"
+
+
+def read_manifest(segment_dir: Path) -> dict[str, Any]:
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"missing manifest: {manifest_path}")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _capture_meta_fields(manifest: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key in ("sync_mode", "frame_interval_ms", "capture_fps", "imu_hz"):
+        if key in manifest:
+            out[key] = manifest[key]
+    return out
+
+
+def write_manifest_v2(segment_dir: Path, payload: dict[str, Any]) -> None:
+    """Write manifest schema v2 (status enum only; no closed/uploaded bools)."""
+    body = dict(payload)
+    body["manifest_schema_version"] = MANIFEST_SCHEMA_VERSION
+    body.pop("closed", None)
+    body.pop("uploaded", None)
+    body.pop("uploadedAt", None)
+    manifest_path = segment_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(body, separators=(",", ":")) + "\n", encoding="utf-8")
+
+
+def check_segment_integrity(
+    segment_dir: Path,
+    *,
+    require_imu: bool | None = None,
+) -> tuple[bool, list[str]]:
+    """Appendix A integrity checks for a closed segment directory."""
+    issues: list[str] = []
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return False, ["missing_manifest"]
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, ["manifest_unparseable"]
+
+    frame_count = int(manifest.get("frame_count") or 0)
+    if frame_count <= 0:
+        issues.append("invalid_frame_count")
+
+    rows_path = segment_dir / "rows.jsonl"
+    if not rows_path.is_file():
+        issues.append("missing_rows_jsonl")
+    else:
+        row_lines = _count_jsonl_lines(rows_path)
+        if row_lines != frame_count:
+            issues.append(f"rows_count_mismatch:{row_lines}!={frame_count}")
+
+    frames_dir = segment_dir / "frames"
+    if not frames_dir.is_dir():
+        issues.append("missing_frames_dir")
+    else:
+        bin_count = len(list(frames_dir.glob("*.bin")))
+        if bin_count != frame_count:
+            issues.append(f"frame_bin_count_mismatch:{bin_count}!={frame_count}")
+
+    if require_imu is None:
+        station = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
+        optional = os.environ.get("EGO_SEGMENT_IMU_OPTIONAL", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        require_imu = station == "ego-001" and not optional
+
+    imu_path = segment_dir / "imu_raw.jsonl"
+    if require_imu:
+        if not imu_path.is_file():
+            issues.append("missing_imu_raw")
+        elif _count_jsonl_lines(imu_path) < 1:
+            issues.append("empty_imu_raw")
+
+    return len(issues) == 0, issues
+
+
+def can_gc_segment(segment_dir: Path) -> bool:
+    try:
+        manifest = read_manifest(segment_dir)
+    except (OSError, json.JSONDecodeError, FileNotFoundError):
+        return False
+    return manifest_status(manifest) == GC_ELIGIBLE_STATUS
+
+
+def list_uploaded_segments(root: Path, session_id: str) -> list[Path]:
+    return _list_segments_by_status(
+        root / "sessions" / session_id / "segments",
+        session_id=session_id,
+        statuses=frozenset({GC_ELIGIBLE_STATUS}),
+    )
+
+
+def scan_orphan_active_segments(active_root: Path, session_id: str) -> list[Path]:
+    """Detect tmpfs active dirs left behind by crash (orphan_active)."""
+    base = active_root / "sessions" / session_id / "segments"
+    if not base.is_dir():
+        return []
+    orphans: list[Path] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        try:
+            manifest = read_manifest(child)
+        except (OSError, json.JSONDecodeError, FileNotFoundError):
+            orphans.append(child)
+            continue
+        if manifest_status(manifest) == "RECORDING":
+            orphans.append(child)
+    return orphans
+
+
+def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
+    """Run integrity checks after rows/frames are flushed, then set CLOSED or CORRUPT."""
+    ok, issues = check_segment_integrity(segment_dir)
+    status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
+    manifest = read_manifest(segment_dir)
+    payload = {
+        **{k: manifest[k] for k in manifest if k not in ("closed", "uploaded", "uploadedAt")},
+        "status": status,
+        "closed_at": _utc_now_iso(),
+        "upload": manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta(),
+        "integrity": _default_integrity_meta(ok=ok, issues=issues),
+        **_capture_meta_fields(manifest),
+    }
+    write_manifest_v2(segment_dir, payload)
+    return status
+
+
+def reconcile_orphan_active_segment(segment_dir: Path) -> SegmentStatus:
+    """Finalize a crash orphan on tmpfs: integrity check → CLOSED or CORRUPT."""
+    ok, issues = check_segment_integrity(segment_dir)
+    if "missing_manifest" in issues or "manifest_unparseable" in issues:
+        issues.append("orphan_active")
+        ok = False
+    status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
+    if not ok and "orphan_active" not in issues:
+        issues.append("orphan_active")
+    try:
+        manifest = read_manifest(segment_dir)
+    except (OSError, json.JSONDecodeError, FileNotFoundError):
+        manifest = {
+            "segment_id": segment_dir.name,
+            "session_id": "",
+            "start_frame_index": 0,
+            "end_frame_index": 0,
+            "frame_count": 0,
+            "created_at": _utc_now_iso(),
+        }
+    payload = {
+        **{k: manifest[k] for k in manifest if k not in ("closed", "uploaded", "uploadedAt")},
+        "segment_id": manifest.get("segment_id") or segment_dir.name,
+        "session_id": manifest.get("session_id") or "",
+        "status": status,
+        "closed_at": _utc_now_iso(),
+        "upload": manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta(),
+        "integrity": _default_integrity_meta(ok=ok, issues=issues),
+        **_capture_meta_fields(manifest),
+    }
+    write_manifest_v2(segment_dir, payload)
+    return status
 
 
 def build_lerobot_row(
@@ -163,10 +381,11 @@ class SegmentManifest:
     start_frame_index: int
     end_frame_index: int
     frame_count: int
-    closed: bool
-    uploaded: bool
+    status: SegmentStatus
     created_at: str
     closed_at: str | None = None
+    upload: dict[str, Any] = field(default_factory=_default_upload_meta)
+    integrity: dict[str, Any] = field(default_factory=lambda: _default_integrity_meta())
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -182,36 +401,17 @@ class _OpenSegmentWriter:
         self._rows_path = segment_dir / "rows.jsonl"
         self._rows_fp: TextIO = open(self._rows_path, "a", encoding="utf-8", buffering=256 * 1024)
         self._row_lines: list[str] = []
-        self._row_count = 0
         self._imu_raw_path = segment_dir / "imu_raw.jsonl"
         self._imu_raw_fp: TextIO | None = None
         self._imu_raw_lines: list[str] = []
-        self._h264_buffers: dict[str, list[bytes]] = {}
 
     def write_frame(self, job: _PersistJob) -> None:
         prefix = f"{job.frame_index:08d}"
-        if SEGMENT_H264 and not SEGMENT_H264_LEGACY_APPEND:
-            for key, chunk in job.camera_jpegs.items():
-                self._h264_buffers.setdefault(key, []).append(chunk)
-        elif SEGMENT_H264 and SEGMENT_H264_LEGACY_APPEND:
-            streams_dir = self.segment_dir / "streams"
-            streams_dir.mkdir(parents=True, exist_ok=True)
-            for key, chunk in job.camera_jpegs.items():
-                safe = key.replace(".", "_") + ".h264"
-                with open(streams_dir / safe, "ab", buffering=1024 * 1024) as fp:
-                    fp.write(chunk)
-        elif SEGMENT_FRAME_BIN:
-            from ego_capture_studio.capture.frame_bin_codec import pack_frame_bin
+        from ego_capture_studio.capture.frame_bin_codec import pack_frame_bin
 
-            out = self.frames_dir / f"{prefix}.bin"
-            with open(out, "wb", buffering=1024 * 1024) as img_fp:
-                img_fp.write(pack_frame_bin(job.camera_jpegs))
-        else:
-            for key, jpeg in job.camera_jpegs.items():
-                safe = key.replace(".", "_") + ".jpg"
-                out = self.frames_dir / f"{prefix}__{safe}"
-                with open(out, "wb", buffering=512 * 1024) as img_fp:
-                    img_fp.write(jpeg)
+        out = self.frames_dir / f"{prefix}.bin"
+        with open(out, "wb", buffering=1024 * 1024) as img_fp:
+            img_fp.write(pack_frame_bin(job.camera_jpegs))
         row = build_lerobot_row(
             frame_index=job.frame_index,
             timestamp_ns=job.timestamp_ns,
@@ -220,7 +420,6 @@ class _OpenSegmentWriter:
             camera_ts_offset_ns=job.camera_ts_offset_ns,
         )
         self._row_lines.append(json.dumps(row, separators=(",", ":")) + "\n")
-        self._row_count += 1
         if job.imu_raw_batch:
             self._append_imu_raw_records(job.imu_raw_batch)
         if len(self._row_lines) >= SEGMENT_ROWS_BUFFER_LINES:
@@ -259,55 +458,7 @@ class _OpenSegmentWriter:
     def close(self) -> None:
         self._flush_rows()
         self._flush_imu_raw()
-        row_count = int(self._row_count)
         self._rows_fp.flush()
-        if SEGMENT_FSYNC_ON_CLOSE:
-            try:
-                os.fsync(self._rows_fp.fileno())
-            except OSError:
-                pass
-        self._rows_fp.close()
-        if SEGMENT_H264 and not SEGMENT_H264_LEGACY_APPEND and self._h264_buffers:
-            from ego_capture_studio.capture.segment_h264_mux import (
-                SEGMENT_H264_STRICT,
-                mux_h264_buffers_to_mp4,
-            )
-
-            try:
-                mux_h264_buffers_to_mp4(
-                    self.segment_dir,
-                    self._h264_buffers,
-                    expected_rows=row_count,
-                )
-                self._h264_buffers.clear()
-                try:
-                    self._row_count = sum(
-                        1
-                        for line in self._rows_path.read_text(encoding="utf-8").splitlines()
-                        if line.strip()
-                    )
-                except OSError:
-                    pass
-                manifest_path = self.segment_dir / "manifest.json"
-                if manifest_path.is_file() and self._row_count > 0:
-                    try:
-                        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                        manifest["frame_count"] = int(self._row_count)
-                        manifest["end_frame_index"] = int(manifest.get("start_frame_index", 0)) + int(
-                            self._row_count
-                        ) - 1
-                        manifest_path.write_text(
-                            json.dumps(manifest, separators=(",", ":")) + "\n",
-                            encoding="utf-8",
-                        )
-                    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                        pass
-            except Exception as exc:
-                print(
-                    f"segment_h264_mux close failed segment={self.segment_dir.name}: {exc}",
-                    flush=True,
-                )
-                # Do not raise: allow finalize so stop does not hang on one bad stream.
         if self._imu_raw_fp is not None:
             self._imu_raw_fp.flush()
             if SEGMENT_FSYNC_ON_CLOSE:
@@ -317,6 +468,12 @@ class _OpenSegmentWriter:
                     pass
             self._imu_raw_fp.close()
             self._imu_raw_fp = None
+        if SEGMENT_FSYNC_ON_CLOSE:
+            try:
+                os.fsync(self._rows_fp.fileno())
+            except OSError:
+                pass
+        self._rows_fp.close()
         if SEGMENT_FSYNC_ON_CLOSE:
             try:
                 fd = os.open(self.segment_dir, os.O_RDONLY)
@@ -382,7 +539,22 @@ class SegmentCaptureWriter:
         self.root.mkdir(parents=True, exist_ok=True)
         self._session_dir().mkdir(parents=True, exist_ok=True)
         self._load_checkpoint()
+        self._reconcile_orphan_active_on_init()
         self._pending_count = self._scan_pending_segment_count()
+
+    def _reconcile_orphan_active_on_init(self) -> None:
+        orphans = scan_orphan_active_segments(SEGMENT_ACTIVE_ROOT, self.session_id)
+        if not orphans:
+            return
+        dest_parent = self._segments_dir()
+        dest_parent.mkdir(parents=True, exist_ok=True)
+        for active_dir in orphans:
+            reconcile_orphan_active_segment(active_dir)
+            dest_dir = dest_parent / active_dir.name
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir, ignore_errors=True)
+            if active_dir.is_dir():
+                shutil.move(str(active_dir), str(dest_dir))
 
     @classmethod
     def from_env(
@@ -391,7 +563,8 @@ class SegmentCaptureWriter:
         task: str,
         checkpoint_path: str | Path | None = None,
     ) -> SegmentCaptureWriter:
-        root = Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
+        station = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
+        root = Path(os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{station}/segments"))
         gb = float(os.environ.get("EGO_SEGMENT_QUOTA_GB", "256"))
         session_id = os.environ.get("EGO_CAPTURE_SESSION_ID") or new_session_id()
         return cls(
@@ -496,7 +669,7 @@ class SegmentCaptureWriter:
                 m = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
-            if m.get("closed") and not m.get("uploaded"):
+            if manifest_status(m) in UPLOADABLE_STATUSES:
                 count += 1
         return count
 
@@ -519,15 +692,15 @@ class SegmentCaptureWriter:
         self._enforce_disk_quota()
 
     def _enforce_disk_quota(self) -> None:
-        """Drop oldest pending segments when local store exceeds quota (queue, not archive)."""
+        """Delete oldest UPLOADED segments only when local store exceeds quota."""
         while segment_store_bytes(self.root) > self.quota_bytes:
-            pending = sorted(
-                list_closed_pending_segments(self.root, self.session_id),
+            uploaded = sorted(
+                list_uploaded_segments(self.root, self.session_id),
                 key=lambda p: p.name,
             )
-            if len(pending) <= 1:
+            if not uploaded:
                 break
-            mark_segment_uploaded(pending[0], delete=True)
+            gc_segment_dir(uploaded[0])
             self._pending_count = -1
 
     def _enqueue_finalize(self, segment_id: str, active_dir: Path) -> None:
@@ -550,35 +723,10 @@ class SegmentCaptureWriter:
             finally:
                 self._finalize_queue.task_done()
 
-    def purge_oldest_pending_segments(self, *, keep: int | None = None) -> int:
-        """Delete oldest closed-unuploaded segments (local only) to cap pending backlog."""
-        keep_n = SEGMENT_MAX_PENDING - 1 if keep is None else int(keep)
-        pending = sorted(
-            list_closed_pending_segments(self.root, self.session_id),
-            key=lambda p: p.name,
-        )
-        excess = max(0, len(pending) - keep_n)
-        for seg in pending[:excess]:
-            mark_segment_uploaded(seg, delete=True)
-        if excess:
-            self._pending_count = -1
-        return excess
-
-    def _enforce_pending_cap(self) -> None:
-        """Drop oldest closed segments when backlog exceeds SEGMENT_MAX_PENDING."""
-        if not SEGMENT_AUTO_PURGE_PENDING:
-            return
-        while self.pending_segment_count() >= SEGMENT_MAX_PENDING:
-            if self.purge_oldest_pending_segments() <= 0:
-                break
-
     def _wait_backpressure(self) -> None:
-        self._enforce_pending_cap()
         if not SEGMENT_BACKPRESSURE_PENDING:
             return
-        while self.pending_segment_count() >= SEGMENT_MAX_PENDING:
-            if SEGMENT_AUTO_PURGE_PENDING and self.purge_oldest_pending_segments() > 0:
-                continue
+        while self.pending_segment_count() >= SEGMENT_BACKPRESSURE_PENDING_MAX:
             time.sleep(SEGMENT_BACKPRESSURE_SLEEP_S)
 
     def _manifest_dict(self, manifest: SegmentManifest) -> dict[str, Any]:
@@ -590,10 +738,7 @@ class SegmentCaptureWriter:
         return payload
 
     def _write_manifest(self, segment_dir: Path, manifest: SegmentManifest) -> None:
-        (segment_dir / "manifest.json").write_text(
-            json.dumps(self._manifest_dict(manifest), separators=(",", ":")) + "\n",
-            encoding="utf-8",
-        )
+        write_manifest_v2(segment_dir, self._manifest_dict(manifest))
 
     def _open_new_segment(self) -> str:
         self._segment_seq += 1
@@ -611,8 +756,7 @@ class SegmentCaptureWriter:
             start_frame_index=self._open_start_frame,
             end_frame_index=self._open_start_frame,
             frame_count=0,
-            closed=False,
-            uploaded=False,
+            status="RECORDING",
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         self._write_manifest(segment_dir, manifest)
@@ -651,10 +795,8 @@ class SegmentCaptureWriter:
             start_frame_index=self._open_start_frame,
             end_frame_index=end_idx,
             frame_count=self._open_frame_count,
-            closed=True,
-            uploaded=False,
+            status="RECORDING",
             created_at=created_at,
-            closed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         self._write_manifest(segment_dir, manifest)
         self._open_segment_id = None
@@ -783,25 +925,10 @@ class SegmentCaptureWriter:
                     if isinstance(work, _SegmentCloseJob):
                         writer = self._open_writers.pop(work.segment_id, None)
                         active_dir = self._active_segments_dir() / work.segment_id
-                        try:
-                            if writer is not None:
-                                writer.close()
-                        except Exception as exc:
-                            print(
-                                f"segment_close_failed segment={work.segment_id}: {exc}",
-                                flush=True,
-                            )
-                            fail_marker = active_dir / ".h264_close_failed"
-                            try:
-                                fail_marker.write_text(
-                                    f"{exc}\n",
-                                    encoding="utf-8",
-                                )
-                            except OSError:
-                                pass
-                            self._enqueue_finalize(work.segment_id, active_dir)
-                            continue
+                        if writer is not None:
+                            writer.close()
                         if active_dir.is_dir():
+                            finalize_segment_manifest_after_persist(active_dir)
                             self._enqueue_finalize(work.segment_id, active_dir)
                     else:
                         seg_id = work.segment_id
@@ -881,7 +1008,12 @@ def segment_store_bytes(root: Path) -> int:
     return total
 
 
-def _list_closed_pending_under(seg_root: Path, *, session_id: str | None = None) -> list[Path]:
+def _list_segments_by_status(
+    seg_root: Path,
+    *,
+    session_id: str | None = None,
+    statuses: frozenset[str],
+) -> list[Path]:
     if not seg_root.is_dir():
         return []
     out: list[Path] = []
@@ -899,159 +1031,138 @@ def _list_closed_pending_under(seg_root: Path, *, session_id: str | None = None)
             manifest_sid = str(m.get("session_id") or "").strip()
             if manifest_sid and manifest_sid != session_id:
                 continue
-        if m.get("closed") and not m.get("uploaded"):
+        if manifest_status(m) in statuses:
             out.append(child)
     return out
 
 
-def list_closed_pending_segments(root: Path, session_id: str) -> list[Path]:
-    out = _list_closed_pending_under(root / "sessions" / session_id / "segments", session_id=session_id)
+def _list_closed_pending_under(
+    seg_root: Path,
+    *,
+    session_id: str | None = None,
+    include_uploaded: bool = False,
+) -> list[Path]:
+    statuses: set[str] = set(UPLOADABLE_STATUSES)
+    if include_uploaded:
+        statuses.add(GC_ELIGIBLE_STATUS)
+    return _list_segments_by_status(seg_root, session_id=session_id, statuses=frozenset(statuses))
+
+
+def list_closed_pending_segments(
+    root: Path,
+    session_id: str,
+    *,
+    include_uploaded: bool = False,
+) -> list[Path]:
+    out = _list_closed_pending_under(
+        root / "sessions" / session_id / "segments",
+        session_id=session_id,
+        include_uploaded=include_uploaded,
+    )
     legacy_root = root / "sessions" / "segments"
     if legacy_root.is_dir():
-        for seg in _list_closed_pending_under(legacy_root, session_id=session_id):
+        for seg in _list_closed_pending_under(
+            legacy_root,
+            session_id=session_id,
+            include_uploaded=include_uploaded,
+        ):
             if seg not in out:
                 out.append(seg)
     return out
 
 
 def _delete_segment_dir(segment_dir: Path) -> None:
-    """Deprecated: use delete_segment_dir (returns bool)."""
-    delete_segment_dir(segment_dir)
-
-
-_delete_queue: queue.Queue[Path | None] | None = None
-_delete_worker: threading.Thread | None = None
-_delete_worker_lock = threading.Lock()
-
-
-def _log_segment_delete(event: str, segment_dir: Path, **extra: Any) -> None:
-    parts = [f"segment_delete_{event}", f"segment={segment_dir.name}"]
-    for key, val in extra.items():
-        parts.append(f"{key}={val}")
-    print(" ".join(parts), flush=True)
-
-
-def delete_segment_dir(segment_dir: Path) -> bool:
-    """Delete a closed segment directory with retries. Returns True if gone."""
-    segment_dir = segment_dir.resolve()
-    if not segment_dir.is_dir():
-        return True
-    last_err: OSError | None = None
-    for attempt in range(1, SEGMENT_DELETE_RETRIES + 1):
-        try:
-            for sub in (segment_dir / ".upload", segment_dir / "frames"):
-                if sub.is_dir():
-                    shutil.rmtree(sub)
-            shutil.rmtree(segment_dir)
-            return True
-        except OSError as exc:
-            last_err = exc
-            if attempt < SEGMENT_DELETE_RETRIES:
-                time.sleep(SEGMENT_DELETE_RETRY_BASE_S * attempt)
-    if segment_dir.is_dir():
-        _log_segment_delete(
-            "fail",
-            segment_dir,
-            err=str(last_err or "unknown")[:160],
-            attempts=SEGMENT_DELETE_RETRIES,
+    if not can_gc_segment(segment_dir):
+        raise RuntimeError(
+            f"refusing to delete segment {segment_dir.name}: status is not {GC_ELIGIBLE_STATUS}"
         )
-        return False
-    return True
+    shutil.rmtree(segment_dir, ignore_errors=True)
 
 
-def _delete_worker_loop() -> None:
-    assert _delete_queue is not None
-    while True:
-        item = _delete_queue.get()
-        try:
-            if item is None:
-                return
-            delete_segment_dir(item)
-        finally:
-            _delete_queue.task_done()
-
-
-def _ensure_delete_worker() -> queue.Queue[Path | None]:
-    global _delete_queue, _delete_worker
-    with _delete_worker_lock:
-        if _delete_queue is None:
-            _delete_queue = queue.Queue()
-            _delete_worker = threading.Thread(
-                target=_delete_worker_loop,
-                name="ego-seg-delete",
-                daemon=True,
-            )
-            _delete_worker.start()
-        return _delete_queue
-
-
-def schedule_segment_delete(segment_dir: Path) -> None:
-    segment_dir = segment_dir.resolve()
-    if not segment_dir.is_dir():
-        return
+def gc_segment_dir(segment_dir: Path) -> None:
+    """Delete a segment directory only when status == UPLOADED."""
     if SEGMENT_ASYNC_DELETE:
-        _ensure_delete_worker().put(segment_dir)
-        return
-    delete_segment_dir(segment_dir)
-
-
-def wait_for_segment_deletes(timeout_s: float | None = None) -> bool:
-    """Block until async delete queue drains (or timeout)."""
-    if _delete_queue is None:
-        return True
-    deadline = time.monotonic() + (timeout_s if timeout_s is not None else SEGMENT_DELETE_FLUSH_TIMEOUT_S)
-    while time.monotonic() < deadline:
-        if _delete_queue.unfinished_tasks == 0:
-            return True
-        time.sleep(0.05)
-    return _delete_queue.unfinished_tasks == 0
-
-
-def list_uploaded_segment_dirs(root: Path, session_id: str | None = None) -> list[Path]:
-    out: list[Path] = []
-    sessions_root = root / "sessions"
-    if not sessions_root.is_dir():
-        return out
-    if session_id:
-        session_dirs = [sessions_root / session_id]
+        threading.Thread(
+            target=_delete_segment_dir,
+            args=(segment_dir,),
+            name=f"ego-seg-delete-{segment_dir.name}",
+            daemon=True,
+        ).start()
     else:
-        session_dirs = [p for p in sessions_root.iterdir() if p.is_dir()]
-    for sess_dir in session_dirs:
-        seg_root = sess_dir / "segments"
-        if not seg_root.is_dir():
-            continue
-        for child in sorted(seg_root.iterdir()):
-            if not child.is_dir():
-                continue
-            manifest_path = child / "manifest.json"
-            if not manifest_path.is_file():
-                continue
-            try:
-                m = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if m.get("uploaded"):
-                out.append(child)
-    return out
+        _delete_segment_dir(segment_dir)
 
 
-def purge_uploaded_segments(root: Path, session_id: str | None = None) -> tuple[int, int]:
-    """Delete segment dirs marked uploaded=true. Returns (purged, failed)."""
-    purged = 0
-    failed = 0
-    for seg_dir in list_uploaded_segment_dirs(root, session_id):
-        if delete_segment_dir(seg_dir):
-            purged += 1
-        else:
-            failed += 1
-    return purged, failed
+def _update_manifest_status(
+    segment_dir: Path,
+    new_status: SegmentStatus,
+    *,
+    upload_patch: dict[str, Any] | None = None,
+    integrity_patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    manifest = read_manifest(segment_dir)
+    upload = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    if upload_patch:
+        upload.update(upload_patch)
+    integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else _default_integrity_meta()
+    if integrity_patch:
+        integrity.update(integrity_patch)
+    payload = {
+        **{k: manifest[k] for k in manifest if k not in ("closed", "uploaded", "uploadedAt")},
+        "status": new_status,
+        "upload": upload,
+        "integrity": integrity,
+        **_capture_meta_fields(manifest),
+    }
+    write_manifest_v2(segment_dir, payload)
+    return payload
+
+
+def mark_segment_uploading(segment_dir: Path) -> None:
+    manifest = read_manifest(segment_dir)
+    status = manifest_status(manifest)
+    allowed = set(UPLOADABLE_STATUSES) | {GC_ELIGIBLE_STATUS, "UPLOADING"}
+    if status not in allowed:
+        raise ValueError(f"cannot mark uploading from status {status}")
+    upload = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    upload["attempts"] = int(upload.get("attempts") or 0) + 1
+    upload["last_attempt_at"] = _utc_now_iso()
+    upload["last_error"] = None
+    _update_manifest_status(segment_dir, "UPLOADING", upload_patch=upload)
+
+
+def mark_segment_upload_failed(segment_dir: Path, error: str) -> None:
+    manifest = read_manifest(segment_dir)
+    status = manifest_status(manifest)
+    if status not in {"UPLOADING", *UPLOADABLE_STATUSES}:
+        raise ValueError(f"cannot mark upload failed from status {status}")
+    upload = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    upload["last_error"] = str(error)[:500]
+    upload["last_attempt_at"] = _utc_now_iso()
+    _update_manifest_status(segment_dir, "UPLOAD_FAILED", upload_patch=upload)
+
+
+def clear_segment_uploaded(segment_dir: Path) -> None:
+    manifest = read_manifest(segment_dir)
+    status = manifest_status(manifest)
+    if status != GC_ELIGIBLE_STATUS:
+        return
+    upload = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    upload["remote_ack_at"] = None
+    upload["last_error"] = None
+    _update_manifest_status(segment_dir, "CLOSED", upload_patch=upload)
 
 
 def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
-    manifest_path = segment_dir / "manifest.json"
-    m = json.loads(manifest_path.read_text(encoding="utf-8"))
-    m["uploaded"] = True
-    m["uploadedAt"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    manifest_path.write_text(json.dumps(m, separators=(",", ":")) + "\n", encoding="utf-8")
+    manifest = read_manifest(segment_dir)
+    status = manifest_status(manifest)
+    if status == "CORRUPT":
+        raise ValueError("cannot mark uploaded: segment is CORRUPT")
+    if status == "RECORDING":
+        raise ValueError("cannot mark uploaded: segment is still RECORDING")
+    upload = manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    upload["remote_ack_at"] = _utc_now_iso()
+    upload["last_error"] = None
+    _update_manifest_status(segment_dir, GC_ELIGIBLE_STATUS, upload_patch=upload)
     if delete:
-        schedule_segment_delete(segment_dir)
+        gc_segment_dir(segment_dir)
+

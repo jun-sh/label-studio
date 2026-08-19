@@ -19,7 +19,7 @@ STATION_META_DIRNAME = "station_meta"
 
 
 def segment_root_from_env() -> Path:
-    return Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"))
+    return Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-001/segments"))
 
 
 def station_meta_dir(segment_root: Path | None = None) -> Path:

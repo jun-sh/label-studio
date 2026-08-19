@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ego-deliver — 214 上传 → 34 派生等待 → 后处理 → Viewer 发布（一条命令）
+# ego-deliver — edge upload → 34 derive → postprocess → Viewer publish
 set -euo pipefail
 
 STATION=""
@@ -29,18 +29,18 @@ if [[ -z "$STATION" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 用法: ego-deliver <station> [选项]
 
 录完后在 34 上执行的唯一交付命令:
-  1. 214 上传待传 segment
+  1. 边缘上传待传 segment
   2. 34 等待派生（LeRobot parquet + MP4）
   3. 后处理（畸变校正 / 手部骨架 / 深度 / 发布）
   4. 部署 Viewer（内参 + rectify 硬门禁）
 
 示例:
-  ego-deliver ego-lan-214
-  ego-deliver ego-lan-214 --reset-34    # 仅清 34，从 214 重传
-  ego-deliver ego-lan-214 --reset-full  # 清 214 + 34（慎用）
+  ego-deliver ego-001
+  ego-deliver ego-001 --reset-34    # 仅清 34，从边缘重传
+  ego-deliver ego-001 --reset-full  # 清边缘 + 34（慎用）
 
 环境变量:
-  EDGE_HOST            默认 server@10.10.10.214
+  EDGE_HOST            默认 server@10.10.10.130（ego-001）
   DERIVE_TIMEOUT_SEC   默认 3600
   EGO_RESET_YES=1      跳过 reset 确认
 EOF
@@ -49,7 +49,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-EDGE_HOST="${EDGE_HOST:-server@10.10.10.214}"
+EDGE_HOST="${EDGE_HOST:-server@10.10.10.130}"
 DERIVE_TIMEOUT_SEC="${DERIVE_TIMEOUT_SEC:-3600}"
 PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
 PLATFORM_HOST="${PLATFORM_HOST%/}"
@@ -58,49 +58,59 @@ log() { echo "[deliver] $*"; }
 die() { echo "[deliver] ERROR: $*" >&2; exit 1; }
 
 SLUG="$(python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" slug "$STATION" \
-  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_214_hand_pose")"
+  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "egodome")"
 VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
 
 if [[ "$RESET_MODE" == "34" ]]; then
   log "=== 0/3 清场 (仅 34) ==="
-  STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-lan-214-reset-34-only.sh"
+  STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-reset-34-only.sh"
 elif [[ "$RESET_MODE" == "full" ]]; then
-  log "=== 0/3 清场 (214 + 34) ==="
-  STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-lan-214-reset-for-rerun.sh"
+  log "=== 0/3 清场 (边缘 + 34) ==="
+  STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-001-reset-for-rerun.sh" --yes
 fi
 
-log "=== 1/3 214 上传待传 segment ==="
-ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<'REMOTE'
+log "=== 1/3 边缘上传待传 segment ==="
+ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<REMOTE
 set -euo pipefail
-PY="${EGO_PYTHON:-/home/server/workspace/ego-studio/.venv/bin/python}"
-SEG_ROOT="${EGO_SEGMENT_ROOT:-/home/server/cache/ego-lan-214/segments}"
+set -a
+source "\$HOME/.config/ego-station.env" 2>/dev/null || true
+source "\$HOME/.config/ego-station.env.d/station.conf" 2>/dev/null || true
+set +a
+PY="\${EGO_PYTHON:-/home/server/workspace/ego-studio/.venv/bin/python}"
+STATION="\${EGO_STATION_ID:-${STATION}}"
+SEG_ROOT="\${EGO_SEGMENT_ROOT:-/home/server/cache/\${STATION}/segments}"
+EXPORT_ROOT="\${EGO_EXPORT_ROOT:-/home/server/export/\${STATION}}"
 uploaded=0
-for sess_dir in "${SEG_ROOT}/sessions"/sess_*/; do
-  [[ -d "$sess_dir" ]] || continue
-  sid="$(basename "$sess_dir")"
-  if "$PY" -c "
+for sess_dir in "\${SEG_ROOT}/sessions"/sess_*/; do
+  [[ -d "\$sess_dir" ]] || continue
+  sid="\$(basename "\$sess_dir")"
+  if "\$PY" -c "
 from pathlib import Path
 from ego_capture_studio.capture.segment_store import list_closed_pending_segments
-root = Path('${SEG_ROOT}')
-pending = list_closed_pending_segments(root, '${sid}')
+root = Path('\${SEG_ROOT}')
+pending = list_closed_pending_segments(root, '\${sid}')
 raise SystemExit(0 if pending else 1)
 " 2>/dev/null; then
-    echo "[214] uploading ${sid}..."
-    "$PY" -m ego_capture_studio.cli.ego_upload --source segments --session-id "$sid" --no-live-ui
-    uploaded=$((uploaded + 1))
+    echo "[edge] uploading \${sid}..."
+    "\$PY" -m ego_capture_studio.cli.upload_segments --limit 3 --ensure-session \
+      --segment-root "\${SEG_ROOT}" \
+      --upload-url "\${EGO_UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION}/upload}" \
+      --session-id "\$sid"
+    uploaded=\$((uploaded + 1))
   fi
 done
-READY_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-lan-214}/ready"
-if [[ -d "$READY_ROOT" ]]; then
-  latest="$(find "$READY_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1 || true)"
-  if [[ -n "$latest" ]] && compgen -G "${latest}"/sess_*__seg_*.tar.zst >/dev/null; then
-    echo "[214] uploading ready archives from ${latest}..."
-    "$PY" -m ego_capture_studio.cli.ego_upload --source ready --ready-dir "$latest" --no-live-ui || true
-    uploaded=$((uploaded + 1))
+if [[ -d "\$EXPORT_ROOT/ready" ]]; then
+  latest="\$(find "\$EXPORT_ROOT/ready" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1 || true)"
+  if [[ -n "\$latest" ]] && compgen -G "\${latest}"/sess_*__seg_*.tar.zst >/dev/null; then
+    echo "[edge] uploading ready archives from \${latest}..."
+    "\$PY" -m ego_capture_studio.cli.upload_segments --limit 3 --ensure-session \
+      --segment-root "\${SEG_ROOT}" \
+      --upload-url "\${EGO_UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION}/upload}" || true
+    uploaded=\$((uploaded + 1))
   fi
 fi
-if [[ "$uploaded" -eq 0 ]]; then
-  echo "[214] nothing to upload (segments already sent or no closed segments)"
+if [[ "\$uploaded" -eq 0 ]]; then
+  echo "[edge] nothing to upload (segments already sent or no closed segments)"
 fi
 REMOTE
 

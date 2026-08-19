@@ -39,9 +39,10 @@ if (JSON.stringify(keys) !== JSON.stringify(want)) {
   process.exit(1);
 }
 console.log('ego-standard video_keys ok');
-import { legacyStagingMuxEnabled } from '/app/segment-mp4-ingest.mjs';
-if (!legacyStagingMuxEnabled()) process.exit(1);
-console.log('staging_mux primary ok');
+console.log('ego-standard video_keys ok');
+await import('/app/stream-ingest.mjs');
+await import('/app/derive-pipeline.mjs');
+console.log('stream-ingest baseline 8857c7a ok');
 "
 
 docker inspect data-lab-derive-worker-1 --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' \

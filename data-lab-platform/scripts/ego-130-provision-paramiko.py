@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provision 130 via paramiko (password auth). Mirrors ego-130-provision.sh."""
+"""Provision 130 via paramiko — 8857c7a JPEG/staging baseline + retained 4 RGB topology."""
 from __future__ import annotations
 
 import os
@@ -17,6 +17,7 @@ USER, HOST = TARGET.split("@", 1)
 PASSWORD = os.environ.get("RC_CAPTURE_PASS", "1")
 
 REMOTE_STUDIO = "/home/server/workspace/ego-studio"
+REMOTE_CONFIG = f"{REMOTE_STUDIO}/config"
 REMOTE_CAPTURE = f"{REMOTE_STUDIO}/src/ego_capture_studio/capture"
 REMOTE_CLI = f"{REMOTE_STUDIO}/src/ego_capture_studio/cli"
 CACHE_ROOT = f"/home/server/cache/{STATION_ID}"
@@ -73,7 +74,7 @@ def main() -> None:
     c = connect()
     run(
         c,
-        f"mkdir -p {REMOTE_CAPTURE} {REMOTE_CLI} {CACHE_ROOT}/segments {CACHE_ROOT}/logs",
+        f"mkdir -p {REMOTE_CAPTURE} {REMOTE_CLI} {REMOTE_CONFIG} {CACHE_ROOT}/segments {CACHE_ROOT}/logs",
     )
     sftp = c.open_sftp()
     upload_tree(sftp, CAPTURE_SRC, REMOTE_CAPTURE)
@@ -101,13 +102,15 @@ def main() -> None:
         str(CAPTURE_SRC / "tools/upload_segments_loop.py"),
         f"{tools_remote}/upload_segments_loop.py",
     )
-    conf_local = CAPTURE_SRC / "systemd/ecs-record-oak-stream.service.d/v0.0.8-segment-mp4.conf"
-    sftp.put(str(conf_local), "/tmp/v0.0.8-segment-mp4.conf")
-    prod_conf = CAPTURE_SRC / "systemd/ecs-record-oak-stream.service.d/ego-standard-production.conf"
-    if prod_conf.is_file():
-        sftp.put(str(prod_conf), "/tmp/ego-standard-production.conf")
-    prod_dropin = CAPTURE_SRC / "systemd/ecs-upload-segments-loop.service.d/production-manual-only.conf"
-    sftp.put(str(prod_dropin), "/tmp/production-manual-only.conf")
+    for topo in ("camera_topology_standard.json", "camera_topology_standard.yaml"):
+        local_topo = CAPTURE_SRC / "config" / topo
+        if local_topo.is_file():
+            sftp.put(str(local_topo), f"{REMOTE_CONFIG}/{topo}")
+    prod_conf = CAPTURE_SRC / "systemd/ecs-record-oak-stream.service.d/z-production-egoverse.conf"
+    sftp.put(str(prod_conf), "/tmp/z-production-egoverse.conf")
+    hb_svc = CAPTURE_SRC / "systemd/ecs-station-heartbeat.service"
+    if hb_svc.is_file():
+        sftp.put(str(hb_svc), "/tmp/ecs-station-heartbeat.service")
     sftp.close()
 
     remote_script = f"""
@@ -116,68 +119,66 @@ echo '1' | sudo -S apt-get install -y ffmpeg rsync 2>/dev/null || sudo apt-get i
 for d in /etc/systemd/system/ecs-record-oak-stream.service.d \\
            "$HOME/.config/systemd/user/ecs-record-oak-stream.service.d"; do
   echo '1' | sudo -S mkdir -p "$d" 2>/dev/null || mkdir -p "$d"
-  echo '1' | sudo -S cp /tmp/v0.0.8-segment-mp4.conf "$d/v0.0.8-segment-mp4.conf" 2>/dev/null \\
-    || cp /tmp/v0.0.8-segment-mp4.conf "$d/v0.0.8-segment-mp4.conf"
-  if [[ -f /tmp/ego-standard-production.conf ]]; then
-    echo '1' | sudo -S cp /tmp/ego-standard-production.conf "$d/ego-standard-production.conf" 2>/dev/null \\
-      || cp /tmp/ego-standard-production.conf "$d/ego-standard-production.conf"
-  fi
-  for bad in z-production-egoverse.conf scheme-a.conf v0.0.9-h264-plan-b.conf; do
-  if [[ -f "$d/$bad" ]]; then
-    echo '1' | sudo -S mv "$d/$bad" "$d/$bad.disabled" 2>/dev/null || mv "$d/$bad" "$d/$bad.disabled"
-  fi
+  echo '1' | sudo -S cp /tmp/z-production-egoverse.conf "$d/z-production-egoverse.conf" 2>/dev/null \\
+    || cp /tmp/z-production-egoverse.conf "$d/z-production-egoverse.conf"
+  for bad in v0.0.8-segment-mp4.conf ego-standard-production.conf scheme-a.conf \\
+               v0.0.8-segment-mp4-genpts.conf v0.0.9-h264-plan-b.conf phase2-h264-poc.conf; do
+    if [[ -f "$d/$bad" ]]; then
+      echo '1' | sudo -S mv "$d/$bad" "$d/$bad.disabled" 2>/dev/null || mv "$d/$bad" "$d/$bad.disabled"
+      echo "disabled $d/$bad"
+    fi
   done
 done
 mkdir -p "$HOME/.config/ego-station.env.d"
-if [[ -f "$HOME/.config/ego-station.env" ]]; then
-  grep -q '^SEGMENT_H264_LEGACY_APPEND=' "$HOME/.config/ego-station.env" \\
-    && sed -i 's/^SEGMENT_H264_LEGACY_APPEND=.*/SEGMENT_H264_LEGACY_APPEND=0/' "$HOME/.config/ego-station.env" \\
-    || echo 'SEGMENT_H264_LEGACY_APPEND=0' >> "$HOME/.config/ego-station.env"
-  grep -q '^SEGMENT_FRAME_BIN=' "$HOME/.config/ego-station.env" \\
-    && sed -i 's/^SEGMENT_FRAME_BIN=.*/SEGMENT_FRAME_BIN=1/' "$HOME/.config/ego-station.env" \\
-    || echo 'SEGMENT_FRAME_BIN=1' >> "$HOME/.config/ego-station.env"
-  grep -q '^SEGMENT_H264=' "$HOME/.config/ego-station.env" \\
-    && sed -i 's/^SEGMENT_H264=.*/SEGMENT_H264=0/' "$HOME/.config/ego-station.env" \\
-    || echo 'SEGMENT_H264=0' >> "$HOME/.config/ego-station.env"
-  sed -i '/^Segment_H264_LEGACY_APPEND/d' "$HOME/.config/ego-station.env" 2>/dev/null || true
-fi
+cat > "$HOME/.config/ego-station.env" <<EOF
+EGO_STATION_ID={STATION_ID}
+EGO_SEGMENT_ROOT={CACHE_ROOT}/segments
+EGO_EXPORT_ROOT=/home/server/export/{STATION_ID}
+EGO_CAPTURE_CHECKPOINT={CACHE_ROOT}/segments/checkpoint.json
+EGO_UPLOAD_LOG_DIR={CACHE_ROOT}/logs
+DATALAB_HEARTBEAT_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/{STATION_ID}/upload
+EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/{STATION_ID}/upload
+STATION_UPLOAD_TOKEN=dl-upload-{STATION_ID}-v1
+DATALAB_CAPTURE_HOST={HOST}
+EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
+UPLOAD_PROTOCOL=tarzst
+EOF
 cat > "$HOME/.config/ego-station.env.d/station.conf" <<EOF
 EGO_SEGMENT_ROOT={CACHE_ROOT}/segments
 EGO_CAPTURE_CHECKPOINT={CACHE_ROOT}/segments/checkpoint.json
 EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/{STATION_ID}/upload
-EGO_TOPOLOGY_FILE={REMOTE_CAPTURE}/config/camera_topology_standard.json
-SEGMENT_H264=0
-SEGMENT_H264_LEGACY_APPEND=0
+DATALAB_HEARTBEAT_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/{STATION_ID}/upload
+STATION_UPLOAD_TOKEN=dl-upload-{STATION_ID}-v1
+DATALAB_CAPTURE_HOST={HOST}
+EGO_TOPOLOGY_FILE={REMOTE_CONFIG}/camera_topology_standard.yaml
 SEGMENT_FRAME_BIN=1
 OAK_HW_JPEG=1
 OAK_H264=0
-OAK_HW_PREVIEW=1
-OAK_HW_PREVIEW_H264=0
-EGO_FRAME_INTERVAL_MS=33
-EGO_IMU_INTERPOLATE=1
-OAK_GPIO_FSYNC=1
-PREVIEW_MAX_EDGE=1280
-PREVIEW_FPS=15
-EGO_SEGMENT_PERSIST_QUEUE_MAX=2048
 UPLOAD_PROTOCOL=tarzst
 EOF
-systemctl --user daemon-reload 2>/dev/null || true
-echo '1' | sudo -S systemctl daemon-reload 2>/dev/null || true
+printf 'EGO_UPLOAD_MODE=production\\n' > "$HOME/.config/ego-station.env.d/upload-mode.conf"
+mkdir -p "$HOME/.config/systemd/user"
+if [[ -f /tmp/ecs-station-heartbeat.service ]]; then
+  cp /tmp/ecs-station-heartbeat.service "$HOME/.config/systemd/user/ecs-station-heartbeat.service"
+fi
 LOOP_UNIT=ecs-upload-segments-loop.service
-DROPIN_DIR="$HOME/.config/systemd/user/ecs-upload-segments-loop.service.d"
 systemctl --user stop "$LOOP_UNIT" 2>/dev/null || true
 systemctl --user disable "$LOOP_UNIT" 2>/dev/null || true
 systemctl --user mask "$LOOP_UNIT" 2>/dev/null || true
 pkill -f '[u]pload_segments_loop.py' 2>/dev/null || true
-mkdir -p "$DROPIN_DIR"
-rm -f "$DROPIN_DIR/production-manual-only.conf" "$DROPIN_DIR/debug-auto-upload.conf"
-cp /tmp/production-manual-only.conf "$DROPIN_DIR/production-manual-only.conf"
-mkdir -p "$HOME/.config/ego-station.env.d"
-printf 'EGO_UPLOAD_MODE=production\n' > "$HOME/.config/ego-station.env.d/upload-mode.conf"
 systemctl --user daemon-reload 2>/dev/null || true
+echo '1' | sudo -S systemctl daemon-reload 2>/dev/null || true
+systemctl --user enable ecs-station-heartbeat.service 2>/dev/null || true
+systemctl --user start ecs-station-heartbeat.service 2>/dev/null || true
 """
     run_script(c, remote_script)
 
+    verify = run(
+        c,
+        "systemctl --user show ecs-record-oak-stream.service -p Environment --value | tr ' ' '\\n' | "
+        "grep -E '^(SEGMENT_FRAME_BIN|OAK_HW_JPEG|OAK_H264)=' | sort",
+    ).strip()
+    print("capture env:", verify.replace("\n", " "))
     print(run(c, "which ffmpeg && ffmpeg -version | head -1").strip())
     c.close()
     print(f"provision ok: {TARGET} station={STATION_ID}")

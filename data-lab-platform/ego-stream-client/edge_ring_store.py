@@ -82,7 +82,7 @@ class EdgeRingStore:
     def from_env(cls) -> EdgeRingStore | None:
         if os.environ.get("EGO_EDGE_RING_ENABLED", "1").strip().lower() in ("0", "false", "no"):
             return None
-        root = Path(os.environ.get("EGO_RING_ROOT", "/home/server/cache/ego-lan-214/ring"))
+        root = Path(os.environ.get("EGO_RING_ROOT", "/home/server/cache/ego-001/ring"))
         gb = float(os.environ.get("EGO_RING_QUOTA_GB", "32"))
         return cls(root, quota_bytes=int(gb * 1024**3))
 

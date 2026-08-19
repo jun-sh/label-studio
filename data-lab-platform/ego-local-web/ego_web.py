@@ -40,13 +40,16 @@ SEGMENT_ACTIVE_ROOT = Path(
     os.environ.get("EGO_SEGMENT_ACTIVE_ROOT", "/dev/shm/ego-capture-active"),
 )
 SEGMENT_ROOT = Path(
-    os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments"),
+    os.environ.get(
+        "EGO_SEGMENT_ROOT",
+        f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments",
+    )
 )
 CHECKPOINT_PATH = Path(
     os.environ.get(
         "EGO_CAPTURE_CHECKPOINT",
-        "/home/server/cache/ego-lan-214/segments/checkpoint.json",
-    ),
+        f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments/checkpoint.json",
+    )
 )
 SEGMENT_STORE_VERSION = 1
 DEFAULT_CAPTURE_TASK = os.environ.get(

@@ -2,14 +2,14 @@
 # EGO 214 collector disk / cache alert. No capture code changes.
 set -euo pipefail
 
-CACHE_ROOT="${EGO_LOCAL_CACHE_ROOT:-/home/server/cache/ego-lan-214}"
+CACHE_ROOT="${EGO_LOCAL_CACHE_ROOT:-/home/server/cache/ego-001}"
 RING_ROOT="${EGO_RING_ROOT:-${CACHE_ROOT}/ring}"
 RING_QUOTA_GB="${EGO_RING_QUOTA_GB:-32}"
 LOG="${STORAGE_ALERT_LOG:-${CACHE_ROOT}/logs/storage-alert.log}"
 DISK_WARN="${DISK_WARN_PERCENT:-85}"
 DISK_CRIT="${DISK_CRIT_PERCENT:-92}"
 CACHE_MAX_GB="${CACHE_MAX_GB:-8}"
-UPLOAD_URL="${UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload}"
+UPLOAD_URL="${UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload}"
 
 mkdir -p "$(dirname "$LOG")" "${CACHE_ROOT}/logs"
 exec >>"$LOG" 2>&1

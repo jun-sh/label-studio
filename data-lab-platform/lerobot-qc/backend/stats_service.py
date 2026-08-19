@@ -126,7 +126,7 @@ def _compute_tabular_stats_from_data(
 
     frames: list[pd.DataFrame] = []
     for parquet_path in sorted((output_root / "data").rglob("*.parquet")):
-        if "high_freq" in parquet_path.parts:
+        if "sensor_raw" in parquet_path.parts:
             continue
         frames.append(pq.read_table(parquet_path).to_pandas())
     if not frames:

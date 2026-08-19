@@ -6,15 +6,16 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/server/workspace/ego-studio
+
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
-Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-lan-214-v1
-Environment=EGO_SEGMENT_ROOT=/home/server/cache/ego-lan-214/segments
 Environment=DATALAB_UPLOAD_TIMEOUT_S=600
 Environment=EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
 
 ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.upload_segments \
-  --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload \
   --ensure-session \
   --limit 3
 

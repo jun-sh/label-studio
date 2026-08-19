@@ -29,7 +29,7 @@ PHASE_LABELS_EN: dict[str, str] = {
 
 
 def default_station_id() -> str:
-    return os.environ.get("EGO_STATION_ID", "ego-lan-214").strip() or "ego-lan-214"
+    return os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
 
 
 def default_base_url() -> str:

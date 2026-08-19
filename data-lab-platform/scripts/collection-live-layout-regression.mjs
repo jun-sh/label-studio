@@ -8,7 +8,7 @@ import puppeteer from "puppeteer-core";
 const BASE = process.argv[2] || "http://127.0.0.1:8080";
 const VIEWER_URL =
   `${BASE}/lerobot/?datalab_embed=1&datalab_collection=1&lang=zh` +
-  `&url=${encodeURIComponent("/lerobot/api/stream/ego-lan-214/")}&_ts=${Date.now()}`;
+  `&url=${encodeURIComponent("/lerobot/api/stream/ego-001/")}&_ts=${Date.now()}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

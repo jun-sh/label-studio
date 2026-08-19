@@ -1,4 +1,4 @@
-"""[DEPRECATED v0.0.8] Use `python -m ego_capture_studio.cli.upload_segments` (tar.zst) instead."""
+"""One-shot upload: segments/ pending (Agent) or export/ready/*.tar.zst — with progress status file."""
 
 from __future__ import annotations
 
@@ -14,11 +14,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
     load_camera_intrinsics_json,
 )
 from ego_capture_studio.capture.intrinsics_store import backfill_session_intrinsics_if_missing
-from ego_capture_studio.capture.segment_store import (
-    list_closed_pending_segments,
-    purge_uploaded_segments,
-    wait_for_segment_deletes,
-)
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
 from ego_capture_studio.capture.segment_upload import (
     SegmentUploader,
     _resolve_archive_session,
@@ -43,15 +39,16 @@ try:
 except ImportError:
     from camera_map import ALL_LEROBOT_VIDEO_KEYS  # type: ignore[no-redef]
 
+DEFAULT_STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
 DEFAULT_UPLOAD_URL = os.environ.get(
     "EGO_UPLOAD_URL",
-    "http://10.10.10.34:8080/lerobot/api/collection/stations/ego-lan-214/upload",
+    f"http://10.10.10.34:8080/lerobot/api/collection/stations/{DEFAULT_STATION}/upload",
 )
 DEFAULT_SEGMENT_ROOT = Path(
-    os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments")
+    os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{DEFAULT_STATION}/segments")
 )
 DEFAULT_EXPORT_ROOT = Path(
-    os.environ.get("EGO_EXPORT_ROOT", "/home/server/export/ego-lan-214")
+    os.environ.get("EGO_EXPORT_ROOT", f"/home/server/export/{DEFAULT_STATION}")
 )
 
 
@@ -90,12 +87,12 @@ def _ensure_session(uploader: SegmentUploader, root: Path, session_id: str, task
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Upload ego-lan-214 segments to Data Lab (segments/ or export/ready/).",
+        description="Upload ego station segments to Data Lab (segments/ or export/ready/).",
     )
     p.add_argument(
         "--upload-url",
         default=DEFAULT_UPLOAD_URL,
-        help="Ingest upload URL (…/stations/ego-lan-214/upload)",
+        help="Ingest upload URL (…/stations/<station>/upload)",
     )
     p.add_argument("--segment-root", type=Path, default=DEFAULT_SEGMENT_ROOT)
     p.add_argument("--export-root", type=Path, default=DEFAULT_EXPORT_ROOT)
@@ -221,23 +218,6 @@ def main() -> None:
                 )
         print(f"uploaded_segments={n}", file=sys.stderr, flush=True)
         if n > 0:
-            delete_after = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-            )
-            if delete_after:
-                wait_for_segment_deletes()
-                scope_session = None if use_ready else session_id
-                purged, failed = purge_uploaded_segments(root, scope_session)
-                if purged:
-                    print(f"本机已清理已上传段：{purged} 个", file=sys.stderr, flush=True)
-                if failed:
-                    print(
-                        f"⚠️ 本机段清理未完成：{failed} 个（upload_loop 将自动重试）",
-                        file=sys.stderr,
-                        flush=True,
-                    )
             kick = kick_derive_after_upload(uploader)
             if kick is None:
                 print(

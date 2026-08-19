@@ -134,15 +134,107 @@ def extract_tar_zst(archive: Path, dest_dir: Path, *, expected_sha256: str | Non
     }
 
 
+def validate_tar_zst(archive: Path) -> dict:
+    """Validate ego segment tar.zst members for Phase3 ingest gate."""
+    _require_zstd()
+    if not archive.is_file():
+        return {"ok": False, "error_code": "TAR_MISSING_ARCHIVE", "issues": ["archive_missing"]}
+
+    issues: list[str] = []
+    manifest: dict | None = None
+    rows_lines = 0
+    imu_lines = 0
+    frame_bins = 0
+    members: list[str] = []
+
+    dctx = zstd.ZstdDecompressor()
+    with archive.open("rb") as raw:
+        with dctx.stream_reader(raw) as reader:
+            with tarfile.open(fileobj=reader, mode="r|") as tar:
+                for member in tar:
+                    if not member.isfile():
+                        continue
+                    name = member.name.lstrip("./")
+                    members.append(name)
+                    if name == "manifest.json":
+                        extracted = tar.extractfile(member)
+                        if extracted is None:
+                            issues.append("manifest_unreadable")
+                        else:
+                            try:
+                                manifest = json.loads(extracted.read().decode("utf-8"))
+                            except (json.JSONDecodeError, UnicodeDecodeError):
+                                issues.append("manifest_unparseable")
+                    elif name == "rows.jsonl":
+                        extracted = tar.extractfile(member)
+                        if extracted is None:
+                            issues.append("rows_unreadable")
+                        else:
+                            text = extracted.read().decode("utf-8", errors="replace")
+                            rows_lines = sum(1 for line in text.splitlines() if line.strip())
+                    elif name == "imu_raw.jsonl":
+                        extracted = tar.extractfile(member)
+                        if extracted is None:
+                            issues.append("imu_unreadable")
+                        else:
+                            text = extracted.read().decode("utf-8", errors="replace")
+                            imu_lines = sum(1 for line in text.splitlines() if line.strip())
+                    elif name.startswith("frames/") and name.endswith(".bin"):
+                        frame_bins += 1
+
+    if manifest is None:
+        issues.append("missing_manifest")
+    if rows_lines <= 0:
+        issues.append("missing_rows_jsonl")
+    if imu_lines <= 0:
+        issues.append("missing_imu_raw")
+    frame_count = int((manifest or {}).get("frame_count") or 0)
+    if frame_count <= 0:
+        issues.append("invalid_frame_count")
+    if frame_bins != frame_count:
+        issues.append(f"frame_bin_count_mismatch:{frame_bins}!={frame_count}")
+    if rows_lines != frame_count:
+        issues.append(f"rows_count_mismatch:{rows_lines}!={frame_count}")
+
+    ok = len(issues) == 0
+    error_code = None
+    if not ok:
+        if "missing_manifest" in issues or "manifest_unparseable" in issues:
+            error_code = "TAR_MISSING_MEMBER"
+        elif any("frame_bin_count_mismatch" in i or "rows_count_mismatch" in i for i in issues):
+            error_code = "TAR_FRAME_COUNT_MISMATCH"
+        elif "missing_imu_raw" in issues:
+            error_code = "TAR_MISSING_MEMBER"
+        else:
+            error_code = "TAR_VALIDATION_FAILED"
+
+    return {
+        "ok": ok,
+        "error_code": error_code,
+        "issues": issues,
+        "manifest": manifest,
+        "frame_count": frame_count,
+        "rows_lines": rows_lines,
+        "imu_lines": imu_lines,
+        "frame_bins": frame_bins,
+        "members": members,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stream-extract tar.zst with atomic commit")
     parser.add_argument("archive", type=Path, help="Path to .tar.zst archive")
     parser.add_argument("dest_dir", nargs="?", type=Path, help="Destination directory")
     parser.add_argument("--peek", metavar="MEMBER", help="Extract single member to stdout")
+    parser.add_argument("--validate-json", action="store_true", help="Validate archive members; print JSON")
     parser.add_argument("--expected-sha256", metavar="HEX", default=None)
     args = parser.parse_args()
 
     try:
+        if args.validate_json:
+            print(json.dumps(validate_tar_zst(args.archive)))
+            return 0
+
         if args.peek:
             payload = peek_tar_member(args.archive, args.peek)
             sys.stdout.buffer.write(payload)

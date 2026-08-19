@@ -1,8 +1,8 @@
 # ego-001 交付手册（一页）
 
-**原则：** 130 采集与 34 派生解耦 · 手动上传 · segment_mp4 单主路径 · READY 后 Viewer 可播
+**原则：** 130 HW JPEG 采集 · 手动 tar.zst 上传 · 34 staging mux · `session.READY` 后 Viewer 可播
 
-**版本配对：** 130 `v0.0.8-segment-mp4` + H264 FIFO（`OAK_H264_SEQUENTIAL=1`）+ 34 `data-lab-lerobot-studio:v0.0.12`（见 [STABLE-v0.0.12.md](STABLE-v0.0.12.md)）
+**版本：** 34 `data-lab-lerobot-studio:v0.0.11.2` · 130 `z-production-egoverse.conf`（`OAK_H264=0`）
 
 ---
 
@@ -11,10 +11,10 @@
 ```text
 130 采集站 (10.10.10.130)          34 平台 (10.10.10.34)
 ─────────────────────────          ────────────────────────
-record_oak_stream                  stream-ingest (segment_mp4)
-  → tar.zst (rows + 4×MP4)    →      jsonl + MP4 concat + parquet
+record_oak_stream (HW JPEG)        stream-ingest
+  → tar.zst (rows + frame bins) →    jsonl + staging JPG → MP4 + parquet
 upload_segments (手动)               derive-worker → session.READY
-                                     Viewer /data/ego_001
+                                     Viewer /data/egodome
 ```
 
 | 项 | 值 |
@@ -23,7 +23,7 @@ upload_segments (手动)               derive-worker → session.READY
 | Token | `dl-upload-ego-001-v1` |
 | 段根 (130) | `/home/server/cache/ego-001/segments` |
 | Stream (34) | `data-storage/stream/ego-001` |
-| 拓扑 | `ego-standard`（4 路，含 `depth_left`） |
+| 拓扑 | `ego-standard`（4 路 RGB） |
 
 ---
 
@@ -32,7 +32,7 @@ upload_segments (手动)               derive-worker → session.READY
 ### 34（平台）
 
 ```bash
-data-lab-platform/scripts/deploy-stream-ingest-v0.0.9.2.sh
+data-lab-platform/scripts/deploy-stream-ingest-v0.0.11.2.sh
 RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
 ```
 
@@ -40,11 +40,12 @@ RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
 
 ```bash
 data-lab-platform/scripts/ego-130-provision.sh server@10.10.10.130 ego-001
-data-lab-platform/scripts/ego-130-verify-h264.sh server@10.10.10.130
+# 或: python3 data-lab-platform/scripts/ego-130-provision-paramiko.py
+data-lab-platform/scripts/ego-130-verify-production.sh server@10.10.10.130
 data-lab-platform/scripts/ego-130-upload-mode.sh production   # 在 130 上
 ```
 
-验收：`SEGMENT_H264=1`、`SEGMENT_FRAME_BIN=0`、日志 `hw_h264=True storage_h264=1`。
+验收：`SEGMENT_FRAME_BIN=1`、`OAK_HW_JPEG=1`、`OAK_H264=0`；段目录 `frames/*.bin`，无 `*.h264`。
 
 ---
 
@@ -54,7 +55,6 @@ data-lab-platform/scripts/ego-130-upload-mode.sh production   # 在 130 上
 
 ```bash
 systemctl --user start ecs-record-oak-stream
-# 或手机 UI start（仅采集，不上传）
 ```
 
 ### 2. 停止采集
@@ -73,10 +73,7 @@ export PYTHONPATH=/home/server/workspace/ego-studio/src
   --ensure-session \
   --segment-root /home/server/cache/ego-001/segments \
   --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload
-# 调试可加: --limit 3
 ```
-
-**禁止** 生产环境 enable `ecs-upload-segments-loop`（见 [ego-130-upload-policy.md](ego-130-upload-policy.md)）。
 
 ### 4. 查看派生状态（34）
 
@@ -86,47 +83,44 @@ STATION_ID=ego-001 data-lab-platform/scripts/ego-derive status --station ego-001
 
 期望：`phase=READY`，`mp4Ok=true`，`session.READY` 存在。
 
-### 5. 手动触发 derive（若未自动完成）
+### 5. 一键交付（34）
 
 ```bash
-STATION_ID=ego-001 data-lab-platform/scripts/ego-derive run --station ego-001 --session <sess_...>
+ego-deliver ego-001
 ```
 
-### 6. Viewer 签收
+### 6. Viewer
 
-| 页面 | 用途 | 期望 |
-|------|------|------|
-| `/collection?station=ego-001` | **采集回放**（实时/已上传段预览） | 3 路 RGB 可播、时间轴同步；**不含**后处理深度图 |
-| 数据集浏览（`stream/ego-001` READY 后） | **LeRobot 派生结果** | 4 路 MP4（含 `camera_depth_left` = OAK 深度相机原始 H264，非深度图生成流水线产物） |
-
-采集回放签收：前左 / 前右 / 后右可播，帧数与 session 一致。  
-派生签收：`derive-status` → `phase=READY`，`parquetRows≈5995`，`mp4Ok=true`（21 段生产 session）。
-
-<http://10.10.10.34:8080/collection?station=ego-001> — 采集状态  
-数据集浏览 — `stream/ego-001` 对应 LeRobot 目录
+<http://10.10.10.34:8080/collection?station=ego-001> — 采集回放（四路 RGB MP4）
 
 ---
 
-## 验收脚本（34 上）
+## 验收脚本
 
 ```bash
-# 容器 + 主路径
+# 容器 + JPEG ingest 基线
 RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
 
-# 平台 CI 门禁（rc-acceptance + derive READY，无 130 SSH）
+# 平台 CI（无 130 SSH；有 stream 数据时才验 READY）
 RC_STATION=ego-001 data-lab-platform/scripts/ci-ego-platform.sh
 
-# H264 包数 vs jsonl 审计（≥85%，跨相机差 ≤120）
-RC_STATION=ego-001 data-lab-platform/scripts/ego-130-h264-packet-audit.sh
+# 全链路 E2E（清场 + 短录 + 上传 + READY）
+bash data-lab-platform/scripts/ego-001-plan-b-e2e.sh
 
-# 130 可选：H264 remux genpts 调优（新 session 前 A/B 对比）
-bash data-lab-platform/scripts/ego-130-h264-tuning.sh server@10.10.10.130 status
-
-# 130 上传 + READY（自动发现 session，默认 3 段）
+# 仅上传 + READY
 RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh
+```
 
-# 全 session（所有 pending 段，耗时长）
-RC_STATION=ego-001 RC_UPLOAD_LIMIT=999 RC_DERIVE_TIMEOUT_S=900 data-lab-platform/scripts/rc-e2e-upload.sh
+---
+
+## 清场重跑
+
+```bash
+# 边缘 + 34 全清
+EGO_RESET_YES=1 bash data-lab-platform/scripts/ego-001-reset-for-rerun.sh --yes
+
+# 仅清 34
+STATION_ID=ego-001 EGO_RESET_YES=1 bash data-lab-platform/scripts/ego-reset-34-only.sh --yes
 ```
 
 ---
@@ -135,34 +129,13 @@ RC_STATION=ego-001 RC_UPLOAD_LIMIT=999 RC_DERIVE_TIMEOUT_S=900 data-lab-platform
 
 | 现象 | 检查 |
 |------|------|
-| 无 `streams/*.mp4` | 130：`ego-130-verify-h264.sh`；是否 `z-production-egoverse.conf` 覆盖 |
-| ingest 仅 ~300 帧/路 | 34 镜像是否 `v0.0.9.2`；`STREAM_SEGMENT_INGEST_BATCH_SIZE=1` |
-| `rear_left` 在 info.json | `session_start` 拓扑；`station-topology.json` ego-001→ego-standard |
-| `phase=UPLOADED` 卡死 | `ego-derive run`；查 `session.FAILED`；`mux_validated.json` |
-| MP4 帧数 < jsonl | 已知 H264 包数偏差；v0.0.9.2 容忍 ≥85% |
-| 改代码不生效 | `docker cp` 后必须 `docker restart stream-ingest`；生产用镜像 |
-| 8080 上传 502 | 重建 stream-ingest/lerobot 后 **restart nginx**（`docker restart data-lab-nginx-1`） |
-
-```bash
-# 日志
-docker logs data-lab-stream-ingest-1 --since 10m | grep ego-001
-journalctl --user -u ecs-record-oak-stream --since "1 hour ago" | tail -50
-```
+| 采集启动失败 | `ego-130-verify-production.sh`；`journalctl -u ecs-record-oak-stream` |
+| `mux_fail capture_codec_not_jpeg` | 130 是否误开 `OAK_H264`；重 provision |
+| `phase=UPLOADED` 卡死 | `ego-derive run`；`mux_validated.json`；derive-worker 日志 |
+| 改代码不生效 | 重建 `v0.0.11.2` 镜像并 `force-recreate` ingest |
 
 ---
 
-## 回滚
+## 遗留脚本
 
-```bash
-# 34 → v0.0.9
-docker-compose ... -f data-lab-platform/docker-compose.v0.0.9.yml up -d stream-ingest derive-worker
-```
-
----
-
-## 相关文档
-
-- [RELEASE-v0.0.9.2.md](../RELEASE-v0.0.9.2.md) — 变更与部署
-- [ego-lerobot-vendor-ext-migration.md](ego-lerobot-vendor-ext-migration.md) — MCAP 剥离 + high_freq IMU 商用扩展
-- [ego-130-upload-policy.md](ego-130-upload-policy.md) — 上传策略
-- [RELEASE-v0.0.8.md](../RELEASE-v0.0.8.md) — tar.zst 契约
+H264 / `ego-lan-214` / `segment_mp4` 相关脚本已移至 `data-lab-platform/scripts/legacy/`。

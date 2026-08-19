@@ -22,8 +22,13 @@ except ImportError:
 from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
 from ego_capture_studio.capture.frame_bin_codec import unpack_frame_bin
 from ego_capture_studio.capture.segment_store import (
+    clear_segment_uploaded,
     list_closed_pending_segments,
+    manifest_status,
+    mark_segment_upload_failed,
     mark_segment_uploaded,
+    mark_segment_uploading,
+    read_manifest,
     segment_file_key,
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
@@ -422,30 +427,58 @@ def _segment_archive_bytes(segment_dir: Path) -> int:
     return 0
 
 
+def _segment_upload_skip_reason(segment_dir: Path) -> str | None:
+    try:
+        manifest = read_manifest(segment_dir)
+        status = manifest_status(manifest)
+    except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+        return "unreadable_manifest"
+    if status == "CORRUPT":
+        return "corrupt"
+    if status == "RECORDING":
+        return "still_recording"
+    if status == "UPLOADING":
+        return None
+    if status not in {"CLOSED", "UPLOAD_FAILED", "UPLOADED"}:
+        return f"invalid_status:{status}"
+    return None
+
+
+def _prepare_segment_for_upload(segment_dir: Path, *, force: bool) -> str | None:
+    """Apply --force reset and validate segment is uploadable. Returns skip reason or None."""
+    skip = _segment_upload_skip_reason(segment_dir)
+    if skip:
+        return skip
+    status = manifest_status(read_manifest(segment_dir))
+    if force and status == "UPLOADED":
+        clear_segment_uploaded(segment_dir)
+    return None
+
+
 def _upload_one_segment(
     *,
     segment_dir: Path,
     session_id: str,
     uploader: SegmentUploader,
+    force: bool = False,
 ) -> bool:
     segment_id = segment_dir.name
-    if os.environ.get("SEGMENT_H264", "0").strip().lower() in ("1", "true", "yes"):
-        from ego_capture_studio.capture.segment_h264_mux import verify_segment_stream_mp4s
+    skip = _prepare_segment_for_upload(segment_dir, force=force)
+    if skip:
+        _log(
+            "segment_skip",
+            session_id=session_id,
+            segment_id=segment_id,
+            reason=skip,
+        )
+        return False
 
-        try:
-            verify_segment_stream_mp4s(segment_dir)
-        except Exception as exc:
-            _log(
-                "segment_skip",
-                session_id=session_id,
-                segment_id=segment_id,
-                reason=f"h264_streams_invalid:{exc}",
-            )
-            return False
     status = UploadStatusWriter.get_default()
+    last_error = ""
     for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         t0 = time.monotonic()
         try:
+            mark_segment_uploading(segment_dir)
             archive_bytes = _segment_archive_bytes(segment_dir)
             status.set_uploading(
                 session_id=session_id,
@@ -458,6 +491,7 @@ def _upload_one_segment(
             mark_segment_uploaded(segment_dir, delete=DELETE_AFTER_UPLOAD)
             elapsed = time.monotonic() - t0
             duplicate = bool(out.get("duplicate"))
+            manifest = read_manifest(segment_dir)
             _log(
                 "segment_ok",
                 session_id=session_id,
@@ -467,6 +501,8 @@ def _upload_one_segment(
                 duplicate=duplicate,
                 protocol=uploader.protocol,
                 attempt=attempt,
+                manifest_status=manifest_status(manifest),
+                remote_ack_at=(manifest.get("upload") or {}).get("remote_ack_at"),
             )
             human = status.record_ok(
                 session_id=session_id,
@@ -479,18 +515,22 @@ def _upload_one_segment(
                 print(human, flush=True)
             return True
         except Exception as exc:
+            last_error = str(exc)
             if attempt >= UPLOAD_MAX_RETRIES:
+                mark_segment_upload_failed(segment_dir, last_error)
+                manifest = read_manifest(segment_dir)
                 _log(
                     "segment_fail",
                     session_id=session_id,
                     segment_id=segment_id,
-                    err=str(exc)[:200],
-                    attempts=attempt,
+                    err=last_error[:200],
+                    attempts=int((manifest.get("upload") or {}).get("attempts") or attempt),
+                    manifest_status=manifest_status(manifest),
                 )
                 human = status.record_fail(
                     session_id=session_id,
                     segment_id=segment_id,
-                    error=str(exc),
+                    error=last_error,
                 )
                 if not live_ui_enabled():
                     print(human, flush=True)
@@ -745,16 +785,27 @@ def upload_pending_segments(
     session_id: str,
     uploader: SegmentUploader,
     limit: int | None = None,
+    include_uploaded: bool = False,
+    force: bool = False,
 ) -> int:
     _quarantine_orphan_segments(root, session_id)
-    pending = list_closed_pending_segments(root, session_id)
+    pending = list_closed_pending_segments(
+        root,
+        session_id,
+        include_uploaded=include_uploaded or force,
+    )
     if limit is not None:
         pending = pending[:limit]
 
     uploaded = 0
     if UPLOAD_CONCURRENCY <= 1 or len(pending) <= 1:
         for segment_dir in pending:
-            if _upload_one_segment(segment_dir=segment_dir, session_id=session_id, uploader=uploader):
+            if _upload_one_segment(
+                segment_dir=segment_dir,
+                session_id=session_id,
+                uploader=uploader,
+                force=force,
+            ):
                 uploaded += 1
         return uploaded
 
@@ -766,6 +817,7 @@ def upload_pending_segments(
                 segment_dir=segment_dir,
                 session_id=session_id,
                 uploader=uploader,
+                force=force,
             ): segment_dir
             for segment_dir in pending
         }

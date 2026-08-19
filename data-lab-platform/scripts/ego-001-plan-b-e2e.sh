@@ -154,11 +154,11 @@ print("capture idle ok")
 PY
 fi
 
-log "=== verify h264 on 130 ==="
+log "=== verify JPEG capture on 130 ==="
 export RC_CAPTURE_PASS="${CAPTURE_PASS}"
-python3 "${ROOT}/data-lab-platform/scripts/ego-130-verify-h264-paramiko.py" "${CAPTURE_USER}@${CAPTURE_HOST}"
+python3 "${ROOT}/data-lab-platform/scripts/ego-130-verify-production-paramiko.py" "${CAPTURE_USER}@${CAPTURE_HOST}"
 
-log "=== verify latest segment has 4x .h264 ==="
+log "=== verify latest segment has JPEG frame bins (no .h264) ==="
 export RC_CAPTURE_HOST RC_CAPTURE_USER RC_CAPTURE_PASS RC_STATION
 CAPTURE_SESSION="$(python3 - <<'PY'
 import os, paramiko, sys
@@ -176,11 +176,15 @@ _, o, _ = c.exec_command(
 seg = o.read().decode().strip()
 if not seg:
     sys.exit("no segment dir on 130")
-_, o, _ = c.exec_command(f"ls {seg}/streams/*.h264 2>/dev/null | wc -l", timeout=30)
-n = int(o.read().decode().strip() or "0")
-if n < 4:
-    sys.exit(f"expected 4 h264 streams, got {n} in {seg}")
-print(f"segment h264 ok: {seg} ({n} streams)", file=sys.stderr)
+_, o, _ = c.exec_command(f"find {seg} -name '*.h264' 2>/dev/null | wc -l", timeout=30)
+h264_n = int(o.read().decode().strip() or "0")
+if h264_n > 0:
+    sys.exit(f"unexpected H264 streams in {seg} (got {h264_n})")
+_, o, _ = c.exec_command(f"ls {seg}/frames/*.bin 2>/dev/null | wc -l", timeout=30)
+bin_n = int(o.read().decode().strip() or "0")
+if bin_n < 1:
+    sys.exit(f"expected JPEG frame bins in {seg}/frames, got {bin_n}")
+print(f"segment jpeg ok: {seg} ({bin_n} frame bins)", file=sys.stderr)
 session = seg.split("/sessions/")[1].split("/")[0]
 print(session)
 c.close()

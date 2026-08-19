@@ -1,7 +1,7 @@
 {
   "mode": "egoverse_30hz",
   "status": "production_standard",
-  "station": "ego-lan-214",
+  "station": "ego-001",
   "capture_fps": 30,
   "imu_hz": 200,
   "frame_interval_ms": 33,

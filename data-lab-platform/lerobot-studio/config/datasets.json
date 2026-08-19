@@ -36,14 +36,14 @@
     "coverImageUrl": "/lerobot/bundled/covers/lerobot_dataset_dualpiper_pulling.webp"
   },
   {
-    "id": "ego_214_hand_pose",
+    "id": "egodome",
     "name": "Ego-214-Hand-Pose",
-    "description": "LeRobot v3.0 · ego-lan-214 with offline MANO hand pose",
-    "url": "/lerobot/api/sample/ego_214_hand_pose/dataset/",
-    "httpDatasetUrl": "/lerobot/api/sample/ego_214_hand_pose/dataset/",
-    "archiveUrl": "/lerobot/bundled/ego_214_hand_pose.zip",
+    "description": "LeRobot v3.0 · ego-001 with offline MANO hand pose",
+    "url": "/lerobot/api/sample/egodome/dataset/",
+    "httpDatasetUrl": "/lerobot/api/sample/egodome/dataset/",
+    "archiveUrl": "/lerobot/bundled/egodome.zip",
     "previewVideoUrl": "",
-    "coverImageUrl": "/lerobot/bundled/covers/ego_214_hand_pose.webp"
+    "coverImageUrl": "/lerobot/bundled/covers/egodome.webp"
   },
   {
     "id": "egodome",

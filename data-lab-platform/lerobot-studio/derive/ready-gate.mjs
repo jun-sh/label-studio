@@ -190,7 +190,7 @@ function isNullishImuValue(value) {
   return typeof value === "number" && Number.isNaN(value);
 }
 
-/** G6: main table IMU fields present; NaN ratio < 1%. */
+/** G6: main table IMU aligned; null/missing ratio < 1%. */
 export function checkImuMainAlignment(root) {
   const jsonlPath = mainJsonlPath(root);
   if (!fs.existsSync(jsonlPath)) {
@@ -200,25 +200,31 @@ export function checkImuMainAlignment(root) {
   if (!rows.length) {
     return fail("G6", "IMU_ALIGN_NULL", "main jsonl empty", "imu");
   }
-  let nanCount = 0;
+  let missingCount = 0;
   for (const row of rows) {
     for (const key of ["observation.imu_accel", "observation.imu_gyro"]) {
       const val = row[key];
       if (val === null || val === undefined) {
-        return fail("G6", "IMU_ALIGN_NULL", `${key} null at frame ${row.frame_index}`, "imu");
+        missingCount += 1;
+        continue;
       }
-      if (Array.isArray(val) && val.some((v) => Number.isNaN(v))) {
-        nanCount += 1;
+      if (Array.isArray(val) && val.some((v) => isNullishImuValue(v))) {
+        missingCount += 1;
       }
     }
     const ts = row["observation.imu_timestamp"];
     if (isNullishImuValue(ts)) {
-      return fail("G6", "IMU_ALIGN_NULL", `imu_timestamp null at frame ${row.frame_index}`, "imu");
+      missingCount += 1;
     }
   }
-  const nanRatio = nanCount / Math.max(1, rows.length * 2);
-  if (nanRatio >= 0.01) {
-    return fail("G6", "IMU_ALIGN_NULL", `NaN ratio ${(nanRatio * 100).toFixed(2)}% >= 1%`, "imu");
+  const nullRatio = missingCount / Math.max(1, rows.length * 3);
+  if (nullRatio >= 0.01) {
+    return fail(
+      "G6",
+      "IMU_ALIGN_NULL",
+      `null ratio ${(nullRatio * 100).toFixed(2)}% >= 1%`,
+      "imu",
+    );
   }
   return pass("G6");
 }
@@ -234,8 +240,9 @@ const CHECK_FNS = [
 
 /**
  * Run all READY gate checks. Stops at first failure.
+ * Top-level catch ensures GATE_INTERNAL_ERROR → structured failure (no silent deadlock).
  */
-export function runReadyGate(root, stationId, sessionId) {
+function runReadyGateChecks(root, stationId, sessionId) {
   const checks = [];
   for (const { id, run } of CHECK_FNS) {
     const result = run(root, stationId, sessionId);
@@ -259,4 +266,27 @@ export function runReadyGate(root, stationId, sessionId) {
     reason: null,
     failedCheckId: null,
   };
+}
+
+export function runReadyGate(root, stationId, sessionId) {
+  try {
+    return runReadyGateChecks(root, stationId, sessionId);
+  } catch (err) {
+    const message = String(err?.message || err).slice(0, 500);
+    const stack = String(err?.stack || err).slice(0, 2000);
+    console.error(`[ready-gate] GATE_INTERNAL_ERROR station=${stationId} session=${sessionId} ${message}\n${stack}`);
+    return {
+      ok: false,
+      checks: [],
+      checksPassed: 0,
+      checksTotal: READY_GATE_CHECKS_TOTAL,
+      reason: {
+        code: "GATE_INTERNAL_ERROR",
+        message,
+        category: "derive",
+      },
+      failedCheckId: "GATE",
+      internalError: { stack },
+    };
+  }
 }

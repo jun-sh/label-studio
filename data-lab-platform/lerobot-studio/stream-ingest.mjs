@@ -3724,7 +3724,7 @@ async function handleTarZstSegmentUpload(stationId, req) {
   try {
     await streamRequestToFile(req, archivePath);
     const { handleTarZstIngestUpload } = await import("./ingest/index.mjs");
-    return handleTarZstIngestUpload(stationId, {
+    return await handleTarZstIngestUpload(stationId, {
       archivePath,
       sessionId,
       segmentId,

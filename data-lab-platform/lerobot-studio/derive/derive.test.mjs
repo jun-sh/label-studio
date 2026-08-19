@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildFrameMap,
+  buildFrameMapForDerive,
   validateFrameMapContinuity,
+  validateFrameMapPrerequisites,
   writeFrameMap,
 } from "./frame-map.mjs";
 import { transitionSegmentState, SEGMENT_INGEST_STATUS } from "../ingest/segment-state.mjs";
@@ -55,6 +57,39 @@ describe("derive frame-map", () => {
     assert.equal(frameMap.frame_segments[2].global_end, 6);
     assert.equal(frameMap.sessions[0].session_id, "sess_a");
     assert.equal(frameMap.sessions[1].session_id, "sess_b");
+  });
+
+  it("returns not-ready when DONE_UPLOAD exists but segment not DERIVE_PENDING", () => {
+    const root = tmpRoot();
+    writeSessionMarker(root, "sess_a", SESSION_MARKERS.DONE_UPLOAD, {
+      at: "2026-08-18T10:00:00.000Z",
+    });
+    const rawDir = path.join(root, "raw", "segments", "sess_a");
+    fs.mkdirSync(rawDir, { recursive: true });
+    fs.writeFileSync(path.join(rawDir, "seg_000001.tar.zst"), Buffer.alloc(8));
+    const prereq = validateFrameMapPrerequisites(root);
+    assert.equal(prereq.ok, false);
+    assert.equal(prereq.code, "FRAME_MAP_NOT_READY");
+  });
+
+  it("builds merged frame map once all segments are DERIVE_PENDING", () => {
+    const root = tmpRoot();
+    writeSessionMarker(root, "sess_a", SESSION_MARKERS.DONE_UPLOAD, {
+      at: "2026-08-18T10:00:00.000Z",
+    });
+    writeSessionMarker(root, "sess_b", SESSION_MARKERS.DONE_UPLOAD, {
+      at: "2026-08-18T12:00:00.000Z",
+    });
+    writeSegmentState(root, "sess_a", "seg_000001", 2);
+    writeSegmentState(root, "sess_b", "seg_000001", 3);
+    for (const sid of ["sess_a", "sess_b"]) {
+      const rawDir = path.join(root, "raw", "segments", sid);
+      fs.mkdirSync(rawDir, { recursive: true });
+      fs.writeFileSync(path.join(rawDir, "seg_000001.tar.zst"), Buffer.alloc(8));
+    }
+    const built = buildFrameMapForDerive(root);
+    assert.equal(built.ok, true);
+    assert.equal(built.frameMap.length, 5);
   });
 });
 
@@ -126,6 +161,92 @@ describe("derive imu align-main", () => {
     const row = JSON.parse(fs.readFileSync(jsonlPath, "utf8").trim());
     assert.deepEqual(row["observation.imu_accel"], [2, 0, 0]);
     assert.deepEqual(row["observation.imu_gyro"], [0, 2, 0]);
+  });
+
+  it("writes null (not NaN literals) for missing gyro in parquet", () => {
+    const root = tmpRoot();
+    const imuParquet = path.join(root, "sensor_raw/imu/chunk-000/file-000.parquet");
+    fs.mkdirSync(path.dirname(imuParquet), { recursive: true });
+    const pyWrite = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import pyarrow as pa, pyarrow.parquet as pq, math
+table = pa.table({
+  "episode_index": pa.array([0], type=pa.int32()),
+  "segment_id": pa.array(["seg_000001"], type=pa.string()),
+  "imu_timestamp": pa.array([0.02], type=pa.float64()),
+  "accel": pa.array([[1.0, 0.0, 0.0]], type=pa.list_(pa.float32())),
+  "gyro": pa.array([[float("nan"), float("nan"), float("nan")]], type=pa.list_(pa.float32())),
+  "mag": pa.array([[0.0, 0.0, 0.0]], type=pa.list_(pa.float32())),
+})
+pq.write_table(table, ${JSON.stringify(imuParquet)})`,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(pyWrite.status, 0, pyWrite.stderr);
+
+    const jsonlPath = path.join(root, "data/chunk-000/file-000.jsonl");
+    fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+    fs.writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({ frame_index: 0, timestamp_ns: 20_000_000, task: "t" })}\n`,
+    );
+
+    const res = spawnSync(
+      "python3",
+      [path.join(__dirname, "imu", "align-main.py"), root, "--jsonl", jsonlPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(res.status, 0, res.stderr || res.stdout);
+
+    const raw = fs.readFileSync(jsonlPath, "utf8").trim();
+    assert.doesNotMatch(raw, /NaN/);
+    const row = JSON.parse(raw);
+    assert.equal(row["observation.imu_gyro"], null);
+    assert.deepEqual(row["observation.imu_accel"], [1, 0, 0]);
+  });
+
+  it("writes null when parquet gyro has partial NaN components", () => {
+    const root = tmpRoot();
+    const imuParquet = path.join(root, "sensor_raw/imu/chunk-000/file-000.parquet");
+    fs.mkdirSync(path.dirname(imuParquet), { recursive: true });
+    const pyWrite = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import pyarrow as pa, pyarrow.parquet as pq, math
+table = pa.table({
+  "episode_index": pa.array([0], type=pa.int32()),
+  "segment_id": pa.array(["seg_000001"], type=pa.string()),
+  "imu_timestamp": pa.array([0.02], type=pa.float64()),
+  "accel": pa.array([[1.0, 0.0, 0.0]], type=pa.list_(pa.float32())),
+  "gyro": pa.array([[float("nan"), 0.0, 0.0]], type=pa.list_(pa.float32())),
+  "mag": pa.array([[0.0, 0.0, 0.0]], type=pa.list_(pa.float32())),
+})
+pq.write_table(table, ${JSON.stringify(imuParquet)})`,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(pyWrite.status, 0, pyWrite.stderr);
+
+    const jsonlPath = path.join(root, "data/chunk-000/file-000.jsonl");
+    fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+    fs.writeFileSync(
+      jsonlPath,
+      `${JSON.stringify({ frame_index: 0, timestamp_ns: 20_000_000, task: "t" })}\n`,
+    );
+
+    const res = spawnSync(
+      "python3",
+      [path.join(__dirname, "imu", "align-main.py"), root, "--jsonl", jsonlPath],
+      { encoding: "utf8" },
+    );
+    assert.equal(res.status, 0, res.stderr || res.stdout);
+
+    const row = JSON.parse(fs.readFileSync(jsonlPath, "utf8").trim());
+    assert.doesNotMatch(fs.readFileSync(jsonlPath, "utf8"), /NaN/);
+    assert.equal(row["observation.imu_gyro"], null);
   });
 });
 

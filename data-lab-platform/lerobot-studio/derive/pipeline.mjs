@@ -10,9 +10,10 @@ import { fileURLToPath } from "node:url";
 import { rawSegmentArchivePath } from "./io.mjs";
 import { stationRoot, deriveLog } from "./station-context.mjs";
 import {
-  rebuildAndWriteFrameMap,
-  validateFrameMapContinuity,
+  buildFrameMapForDerive,
   readFrameMap,
+  validateFrameMapContinuity,
+  validateFrameMapPrerequisites,
 } from "./frame-map.mjs";
 import {
   cleanupExtractDir,
@@ -112,15 +113,20 @@ export async function runDerivePipeline(stationId, options = {}) {
 
   deriveLog(stationId, "derive_pipeline_start", { sessionId, muxOnly });
 
-  const frameMap = rebuildAndWriteFrameMap(root);
-  const continuity = validateFrameMapContinuity(frameMap);
-  if (!continuity.ok) {
-    throw new Error(`frame_map_invalid: ${continuity.issues.join("; ")}`);
+  const frameMapResult = buildFrameMapForDerive(root);
+  if (!frameMapResult.ok) {
+    deriveLog(stationId, "derive_frame_map_not_ready", {
+      sessionId,
+      message: frameMapResult.message,
+    });
+    return {
+      ok: false,
+      reason: frameMapResult.reason,
+      message: frameMapResult.message,
+      sessionId,
+    };
   }
-
-  if (frameMap.length <= 0) {
-    return { ok: false, reason: "empty_frame_map", sessionId };
-  }
+  const frameMap = frameMapResult.frameMap;
 
   const segmentExtracts = [];
 
@@ -177,7 +183,32 @@ export async function runDerivePipeline(stationId, options = {}) {
   });
 
   const finalFrameMap = readFrameMap(root) || frameMap;
-  const gate = runReadyGate(root, stationId, sessionId);
+  let gate;
+  try {
+    gate = runReadyGate(root, stationId, sessionId);
+  } catch (err) {
+    const reason = {
+      code: "GATE_INTERNAL_ERROR",
+      message: String(err?.message || err).slice(0, 500),
+      category: "derive",
+    };
+    markSessionFailed(root, sessionId, reason, {
+      gate: { ok: false, internalError: { stack: String(err?.stack || "").slice(0, 2000) } },
+    });
+    deriveLog(stationId, "derive_failed", {
+      sessionId,
+      reasonCode: reason.code,
+      failedCheckId: "GATE",
+    });
+    return {
+      ok: false,
+      sessionId,
+      frameMap: finalFrameMap,
+      mux: muxReport,
+      reason,
+      phase: "FAILED",
+    };
+  }
 
   if (gate.ok) {
     markSessionReady(root, sessionId, {
@@ -223,4 +254,4 @@ export async function runDerivePipeline(stationId, options = {}) {
   };
 }
 
-export { rebuildAndWriteFrameMap, readFrameMap, validateFrameMapContinuity };
+export { buildFrameMapForDerive, readFrameMap, validateFrameMapContinuity, validateFrameMapPrerequisites };

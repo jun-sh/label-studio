@@ -270,7 +270,11 @@ async function runLinearPipeline(stationId, { muxOnly = false, sessionId: forced
     sessionId: forcedSessionId,
     muxOnly,
   });
-  if (result.reason === "no_session" || result.reason === "done_upload_missing" || result.reason === "empty_frame_map") {
+  if (
+    result.reason === "no_session" ||
+    result.reason === "done_upload_missing" ||
+    result.reason === "frame_map_not_ready"
+  ) {
     streamLog(stationId, "derive_pipeline_skip", result);
     return result;
   }
@@ -384,6 +388,11 @@ export async function runDerivePipelineBlocking(
       sessionId,
       inlineMuxRetry: true,
     });
+    if (result?.reason === "frame_map_not_ready") {
+      const { clearSessionMarker } = await import("./session-markers.mjs");
+      clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+      return { ok: false, reason: result.reason, sessionId, message: result.message };
+    }
     if (result?.phase === "READY") {
       return { ok: true, phase: "READY", sessionId, gate: result.gate, disk: computeDeriveStatusFromDisk(stationId, sessionId) };
     }
@@ -399,8 +408,26 @@ export async function runDerivePipelineBlocking(
     }
     return { ok: Boolean(result?.ok), sessionId, ...result };
   } catch (err) {
-    // Phase4: no session.FAILED marker (Phase5 ready-gate).
-    throw err;
+    const reason = {
+      code: err?.code === "FRAME_MAP_EMPTY" || err?.code === "FRAME_MAP_INVALID" ? err.code : "GATE_INTERNAL_ERROR",
+      message: String(err?.message || err).slice(0, 500),
+      category: "derive",
+    };
+    markSessionFailed(root, sessionId, reason, {
+      internalError: { stack: String(err?.stack || "").slice(0, 2000) },
+    });
+    streamLog(stationId, "derive_pipeline_fail", {
+      sessionId,
+      reasonCode: reason.code,
+      message: reason.message,
+    });
+    return {
+      ok: false,
+      phase: "FAILED",
+      sessionId,
+      reason,
+      disk: computeDeriveStatusFromDisk(stationId, sessionId),
+    };
   } finally {
     pipelineRunning.set(stationId, false);
     releaseDeriverLock(root);

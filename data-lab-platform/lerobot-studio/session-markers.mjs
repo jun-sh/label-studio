@@ -130,6 +130,7 @@ export function listSessionsPendingDerive(root) {
     if (!fs.statSync(dir).isDirectory()) continue;
     if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD)) continue;
     if (hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) continue;
+    if (hasSessionMarker(root, sessionId, SESSION_MARKERS.FAILED)) continue;
     if (hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) continue;
     pending.push(sessionId);
   }

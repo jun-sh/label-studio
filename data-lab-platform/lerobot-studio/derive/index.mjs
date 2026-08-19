@@ -10,6 +10,9 @@ export {
   findSegmentEntry,
   globalIndexForLocal,
   validateFrameMapContinuity,
+  validateFrameMapPrerequisites,
+  buildFrameMapForDerive,
+  FrameMapError,
   episodeMapPath,
   FRAME_MAP_VERSION,
 } from "./frame-map.mjs";

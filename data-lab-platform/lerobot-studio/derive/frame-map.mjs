@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { readJson, writeJsonAtomic } from "./io.mjs";
 import { rawSegmentArchivePath } from "./io.mjs";
 import { readSessionMarker, SESSION_MARKERS } from "../session-markers.mjs";
-import { listSegmentStates, SEGMENT_INGEST_STATUS } from "../ingest/segment-state.mjs";
+import { listSegmentStates, readSegmentState, SEGMENT_INGEST_STATUS } from "../ingest/segment-state.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VALIDATE_SCRIPT = path.join(__dirname, "..", "scripts", "extract-tar-zst.py");
@@ -197,4 +197,109 @@ export function validateFrameMapContinuity(frameMap) {
     issues.push(`length ${length} != end+1 ${expected}`);
   }
   return { ok: issues.length === 0, issues };
+}
+
+/**
+ * Ensure every DONE_UPLOAD session has raw archives in DERIVE_PENDING before frame-map build.
+ * Returns not-ready (retry later) vs empty (hard failure after prerequisites).
+ */
+export function validateFrameMapPrerequisites(root) {
+  const sessionsDir = path.join(root, "state", "sessions");
+  if (!fs.existsSync(sessionsDir)) {
+    return { ok: false, code: "FRAME_MAP_EMPTY", message: "no state/sessions directory" };
+  }
+
+  const pendingIssues = [];
+  let hasWork = false;
+
+  for (const sessionId of fs.readdirSync(sessionsDir).sort()) {
+    if (sessionId.startsWith(".")) continue;
+    const sessDir = path.join(sessionsDir, sessionId);
+    if (!fs.statSync(sessDir).isDirectory()) continue;
+    if (!readSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD)) continue;
+    if (readSessionMarker(root, sessionId, SESSION_MARKERS.READY)) continue;
+
+    hasWork = true;
+    const rawDir = path.join(root, "raw", "segments", sessionId);
+    if (!fs.existsSync(rawDir)) {
+      pendingIssues.push(`${sessionId}: raw/segments missing`);
+      continue;
+    }
+
+    const archives = fs
+      .readdirSync(rawDir)
+      .filter((name) => name.endsWith(".tar.zst"))
+      .sort();
+    if (!archives.length) {
+      pendingIssues.push(`${sessionId}: no raw tar.zst archives`);
+      continue;
+    }
+
+    for (const archive of archives) {
+      const segmentId = archive.replace(/\.tar\.zst$/, "");
+      const state = readSegmentState(root, sessionId, segmentId);
+      if (!state || state.status !== SEGMENT_INGEST_STATUS.DERIVE_PENDING) {
+        pendingIssues.push(
+          `${sessionId}/${segmentId}: status=${state?.status || "missing"} (need DERIVE_PENDING)`,
+        );
+        continue;
+      }
+      const frameCount = Number(state.frame_count || 0);
+      if (frameCount <= 0) {
+        const archivePath = rawSegmentArchivePath(root, sessionId, segmentId);
+        const manifest = fs.existsSync(archivePath) ? readManifestFromArchive(archivePath) : null;
+        const fromManifest = Number(manifest?.frame_count || manifest?.frameCount || 0);
+        if (fromManifest <= 0) {
+          pendingIssues.push(`${sessionId}/${segmentId}: frame_count=0`);
+        }
+      }
+    }
+  }
+
+  if (!hasWork) {
+    return { ok: false, code: "FRAME_MAP_EMPTY", message: "no DONE_UPLOAD sessions pending derive" };
+  }
+  if (pendingIssues.length) {
+    return {
+      ok: false,
+      code: "FRAME_MAP_NOT_READY",
+      message: pendingIssues.join("; "),
+      pendingIssues,
+    };
+  }
+  return { ok: true };
+}
+
+export class FrameMapError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "FrameMapError";
+    this.code = code;
+  }
+}
+
+/**
+ * Validate prerequisites, build frame map, and fail loudly if still empty.
+ */
+export function buildFrameMapForDerive(root) {
+  const prereq = validateFrameMapPrerequisites(root);
+  if (!prereq.ok) {
+    if (prereq.code === "FRAME_MAP_NOT_READY") {
+      return { ok: false, reason: "frame_map_not_ready", message: prereq.message, pendingIssues: prereq.pendingIssues };
+    }
+    throw new FrameMapError(prereq.code || "FRAME_MAP_EMPTY", prereq.message || "frame map prerequisites failed");
+  }
+
+  const frameMap = rebuildAndWriteFrameMap(root);
+  const continuity = validateFrameMapContinuity(frameMap);
+  if (!continuity.ok) {
+    throw new FrameMapError("FRAME_MAP_INVALID", continuity.issues.join("; "));
+  }
+  if (!frameMap?.frame_segments?.length || (frameMap.length ?? 0) <= 0) {
+    throw new FrameMapError(
+      "FRAME_MAP_EMPTY",
+      "frame map empty after all segments reached DERIVE_PENDING",
+    );
+  }
+  return { ok: true, frameMap };
 }

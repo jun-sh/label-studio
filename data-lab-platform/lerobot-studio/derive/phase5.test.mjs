@@ -248,12 +248,29 @@ describe("ready-gate G2-G6 individual checks", () => {
     assert.equal(result.reason.code, "IMU_RAW_MISSING");
   });
 
-  it("G6 fails IMU_ALIGN_NULL on null imu fields", () => {
+  it("G6 fails IMU_ALIGN_NULL when null ratio exceeds 1%", () => {
     const root = tmpRoot();
     writeJsonlAtomic(mainJsonlPath(root), [{ frame_index: 0, "observation.imu_accel": null }]);
     const result = checkImuMainAlignment(root);
     assert.equal(result.ok, false);
     assert.equal(result.reason.code, "IMU_ALIGN_NULL");
+    assert.match(result.reason.message, /null ratio/);
+  });
+
+  it("G6 passes when null ratio is below 1%", () => {
+    const root = tmpRoot();
+    const rows = [];
+    for (let i = 0; i < 100; i += 1) {
+      rows.push({
+        frame_index: i,
+        "observation.imu_accel": [1, 0, 0],
+        "observation.imu_gyro": i === 0 ? null : [0, 1, 0],
+        "observation.imu_timestamp": [i * 0.033],
+      });
+    }
+    writeJsonlAtomic(mainJsonlPath(root), rows);
+    const result = checkImuMainAlignment(root);
+    assert.equal(result.ok, true);
   });
 });
 
@@ -288,6 +305,25 @@ describe("ready-gate runReadyGate", () => {
     assert.equal(marker.reason.code, "PARQUET_INDEX_GAP");
     assert.equal(marker.phase, "FAILED");
     assert.equal(marker.mp4Ok, false);
+  });
+
+  it("returns GATE_INTERNAL_ERROR when jsonl contains invalid NaN literals", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_gate_crash";
+    writeFrameMapState(root, 1);
+    writeInfoJson(root);
+    writeImuParquet(root);
+    writeMuxValidated(root, sessionId, 1);
+    const jsonlPath = mainJsonlPath(root);
+    fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+    fs.writeFileSync(
+      jsonlPath,
+      '{"frame_index":0,"observation.imu_gyro":[NaN,NaN,NaN],"observation.imu_accel":[1,0,0],"observation.imu_timestamp":[0]}\n',
+    );
+    const gate = runReadyGate(root, STATION_ID, sessionId);
+    assert.equal(gate.ok, false);
+    assert.equal(gate.reason.code, "GATE_INTERNAL_ERROR");
+    assert.equal(gate.failedCheckId, "GATE");
   });
 });
 

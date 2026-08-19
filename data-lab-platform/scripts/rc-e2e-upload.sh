@@ -167,9 +167,32 @@ if [[ "${ASSERT_READY}" == "1" ]]; then
   deadline=$((SECONDS + DERIVE_TIMEOUT_S))
   phase=""
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
-  phase=$(STATION_ID="${STATION}" "${ROOT}/data-lab-platform/scripts/ego-derive" status \
-    --station "${STATION}" --session "${UPLOAD_SESSION}" --json 2>/dev/null \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('disk',{}).get('phase',''))" 2>/dev/null || echo "")
+    status_json="$(STATION_ID="${STATION}" "${ROOT}/data-lab-platform/scripts/ego-derive" status \
+      --station "${STATION}" --session "${UPLOAD_SESSION}" --json 2>/dev/null || echo '{}')"
+    phase="$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+print(d.get('disk', {}).get('phase', ''))
+" "${status_json}" 2>/dev/null || echo "")"
+    failed_marker="$(python3 -c "
+import json, sys
+d = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+failed = d.get('sessionMarkers', {}).get('session.FAILED')
+if not failed:
+    print('')
+    sys.exit(0)
+reason = failed.get('reason') or {}
+print(reason.get('code', 'FAILED'))
+print(reason.get('message', ''))
+print(reason.get('category', ''))
+" "${status_json}" 2>/dev/null || echo "")"
+    if [[ -n "${failed_marker}" ]]; then
+      fail_code="$(echo "${failed_marker}" | sed -n '1p')"
+      fail_msg="$(echo "${failed_marker}" | sed -n '2p')"
+      fail_cat="$(echo "${failed_marker}" | sed -n '3p')"
+      echo "FAIL: derive session.FAILED code=${fail_code} category=${fail_cat} message=${fail_msg}"
+      exit 1
+    fi
     if [[ "${phase}" == "READY" ]]; then
       break
     fi

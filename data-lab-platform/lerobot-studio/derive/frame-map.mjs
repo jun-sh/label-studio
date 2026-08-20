@@ -163,6 +163,12 @@ export function rebuildAndWriteFrameMap(root, options = {}) {
   return frameMap;
 }
 
+export function rebuildAndWriteFrameMapForDerive(root, options = {}) {
+  const frameMap = buildFrameMap(root, options);
+  writeFrameMap(root, frameMap);
+  return { frameMap };
+}
+
 export function findSegmentEntry(frameMap, sessionId, segmentId) {
   return (frameMap?.frame_segments || []).find(
     (s) => s.session_id === sessionId && s.segment_id === segmentId,
@@ -203,7 +209,8 @@ export function validateFrameMapContinuity(frameMap) {
  * Ensure every DONE_UPLOAD session has raw archives in DERIVE_PENDING before frame-map build.
  * Returns not-ready (retry later) vs empty (hard failure after prerequisites).
  */
-export function validateFrameMapPrerequisites(root) {
+export function validateFrameMapPrerequisites(root, options = {}) {
+  const { scopeSessionId = null } = options;
   const sessionsDir = path.join(root, "state", "sessions");
   if (!fs.existsSync(sessionsDir)) {
     return { ok: false, code: "FRAME_MAP_EMPTY", message: "no state/sessions directory" };
@@ -214,6 +221,7 @@ export function validateFrameMapPrerequisites(root) {
 
   for (const sessionId of fs.readdirSync(sessionsDir).sort()) {
     if (sessionId.startsWith(".")) continue;
+    if (scopeSessionId && sessionId !== scopeSessionId) continue;
     const sessDir = path.join(sessionsDir, sessionId);
     if (!fs.statSync(sessDir).isDirectory()) continue;
     if (!readSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD)) continue;
@@ -281,8 +289,13 @@ export class FrameMapError extends Error {
 /**
  * Validate prerequisites, build frame map, and fail loudly if still empty.
  */
-export function buildFrameMapForDerive(root) {
-  const prereq = validateFrameMapPrerequisites(root);
+export function buildFrameMapForDerive(root, options = {}) {
+  const { scopeSessionId = null } = options;
+  const mapOptions =
+    scopeSessionId != null && String(scopeSessionId).trim()
+      ? { sessionIds: [String(scopeSessionId).trim()] }
+      : {};
+  const prereq = validateFrameMapPrerequisites(root, { scopeSessionId });
   if (!prereq.ok) {
     if (prereq.code === "FRAME_MAP_NOT_READY") {
       return { ok: false, reason: "frame_map_not_ready", message: prereq.message, pendingIssues: prereq.pendingIssues };
@@ -290,7 +303,8 @@ export function buildFrameMapForDerive(root) {
     throw new FrameMapError(prereq.code || "FRAME_MAP_EMPTY", prereq.message || "frame map prerequisites failed");
   }
 
-  const frameMap = rebuildAndWriteFrameMap(root);
+  const frameMapResult = rebuildAndWriteFrameMapForDerive(root, mapOptions);
+  const frameMap = frameMapResult.frameMap;
   const continuity = validateFrameMapContinuity(frameMap);
   if (!continuity.ok) {
     throw new FrameMapError("FRAME_MAP_INVALID", continuity.issues.join("; "));

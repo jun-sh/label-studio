@@ -5,21 +5,30 @@ set -euo pipefail
 
 STATION=""
 RESET_MODE=""
+SKIP_DEPLOY=0
+SKIP_GATE=0
+SKIP_VIEWER_SYNC=0
 for arg in "$@"; do
   case "$arg" in
     --reset|--reset-full) RESET_MODE="full" ;;
     --reset-34) RESET_MODE="34" ;;
+    --skip-deploy) SKIP_DEPLOY=1 ;;
+    --skip-gate) SKIP_GATE=1 ;;
+    --skip-viewer-sync) SKIP_VIEWER_SYNC=1 ;;
     -h|--help)
       cat <<'EOF'
 用法: ego-run-pipeline <station> [选项]
 
   <station>            采集站 ID，如 ego-001
   默认                 增量：只处理未发布 session，断点续跑
+  --skip-deploy        跳过 deploy-local-datasets（由 ego-process 做轻量 ingest）
+  --skip-gate          跳过 Viewer 发布门禁
+  --skip-viewer-sync   跳过 convert 后自动轻量 Viewer sync（P-Ops-3 默认开启）
   --reset-34           仅清 34（stream/pipeline/corpus/samples），保留 214 可重传
   --reset-full         清 214 + 34 全链路（须确认）
   --reset              同 --reset-full（兼容旧用法）
 
-对外交付请优先使用: ego-deliver <station>
+对外交付请优先使用: ego-deliver <station> 或 ego-process <station>
 
 环境变量（oak 子模块覆盖，一般无需设置）:
   EGO_HANDS_FORCE=1
@@ -74,6 +83,8 @@ RESET_SH="${SCRIPT_DIR}/ego-001-reset-for-rerun.sh"
 RESET_34_SH="${SCRIPT_DIR}/ego-reset-34-only.sh"
 DEPLOY_SH="${DATALAB_ROOT}/data-lab-platform/deploy-local-datasets.sh"
 POSTPROCESS_SH="${PIPE_ROOT}/scripts/ego-postprocess.sh"
+VIEWER_SYNC_SH="${SCRIPT_DIR}/ego-viewer-sync.sh"
+AUTO_VIEWER_SYNC="${EGO_AUTO_VIEWER_SYNC:-1}"
 
 PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
 PLATFORM_HOST="${PLATFORM_HOST%/}"
@@ -224,19 +235,36 @@ if [[ "$FAILED" -gt 0 ]]; then
 fi
 
 SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
-if [[ ! -f "$SAMPLES_ZIP" && "$PROCESSED" -eq 0 ]]; then
+if [[ ! -f "$SAMPLES_ZIP" && "$PROCESSED" -eq 0 && "$SKIP_DEPLOY" -eq 0 ]]; then
   die "没有可部署的数据集 zip（${SAMPLES_ZIP}）。请先完成上传和后处理。"
 fi
 
-log "部署 Viewer…"
-if [[ -x "$DEPLOY_SH" ]]; then
-  (cd "$DATALAB_ROOT" && bash "$DEPLOY_SH") 2>&1 | tee -a "$RUN_LOG"
+if [[ "$SKIP_DEPLOY" -eq 0 ]]; then
+  log "部署 Viewer…"
+  if [[ -x "$DEPLOY_SH" ]]; then
+    (cd "$DATALAB_ROOT" && bash "$DEPLOY_SH") 2>&1 | tee -a "$RUN_LOG"
+  else
+    die "找不到部署脚本: $DEPLOY_SH"
+  fi
 else
-  die "找不到部署脚本: $DEPLOY_SH"
+  log "跳过 full deploy（--skip-deploy）"
+fi
+
+VIEWER_SYNCED=0
+if [[ "$PROCESSED" -gt 0 && "$SKIP_DEPLOY" -eq 1 && "$SKIP_VIEWER_SYNC" -eq 0 && "$AUTO_VIEWER_SYNC" != "0" ]]; then
+  if [[ -x "$VIEWER_SYNC_SH" ]]; then
+    log "自动 Viewer sync（convert 完成，P-Ops-3）…"
+    if bash "$VIEWER_SYNC_SH" 2>&1 | tee -a "$RUN_LOG"; then
+      VIEWER_SYNCED=1
+      log "自动 Viewer sync 完成"
+    else
+      log "⚠️  Viewer sync 失败（可稍后 ego-viewer-sync.sh）"
+    fi
+  fi
 fi
 
 GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
-if [[ -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
+if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
   log "Viewer 发布门禁（内参 + rectify + B7）…"
   EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
 fi

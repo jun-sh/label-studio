@@ -362,6 +362,7 @@ function injectBranding(html, search = "") {
       '<script src="/lerobot/branding/manifest-embed-fix.js?v=1"></script>';
   }
   inject +=
+    '<link rel="shortcut icon" href="/static/images/favicon.ico" />' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=71"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
@@ -381,6 +382,7 @@ function injectBranding(html, search = "") {
       '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
       '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
+  html = html.replace(/<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*>\s*/gi, "");
   html = html.replace(/<link[^>]*\/lerobot\/branding\/overlay\.css[^>]*>\s*/gi, "");
   html = html.replace(/<script[^>]*\/lerobot\/branding\/[^"']+[^>]*>\s*<\/script>\s*/gi, "");
   if (!html.includes("/lerobot/branding/overlay.js")) {

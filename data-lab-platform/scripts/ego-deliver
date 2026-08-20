@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ego-deliver — edge upload → 34 derive → postprocess → Viewer publish
+# ego-deliver — edge upload → 34 derive + postprocess → Viewer publish
 set -euo pipefail
 
 STATION=""
@@ -29,19 +29,20 @@ if [[ -z "$STATION" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 用法: ego-deliver <station> [选项]
 
 录完后在 34 上执行的唯一交付命令:
-  1. 边缘上传待传 segment
-  2. 34 等待派生（LeRobot parquet + MP4）
-  3. 后处理（畸变校正 / 手部骨架 / 深度 / 发布）
-  4. 部署 Viewer（内参 + rectify 硬门禁）
+  1. 边缘 ego-upload（幂等上传待传 segment）
+  2. 34 ego-process（derive 批量 + convert + 轻量 Viewer sync）
 
 示例:
   ego-deliver ego-001
   ego-deliver ego-001 --reset-34    # 仅清 34，从边缘重传
   ego-deliver ego-001 --reset-full  # 清边缘 + 34（慎用）
 
+也可分步执行:
+  130:  ego-upload ego-001
+  34:   ego-process ego-001
+
 环境变量:
   EDGE_HOST            默认 server@10.10.10.130（ego-001）
-  DERIVE_TIMEOUT_SEC   默认 3600
   EGO_RESET_YES=1      跳过 reset 确认
 EOF
   exit 0
@@ -50,7 +51,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EDGE_HOST="${EDGE_HOST:-server@10.10.10.130}"
-DERIVE_TIMEOUT_SEC="${DERIVE_TIMEOUT_SEC:-3600}"
 PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
 PLATFORM_HOST="${PLATFORM_HOST%/}"
 
@@ -62,95 +62,38 @@ SLUG="$(python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" slug "$STATION" \
 VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
 
 if [[ "$RESET_MODE" == "34" ]]; then
-  log "=== 0/3 清场 (仅 34) ==="
+  log "=== 0/2 清场 (仅 34) ==="
   STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-reset-34-only.sh"
 elif [[ "$RESET_MODE" == "full" ]]; then
-  log "=== 0/3 清场 (边缘 + 34) ==="
+  log "=== 0/2 清场 (边缘 + 34) ==="
   STATION_ID="$STATION" EGO_RESET_YES="${EGO_RESET_YES:-}" bash "${SCRIPT_DIR}/ego-001-reset-for-rerun.sh" --yes
 fi
 
-log "=== 1/3 边缘上传待传 segment ==="
-ssh -o BatchMode=yes "${EDGE_HOST}" bash -s <<REMOTE
+log "=== 1/2 边缘上传 (ego-upload) ==="
+if ssh -o BatchMode=yes "${EDGE_HOST}" "command -v ego-upload >/dev/null 2>&1"; then
+  ssh -o BatchMode=yes "${EDGE_HOST}" "ego-upload ${STATION}"
+else
+  log "边缘未安装 ego-upload，回退 inline upload_segments"
+  ssh -o BatchMode=yes "${EDGE_HOST}" bash -s -- "${STATION}" <<'REMOTE'
 set -euo pipefail
+STATION="$1"
 set -a
-source "\$HOME/.config/ego-station.env" 2>/dev/null || true
-source "\$HOME/.config/ego-station.env.d/station.conf" 2>/dev/null || true
+source "$HOME/.config/ego-station.env" 2>/dev/null || true
+source "$HOME/.config/ego-station.env.d/station.conf" 2>/dev/null || true
 set +a
-PY="\${EGO_PYTHON:-/home/server/workspace/ego-studio/.venv/bin/python}"
-STATION="\${EGO_STATION_ID:-${STATION}}"
-SEG_ROOT="\${EGO_SEGMENT_ROOT:-/home/server/cache/\${STATION}/segments}"
-EXPORT_ROOT="\${EGO_EXPORT_ROOT:-/home/server/export/\${STATION}}"
-uploaded=0
-for sess_dir in "\${SEG_ROOT}/sessions"/sess_*/; do
-  [[ -d "\$sess_dir" ]] || continue
-  sid="\$(basename "\$sess_dir")"
-  if "\$PY" -c "
-from pathlib import Path
-from ego_capture_studio.capture.segment_store import list_closed_pending_segments
-root = Path('\${SEG_ROOT}')
-pending = list_closed_pending_segments(root, '\${sid}')
-raise SystemExit(0 if pending else 1)
-" 2>/dev/null; then
-    echo "[edge] uploading \${sid}..."
-    "\$PY" -m ego_capture_studio.cli.upload_segments --limit 3 --ensure-session \
-      --segment-root "\${SEG_ROOT}" \
-      --upload-url "\${EGO_UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION}/upload}" \
-      --session-id "\$sid"
-    uploaded=\$((uploaded + 1))
-  fi
-done
-if [[ -d "\$EXPORT_ROOT/ready" ]]; then
-  latest="\$(find "\$EXPORT_ROOT/ready" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1 || true)"
-  if [[ -n "\$latest" ]] && compgen -G "\${latest}"/sess_*__seg_*.tar.zst >/dev/null; then
-    echo "[edge] uploading ready archives from \${latest}..."
-    "\$PY" -m ego_capture_studio.cli.upload_segments --limit 3 --ensure-session \
-      --segment-root "\${SEG_ROOT}" \
-      --upload-url "\${EGO_UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION}/upload}" || true
-    uploaded=\$((uploaded + 1))
-  fi
-fi
-if [[ "\$uploaded" -eq 0 ]]; then
-  echo "[edge] nothing to upload (segments already sent or no closed segments)"
-fi
+PY="${EGO_PYTHON:-/home/server/workspace/ego-studio/.venv/bin/python}"
+SEG_ROOT="${EGO_SEGMENT_ROOT:-/home/server/cache/${STATION}/segments}"
+UPLOAD_URL="${EGO_UPLOAD_URL:-http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION}/upload}"
+export PYTHONPATH="${EGO_CAPTURE_SRC:-/home/server/workspace/ego-studio/src}${PYTHONPATH:+:$PYTHONPATH}"
+"$PY" -m ego_capture_studio.cli.upload_segments \
+  --limit 0 \
+  --ensure-session \
+  --segment-root "$SEG_ROOT" \
+  --upload-url "$UPLOAD_URL"
 REMOTE
-
-log "=== 2/3 等待 34 派生（LeRobot + MP4）==="
-deadline=$(( $(date +%s) + DERIVE_TIMEOUT_SEC ))
-STREAM="${DATALAB_ROOT}/data-storage/stream/${STATION}"
-last_pct=""
-while (( $(date +%s) < deadline )); do
-  status_json="$(curl -sf "${PLATFORM_HOST}/lerobot/api/collection/stations/${STATION}/derive-status" 2>/dev/null || echo '{}')"
-  read -r pct markers total phase parquet_rows <<<"$(
-    python3 -c "
-import json,sys
-d=json.loads(sys.argv[1]) if len(sys.argv)>1 else {}
-p=d.get('progress') or {}
-print(p.get('percent',0), p.get('markers',0), p.get('total',0), d.get('phase','?'), p.get('parquetRows',0))
-" "$status_json" 2>/dev/null || echo "0 0 0 ? 0"
-  )"
-  line="$(date +%H:%M:%S) derive ${pct}% markers=${markers}/${total} phase=${phase} parquetRows=${parquet_rows}"
-  if [[ "$line" != "$last_pct" ]]; then
-    log "$line"
-    last_pct="$line"
-  fi
-  if [[ -f "${STREAM}/meta/info.json" && -f "${STREAM}/data/chunk-000/file-000.parquet" ]] \
-    && find "${STREAM}/videos" -name '*.mp4' -print -quit 2>/dev/null | grep -q .; then
-    if [[ "${total:-0}" -gt 0 && "${pct:-0}" -ge 100 ]]; then
-      log "派生完成"
-      break
-    fi
-    if [[ "${total:-0}" -eq 0 && "$(python3 -c "import json; print(json.load(open('${STREAM}/meta/info.json')).get('total_frames',0))" 2>/dev/null || echo 0)" -gt 0 ]]; then
-      log "派生完成（stream 已有数据）"
-      break
-    fi
-  fi
-  sleep 20
-done
-if (( $(date +%s) >= deadline )); then
-  die "派生超时 ${DERIVE_TIMEOUT_SEC}s — 查 derive-status 或 derive-worker 日志"
 fi
 
-log "=== 3/3 后处理 + 发布 Viewer ==="
-bash "${SCRIPT_DIR}/ego-run-pipeline" "$STATION"
+log "=== 2/2 34 派生 + 后处理 + Viewer (ego-process) ==="
+bash "${SCRIPT_DIR}/ego-process" "$STATION"
 
 log "交付完成 → ${VIEWER_URL}"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Data Lab ego-process-watcher (P-Ops-3 upload notify → ego-process)
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/ego-001-runbook.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=user01
+Group=user01
+WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+Environment=STATION_ID=ego-001
+Environment=EGO_DATALAB_ROOT=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/scripts/ego-process-watcher.sh once
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=data-lab-ego-process-watcher
+
+[Install]
+WantedBy=multi-user.target

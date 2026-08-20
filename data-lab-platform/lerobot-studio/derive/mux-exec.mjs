@@ -9,7 +9,7 @@ import path from "node:path";
 import { encodeFromConcatList, probeMp4FrameCount } from "../mux-exec.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 import { ensureDir, writeJsonAtomic } from "./io.mjs";
-import { DEFAULT_FPS } from "./station-context.mjs";
+import { DEFAULT_FPS, deriveLog } from "./station-context.mjs";
 
 function stagingDir(root, videoKey) {
   return path.join(root, "_staging", videoKey.replace(/\./g, "_"));
@@ -97,11 +97,24 @@ async function muxOneCamera(root, videoKey, frameMap) {
 
 export async function runFourCameraMux(stationId, root, frameMap) {
   const videoKeys = videoKeysForStation(stationId);
-  const results = [];
-  for (const videoKey of videoKeys) {
-    // eslint-disable-next-line no-await-in-loop
-    results.push(await muxOneCamera(root, videoKey, frameMap));
-  }
+  deriveLog(stationId, "derive_mux_full_start", {
+    cameras: videoKeys.length,
+    frameMin: frameMap.frame_index_min,
+    frameMax: frameMap.frame_index_max,
+  });
+  const results = await Promise.all(
+    videoKeys.map(async (videoKey) => {
+      const started = Date.now();
+      const result = await muxOneCamera(root, videoKey, frameMap);
+      deriveLog(stationId, "derive_mux_camera_done", {
+        videoKey,
+        ok: result.ok,
+        frames: result.frames,
+        elapsedMs: Date.now() - started,
+      });
+      return result;
+    }),
+  );
   const allOk = results.every((r) => r.ok);
   return { allOk, results, videoKeys };
 }

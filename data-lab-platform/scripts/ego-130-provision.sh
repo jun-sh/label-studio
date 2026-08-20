@@ -110,6 +110,18 @@ REMOTE
 scp -q "${REPO_ROOT}/data-lab-platform/scripts/ego-130-upload-mode.sh" "${TARGET}:/tmp/ego-130-upload-mode.sh"
 ssh "${TARGET}" "bash /tmp/ego-130-upload-mode.sh production"
 
+echo "==> Install ego-upload CLI (130 one-liner upload)"
+ssh "${TARGET}" "mkdir -p ~/.local/bin"
+scp -q "${REPO_ROOT}/data-lab-platform/scripts/ego-upload-station.sh" \
+  "${TARGET}:~/.local/bin/ego-upload"
+ssh "${TARGET}" "chmod +x ~/.local/bin/ego-upload"
+ssh "${TARGET}" 'grep -q "\.local/bin" ~/.bashrc 2>/dev/null || echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc'
+
+echo "==> Verify ego-upload supports --notify (P-Ops-3)"
+ssh "${TARGET}" "ego-upload --help 2>&1 | grep -q notify" \
+  || { echo "FAIL: ego-upload missing --notify"; exit 1; }
+echo "OK: ego-upload --notify available"
+
 echo "==> Verify ffmpeg"
 ssh "${TARGET}" "which ffmpeg && ffmpeg -version | head -1"
 
@@ -132,6 +144,6 @@ grep -q '^OAK_H264=0' "$HOME/.config/ego-station.env.d/station.conf" 2>/dev/null
 exit "$fail"
 VERIFY
 
-echo ""
 echo "Done. Start capture: systemctl --user start ecs-record-oak-stream"
-echo "Manual upload: python -m ego_capture_studio.cli.upload_segments --limit 3 --ensure-session"
+echo "Manual upload:     ego-upload ${STATION_ID}"
+echo "Upload + notify:   ego-upload ${STATION_ID} --notify   # 需 34 ego-process-watcher timer"

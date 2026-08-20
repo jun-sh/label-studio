@@ -24,6 +24,7 @@ import {
   getDeriveStatusSummary,
   handleDeriveRetry,
   handleDeriveStart,
+  handleProcessNotify,
   resumeDeriveQueuesForAllStations,
   ensureIdleDeriveWatcher,
 } from "./derive-async.mjs";
@@ -162,6 +163,25 @@ const server = http.createServer((req, res) => {
         throw err;
       }
       return sendJson(res, 202, handleDeriveStart(stationId));
+    } catch (err) {
+      return handleIngestError(res, err);
+    }
+  }
+
+  const processNotifyMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/process-notify$`),
+  );
+  if (processNotifyMatch && req.method === "POST") {
+    const stationId = decodeURIComponent(processNotifyMatch[1]);
+    try {
+      const auth = verifyStationUploadToken(stationId, req);
+      if (!auth.ok) {
+        const err = new Error("unauthorized");
+        err.statusCode = 401;
+        err.reason = auth.reason;
+        throw err;
+      }
+      return sendJson(res, 202, handleProcessNotify(stationId, { source: "upload-notify" }));
     } catch (err) {
       return handleIngestError(res, err);
     }

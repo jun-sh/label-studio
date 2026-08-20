@@ -26,6 +26,14 @@ export function deriveMuxMode() {
   return String(process.env.DERIVE_MUX_MODE || "full").trim().toLowerCase();
 }
 
+function x264OutputArgs() {
+  const preset = String(process.env.DERIVE_MUX_X264_PRESET || "veryfast").trim();
+  const threads = String(process.env.DERIVE_MUX_THREADS ?? "0").trim();
+  const args = ["-c:v", "libx264", "-preset", preset, "-pix_fmt", "yuv420p"];
+  if (threads) args.push("-threads", threads);
+  return args;
+}
+
 export function isFullMuxMode() {
   return deriveMuxMode() !== "incremental";
 }
@@ -149,7 +157,7 @@ async function encodeFromConcatListLegacy(
   if (withScale) {
     args.push("-vf", "scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'");
   }
-  args.push("-c:v", "libx264", "-pix_fmt", "yuv420p");
+  args.push(...x264OutputArgs());
   if (Number.isFinite(fps) && fps > 0) {
     args.push("-r", String(fps));
   }
@@ -173,7 +181,7 @@ async function encodeFromConcatListFluent(
     if (withScale) {
       cmd = cmd.videoFilters("scale='max(2,trunc(iw/2)*2)':'max(2,trunc(ih/2)*2)'");
     }
-    const outputOpts = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"];
+    const outputOpts = [...x264OutputArgs(), "-movflags", "+faststart"];
     if (Number.isFinite(fps) && fps > 0) {
       outputOpts.push("-r", String(fps));
     }
@@ -214,7 +222,7 @@ export async function encodeFromConcatList(listPath, destPath, options = {}) {
 }
 
 async function concatMp4OnceLegacy(listPath, destPath, codecMode) {
-  const outputArgs = codecMode === "copy" ? ["-c", "copy"] : ["-c:v", "libx264", "-pix_fmt", "yuv420p"];
+  const outputArgs = codecMode === "copy" ? ["-c", "copy"] : x264OutputArgs();
   const res = await spawnFfmpeg([
     "-y",
     "-hide_banner",
@@ -239,7 +247,7 @@ async function concatMp4OnceFluent(listPath, destPath, codecMode) {
   const outputOpts =
     codecMode === "copy"
       ? ["-c", "copy", "-movflags", "+faststart"]
-      : ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"];
+      : [...x264OutputArgs(), "-movflags", "+faststart"];
   return new Promise((resolve) => {
     let stderr = "";
     const cmd = ffmpeg(listPath).inputOptions(["-f", "concat", "-safe", "0"]);

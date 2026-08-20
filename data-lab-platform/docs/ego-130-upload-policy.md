@@ -11,17 +11,34 @@
 
 ## 生产：手动上传
 
-关段后，操作员在 130 上执行（示例 ego-001）：
+关段后，操作员在 130 上执行：
+
+```bash
+ego-upload ego-001
+```
+
+（`ego-130-provision.sh` 会安装到 `~/.local/bin/ego-upload`。）
+
+等价底层命令：
 
 ```bash
 set -a; source ~/.config/ego-station.env 2>/dev/null || true; set +a
 export PYTHONPATH=/home/server/workspace/ego-studio/src
 
 /home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.upload_segments \
-  --limit 3 \
+  --limit 0 \
   --ensure-session \
   --segment-root /home/server/cache/ego-001/segments \
   --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload
+```
+
+34 侧对应：`ego-process ego-001`（derive + convert + 轻量 Viewer sync）。
+
+可选：上传后自动通知 34 排队处理：
+
+```bash
+ego-upload ego-001 --notify
+# 34 侧: ego-process-watcher.sh watch  （或 cron 每分钟 once）
 ```
 
 - `ego_upload` / 逐帧 multipart：**已废弃**，勿用。

@@ -2,7 +2,7 @@
 
 **原则：** 130 HW JPEG 采集 · 手动 tar.zst 上传 · 34 staging mux · `session.READY` 后 Viewer 可播
 
-**版本：** 34 `data-lab-lerobot-studio:v0.0.11.2` · 130 `z-production-egoverse.conf`（`OAK_H264=0`）
+**版本：** 34 `data-lab-lerobot-studio:v0.1.1` · 130 `z-production-egoverse.conf`（`OAK_H264=0`）
 
 ---
 
@@ -32,9 +32,16 @@ upload_segments (手动)               derive-worker → session.READY
 ### 34（平台）
 
 ```bash
-data-lab-platform/scripts/deploy-stream-ingest-v0.0.11.2.sh
-RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
+# 构建 + 部署 v0.1.1（生产推荐，Phase D unit-only）
+bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
+
+# 验收
+RC_STATION=ego-001 bash data-lab-platform/scripts/rc-ego-001-v0.1.1-preflight.sh
+bash data-lab-platform/scripts/rc-ego-001-p2-phase-d.sh
+RC_STATION=ego-001 bash data-lab-platform/scripts/rc-ego-001-p2-ops-async-preflight.sh
 ```
+
+详见 [RELEASE-v0.1.1.md](../RELEASE-v0.1.1.md)。
 
 ### 130（采集）
 
@@ -51,6 +58,57 @@ data-lab-platform/scripts/ego-130-upload-mode.sh production   # 在 130 上
 
 ## 日常操作
 
+### 目标 SOP（P-Ops-1）
+
+```text
+130:  录制 Start/Stop（手机 UI）
+130:  ego-upload ego-001
+34:   ego-process ego-001
+浏览器: /collection?station=ego-001  +  /data/egodome
+```
+
+或 34 上一键：`ego-deliver ego-001`（SSH 130 上传 + ego-process）。
+
+### P-Ops-2：async derive-worker（生产默认）
+
+```bash
+# 34 — 一键切换 async 模式（DERIVE_ASYNC=1 + 启动 derive-worker）
+bash data-lab-platform/scripts/ego-derive-mode.sh async
+
+# 或完整部署（推荐首次/升级）
+bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
+
+# 验收
+RC_STATION=ego-001 bash data-lab-platform/scripts/rc-ego-001-p2-ops-async-preflight.sh
+bash data-lab-platform/scripts/rc-ego-001-p2-phase-d.sh
+```
+
+切换后 `ego-process ego-001` 会**等待 derive-worker** 而非手动 `ego-derive run`。  
+回退 manual：`bash data-lab-platform/scripts/ego-derive-mode.sh manual`
+
+### P-Ops-3：自动 Viewer sync + 上传通知
+
+- convert 完成后 `ego-run-pipeline --skip-deploy` **自动**跑 `ego-viewer-sync.sh`
+- 130 上传后通知 34（推荐）：
+  ```bash
+  ego-upload ego-001 --notify
+  # 或 EGO_NOTIFY_PROCESS=1 ego-upload ego-001
+  ```
+- 34 安装 systemd timer（生产推荐，开机自启）：
+  ```bash
+  sudo bash data-lab-platform/scripts/install-ego-process-watcher-systemd.sh
+  systemctl status data-lab-ego-process-watcher.timer
+  journalctl -u data-lab-ego-process-watcher.service -f
+  ```
+  每 30s 轮询 `process-notify.pending.json` 并执行 `ego-process`。
+- 前台调试：`bash data-lab-platform/scripts/ego-process-watcher.sh watch`
+
+### Viewer 多 episode（Phase D / unit layout）
+
+- `/data/egodome` 现为 **N 个独立 episode**（每 trip 一个），不再是整站连续时间轴
+- Viewer 内用 episode 选择器切换；IMU 曲线不再跨 session 锯齿
+- 操作员说明：一次采集 = 一个 episode = 一个训练样本（`STREAM_SESSION_SINGLE_EPISODE=0`）
+
 ### 1. 开始采集（130）
 
 ```bash
@@ -63,19 +121,24 @@ systemctl --user start ecs-record-oak-stream
 systemctl --user stop ecs-record-oak-stream
 ```
 
-### 3. 手动上传（生产）
+### 3. 上传（130）
 
 ```bash
-set -a; source ~/.config/ego-station.env 2>/dev/null || true; set +a
-export PYTHONPATH=/home/server/workspace/ego-studio/src
-
-/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.upload_segments \
-  --ensure-session \
-  --segment-root /home/server/cache/ego-001/segments \
-  --upload-url http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload
+ego-upload ego-001
 ```
 
-### 4. 查看派生状态（34）
+等价于 `upload_segments --limit 0 --ensure-session`（幂等，只传未 UPLOADED 段）。  
+首次部署需 `ego-130-provision.sh` 安装 `~/.local/bin/ego-upload`。
+
+### 4. 派生 + 后处理 + Viewer（34）
+
+```bash
+ego-process ego-001
+```
+
+步骤：derive 批量（`DERIVE_LAYOUT=unit`）→ convert 增量 → `ingest-bundled-datasets.sh`（非 full deploy）。
+
+### 5. 查看派生状态（34）
 
 ```bash
 STATION_ID=ego-001 data-lab-platform/scripts/ego-derive status --station ego-001 --json
@@ -83,13 +146,13 @@ STATION_ID=ego-001 data-lab-platform/scripts/ego-derive status --station ego-001
 
 期望：`phase=READY`，`mp4Ok=true`，`session.READY` 存在。
 
-### 5. 一键交付（34）
+### 6. 一键交付（34，可选）
 
 ```bash
 ego-deliver ego-001
 ```
 
-### 6. Viewer
+### 7. Viewer
 
 <http://10.10.10.34:8080/collection?station=ego-001> — 采集回放（四路 RGB MP4）
 
@@ -98,17 +161,16 @@ ego-deliver ego-001
 ## 验收脚本
 
 ```bash
+# 生产全套（v0.1.1 + Phase D + async + watcher timer）
+bash data-lab-platform/scripts/rc-ego-001-production.sh
+
+# 分项
+bash data-lab-platform/scripts/rc-ego-001-v0.1.1-preflight.sh
+bash data-lab-platform/scripts/rc-ego-001-p2-phase-d.sh
+bash data-lab-platform/scripts/rc-ego-001-p2-ops-async-preflight.sh
+
 # 容器 + JPEG ingest 基线
 RC_STATION=ego-001 data-lab-platform/scripts/rc-acceptance.sh
-
-# 平台 CI（无 130 SSH；有 stream 数据时才验 READY）
-RC_STATION=ego-001 data-lab-platform/scripts/ci-ego-platform.sh
-
-# 全链路 E2E（清场 + 短录 + 上传 + READY）
-bash data-lab-platform/scripts/ego-001-plan-b-e2e.sh
-
-# 仅上传 + READY
-RC_STATION=ego-001 RC_UPLOAD_LIMIT=3 data-lab-platform/scripts/rc-e2e-upload.sh
 ```
 
 ---

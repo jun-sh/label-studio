@@ -383,7 +383,11 @@
             var parquetReady = Boolean(prog.parquetReady);
             if (markers > 0 && markers < total) {
               textEl.textContent =
-                (ZH ? "处理中 " : "Processing ") + markers + "/" + total + (ZH ? " 段" : " segs");
+                (ZH ? "处理中 " : "Processing ") +
+                markers +
+                "/" +
+                total +
+                (ZH ? " 段（可先查看已就绪数据）" : " segs (view ready data)");
             } else if (parquetReady && !mp4Ok) {
               var sub = String(prog.subPhaseLabelZh || prog.subPhase || "");
               if (markers >= total && total > 0) {
@@ -460,11 +464,12 @@
               logsEl.textContent = "";
             }
           }
+          var parquetRows = Number(prog.parquetRows || 0);
+          var partialDatasetReady =
+            total > 0 && markers > 0 && markers < total && parquetRows > 0;
           if (
-            phase === "READY" &&
-            total > 0 &&
-            ready >= total &&
-            typeof g.__datalabCollectionSetDatasetReady === "function"
+            typeof g.__datalabCollectionSetDatasetReady === "function" &&
+            ((phase === "READY" && total > 0 && ready >= total) || partialDatasetReady)
           ) {
             g.__datalabCollectionSetDatasetReady(true);
           }

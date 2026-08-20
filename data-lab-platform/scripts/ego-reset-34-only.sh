@@ -13,7 +13,10 @@ PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$ROOT")/ego-hand-pipeline}"
 STREAM_HOST="${EGO_STREAM_HOST:-${ROOT}/data-storage/stream/${STATION}}"
 ARCHIVE_HOST="${ROOT}/data-storage/ego-archive/${STATION}"
 STREAM_DEV="${ROOT}/data-lab-platform/stream-data/${STATION}"
-COMPOSE_OVERLAY="${EGO_COMPOSE_OVERLAY:-data-lab-platform/docker-compose.v0.0.13.yml}"
+
+# shellcheck source=ego-production-defaults.sh
+source "${SCRIPT_DIR}/ego-production-defaults.sh"
+COMPOSE_OVERLAY="${EGO_COMPOSE_OVERLAY}"
 
 # shellcheck source=ego-reset-34-wipe-stream.sh
 source "${SCRIPT_DIR}/ego-reset-34-wipe-stream.sh"

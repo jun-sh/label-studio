@@ -44,7 +44,8 @@ container_node() {
     -e DERIVE_EXTRACT_BACKEND="${DERIVE_EXTRACT_BACKEND:-python}" \
     -e EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}" \
     -e DERIVE_MUX_MODE="${DERIVE_MUX_MODE:-full}" \
-    -e DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-fluent}" \
+    -e DERIVE_LAYOUT="${DERIVE_LAYOUT:-unit}" \
+    -e DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-legacy}" \
     -e DERIVE_VIDEO_EXPORT_BACKEND="${DERIVE_VIDEO_EXPORT_BACKEND:-auto}" \
     -e DERIVE_PARQUET_BACKEND=lerobot \
     "${INGEST_CONTAINER}" \
@@ -72,6 +73,9 @@ case "${CMD}" in
       export EGO_DATALAB_ROOT="${ROOT}"
       exec bash "${DERIVE_STATUS}" "$@"
     fi
+    ;;
+  rebuild-view|fsck)
+    container_node /app/ego-derive-run.mjs "${CMD}" --station "${STATION}" "$@"
     ;;
   -h|--help|help|"")
     usage

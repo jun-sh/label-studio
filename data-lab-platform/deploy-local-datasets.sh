@@ -5,10 +5,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
+SCRIPT_DIR="${ROOT}/data-lab-platform/scripts"
+# shellcheck source=ego-production-defaults.sh
+source "${SCRIPT_DIR}/ego-production-defaults.sh"
+
 SAMPLES_DIR="${ROOT}/data-storage/samples"
 
+# Match stream-ingest image — bind-mounted stream-ingest.mjs requires derive/ from the same build.
+if [ -z "${LEROBOT_IMAGE:-}" ]; then
+  LEROBOT_IMAGE="$(docker inspect data-lab-stream-ingest-1 --format '{{.Config.Image}}' 2>/dev/null || true)"
+fi
+export LEROBOT_IMAGE="${LEROBOT_IMAGE:-data-lab-lerobot-studio:${EGO_PRODUCTION_TAG}}"
+echo "==> LEROBOT_IMAGE=${LEROBOT_IMAGE}"
+
 compose() {
-  docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml "$@"
+  local -a files=(-f docker-compose.yml -f data-lab-platform/docker-compose.platform.yml -f data-lab-platform/docker-compose.storage.override.yml -f "${EGO_COMPOSE_OVERLAY}")
+  docker-compose "${files[@]}" "$@"
 }
 
 if [ ! -d "${SAMPLES_DIR}" ]; then

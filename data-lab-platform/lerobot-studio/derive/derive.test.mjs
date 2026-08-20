@@ -11,7 +11,6 @@ import {
   buildFrameMapForDerive,
   validateFrameMapContinuity,
   validateFrameMapPrerequisites,
-  writeFrameMap,
 } from "./frame-map.mjs";
 import { transitionSegmentState, SEGMENT_INGEST_STATUS } from "../ingest/segment-state.mjs";
 import { writeSessionMarker, SESSION_MARKERS } from "../session-markers.mjs";

@@ -29,6 +29,8 @@ export {
 export { runSessionMux, runFourCameraMux, writeMuxValidatedSnapshot } from "./mux-exec.mjs";
 
 export { runDerivePipeline } from "./pipeline.mjs";
+export { runDerivePipelineUnit, runUnitFsck } from "./pipeline-unit.mjs";
+export { deriveLayout } from "./station-context.mjs";
 
 export {
   runReadyGate,

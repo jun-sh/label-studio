@@ -2,6 +2,10 @@ import path from "node:path";
 
 export const DEFAULT_FPS = Number(process.env.STREAM_MUX_FPS || 30);
 
+export function deriveLayout() {
+  return String(process.env.DERIVE_LAYOUT || "unit").trim().toLowerCase();
+}
+
 export function stationRoot(stationId) {
   const streamRoot = process.env.STREAM_DATA_ROOT || "/srv/stream";
   return path.join(streamRoot, stationId);

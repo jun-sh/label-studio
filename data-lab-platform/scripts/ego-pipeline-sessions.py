@@ -176,6 +176,9 @@ DEFAULT_PIPELINE_BACKEND = "oak"
 
 
 def _session_parquet_ready(stream_root: Path, session_id: str) -> bool:
+    ready_marker = stream_root / "state" / "sessions" / session_id / "session.READY"
+    if ready_marker.is_file():
+        return True
     try:
         from ego_platform.lerobot.stream_ready import session_parquet_ready
 
@@ -256,6 +259,34 @@ def all_awaiting_parquet_ready(
     return all(_session_parquet_ready(stream_root, sid) for sid in awaiting)
 
 
+def derive_pending_sessions(stream_root: Path) -> list[str]:
+    """Sessions with DONE_UPLOAD but not yet READY (upload order)."""
+    sessions_dir = stream_root / "state" / "sessions"
+    if not sessions_dir.is_dir():
+        return []
+
+    pending: list[tuple[str, str]] = []
+    for sess_dir in sorted(sessions_dir.glob("sess_*")):
+        if not sess_dir.is_dir():
+            continue
+        sid = sess_dir.name
+        if not (sess_dir / "session.DONE_UPLOAD").is_file():
+            continue
+        if (sess_dir / "session.READY").is_file():
+            continue
+        marker = sess_dir / "session.DONE_UPLOAD"
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+            at = str(data.get("at") or data.get("uploadedAt") or sid)
+        except (OSError, json.JSONDecodeError):
+            at = sid
+        pending.append((at, sid))
+
+    return [sid for _, sid in sorted(pending)]
+
+
 def station_slug(pipe_root: Path, station: str) -> str:
     defaults = {
         "ego-001": "egodome",
@@ -285,6 +316,7 @@ def main() -> int:
         choices=[
             "pending",
             "awaiting",
+            "derive-pending",
             "all-parquet-ready",
             "has-data",
             "slug",
@@ -343,6 +375,10 @@ def main() -> int:
         return 0
     if args.command == "pending":
         for sid in pending_sessions(stream, pipe, args.station, backend=backend, datalab_root=datalab):
+            print(sid)
+        return 0
+    if args.command == "derive-pending":
+        for sid in derive_pending_sessions(stream):
             print(sid)
         return 0
     if args.command == "awaiting":

@@ -6,14 +6,24 @@
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 ```
 
-Compose 叠加文件（与当前运行容器一致）：
+Compose 叠加文件（EgoDome 生产栈，与当前运行容器一致）：
 
 ```bash
-COMPOSE="docker-compose \
+# 生产默认值见 scripts/ego-production-defaults.sh（当前 v0.1.1）
+source data-lab-platform/scripts/ego-production-defaults.sh
+
+COMPOSE="docker compose \
   -f docker-compose.yml \
   -f data-lab-platform/docker-compose.platform.yml \
-  -f data-lab-platform/docker-compose.storage.override.yml"
+  -f data-lab-platform/docker-compose.storage.override.yml \
+  -f ${EGO_COMPOSE_OVERLAY}"
+
+# async derive 模式需再加 async overlay（或读 .ego-derive-mode）：
+# COMPOSE="$COMPOSE -f ${EGO_COMPOSE_OVERLAY_ASYNC}"
 ```
+
+**注意：** 裸跑 `$COMPOSE up -d` 不带 overlay 会回退到 platform 默认（`:local` 镜像）。  
+生产部署请用：`bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh`
 
 | 组件 | 地址 | 说明 |
 |------|------|------|
@@ -75,6 +85,20 @@ curl -fsS http://10.10.10.34:8080/lerobot-annotate/ >/dev/null && echo OK
 
 ---
 
+## 一次性：EgoDome process-watcher 开机自启（34）
+
+130 使用 `ego-upload ego-001 --notify` 时，34 需 timer 消费 notify marker：
+
+```bash
+sudo bash data-lab-platform/scripts/install-ego-process-watcher-systemd.sh
+systemctl status data-lab-ego-process-watcher.timer
+journalctl -u data-lab-ego-process-watcher.service -n 20 --no-pager
+```
+
+同时启用开机 5 分钟后生产 preflight（`rc-ego-001-production.sh --boot-check`）。
+
+---
+
 ## 一次性：启用 SAM 开机自启
 
 **推荐（系统级，重启后无需登录）：**
@@ -131,7 +155,10 @@ systemctl --user daemon-reload
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 
 # 1) Docker 栈（容器已配置 unless-stopped，一般会自动起来）
-$COMPOSE up -d
+#    若需手工拉起生产栈（勿省略 overlay）：
+bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
+# 或仅确认已在跑：
+bash data-lab-platform/scripts/rc-ego-001-v0.1.1-preflight.sh
 
 # 2) SAM（已 enable systemd 时自动启动；否则手动）
 sudo systemctl start data-lab-sam-backend
@@ -222,7 +249,11 @@ docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
 | embodied-annotate Dockerfile | `data-lab-platform/embodied-annotate/Dockerfile` |
 | SAM 环境变量 | `ml-services/.env.sam`（从 `.env.sam.example` 复制） |
 | SAM 日志 / pid | `ml-services/sam-backend.log`、`ml-services/sam-backend.pid` |
-| 平台 Compose | `data-lab-platform/docker-compose.platform.yml` |
+| 平台 Compose 生产默认 | `data-lab-platform/scripts/ego-production-defaults.sh` |
+| Ego process-watcher systemd | `data-lab-platform/systemd/data-lab-ego-process-watcher.*` |
+| Ego watcher 安装 | `sudo bash data-lab-platform/scripts/install-ego-process-watcher-systemd.sh` |
+| Ego 生产验收 | `bash data-lab-platform/scripts/rc-ego-001-production.sh` |
+| 平台 Compose base | `data-lab-platform/docker-compose.platform.yml` |
 | 存储侧车 Compose | `data-lab-platform/docker-compose.storage.override.yml` |
 
 ---

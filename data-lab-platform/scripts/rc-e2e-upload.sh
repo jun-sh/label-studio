@@ -129,8 +129,8 @@ if [[ "${SKIP_UPLOAD}" != "1" ]]; then
 echo "waiting for ingest (max 180s)..."
 for _ in $(seq 1 36); do
   LOGS=$(docker logs "${CID}" 2>&1 | tail -120)
-  if echo "${LOGS}" | grep -qE "tarzst_segment_ok"; then
-    if echo "${LOGS}" | grep -q "session=${UPLOAD_SESSION}"; then
+  if echo "${LOGS}" | grep -qE "tarzst_segment_ok|ingest_segment_ok"; then
+    if echo "${LOGS}" | grep -qE "session=${UPLOAD_SESSION}|sessionId=${UPLOAD_SESSION}"; then
       break
     fi
   fi

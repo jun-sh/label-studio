@@ -34,6 +34,11 @@ import {
   findSegmentEntry,
 } from "./derive/frame-map.mjs";
 import {
+  resolveManifestDeriveMetrics,
+  verifyManifestMp4Coverage,
+  isUnitLayoutPublished,
+} from "./derive/manifest.mjs";
+import {
   attachEpisodeMetaToIndexEntry,
   bootstrapDatasetSchema,
   buildCanonicalFrameRow,
@@ -470,8 +475,12 @@ export function listSessionIdsOnDisk(root) {
 function resolveDeriveSegmentTotals(root, sessionId) {
   const rawTotal = sessionId ? countRawTarZstForSession(root, sessionId) : 0;
   const committed = sessionId ? countCommittedSegmentsForSession(root, sessionId) : 0;
-  const deriveMarkers = sessionId ? countDeriveMarkersForSession(root, sessionId) : 0;
   const total = Math.max(rawTotal, committed);
+  // fix2 / Phase0: session.READY is authoritative; legacy seg_*.ok.json optional
+  if (sessionId && hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) {
+    return { rawTotal, committed, deriveMarkers: total, total, markers: total };
+  }
+  const deriveMarkers = sessionId ? countDeriveMarkersForSession(root, sessionId) : 0;
   const markers =
     rawTotal > 0 ? deriveMarkers : Math.max(deriveMarkers, committed);
   return { rawTotal, committed, deriveMarkers, total, markers };
@@ -505,6 +514,29 @@ export function listRawSessionIds(root) {
     .filter((d) => !d.startsWith(".") && fs.statSync(path.join(rawRoot, d)).isDirectory());
 }
 
+/** Fast mp4Ok from rebuild-view cache; avoids per-episode ffprobe on derive-status. */
+function mp4OkFromCachedMuxValidation(muxVal, expectedMp4, sessionId = null) {
+  if (!muxVal?.ok || expectedMp4 <= 0) return false;
+  if (muxVal.expected_frames != null && Number(muxVal.expected_frames) !== expectedMp4) {
+    return false;
+  }
+  if (muxVal.layout === "unit" || muxVal.source === "manifest") {
+    const frameVals = Object.values(muxVal.frames || {});
+    return (
+      frameVals.length > 0 &&
+      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1)
+    );
+  }
+  if (sessionId && muxVal.sessionId === sessionId) {
+    const frameVals = Object.values(muxVal.frames || {});
+    return (
+      frameVals.length > 0 &&
+      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1)
+    );
+  }
+  return false;
+}
+
 /** Station-wide derive status (all sessions / episodes on disk). */
 export function computeStationDeriveStatusFromDisk(stationId) {
   const root = stationRoot(stationId);
@@ -519,19 +551,26 @@ export function computeStationDeriveStatusFromDisk(stationId) {
     committed += t.committed;
   }
   const total = Math.max(rawTotal, committed);
-  const metrics = resolveDeriveFrameMetrics(root);
+  const metrics = resolveDeriveFrameMetrics(root, stationId);
   const parquetRows = metrics.rowCount;
   const expectedMp4 = metrics.expectedMp4Frames;
+  const allSessionsReady =
+    sessionIds.length > 0 &&
+    sessionIds.every((sid) => hasSessionMarker(root, sid, SESSION_MARKERS.READY));
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
-  let mp4Ok = false;
-  if (muxVal.ok && expectedMp4 > 0) {
-    const frameVals = Object.values(muxVal.frames || {});
-    mp4Ok =
-      frameVals.length > 0 &&
-      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+  let mp4Ok = mp4OkFromCachedMuxValidation(muxVal, expectedMp4);
+  if (!mp4Ok && !allSessionsReady) {
+    if (verifyManifestMp4Coverage(root, stationId)) {
+      mp4Ok = true;
+    } else if (muxVal.ok && expectedMp4 > 0) {
+      const frameVals = Object.values(muxVal.frames || {});
+      mp4Ok =
+        frameVals.length > 0 &&
+        frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+    }
   }
   const parquetReady = total > 0 && markers >= total && parquetRows > 0;
-  const fullyReady = parquetReady && mp4Ok;
+  const fullyReady = allSessionsReady || (parquetReady && mp4Ok);
   let phase = "IDLE";
   if (fullyReady) phase = "READY";
   else if (total > 0) phase = "UPLOADED";
@@ -540,7 +579,7 @@ export function computeStationDeriveStatusFromDisk(stationId) {
     sessionId: null,
     phase,
     total,
-    markers,
+    markers: allSessionsReady ? total : markers,
     committedSegments: committed,
     rawSegments: rawTotal,
     parquetRows,
@@ -679,7 +718,11 @@ function readLeRobotDataParquetRows(root) {
  * Derive metrics for READY gate. Jsonl is source of truth; MP4 covers [min..max] global indices.
  * Incremental parquet append can drift from jsonl when frame_index is non-zero-based.
  */
-export function resolveDeriveFrameMetrics(root) {
+export function resolveDeriveFrameMetrics(root, stationId = null) {
+  const manifestMetrics = stationId ? resolveManifestDeriveMetrics(root, stationId) : null;
+  if (manifestMetrics) return manifestMetrics;
+  const manifestOnly = resolveManifestDeriveMetrics(root, stationIdFromRoot(root));
+  if (manifestOnly) return manifestOnly;
   const info = readJson(path.join(root, "meta", "info.json"), {});
   const marker = readJson(path.join(root, "live", "parquet_sync.json"), {});
   const parquetPath = path.join(root, "data", "chunk-000", "file-000.parquet");
@@ -789,19 +832,24 @@ export function computeDeriveStatusFromDisk(stationId, sessionId) {
     root,
     sessionId,
   );
-  const metrics = resolveDeriveFrameMetrics(root);
+  const metrics = resolveDeriveFrameMetrics(root, stationId);
   const parquetRows = metrics.rowCount;
   const muxVal = readJson(path.join(root, "live", "derive", "mux_validated.json"), {});
   const expectedMp4 = metrics.expectedMp4Frames;
-  let mp4Ok = false;
-  if (muxVal.ok && muxVal.sessionId === sessionId && expectedMp4 > 0) {
-    const frameVals = Object.values(muxVal.frames || {});
-    mp4Ok =
-      frameVals.length > 0 &&
-      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+  let mp4Ok = mp4OkFromCachedMuxValidation(muxVal, expectedMp4, sessionId);
+  const sessionReady = sessionId && hasSessionMarker(root, sessionId, SESSION_MARKERS.READY);
+  if (!mp4Ok && !sessionReady) {
+    if (verifyManifestMp4Coverage(root, stationId)) {
+      mp4Ok = true;
+    } else if (muxVal.ok && muxVal.sessionId === sessionId && expectedMp4 > 0) {
+      const frameVals = Object.values(muxVal.frames || {});
+      mp4Ok =
+        frameVals.length > 0 &&
+        frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1);
+    }
   }
   const parquetReady = total > 0 && markers >= total && parquetRows > 0;
-  const fullyReady = parquetReady && mp4Ok;
+  const fullyReady = sessionReady || (parquetReady && mp4Ok);
   let phase = "IDLE";
   if (fullyReady) phase = "READY";
   else if (total > 0) phase = "UPLOADED";
@@ -810,7 +858,7 @@ export function computeDeriveStatusFromDisk(stationId, sessionId) {
     sessionId,
     phase,
     total,
-    markers,
+    markers: sessionReady ? total : markers,
     committedSegments: committed,
     rawSegments: rawTotal,
     parquetRows,
@@ -4064,8 +4112,18 @@ function runMux(stationId) {
   });
 }
 
+function hasUnitManifestPublished(root) {
+  const manifest = readJson(path.join(root, "manifest", "manifest.json"), {});
+  return Array.isArray(manifest.episodes) && manifest.episodes.length > 0;
+}
+
 function runParquetSync(stationId) {
   const root = stationRoot(stationId);
+  if (hasUnitManifestPublished(root)) {
+    syncEpisodesMetaOnly(stationId);
+    onSessionFinalizeParquetDone(stationId);
+    return;
+  }
   if (isStationImportActive(stationId)) {
     scheduleParquetSync(stationId);
     return;
@@ -4563,6 +4621,12 @@ export function resolveStreamFile(stationId, urlPath) {
 
   if (norm === "meta/info.json") {
     const canonicalPath = path.join(root, "meta", "info.json");
+    if (isUnitLayoutPublished(root)) {
+      if (fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile()) {
+        return canonicalPath;
+      }
+      return null;
+    }
     const viewer = viewerInfoPath(root);
     if (fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile()) {
       const canonical = readJson(canonicalPath, {});

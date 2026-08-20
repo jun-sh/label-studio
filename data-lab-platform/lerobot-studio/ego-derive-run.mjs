@@ -9,7 +9,7 @@ import { runDerivePipelineBlocking, pickPrimarySessionId } from "./derive-pipeli
 import { computeDeriveStatusFromDisk, stationRoot, streamLog } from "./stream-ingest.mjs";
 
 function parseArgs(argv) {
-  const args = { command: "run", station: "", session: "", muxOnly: false, json: false };
+  const args = { command: "run", station: "", session: "", muxOnly: false, json: false, repair: false };
   const rest = [...argv];
   if (rest[0] && !rest[0].startsWith("-")) {
     args.command = rest.shift();
@@ -20,6 +20,7 @@ function parseArgs(argv) {
     else if (a === "--session") args.session = rest[++i] || "";
     else if (a === "--mux-only") args.muxOnly = true;
     else if (a === "--json") args.json = true;
+    else if (a === "--repair") args.repair = true;
     else if (a === "--help" || a === "-h") args.help = true;
   }
   if (!args.station) {
@@ -34,8 +35,12 @@ function printHelp() {
 Usage:
   node ego-derive-run.mjs run --station <id> [--session <sess>] [--mux-only] [--json]
 
+  node ego-derive-run.mjs rebuild-view --station <id> [--json]
+  node ego-derive-run.mjs fsck --station <id> [--repair] [--json]
+
 Environment:
   STREAM_DATA_ROOT   default /srv/stream
+  DERIVE_LAYOUT      unit (default) | legacy (deprecated, ignored)
   DERIVE_EXTRACT_BACKEND / DERIVE_MUX_BACKEND / DERIVE_PARQUET_BACKEND
 
 Markers written under state/sessions/<session>/:
@@ -118,6 +123,29 @@ async function cmdStatus(args) {
   }
 }
 
+async function cmdRebuildView(args) {
+  const stationId = args.station.trim();
+  const root = stationRoot(stationId);
+  const { runDerivePipelineUnit } = await import("./derive/pipeline-unit.mjs");
+  const result = await runDerivePipelineUnit(stationId, { rebuildViewOnly: true });
+  if (args.json) console.log(JSON.stringify(result, null, 2));
+  else console.log(`[ego-derive] rebuild-view ${stationId} episodes=${result.manifest?.episodes?.length ?? 0}`);
+  process.exit(result.ok ? 0 : 1);
+}
+
+async function cmdFsck(args) {
+  const stationId = args.station.trim();
+  const root = stationRoot(stationId);
+  const { runUnitFsck } = await import("./derive/pipeline-unit.mjs");
+  const result = await runUnitFsck(root, stationId, { repair: Boolean(args.repair) });
+  if (args.json) console.log(JSON.stringify(result, null, 2));
+  else {
+    console.log(`[ego-derive] fsck ${stationId} ok=${result.ok} issues=${result.issues.length}`);
+    for (const issue of result.issues) console.log(`  - ${issue.session_id}: ${issue.issue}`);
+  }
+  process.exit(result.ok ? 0 : 1);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -130,6 +158,14 @@ async function main() {
   }
   if (args.command === "run") {
     await cmdRun(args);
+    return;
+  }
+  if (args.command === "rebuild-view") {
+    await cmdRebuildView(args);
+    return;
+  }
+  if (args.command === "fsck") {
+    await cmdFsck(args);
     return;
   }
   printHelp();

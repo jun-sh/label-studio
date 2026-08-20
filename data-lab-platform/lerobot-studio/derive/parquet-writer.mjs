@@ -119,14 +119,28 @@ export function updateInfoFrameMetrics(root, frameMap) {
   fs.renameSync(tmp, infoPath);
 }
 
-export function writeMainTableFromSegments(root, stationId, frameMap, segmentExtracts) {
-  const rows = buildMainTableRows(frameMap, segmentExtracts);
+export function writeMainTableFromSegments(root, stationId, frameMap, segmentExtracts, options = {}) {
+  const { append = false } = options;
+  const newRows = buildMainTableRows(frameMap, segmentExtracts);
+  let rows = newRows;
+  if (append) {
+    const jsonlPath = mainJsonlPath(root);
+    const existing = fs.existsSync(jsonlPath) ? readJsonl(jsonlPath) : [];
+    const byIndex = new Map(existing.map((row) => [Number(row.frame_index), row]));
+    for (const row of newRows) {
+      byIndex.set(Number(row.frame_index), row);
+    }
+    rows = Array.from(byIndex.values()).sort(
+      (a, b) => Number(a.frame_index) - Number(b.frame_index),
+    );
+  }
   const jsonlPath = writeMainJsonl(root, rows);
   const alignReport = alignMainTableImu(root, jsonlPath);
   updateInfoFrameMetrics(root, frameMap);
   syncMainParquet(root, stationId);
   return {
     rows: rows.length,
+    rowsAdded: newRows.length,
     jsonlPath,
     alignReport,
   };

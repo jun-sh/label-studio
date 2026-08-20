@@ -446,6 +446,12 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict, info
     duration = length / fps if fps > 0 else 0.0
     task = format_episode_list_task(ep, full_task)
     ep_index = int(ep.get("episode_index", 0))
+    per_file = bool(ep.get("per_episode_file"))
+    file_index = int(ep.get("data/file_index", ep.get("file_index", ep_index if per_file else 0)))
+    if per_file:
+        from_idx = 0
+        to_idx = length
+        duration = length / fps if fps > 0 else 0.0
     ep_meta = episode_meta_for_index_entry(ep, meta_defaults)
     row: dict = {
         "episode_index": ep_index,
@@ -453,10 +459,10 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict, info
         "task_index": ep_index,
         "dataset_from_index": from_idx,
         "dataset_to_index": to_idx,
-        "data/chunk_index": 0,
-        "data/file_index": 0,
-        "chunk_index": 0,
-        "file_index": 0,
+        "data/chunk_index": int(ep.get("data/chunk_index", 0)),
+        "data/file_index": file_index,
+        "chunk_index": int(ep.get("chunk_index", 0)),
+        "file_index": file_index,
     }
     for key in EPISODE_META_STRING_COLS:
         row[key] = ep_meta.get(key, EPISODE_META_DEFAULTS[key])
@@ -464,10 +470,16 @@ def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict, info
         val = ep_meta.get(key)
         row[key] = float(val) if val is not None else float("nan")
     for key in video_keys_from_info(info):
-        row[f"videos/{key}/chunk_index"] = 0
-        row[f"videos/{key}/file_index"] = 0
-        row[f"videos/{key}/from_timestamp"] = float(from_idx) / fps if fps > 0 else 0.0
-        row[f"videos/{key}/to_timestamp"] = float(to_idx) / fps if fps > 0 else duration
+        v_chunk = int(ep.get(f"videos/{key}/chunk_index", 0))
+        v_file = int(ep.get(f"videos/{key}/file_index", file_index))
+        row[f"videos/{key}/chunk_index"] = v_chunk
+        row[f"videos/{key}/file_index"] = v_file
+        if per_file:
+            row[f"videos/{key}/from_timestamp"] = 0.0
+            row[f"videos/{key}/to_timestamp"] = duration
+        else:
+            row[f"videos/{key}/from_timestamp"] = float(from_idx) / fps if fps > 0 else 0.0
+            row[f"videos/{key}/to_timestamp"] = float(to_idx) / fps if fps > 0 else duration
     row["tasks"] = task
     row["_duration"] = duration
     return row
@@ -643,6 +655,52 @@ def sync_lerobot_info_frame_counts(root: Path, info: dict, episodes: list[dict])
     (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
 
+def unit_manifest_published(root: Path) -> dict | None:
+    manifest = read_json(root / "manifest" / "manifest.json", {})
+    episodes = manifest.get("episodes") if isinstance(manifest, dict) else None
+    if not isinstance(episodes, list) or not episodes:
+        return None
+    return manifest
+
+
+def episodes_from_unit_manifest(manifest: dict) -> list[dict]:
+    out: list[dict] = []
+    for ep in manifest.get("episodes") or []:
+        ep_index = int(ep.get("episode_index", len(out)))
+        length = int(ep.get("frames") or 0)
+        out.append(
+            {
+                "episode_index": ep_index,
+                "length": length,
+                # Per-episode L2 files use local row indices 0..length-1 (not global concat).
+                "dataset_from_index": 0,
+                "dataset_to_index": length,
+                "data/chunk_index": 0,
+                "data/file_index": ep_index,
+                "file_index": ep_index,
+                "per_episode_file": True,
+                "title": str(ep.get("session_id") or ""),
+            }
+        )
+    return out
+
+
+def sync_unit_manifest_info(root: Path, manifest: dict) -> int:
+    total_frames = int(manifest.get("total_frames") or 0)
+    episodes = episodes_from_unit_manifest(manifest)
+    info = read_json(root / "meta" / "info.json", {})
+    info["total_frames"] = total_frames
+    info["ingest_row_count"] = total_frames
+    info["total_episodes"] = len(episodes)
+    if total_frames > 0:
+        info["frame_index_min"] = 0
+        info["frame_index_max"] = total_frames - 1
+    if episodes:
+        info["splits"] = {"train": f"0:{len(episodes)}"}
+    (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    return total_frames
+
+
 def main() -> int:
     argv = [a for a in sys.argv[1:] if a]
     viewer_scaffold = "--viewer-scaffold" in argv
@@ -668,7 +726,14 @@ def main() -> int:
         created_at=live.get("startedAt"),
     )
     total_frames = int(info.get("total_frames") or 0)
-    episodes = load_episodes_index(root)
+    unit_manifest = unit_manifest_published(root)
+    if unit_manifest:
+        episodes = episodes_from_unit_manifest(unit_manifest)
+        total_frames = sync_unit_manifest_info(root, unit_manifest)
+        episodes_key = len(episodes)
+    else:
+        episodes = load_episodes_index(root)
+        episodes_key = len(episodes)
     jsonl_path = root / "data" / "chunk-000" / "file-000.jsonl"
     try:
         jsonl_mtime = int(jsonl_path.stat().st_mtime) if jsonl_path.is_file() else 0
@@ -678,17 +743,19 @@ def main() -> int:
     marker = read_json(marker_path, {})
     episodes_key = len(episodes)
 
-    lerobot_owned = lerobot_owns_data(root)
+    lerobot_owned = lerobot_owns_data(root) or unit_manifest is not None
     write_tasks_jsonl(root, episodes, task, skip_tasks_parquet=lerobot_owned)
     ensure_annotations_skeleton(root)
-    if not lerobot_owned:
+    if not lerobot_owned and not meta_only:
         write_episodes_parquet(root, episodes, fps, task)
         rows = read_jsonl(jsonl_path)
         if rows:
             write_data_parquet(root, rows, fps, episodes)
             total_frames = len(rows)
-    if lerobot_owned:
+    if lerobot_owned and not unit_manifest:
         sync_lerobot_info_frame_counts(root, info, episodes)
+    elif unit_manifest:
+        write_episodes_parquet(root, episodes, fps, task)
     if meta_only:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_path.write_text(

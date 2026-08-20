@@ -1,4 +1,5 @@
 # v0.0.13-fix2 overlay: v0.0.13-fix1 + IMU accel/gyro pair tolerance (3ms).
+# Grayscale P0: SINGLE_EPISODE=0 (one capture session = one training sample).
 services:
   stream-ingest:
     image: data-lab-lerobot-studio:v0.0.13-fix2
@@ -14,7 +15,7 @@ services:
       - DERIVE_VIDEO_EXPORT_BACKEND=auto
       - DERIVE_ASYNC=0
       - DERIVE_ASYNC_EGO_001=0
-      - STREAM_SESSION_SINGLE_EPISODE=1
+      - STREAM_SESSION_SINGLE_EPISODE=0
 
   derive-worker:
     image: data-lab-lerobot-studio:v0.0.13-fix2
@@ -26,7 +27,7 @@ services:
       - DERIVE_STANDALONE=1
       - DERIVE_VIDEO_EXPORT_BACKEND=auto
       - DERIVE_ASYNC=0
-      - STREAM_SESSION_SINGLE_EPISODE=1
+      - STREAM_SESSION_SINGLE_EPISODE=0
 
   lerobot:
     image: data-lab-lerobot-studio:v0.0.13-fix2

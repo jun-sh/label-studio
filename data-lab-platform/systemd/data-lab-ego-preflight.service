@@ -1,0 +1,19 @@
+[Unit]
+Description=Data Lab EgoDome production preflight (post-boot sanity)
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/RELEASE-v0.1.1.md
+After=network-online.target docker.service data-lab-ego-process-watcher.timer
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=user01
+Group=user01
+WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+Environment=STATION_ID=ego-001
+ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/scripts/rc-ego-001-production.sh --boot-check
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=data-lab-ego-preflight
+
+[Install]
+WantedBy=multi-user.target

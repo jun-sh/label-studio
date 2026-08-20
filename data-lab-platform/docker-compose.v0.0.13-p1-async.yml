@@ -1,0 +1,11 @@
+# P-Ops-2 overlay: async derive-worker watches session.DONE_UPLOAD (use after p1.yml).
+services:
+  stream-ingest:
+    environment:
+      - DERIVE_ASYNC=1
+      - DERIVE_ASYNC_EGO_001=1
+
+  derive-worker:
+    environment:
+      - DERIVE_ASYNC=1
+      - DERIVE_ASYNC_EGO_001=1

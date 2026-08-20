@@ -846,6 +846,23 @@ export function resumeDeriveQueuesForAllStations() {
   }
 }
 
+/** Queue host-side ego-process via process-notify.pending.json (P-Ops-3). */
+export function handleProcessNotify(stationId, meta = {}) {
+  const root = stationRoot(stationId);
+  const stateDir = path.join(root, "state");
+  ensureDir(stateDir);
+  const marker = path.join(stateDir, "process-notify.pending.json");
+  const payload = {
+    stationId,
+    at: new Date().toISOString(),
+    source: meta.source || "process-notify",
+    ...meta,
+  };
+  writeJsonAtomic(marker, payload);
+  streamLog(stationId, "process_notify_queued", { at: payload.at, source: payload.source });
+  return { ok: true, queued: true, stationId, at: payload.at };
+}
+
 export {
   computeDeriveStatusFromDisk,
   scheduleDerivePipeline,

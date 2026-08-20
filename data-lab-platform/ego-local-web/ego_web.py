@@ -51,6 +51,7 @@ CHECKPOINT_PATH = Path(
         f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments/checkpoint.json",
     )
 )
+STATIC_ROOT = Path(__file__).resolve().parent / "static"
 SEGMENT_STORE_VERSION = 1
 DEFAULT_CAPTURE_TASK = os.environ.get(
     "EGO_DEFAULT_CAPTURE_TASK",
@@ -480,7 +481,7 @@ def _build_status() -> dict[str, Any]:
         if rec == "active" and frames_writing:
             msg = "正在停止采集，请稍候…"
         elif rec == "deactivating":
-            msg = "正在写入磁盘，请勿断电（段数已不再增加）"
+            msg = "正在写入磁盘，请勿断电"
         else:
             msg = "正在保存数据，请勿断电…"
     elif active and frames_writing:
@@ -642,23 +643,22 @@ INDEX_HTML = """<!DOCTYPE html>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#EEF4FF" />
+  <meta name="theme-color" content="#f3f4f6" />
   <title>EGO 采集</title>
   <style>
     :root {
-      --bg: #f4f3ef;
-      --text: #1a1a18;
-      --muted: #6b6b66;
-      --idle-bg: #EEF4FF;
-      --idle-text: #1E3A8A;
-      --idle-border: #BFDBFE;
-      --rec: #1f8a4c;
-      --err: #c0392b;
-      --warn: #b45309;
-      --btn-idle: #2563eb;
-      --btn-stop: #dc2626;
+      --bg: #f3f4f6;
+      --card: #fff;
+      --text: #111827;
+      --muted: #6b7280;
+      --blue: #2563eb;
+      --blue-soft: #eef4ff;
+      --green: #16a34a;
+      --orange: #f59e0b;
+      --err: #dc2626;
+      --warn: #d97706;
       --radius: 16px;
-      --shadow: 0 8px 28px rgba(0,0,0,.12);
+      --shadow: 0 2px 12px rgba(15, 23, 42, .08);
     }
     * { box-sizing: border-box; }
     html, body {
@@ -668,152 +668,177 @@ INDEX_HTML = """<!DOCTYPE html>
       min-height: 100dvh;
     }
     .app {
-      max-width: 480px; margin: 0 auto;
-      padding: 12px 16px calc(20px + env(safe-area-inset-bottom));
-      display: flex; flex-direction: column; gap: 16px;
+      max-width: 420px; margin: 0 auto;
+      padding: 14px 16px calc(24px + env(safe-area-inset-bottom));
+      display: flex; flex-direction: column; gap: 14px;
     }
-    .status {
+    .card {
+      background: var(--card);
       border-radius: var(--radius);
-      padding: 0 16px;
-      min-height: 96px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
       box-shadow: var(--shadow);
-      transition: background .25s, color .25s;
     }
-    .status[data-state="idle"] {
-      background: var(--idle-bg);
-      color: var(--idle-text);
-      border: 1px solid var(--idle-border);
+    .status-card {
+      padding: 16px 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
     }
-    .status[data-state="recording"] { background: var(--rec); color: #fff; padding: 18px 16px; }
-    .status[data-state="starting"],
-    .status[data-state="warming"],
-    .status[data-state="stopping"] {
-      background: #b8860b;
-      color: #fff;
-      padding: 18px 16px;
+    .status-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      margin-top: 6px; flex-shrink: 0;
+      background: var(--orange);
+      transition: background .25s;
     }
-    .status[data-state="error"] { background: var(--err); color: #fff; padding: 18px 16px; }
+    .status-card[data-link="live"] .status-dot { background: var(--green); }
+    .status-card[data-link="busy"] .status-dot { background: var(--orange); animation: pulse 1.2s ease infinite; }
+    .status-card[data-link="error"] .status-dot { background: var(--err); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+    .status-body { flex: 1; min-width: 0; }
     .status-title {
-      font-size: 1.5rem;
-      font-weight: 700;
-      letter-spacing: .04em;
-      line-height: 1.3;
-      width: 100%;
-      margin: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .status[data-state="idle"] .status-title {
-      font-size: 1.6rem;
-      line-height: 1.25;
-      padding: 0;
-    }
-  /* 待机无副文案：主标题在条内垂直正中 */
-    .status[data-state="idle"].status--solo .status-title {
-      min-height: 96px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      font-size: 1.125rem; font-weight: 700; line-height: 1.35;
+      display: flex; align-items: center; gap: 8px;
     }
     .status-sub {
-      margin: 0;
-      padding: 0 0 14px;
-      font-size: .95rem;
-      width: 100%;
+      margin: 4px 0 0; font-size: .875rem; color: var(--muted); line-height: 1.4;
     }
-    .status-sub:empty {
-      display: none;
-      min-height: 0;
-      padding: 0;
+    .status-sub.live { color: var(--green); font-weight: 600; }
+    .status-sub.err { color: var(--err); }
+    .status-wifi {
+      flex-shrink: 0; width: 28px; height: 28px;
+      color: #9ca3af; transition: color .25s;
     }
-    .status[data-state="idle"] .status-sub:not(:empty) {
-      color: #3B5B9A;
-      opacity: .9;
-      padding-bottom: 16px;
-    }
-    .status:not([data-state="idle"]) .status-sub {
-      margin-top: 6px;
-      padding-bottom: 14px;
-      opacity: .95;
-    }
+    .status-card[data-link="live"] .status-wifi { color: var(--blue); }
     .spinner {
-      display: inline-block; width: 18px; height: 18px;
-      border: 2px solid rgba(255,255,255,.35);
-      border-top-color: #fff; border-radius: 50%;
-      animation: spin .8s linear infinite;
-      vertical-align: -3px; margin-right: 6px;
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid #d1d5db; border-top-color: var(--blue);
+      border-radius: 50%; animation: spin .75s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .preview-wrap {
-      background: #111; border-radius: var(--radius);
-      overflow: hidden; aspect-ratio: 4/3;
-      position: relative; box-shadow: var(--shadow);
+      background: var(--blue-soft);
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16 / 10;
+      position: relative;
+      box-shadow: var(--shadow);
     }
     .preview-wrap img {
       width: 100%; height: 100%; object-fit: cover; display: block;
-      background: #222;
+      background: var(--blue-soft);
     }
     .preview-placeholder {
       position: absolute; inset: 0;
-      display: flex; align-items: center; justify-content: center;
-      color: #aaa; font-size: .95rem; padding: 16px; text-align: center;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px; padding: 20px; text-align: center;
+      color: #64748b;
     }
+    .preview-placeholder svg { opacity: .55; }
+    .preview-placeholder span { font-size: .85rem; line-height: 1.45; max-width: 220px; }
+    .preview-overlay {
+      position: absolute; z-index: 2;
+      background: rgba(255,255,255,.92);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: .8rem; font-weight: 600;
+      color: var(--text);
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .preview-overlay.top-left { top: 12px; left: 12px; font-variant-numeric: tabular-nums; }
+    .preview-overlay.top-right {
+      top: 12px; right: 12px;
+      display: flex; align-items: center; gap: 6px;
+      font-size: .75rem; font-weight: 700;
+    }
+    .rec-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--err);
+      animation: recblink 1s step-end infinite;
+    }
+    @keyframes recblink { 50% { opacity: .2; } }
 
     .btn-main {
-      width: 100%; min-height: 64px;
+      width: 100%; min-height: 56px;
       border: none; border-radius: 999px;
-      font-size: 1.35rem; font-weight: 700;
+      font-size: 1.125rem; font-weight: 700;
       color: #fff; cursor: pointer;
-      box-shadow: var(--shadow);
-      transition: transform .1s, opacity .2s, background .2s;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, .35);
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      transition: transform .1s, opacity .2s, background .2s, box-shadow .2s;
       -webkit-tap-highlight-color: transparent;
       touch-action: manipulation;
     }
     .btn-main:active:not(:disabled) { transform: scale(.98); }
-    .btn-main:disabled { opacity: .55; cursor: not-allowed; }
-    .btn-main[data-mode="start"] { background: var(--btn-idle); }
-    .btn-main[data-mode="stop"] { background: var(--btn-stop); }
+    .btn-main:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+    .btn-main[data-mode="start"] { background: var(--blue); }
+    .btn-main[data-mode="stop"] {
+      background: var(--err);
+      box-shadow: 0 4px 14px rgba(220, 38, 38, .35);
+    }
+    .btn-icon { width: 22px; height: 22px; flex-shrink: 0; }
 
     .info {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
     }
     .info-card {
-      background: #fff; border-radius: 12px; padding: 12px 14px;
-      box-shadow: 0 2px 10px rgba(0,0,0,.06);
+      background: var(--card); border-radius: var(--radius);
+      padding: 14px 16px; box-shadow: var(--shadow);
     }
-    .info-label { font-size: .78rem; color: var(--muted); }
-    .info-value { font-size: 1.1rem; font-weight: 600; margin-top: 4px; }
+    .info-label { font-size: .8rem; color: var(--muted); }
+    .info-value {
+      font-size: 1.65rem; font-weight: 700; margin-top: 6px;
+      color: var(--blue); font-variant-numeric: tabular-nums;
+    }
     .info-value.warn { color: var(--warn); }
 
-    .hint {
-      font-size: .8rem; color: var(--muted); text-align: center; line-height: 1.5;
-      padding: 0 8px;
+    .hints { display: flex; flex-direction: column; gap: 8px; padding: 4px 6px 0; }
+    .hint-row {
+      display: flex; align-items: flex-start; gap: 8px;
+      font-size: .78rem; color: var(--muted); line-height: 1.45;
     }
+    .hint-row svg { flex-shrink: 0; margin-top: 1px; color: #9ca3af; }
   </style>
 </head>
 <body>
   <div class="app">
-    <header class="status" id="statusBar" data-state="idle">
-      <div class="status-title" id="statusTitle">
-        <span class="spinner" id="statusSpinner" hidden></span><span id="statusTitleText">设备待机中</span>
+    <header class="card status-card" id="statusCard" data-link="idle">
+      <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+      <div class="status-body">
+        <div class="status-title" id="statusTitle">
+          <span class="spinner" id="statusSpinner" hidden></span>
+          <span id="statusTitleText">设备待机中</span>
+        </div>
+        <p class="status-sub" id="statusSub">等待连接</p>
       </div>
-      <div class="status-sub" id="statusSub"></div>
+      <svg class="status-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.42a6 6 0 0 1 7 0"/><path d="M12 20h.01"/>
+      </svg>
     </header>
 
     <section class="preview-wrap" aria-label="实时预览">
       <img id="previewImg" alt="" hidden />
-      <div class="preview-placeholder" id="previewPh">开始录制后显示实时画面</div>
+      <div class="preview-placeholder" id="previewPh">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.618v6.764a1 1 0 0 1-1.447.894L15 14M5 18h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2z"/>
+        </svg>
+        <span>开始录制后显示实时画面</span>
+      </div>
+      <div class="preview-overlay top-left" id="previewTimer" hidden>00:00:00</div>
+      <div class="preview-overlay top-right" id="previewRec" hidden>
+        <span class="rec-dot"></span>REC
+      </div>
     </section>
 
-    <button type="button" class="btn-main" id="mainBtn" data-mode="start">开始录制</button>
+    <button type="button" class="btn-main" id="mainBtn" data-mode="start">
+      <svg class="btn-icon" id="btnIconStart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      <svg class="btn-icon" id="btnIconStop" viewBox="0 0 24 24" fill="currentColor" hidden aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1"/>
+      </svg>
+      <span id="mainBtnLabel">开始录制</span>
+    </button>
 
     <section class="info">
       <div class="info-card">
@@ -822,96 +847,133 @@ INDEX_HTML = """<!DOCTYPE html>
       </div>
       <div class="info-card">
         <div class="info-label">已生成段数</div>
-        <div class="info-value" id="segmentCount">0</div>
+        <div class="info-value" id="segmentCount">0 段</div>
       </div>
     </section>
 
-    <p class="hint">结束录制前请保持与本设备的 WiFi 连接。<br />录制过程中手机断开不影响数据写入。</p>
+    <div class="hints">
+      <div class="hint-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.42a6 6 0 0 1 7 0"/><path d="M12 20h.01"/>
+        </svg>
+        <span>录制前请保持 WiFi 连接</span>
+      </div>
+      <div class="hint-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+        </svg>
+        <span>手机断开不影响数据写入</span>
+      </div>
+    </div>
   </div>
   <script>
 (function () {
-  var statusBar = document.getElementById("statusBar");
-  var statusTitle = document.getElementById("statusTitle");
+  var statusCard = document.getElementById("statusCard");
   var statusSpinner = document.getElementById("statusSpinner");
   var statusTitleText = document.getElementById("statusTitleText");
   var statusSub = document.getElementById("statusSub");
   var mainBtn = document.getElementById("mainBtn");
+  var mainBtnLabel = document.getElementById("mainBtnLabel");
+  var btnIconStart = document.getElementById("btnIconStart");
+  var btnIconStop = document.getElementById("btnIconStop");
   var previewImg = document.getElementById("previewImg");
   var previewPh = document.getElementById("previewPh");
+  var previewTimer = document.getElementById("previewTimer");
+  var previewRec = document.getElementById("previewRec");
   var storageFree = document.getElementById("storageFree");
   var segmentCount = document.getElementById("segmentCount");
 
   var pollTimer = null;
-  var previewTimer = null;
+  var previewPollTimer = null;
   var previewPollMs = __PREVIEW_POLL_MS__;
   var actionInFlight = false;
   var previewWantLive = false;
   var previewHasFrame = false;
 
   function formatDuration(sec) {
-    var m = Math.floor(sec / 60);
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
     var s = sec % 60;
-    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+    function pad2(n) { return (n < 10 ? "0" : "") + n; }
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s);
   }
 
-  function setStatusTitle(showSpinner, text) {
-    statusSpinner.hidden = !showSpinner;
-    statusTitleText.textContent = text;
+  function setBtnMode(mode, label, disabled) {
+    mainBtn.setAttribute("data-mode", mode);
+    mainBtnLabel.textContent = label;
+    btnIconStart.hidden = mode !== "start";
+    btnIconStop.hidden = mode !== "stop";
+    if (typeof disabled === "boolean") mainBtn.disabled = disabled;
+  }
+
+  function setStatusLink(link) {
+    statusCard.setAttribute("data-link", link);
+  }
+
+  function setHeader(title, sub, opts) {
+    opts = opts || {};
+    statusSpinner.hidden = !opts.spinner;
+    statusTitleText.textContent = title;
+    statusSub.textContent = sub || "";
+    statusSub.className = "status-sub" + (opts.subClass ? " " + opts.subClass : "");
+  }
+
+  function updatePreviewOverlays(st, data) {
+    var showRec = st === "recording" && (data.frames_writing || (data.duration || 0) > 0);
+    var showTimer = showRec || st === "warming";
+    previewTimer.hidden = !showTimer;
+    previewRec.hidden = !showRec;
+    if (showTimer) {
+      previewTimer.textContent = formatDuration(data.duration || 0);
+    }
   }
 
   function applyStatus(data) {
     var st = data.state || "idle";
-    statusBar.setAttribute("data-state", st);
 
     if (st === "idle") {
-      setStatusTitle(false, "设备待机中");
-      statusSub.textContent = data.msg || "";
-      mainBtn.textContent = "开始录制";
-      mainBtn.setAttribute("data-mode", "start");
-      if (data.msg) {
-        statusBar.classList.remove("status--solo");
-      } else {
-        statusBar.classList.add("status--solo");
-      }
-      stopIdlePreview();
+      setStatusLink("idle");
+      setHeader("设备待机中", data.msg || "等待连接", { subClass: data.msg ? "err" : "" });
+      setBtnMode("start", "开始录制", false);
       stopPreview();
       previewHasFrame = false;
       showPreviewPlaceholder("开始录制后显示实时画面");
+      updatePreviewOverlays(st, data);
     } else if (st === "warming") {
-      statusBar.classList.remove("status--solo");
-      setStatusTitle(true, "相机初始化中");
-      statusSub.textContent = data.msg || "开始写入数据后计时";
-      mainBtn.textContent = "结束录制";
-      mainBtn.setAttribute("data-mode", "stop");
-    } else if (st === "recording") {
-      statusBar.classList.remove("status--solo");
-      setStatusTitle(false, "正在录制中");
-      statusSub.textContent = formatDuration(data.duration || 0);
-      mainBtn.textContent = "结束录制";
-      mainBtn.setAttribute("data-mode", "stop");
-    } else if (st === "starting") {
-      statusBar.classList.remove("status--solo");
-      setStatusTitle(true, "正在启动相机");
-      statusSub.textContent = data.msg || "请稍候，约需数秒";
-      mainBtn.disabled = true;
-      stopIdlePreview();
+      setStatusLink("live");
+      setHeader("设备已连接", "正在录制中", { subClass: "live" });
+      setBtnMode("stop", "结束录制", false);
+      updatePreviewOverlays(st, data);
       startPreview();
+    } else if (st === "recording") {
+      setStatusLink("live");
+      setHeader("设备已连接", "正在录制中", { subClass: "live" });
+      setBtnMode("stop", "结束录制", false);
+      updatePreviewOverlays(st, data);
+      startPreview();
+    } else if (st === "starting") {
+      setStatusLink("busy");
+      setHeader("设备连接中", data.msg || "正在启动相机…", { spinner: true });
+      setBtnMode("start", "启动中…", true);
+      stopPreview();
+      updatePreviewOverlays(st, data);
     } else if (st === "stopping") {
-      statusBar.classList.remove("status--solo");
-      setStatusTitle(true, "正在保存数据");
-      statusSub.textContent = data.msg || "请勿断电";
-      mainBtn.textContent = "保存中…";
-      mainBtn.setAttribute("data-mode", "saving");
-      mainBtn.disabled = true;
-      stopIdlePreview();
+      setStatusLink("busy");
+      setHeader("正在保存数据", data.msg || "请勿断电", { spinner: true });
+      setBtnMode("stop", "保存中…", true);
       stopPreview();
       showPreviewPlaceholder("正在写入磁盘，请勿断电…");
+      updatePreviewOverlays(st, data);
     } else if (st === "error") {
-      statusBar.classList.remove("status--solo");
-      setStatusTitle(false, "出现问题");
-      statusSub.textContent = data.msg || "请稍后重试";
-      mainBtn.textContent = data.capture_active ? "结束录制" : "开始录制";
-      mainBtn.setAttribute("data-mode", data.capture_active ? "stop" : "start");
+      setStatusLink("error");
+      setHeader("出现问题", data.msg || "请稍后重试", { subClass: "err" });
+      if (data.capture_active) {
+        setBtnMode("stop", "结束录制", false);
+      } else {
+        setBtnMode("start", "开始录制", false);
+      }
+      stopPreview();
+      updatePreviewOverlays(st, data);
     }
 
     if (st !== "starting" && st !== "stopping" && !actionInFlight) {
@@ -920,14 +982,13 @@ INDEX_HTML = """<!DOCTYPE html>
 
     storageFree.textContent = data.storage_free || "—";
     storageFree.className = "info-value" + (data.storage_warn ? " warn" : "");
-    segmentCount.textContent = String(data.segment_count != null ? data.segment_count : 0);
+    var seg = data.segment_count != null ? data.segment_count : 0;
+    segmentCount.textContent = String(seg) + " 段";
 
     if (st === "recording" || st === "warming") {
-      stopIdlePreview();
       startPreview();
     } else if (st !== "starting") {
       stopPreview();
-      if (st !== "idle" && st !== "stopping") stopIdlePreview();
     }
   }
 
@@ -936,18 +997,16 @@ INDEX_HTML = """<!DOCTYPE html>
       .then(function (r) { return r.json(); })
       .then(applyStatus)
       .catch(function () {
-        statusBar.setAttribute("data-state", "error");
-        setStatusTitle(false, "无法连接设备");
-        statusSub.textContent = "请确认已连接 EGO WiFi";
+        setStatusLink("error");
+        setHeader("无法连接设备", "请确认已连接采集热点", { subClass: "err" });
+        setBtnMode("start", "开始录制", false);
       });
   }
 
   function showPreviewPlaceholder(text) {
-    previewPh.textContent = text;
+    previewPh.querySelector("span").textContent = text;
     previewPh.hidden = false;
-    if (!previewHasFrame) {
-      previewImg.hidden = true;
-    }
+    if (!previewHasFrame) previewImg.hidden = true;
   }
 
   function tickPreview() {
@@ -962,11 +1021,7 @@ INDEX_HTML = """<!DOCTYPE html>
 
   previewImg.addEventListener("error", function () {
     if (previewWantLive) {
-      if (!previewHasFrame) {
-        showPreviewPlaceholder("预览连接中…");
-      } else {
-        previewPh.hidden = true;
-      }
+      if (!previewHasFrame) showPreviewPlaceholder("预览连接中…");
     } else if (!previewHasFrame) {
       showPreviewPlaceholder("开始录制后显示实时画面");
     }
@@ -974,26 +1029,22 @@ INDEX_HTML = """<!DOCTYPE html>
 
   function startPreview() {
     previewWantLive = true;
-    if (previewTimer) return;
+    if (previewPollTimer) return;
     tickPreview();
-    previewTimer = setInterval(tickPreview, previewPollMs);
+    previewPollTimer = setInterval(tickPreview, previewPollMs);
   }
 
   function stopPreview() {
     previewWantLive = false;
-    if (previewTimer) {
-      clearInterval(previewTimer);
-      previewTimer = null;
+    if (previewPollTimer) {
+      clearInterval(previewPollTimer);
+      previewPollTimer = null;
     }
     previewHasFrame = false;
     previewImg.hidden = true;
     previewPh.hidden = false;
-    previewPh.textContent = "开始录制后显示实时画面";
+    previewPh.querySelector("span").textContent = "开始录制后显示实时画面";
     previewImg.removeAttribute("src");
-  }
-
-  function stopIdlePreview() {
-    /* no-op: idle standby preview disabled */
   }
 
   function doAction(path) {
@@ -1001,24 +1052,21 @@ INDEX_HTML = """<!DOCTYPE html>
     actionInFlight = true;
     mainBtn.disabled = true;
     if (path === "/api/capture/stop") {
-      statusBar.setAttribute("data-state", "stopping");
-      setStatusTitle(true, "正在保存数据");
-      statusSub.textContent = "请勿断电";
-      stopIdlePreview();
+      setStatusLink("busy");
+      setHeader("正在保存数据", "请勿断电", { spinner: true });
+      setBtnMode("stop", "保存中…", true);
       stopPreview();
     } else if (path === "/api/capture/start") {
-      statusBar.setAttribute("data-state", "starting");
-      setStatusTitle(true, "正在启动相机");
-      statusSub.textContent = "请稍候，约需数秒";
-      stopIdlePreview();
+      setStatusLink("busy");
+      setHeader("设备连接中", "正在启动相机…", { spinner: true });
+      setBtnMode("start", "启动中…", true);
     }
     fetch(path, { method: "POST", cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (!res.success && res.msg) {
-          statusBar.setAttribute("data-state", "error");
-          setStatusTitle(false, "操作失败");
-          statusSub.textContent = res.msg;
+          setStatusLink("error");
+          setHeader("操作失败", res.msg, { subClass: "err" });
         }
         return fetchStatus();
       })
@@ -1029,10 +1077,9 @@ INDEX_HTML = """<!DOCTYPE html>
 
   mainBtn.addEventListener("click", function () {
     var mode = mainBtn.getAttribute("data-mode");
-    if (mode === "saving") return;
     if (mode === "stop") {
       doAction("/api/capture/stop");
-    } else {
+    } else if (mode === "start") {
       doAction("/api/capture/start");
     }
   });
@@ -1043,11 +1090,51 @@ INDEX_HTML = """<!DOCTYPE html>
   </script>
 </body>
 </html>
+
 """
 
 
+def _index_html_body() -> bytes:
+    tpl = Path(__file__).resolve().parent / "templates" / "capture_ui.html"
+    if tpl.is_file():
+        html = tpl.read_text(encoding="utf-8")
+    else:
+        html = INDEX_HTML
+    html = html.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).replace(
+        "__PREVIEW_POLL_MS__", str(PREVIEW_POLL_MS)
+    )
+    return html.encode("utf-8")
+
+
+_STATIC_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+}
+
+
+def _serve_static_file(handler: BaseHTTPRequestHandler, rel_path: str) -> bool:
+    if not rel_path or ".." in rel_path.split("/"):
+        return False
+    fp = STATIC_ROOT / rel_path
+    if not fp.is_file():
+        return False
+    data = fp.read_bytes()
+    ctype = _STATIC_MIME.get(fp.suffix.lower(), "application/octet-stream")
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", ctype)
+    handler.send_header("Content-Length", str(len(data)))
+    handler.send_header("Cache-Control", "public, max-age=86400")
+    handler.end_headers()
+    handler.wfile.write(data)
+    return True
+
+
 class EgoWebHandler(BaseHTTPRequestHandler):
-    server_version = "ego-web/1.0"
+    server_version = "ego-web/2.0"
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -1055,15 +1142,19 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
-            body = INDEX_HTML.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).replace(
-                "__PREVIEW_POLL_MS__", str(PREVIEW_POLL_MS)
-            ).encode("utf-8")
+            body = _index_html_body()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+            return
+
+        if path.startswith("/static/"):
+            if _serve_static_file(self, path[len("/static/") :]):
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
             return
 
         if path == "/api/status":

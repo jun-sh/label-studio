@@ -7,9 +7,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${EGO_WEB_DEST:-/home/server/ego-web}"
 SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
-mkdir -p "$DEST" "$SYSTEMD_USER_DIR"
+mkdir -p "$DEST" "$SYSTEMD_USER_DIR" "$DEST/templates"
 
 install -m 0644 "$SCRIPT_DIR/ego_web.py" "$DEST/ego_web.py"
+install -m 0644 "$SCRIPT_DIR/templates/capture_ui.html" "$DEST/templates/capture_ui.html"
+if [[ -d "$SCRIPT_DIR/static" ]]; then
+  rm -rf "$DEST/static"
+  cp -a "$SCRIPT_DIR/static" "$DEST/static"
+fi
 install -m 0644 "$SCRIPT_DIR/export_offline.py" "$DEST/export_offline.py"
 install -m 0755 "$SCRIPT_DIR/scripts/export-offline.sh" "$DEST/export-offline.sh"
 install -m 0755 "$SCRIPT_DIR/scripts/ego-export" "$DEST/ego-export"

@@ -68,10 +68,18 @@ def run(cmd, timeout=300):
 import pathlib
 sftp = c.open_sftp()
 dest = "/home/server/ego-web"
-run(f"mkdir -p {dest}")
+run(f"mkdir -p {dest}/templates {dest}/static/icons")
 for rel in ["ego_web.py", "export_offline.py"]:
     local = pathlib.Path(root) / "data-lab-platform/ego-local-web" / rel
     sftp.put(str(local), f"{dest}/{rel}")
+tpl = pathlib.Path(root) / "data-lab-platform/ego-local-web/templates/capture_ui.html"
+sftp.put(str(tpl), f"{dest}/templates/capture_ui.html")
+static_root = pathlib.Path(root) / "data-lab-platform/ego-local-web/static"
+if static_root.is_dir():
+    for fp in static_root.rglob("*"):
+        if fp.is_file():
+            rel = fp.relative_to(static_root).as_posix()
+            sftp.put(str(fp), f"{dest}/static/{rel}")
 sftp.close()
 
 run("systemctl --user restart ecs-ego-web.service 2>/dev/null || true")

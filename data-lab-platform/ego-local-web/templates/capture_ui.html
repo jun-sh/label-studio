@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#f4f7f9" />
+  <title>EGO 采集</title>
+  <style>
+    :root {
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #8c8c8c;
+      --primary: #5b8ff9;
+      --primary-soft: #e8f1fc;
+      --green: #52c41a;
+      --orange: #faad14;
+      --stop: #ef7674;
+      --err: #ef4444;
+      --warn: #d97706;
+      --radius: 24px;
+      --shadow: 0 6px 24px rgba(15, 35, 70, 0.07);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      -webkit-font-smoothing: antialiased;
+    }
+    .app {
+      max-width: 400px;
+      margin: 0 auto;
+      padding: 16px 16px calc(28px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      position: relative;
+    }
+  /* ---- status ---- */
+    .status-card {
+      padding: 18px 20px 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      overflow: hidden;
+    }
+    .status-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 14px;
+      bottom: 14px;
+      width: 0;
+      border-radius: 0 4px 4px 0;
+      background: var(--green);
+      transition: width .25s;
+    }
+    .status-card[data-link="live"]::before { width: 4px; }
+    .status-main { flex: 1; min-width: 0; }
+    .status-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.35;
+      color: var(--text);
+    }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--orange);
+      flex-shrink: 0;
+      transition: background .25s;
+    }
+    .status-card[data-link="live"] .status-dot { background: var(--green); }
+    .status-card[data-link="busy"] .status-dot {
+      background: var(--orange);
+      animation: pulse 1.2s ease infinite;
+    }
+    .status-card[data-link="error"] .status-dot { background: var(--err); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+    .status-sub {
+      margin: 6px 0 0;
+      font-size: .875rem;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    .status-sub.live { color: var(--green); font-weight: 600; }
+    .status-sub.err { color: var(--err); }
+    .status-wifi {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      object-fit: contain;
+      opacity: .55;
+      transition: opacity .25s;
+    }
+    .status-card[data-link="live"] .status-wifi { opacity: 1; }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #d1d5db;
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: -2px;
+      margin-right: 4px;
+    }
+    .spinner[hidden] {
+      display: none !important;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- preview ---- */
+    .preview-wrap {
+      background: var(--primary-soft);
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 16 / 11;
+      position: relative;
+      box-shadow: var(--shadow);
+    }
+    .preview-wrap img {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      z-index: 2;
+      background: var(--primary-soft);
+    }
+    .preview-placeholder {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+      text-align: center;
+    }
+    .preview-placeholder[hidden] {
+      display: none !important;
+    }
+    .preview-placeholder img {
+      width: 72px;
+      height: 72px;
+      object-fit: contain;
+      opacity: .85;
+    }
+    .preview-placeholder span {
+      font-size: .82rem;
+      line-height: 1.5;
+      color: #7a8ba3;
+      max-width: 240px;
+    }
+    .preview-overlay {
+      position: absolute;
+      z-index: 2;
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-size: .78rem;
+      font-weight: 700;
+      color: var(--text);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      letter-spacing: 0.02em;
+    }
+    .preview-overlay.top-left {
+      top: 14px;
+      left: 14px;
+      font-variant-numeric: tabular-nums;
+      font-size: .85rem;
+    }
+
+  /* ---- button ---- */
+    .btn-main {
+      width: 100%;
+      min-height: 54px;
+      border: none;
+      border-radius: 999px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      box-shadow: 0 8px 20px rgba(91, 143, 249, 0.35);
+      transition: transform .1s, opacity .2s, background .2s, box-shadow .2s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .btn-main:active:not(:disabled) { transform: scale(0.98); }
+    .btn-main:disabled { opacity: .6; cursor: not-allowed; box-shadow: none; }
+    .btn-main[data-mode="start"] { background: var(--primary); }
+    .btn-main[data-mode="stop"] {
+      background: var(--stop);
+      box-shadow: 0 8px 20px rgba(239, 118, 116, 0.4);
+    }
+    .btn-icon { width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; }
+    .btn-play-svg,
+    .btn-stop-icon {
+      flex-shrink: 0;
+    }
+    .btn-main[data-mode="start"] .btn-stop-icon {
+      display: none;
+    }
+    .btn-main[data-mode="stop"] .btn-play-svg {
+      display: none;
+    }
+    .btn-play-svg[hidden],
+    .btn-stop-icon[hidden] {
+      display: none !important;
+    }
+    .btn-stop-icon {
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+  /* ---- metrics ---- */
+    .info {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .info-card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+    .info-label {
+      font-size: .8rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .info-value-row {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      line-height: 1;
+    }
+    .info-num {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--primary);
+      font-variant-numeric: tabular-nums;
+    }
+    .info-num.warn { color: var(--warn); }
+    .info-unit {
+      font-size: .95rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+  /* ---- hints ---- */
+    .hints {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 4px 4px 0;
+    }
+    .hint-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: .76rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .hint-row img {
+      width: 16px;
+      height: 16px;
+      object-fit: contain;
+      flex-shrink: 0;
+      margin-top: 1px;
+      opacity: .7;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="card status-card" id="statusCard" data-link="idle">
+      <div class="status-main">
+        <div class="status-title-row" id="statusTitleRow">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="spinner" id="statusSpinner" hidden></span>
+          <span id="statusTitleText">设备待机中</span>
+        </div>
+        <p class="status-sub" id="statusSub">等待连接</p>
+      </div>
+      <img class="status-wifi" id="statusWifi" src="/static/icons/wifi-gray.png" alt="" />
+    </header>
+
+    <section class="preview-wrap" aria-label="实时预览">
+      <img id="previewImg" alt="" hidden />
+      <div class="preview-placeholder" id="previewPh">
+        <img src="/static/icons/camera.png" alt="" />
+        <span>开始录制后显示实时画面</span>
+      </div>
+      <div class="preview-overlay top-left" id="previewTimer" hidden>00:00:00</div>
+    </section>
+
+    <button type="button" class="btn-main" id="mainBtn" data-mode="start">
+      <svg class="btn-icon btn-play-svg" id="btnIconPlay" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      <span class="btn-stop-icon" id="btnIconStop" hidden></span>
+      <span id="mainBtnLabel">开始录制</span>
+    </button>
+
+    <section class="info">
+      <div class="info-card">
+        <div class="info-label">磁盘剩余</div>
+        <div class="info-value-row">
+          <span class="info-num" id="storageNum">—</span>
+          <span class="info-unit" id="storageUnit"></span>
+        </div>
+      </div>
+      <div class="info-card">
+        <div class="info-label">已生成段数</div>
+        <div class="info-value-row">
+          <span class="info-num" id="segmentNum">0</span>
+          <span class="info-unit">段</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="hints">
+      <div class="hint-row">
+        <img src="/static/icons/wifi-gray.png" alt="" />
+        <span>录制前请保持 WiFi 连接</span>
+      </div>
+      <div class="hint-row">
+        <img src="/static/icons/info.png" alt="" />
+        <span>手机断开不影响数据写入</span>
+      </div>
+    </div>
+  </div>
+  <script>
+(function () {
+  var statusCard = document.getElementById("statusCard");
+  var statusSpinner = document.getElementById("statusSpinner");
+  var statusTitleText = document.getElementById("statusTitleText");
+  var statusSub = document.getElementById("statusSub");
+  var statusWifi = document.getElementById("statusWifi");
+  var mainBtn = document.getElementById("mainBtn");
+  var mainBtnLabel = document.getElementById("mainBtnLabel");
+  var btnIconPlay = document.getElementById("btnIconPlay");
+  var btnIconStop = document.getElementById("btnIconStop");
+  var previewImg = document.getElementById("previewImg");
+  var previewPh = document.getElementById("previewPh");
+  var previewTimer = document.getElementById("previewTimer");
+  var storageNum = document.getElementById("storageNum");
+  var storageUnit = document.getElementById("storageUnit");
+  var segmentNum = document.getElementById("segmentNum");
+
+  var pollTimer = null;
+  var previewPollTimer = null;
+  var previewPollMs = __PREVIEW_POLL_MS__;
+  var actionInFlight = false;
+  var previewWantLive = false;
+  var previewHasFrame = false;
+
+  function formatDuration(sec) {
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    function pad2(n) { return (n < 10 ? "0" : "") + n; }
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(s);
+  }
+
+  function setBtnMode(mode, label, disabled) {
+    mainBtn.setAttribute("data-mode", mode);
+    mainBtnLabel.textContent = label;
+    btnIconPlay.hidden = mode !== "start";
+    btnIconStop.hidden = mode !== "stop";
+    if (typeof disabled === "boolean") mainBtn.disabled = disabled;
+  }
+
+  function hidePreviewPlaceholder() {
+    previewPh.hidden = true;
+  }
+
+  function showPreviewPlaceholder(text) {
+    if (previewHasFrame && previewWantLive) {
+      hidePreviewPlaceholder();
+      previewImg.hidden = false;
+      return;
+    }
+    previewPh.querySelector("span").textContent = text;
+    previewPh.hidden = false;
+    if (!previewHasFrame) previewImg.hidden = true;
+  }
+
+  function setStatusLink(link) {
+    statusCard.setAttribute("data-link", link);
+    statusWifi.src = link === "live" ? "/static/icons/wifi-blue.png" : "/static/icons/wifi-gray.png";
+  }
+
+  function setHeader(title, sub, opts) {
+    opts = opts || {};
+    statusSpinner.hidden = !opts.spinner;
+    statusTitleText.textContent = title;
+    statusSub.textContent = sub || "";
+    statusSub.className = "status-sub" + (opts.subClass ? " " + opts.subClass : "");
+  }
+
+  function updatePreviewOverlays(st, data) {
+    var showTimer =
+      (st === "recording" && (data.frames_writing || (data.duration || 0) > 0)) ||
+      st === "warming";
+    previewTimer.hidden = !showTimer;
+    if (showTimer) previewTimer.textContent = formatDuration(data.duration || 0);
+  }
+
+  function parseStorage(free) {
+    if (!free || free === "—") {
+      storageNum.textContent = "—";
+      storageUnit.textContent = "";
+      return;
+    }
+    var m = String(free).match(/^([\d.]+)\s*(.*)$/);
+    if (m) {
+      storageNum.textContent = m[1];
+      storageUnit.textContent = m[2] || "";
+    } else {
+      storageNum.textContent = free;
+      storageUnit.textContent = "";
+    }
+  }
+
+  function applyStatus(data) {
+    var st = data.state || "idle";
+
+    if (st === "idle") {
+      setStatusLink("idle");
+      setHeader("设备待机中", data.msg || "等待连接", { subClass: data.msg ? "err" : "", spinner: false });
+      setBtnMode("start", "开始录制", false);
+      stopPreview();
+      previewHasFrame = false;
+      showPreviewPlaceholder("开始录制后显示实时画面");
+      updatePreviewOverlays(st, data);
+    } else if (st === "warming") {
+      setStatusLink("live");
+      setHeader("设备已连接", "正在录制中", { subClass: "live", spinner: false });
+      setBtnMode("stop", "结束录制", false);
+      updatePreviewOverlays(st, data);
+      startPreview();
+    } else if (st === "recording") {
+      setStatusLink("live");
+      setHeader("设备已连接", "正在录制中", { subClass: "live", spinner: false });
+      setBtnMode("stop", "结束录制", false);
+      updatePreviewOverlays(st, data);
+      startPreview();
+    } else if (st === "starting") {
+      setStatusLink("busy");
+      setHeader("设备连接中", data.msg || "正在启动相机…", { spinner: true });
+      setBtnMode("start", "启动中…", true);
+      stopPreview();
+      updatePreviewOverlays(st, data);
+    } else if (st === "stopping") {
+      setStatusLink("busy");
+      setHeader("正在保存数据", data.msg || "请勿断电", { spinner: true });
+      setBtnMode("stop", "保存中…", true);
+      stopPreview();
+      showPreviewPlaceholder("正在写入磁盘，请勿断电…");
+      updatePreviewOverlays(st, data);
+    } else if (st === "error") {
+      setStatusLink("error");
+      setHeader("出现问题", data.msg || "请稍后重试", { subClass: "err" });
+      if (data.capture_active) setBtnMode("stop", "结束录制", false);
+      else setBtnMode("start", "开始录制", false);
+      stopPreview();
+      updatePreviewOverlays(st, data);
+    }
+
+    if (st !== "starting" && st !== "stopping" && !actionInFlight) mainBtn.disabled = false;
+
+    parseStorage(data.storage_free || "—");
+    if (data.storage_warn) storageNum.classList.add("warn");
+    else storageNum.classList.remove("warn");
+    segmentNum.textContent = String(data.segment_count != null ? data.segment_count : 0);
+  }
+
+  function fetchStatus() {
+    return fetch("/api/status", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(applyStatus)
+      .catch(function () {
+        setStatusLink("error");
+        setHeader("无法连接设备", "请确认已连接采集热点", { subClass: "err" });
+        setBtnMode("start", "开始录制", false);
+      });
+  }
+
+  function tickPreview() {
+    previewImg.src = "/api/preview/main.jpg?t=" + Date.now();
+  }
+
+  previewImg.addEventListener("load", function () {
+    previewHasFrame = true;
+    previewImg.hidden = false;
+    hidePreviewPlaceholder();
+  });
+
+  previewImg.addEventListener("error", function () {
+    if (previewWantLive && !previewHasFrame) {
+      showPreviewPlaceholder("预览连接中…");
+    } else if (!previewWantLive && !previewHasFrame) {
+      showPreviewPlaceholder("开始录制后显示实时画面");
+    }
+  });
+
+  function startPreview() {
+    previewWantLive = true;
+    if (previewPollTimer) return;
+    tickPreview();
+    previewPollTimer = setInterval(tickPreview, previewPollMs);
+  }
+
+  function stopPreview() {
+    previewWantLive = false;
+    if (previewPollTimer) {
+      clearInterval(previewPollTimer);
+      previewPollTimer = null;
+    }
+    previewHasFrame = false;
+    previewImg.hidden = true;
+    previewPh.hidden = false;
+    previewPh.querySelector("span").textContent = "开始录制后显示实时画面";
+    previewImg.removeAttribute("src");
+  }
+
+  function doAction(path) {
+    if (actionInFlight) return;
+    actionInFlight = true;
+    mainBtn.disabled = true;
+    if (path === "/api/capture/stop") {
+      setStatusLink("busy");
+      setHeader("正在保存数据", "请勿断电", { spinner: true });
+      setBtnMode("stop", "保存中…", true);
+      stopPreview();
+    } else if (path === "/api/capture/start") {
+      setStatusLink("busy");
+      setHeader("设备连接中", "正在启动相机…", { spinner: true });
+      setBtnMode("start", "启动中…", true);
+    }
+    fetch(path, { method: "POST", cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.success && res.msg) {
+          setStatusLink("error");
+          setHeader("操作失败", res.msg, { subClass: "err" });
+        }
+        return fetchStatus();
+      })
+      .finally(function () { actionInFlight = false; });
+  }
+
+  mainBtn.addEventListener("click", function () {
+    var mode = mainBtn.getAttribute("data-mode");
+    if (mode === "stop") doAction("/api/capture/stop");
+    else if (mode === "start") doAction("/api/capture/start");
+  });
+
+  fetchStatus();
+  pollTimer = setInterval(fetchStatus, __STATUS_POLL_MS__);
+})();
+  </script>
+</body>
+</html>

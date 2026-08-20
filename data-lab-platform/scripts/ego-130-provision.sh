@@ -18,6 +18,14 @@ CAPTURE_HOST="${TARGET#*@}"
 
 echo "==> Provision ${TARGET} station=${STATION_ID}"
 
+if ! ssh -o BatchMode=yes -o ConnectTimeout=8 "${TARGET}" "echo ok" >/dev/null 2>&1; then
+  echo "==> SSH key auth unavailable — using paramiko (RC_CAPTURE_PASS)"
+  PROVISION_TARGET="${TARGET}" PROVISION_STATION="${STATION_ID}" \
+    RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" \
+    python3 "${ROOT}/scripts/ego-130-provision-paramiko.py"
+  exit $?
+fi
+
 ssh "${TARGET}" "mkdir -p ${REMOTE_CAPTURE} ${REMOTE_CLI} ${REMOTE_CONFIG} ${CACHE_ROOT}/segments ${CACHE_ROOT}/logs"
 
 echo "==> Sync capture Python (ego-stream-client -> ego-studio)"

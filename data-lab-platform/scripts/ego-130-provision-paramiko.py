@@ -10,6 +10,7 @@ from pathlib import Path
 import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 CAPTURE_SRC = ROOT / "ego-stream-client"
 TARGET = os.environ.get("PROVISION_TARGET", "server@10.10.10.130")
 STATION_ID = os.environ.get("PROVISION_STATION", "ego-001")
@@ -173,6 +174,14 @@ systemctl --user start ecs-station-heartbeat.service 2>/dev/null || true
 """
     run_script(c, remote_script)
 
+    scripts = REPO_ROOT / "data-lab-platform" / "scripts"
+    sftp = c.open_sftp()
+    sftp.put(str(scripts / "ego-upload-station.sh"), "/tmp/ego-upload-station.sh")
+    sftp.close()
+    run(c, "mkdir -p ~/.local/bin && cp /tmp/ego-upload-station.sh ~/.local/bin/ego-upload && chmod +x ~/.local/bin/ego-upload")
+    run(c, "grep -q '\\.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc")
+    run(c, "~/.local/bin/ego-upload --help 2>&1 | grep -q notify")
+
     verify = run(
         c,
         "systemctl --user show ecs-record-oak-stream.service -p Environment --value | tr ' ' '\\n' | "
@@ -180,8 +189,11 @@ systemctl --user start ecs-station-heartbeat.service 2>/dev/null || true
     ).strip()
     print("capture env:", verify.replace("\n", " "))
     print(run(c, "which ffmpeg && ffmpeg -version | head -1").strip())
+    print(run(c, "~/.local/bin/ego-upload --help 2>&1 | grep -E 'notify|ego-upload' | head -3").strip())
     c.close()
     print(f"provision ok: {TARGET} station={STATION_ID}")
+    print(f"Manual upload:     ego-upload {STATION_ID}")
+    print(f"Upload + notify:   ego-upload {STATION_ID} --notify")
 
 
 if __name__ == "__main__":

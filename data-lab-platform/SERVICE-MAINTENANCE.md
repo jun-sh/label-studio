@@ -253,6 +253,8 @@ docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
 | Ego process-watcher systemd | `data-lab-platform/systemd/data-lab-ego-process-watcher.*` |
 | Ego watcher 安装 | `sudo bash data-lab-platform/scripts/install-ego-process-watcher-systemd.sh` |
 | Ego 生产验收 | `bash data-lab-platform/scripts/rc-ego-001-production.sh` |
+| 旧镜像 prune | `bash data-lab-platform/scripts/ego-prune-old-images.sh`（默认 dry-run） |
+| `.bak` 清理 | `bash data-lab-platform/scripts/ego-cleanup-bak-dirs.sh`（7 天 retention） |
 | 平台 Compose base | `data-lab-platform/docker-compose.platform.yml` |
 | 存储侧车 Compose | `data-lab-platform/docker-compose.storage.override.yml` |
 

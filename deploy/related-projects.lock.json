@@ -1,7 +1,7 @@
 {
-  "tag": "deploy-release-v0.0.9",
-  "snapshotted_at": "2026-08-21T15:38:52+08:00",
-  "note": "Canonical deploy backup line. Only deploy-release-v* tags are used for full-stack snapshots.",
+  "tag": "deploy-release-v0.1.1",
+  "snapshotted_at": "2026-08-21T15:50:00+08:00",
+  "note": "Canonical deploy backup line. Product milestone: v0.1.1. Full-stack snapshot: deploy-release-v0.1.1.",
   "projects": [
     {"path": "ml-services/sam2", "remote": "https://github.com/facebookresearch/sam2.git", "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4", "checkpoints_excluded": "ml-services/sam2/checkpoints/*.pt"},
     {"path": "ml-services/label-studio-ml-backend", "remote": "https://github.com/HumanSignal/label-studio-ml-backend.git", "commit": "231a16455c7cbfb27768e3d1400f5356c3bc1a35", "uncommitted_files": 1},

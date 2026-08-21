@@ -103,6 +103,7 @@ data-storage/registry/*.db
 
 # Offline workspace snapshots (ego-workspace-snapshot.sh)
 data-storage/backups/
+backups/
 
 # EGO stream hot tier + cold archive (bind-mounted; do not commit)
 data-storage/stream/

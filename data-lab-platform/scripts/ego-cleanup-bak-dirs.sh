@@ -10,6 +10,11 @@
 #   15 3 * * 0 bash /path/to/data-lab/data-lab-platform/scripts/ego-cleanup-bak-dirs.sh --apply >>/var/log/ego-bak-cleanup.log 2>&1
 set -euo pipefail
 
+# NEVER delete these runtime data trees (see .cursor/rules/data-storage-protected.mdc):
+#   data-storage/corpus/ data-storage/pipeline/ data-storage/lerobot-qc/
+#   data-storage/stream/ data-storage/ego-archive/ data-storage/logs/
+# This script only removes *.bak dirs under EGO_STREAM_ROOT (default: data-storage/stream).
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATION="${STATION_ID:-ego-001}"

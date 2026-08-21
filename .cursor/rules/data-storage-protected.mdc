@@ -1,0 +1,24 @@
+---
+description: Protect runtime data-storage trees from deletion by agents or cleanup scripts
+alwaysApply: true
+---
+
+# data-storage runtime data — DO NOT DELETE
+
+The following paths contain **production/runtime data** and must **never** be deleted,
+truncated, moved, or `rm -rf` by agents, cleanup scripts, or git operations:
+
+- `data-storage/corpus/` — derived datasets, parquet, offline episodes
+- `data-storage/pipeline/` — pipeline intermediate outputs
+- `data-storage/lerobot-qc/` — QC cache, sidecar, delivery videos
+- `data-storage/stream/` — hot-tier stream ingest data
+- `data-storage/ego-archive/` — cold archive
+- `data-storage/logs/` — operational logs (safe to rotate, not bulk-delete without user request)
+- `data-storage/registry/` — episode registry DB
+
+Allowed maintenance (only when user explicitly requests):
+
+- `ego-cleanup-bak-dirs.sh` — removes only `*.bak` dirs under `data-storage/stream/<station>/`
+- `ego-prune-old-images.sh` — prunes Docker **images** only, not data-storage files
+
+When writing cleanup scripts, add explicit guards and never use broad `rm -rf data-storage/`.

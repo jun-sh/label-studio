@@ -46,8 +46,8 @@ bash data-lab-platform/scripts/rc-ego-001-v0.1.1-preflight.sh
 
 ```bash
 EGO_PRODUCTION_TAG=v0.1.0 \
-  EGO_COMPOSE_OVERLAY=data-lab-platform/docker-compose.v0.1.0.yml \
-  EGO_COMPOSE_OVERLAY_ASYNC=data-lab-platform/docker-compose.v0.1.0-async.yml \
+  EGO_COMPOSE_OVERLAY=data-lab-platform/deploy/archive/compose/docker-compose.v0.1.0.yml \
+  EGO_COMPOSE_OVERLAY_ASYNC=data-lab-platform/deploy/archive/compose/docker-compose.v0.1.0-async.yml \
   LEROBOT_IMAGE_TAG=v0.1.0 \
   bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
 ```

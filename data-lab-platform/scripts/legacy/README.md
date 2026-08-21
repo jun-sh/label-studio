@@ -15,3 +15,6 @@ These scripts target **deprecated** paths:
 - Verify 130: `ego-130-verify-production.sh`
 
 Do not run legacy scripts on ego-001 without reading them first.
+
+**Archived compose overlays:** `data-lab-platform/deploy/archive/compose/`  
+**Archived deploy scripts:** `data-lab-platform/scripts/legacy/deploy-stream-ingest-v0.0.*.sh`

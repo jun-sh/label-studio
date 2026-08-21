@@ -45,6 +45,8 @@ label_studio/core/version_.py
 label_studio/core/core
 
 archive
+!data-lab-platform/deploy/archive/
+!data-lab-platform/deploy/archive/**
 
 *.rtl.css
 *.rtl.min.css

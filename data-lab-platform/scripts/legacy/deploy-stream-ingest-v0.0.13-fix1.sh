@@ -18,7 +18,7 @@ fi
 "${COMPOSE[@]}" -f docker-compose.yml \
   -f data-lab-platform/docker-compose.platform.yml \
   -f data-lab-platform/docker-compose.storage.override.yml \
-  -f data-lab-platform/docker-compose.v0.0.13-fix1.yml \
+  -f data-lab-platform/deploy/archive/compose/docker-compose.v0.0.13-fix1.yml \
   up -d --force-recreate stream-ingest derive-worker lerobot
 
 NGINX_CID="${NGINX_CONTAINER:-data-lab-nginx-1}"

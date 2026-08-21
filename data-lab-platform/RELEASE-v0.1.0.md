@@ -27,7 +27,7 @@ bash data-lab-platform/scripts/rc-ego-001-p2-phase-d.sh
 ## 回滚（仅应急）
 
 ```bash
-EGO_PRODUCTION_TAG=v0.1.0 EGO_COMPOSE_OVERLAY=data-lab-platform/docker-compose.v0.1.0.yml \
+EGO_PRODUCTION_TAG=v0.1.0 EGO_COMPOSE_OVERLAY=data-lab-platform/deploy/archive/compose/docker-compose.v0.1.0.yml \
   LEROBOT_IMAGE_TAG=v0.1.0 bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
 # 注意：v0.1.0 仍含 legacy derive 路径
 ```

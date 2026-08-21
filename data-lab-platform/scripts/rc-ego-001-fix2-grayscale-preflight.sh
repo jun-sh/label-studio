@@ -59,7 +59,7 @@ else
 fi
 
 [[ -f "${ROOT}/${OVERLAY}" ]] && ok "overlay present: ${OVERLAY}" || bad "missing overlay ${OVERLAY}"
-[[ -f "${ROOT}/data-lab-platform/docker-compose.v0.0.13-fix1.yml" ]] && ok "rollback overlay fix1 available" || warn "rollback overlay fix1 missing"
+[[ -f "${ROOT}/data-lab-platform/deploy/archive/compose/docker-compose.v0.0.13-fix1.yml" ]] && ok "rollback overlay fix1 available" || warn "rollback overlay fix1 missing"
 
 # --- egodome.zip ---
 [[ -f "${SAMPLES_ZIP}" ]] && ok "samples zip: ${SAMPLES_ZIP}" || bad "missing ${SAMPLES_ZIP}"

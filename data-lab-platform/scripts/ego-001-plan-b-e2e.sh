@@ -26,7 +26,7 @@ die() { echo "[ego-001-e2e] FAIL: $*" >&2; exit 1; }
 
 if [[ "${SKIP_DEPLOY}" != "1" ]]; then
   log "=== deploy v0.0.11.2 on 34 ==="
-  bash "${ROOT}/data-lab-platform/scripts/deploy-stream-ingest-v0.0.11.2.sh"
+  bash "${ROOT}/data-lab-platform/scripts/legacy/deploy-stream-ingest-v0.0.11.2.sh"
 fi
 
 if [[ "${SKIP_CLEAN}" != "1" ]]; then

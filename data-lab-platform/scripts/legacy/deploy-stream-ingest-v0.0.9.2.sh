@@ -14,7 +14,7 @@ cd "${ROOT}"
 docker-compose -f docker-compose.yml \
   -f data-lab-platform/docker-compose.platform.yml \
   -f data-lab-platform/docker-compose.storage.override.yml \
-  -f data-lab-platform/docker-compose.v0.0.9.2.yml \
+  -f data-lab-platform/deploy/archive/compose/docker-compose.v0.0.9.2.yml \
   up -d stream-ingest derive-worker lerobot
 
 echo "=== verify image tags ==="
@@ -22,7 +22,7 @@ for svc in stream-ingest derive-worker; do
   cid="$(docker compose -f docker-compose.yml \
     -f data-lab-platform/docker-compose.platform.yml \
     -f data-lab-platform/docker-compose.storage.override.yml \
-    -f data-lab-platform/docker-compose.v0.0.9.2.yml \
+    -f data-lab-platform/deploy/archive/compose/docker-compose.v0.0.9.2.yml \
     ps -q "${svc}" 2>/dev/null || true)"
   if [[ -n "${cid}" ]]; then
     docker inspect --format '{{.Name}} image={{.Config.Image}}' "${cid}"

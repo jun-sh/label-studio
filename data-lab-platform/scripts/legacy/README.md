@@ -1,20 +1,23 @@
 # Legacy ego scripts (archived)
 
-These scripts target **deprecated** paths:
+已归档、**勿用于 ego-001 日常生产** 的脚本。
 
-- `ego-lan-214` station fleet
-- H264 / `segment_mp4` capture and derive
-- `v0.0.9.2` ingest overlay
+## 当前生产（ego-001）
 
-**Current production (ego-001):**
+- **手册：** [ego-001-使用手册.md](../docs/ego-001-使用手册.md)
+- **130 上传：** `ego-upload ego-001`（默认含 notify）
+- **34 处理：** watcher 自动 `ego-process`，或手动 `ego-process ego-001`
+- **验收：** `rc-ego-001-production.sh`
+- **部署：** `deploy-stream-ingest-v0.1.1-async.sh`
 
-- Capture: HW JPEG frame bins (`z-production-egoverse.conf`)
-- Upload: `tarzst` → staging JPEG mux
-- Reset: `ego-001-reset-for-rerun.sh` or `ego-reset-34-only.sh`
-- E2E: `ego-001-plan-b-e2e.sh`
-- Verify 130: `ego-130-verify-production.sh`
+## 本目录内容
 
-Do not run legacy scripts on ego-001 without reading them first.
+| 类型 | 示例 |
+|------|------|
+| Phase 1–7 RC | `rc-ego-001-phase*.sh` |
+| v0.0.13 / grayscale | `rc-ego-001-fix2-*`, `rc-ego-001-p0-*` |
+| H264 / ego-lan-214 | `ego-130-verify-h264*`, `ego-130-h264-*` |
+| 旧 deploy | `deploy-stream-ingest-v0.0.*.sh` |
+| 实验 pipeline | `ego-run-pipeline-hamer-bf-test`, `ego-run-pipeline-standard` |
 
-**Archived compose overlays:** `data-lab-platform/deploy/archive/compose/`  
-**Archived deploy scripts:** `data-lab-platform/scripts/legacy/deploy-stream-ingest-v0.0.*.sh`
+**Archived compose：** `data-lab-platform/deploy/archive/compose/`

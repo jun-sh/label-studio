@@ -1,6 +1,6 @@
 [Unit]
 Description=Data Lab ego-process-watcher (P-Ops-3 upload notify → ego-process)
-Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/ego-001-runbook.md
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/ego-001-使用手册.md
 After=network-online.target docker.service
 Wants=network-online.target
 

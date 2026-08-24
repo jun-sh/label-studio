@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Single source of truth — EgoDome production image & compose overlays (v0.1.1+).
+# Single source of truth — EgoDome production image & compose overlays (v0.1.2+).
 # Usage: source "$(dirname "$0")/ego-production-defaults.sh"
 
-: "${EGO_PRODUCTION_TAG:=v0.1.1}"
-: "${EGO_COMPOSE_OVERLAY:=data-lab-platform/docker-compose.v0.1.1.yml}"
-: "${EGO_COMPOSE_OVERLAY_ASYNC:=data-lab-platform/docker-compose.v0.1.1-async.yml}"
+: "${EGO_PRODUCTION_TAG:=v0.1.2}"
+: "${EGO_COMPOSE_OVERLAY:=data-lab-platform/docker-compose.v0.1.2.yml}"
+: "${EGO_COMPOSE_OVERLAY_ASYNC:=data-lab-platform/docker-compose.v0.1.2-async.yml}"
 : "${LEROBOT_IMAGE_TAG:=${EGO_PRODUCTION_TAG}}"
 : "${LEROBOT_IMAGE:=data-lab-lerobot-studio:${EGO_PRODUCTION_TAG}}"
 

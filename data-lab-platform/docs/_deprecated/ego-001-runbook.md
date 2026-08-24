@@ -91,8 +91,8 @@ bash data-lab-platform/scripts/rc-ego-001-p2-phase-d.sh
 - convert 完成后 `ego-run-pipeline --skip-deploy` **自动**跑 `ego-viewer-sync.sh`
 - 130 上传后通知 34（推荐）：
   ```bash
-  ego-upload ego-001 --notify
-  # 或 EGO_NOTIFY_PROCESS=1 ego-upload ego-001
+  ego-upload ego-001
+  # 默认 POST process-notify；仅上传不通知：ego-upload ego-001 --no-notify
   ```
 - 34 安装 systemd timer（生产推荐，开机自启）：
   ```bash

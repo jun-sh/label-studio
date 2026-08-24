@@ -1,0 +1,11 @@
+# v0.1.2 async overlay: derive-worker watches session.DONE_UPLOAD (use after v0.1.2.yml).
+services:
+  stream-ingest:
+    environment:
+      - DERIVE_ASYNC=1
+      - DERIVE_ASYNC_EGO_001=1
+
+  derive-worker:
+    environment:
+      - DERIVE_ASYNC=1
+      - DERIVE_ASYNC_EGO_001=1

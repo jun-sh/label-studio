@@ -87,7 +87,7 @@ curl -fsS http://10.10.10.34:8080/lerobot-annotate/ >/dev/null && echo OK
 
 ## 一次性：EgoDome process-watcher 开机自启（34）
 
-130 使用 `ego-upload ego-001 --notify` 时，34 需 timer 消费 notify marker：
+130 使用 `ego-upload ego-001`（默认含 process-notify）时，34 需 timer 消费 notify marker：
 
 ```bash
 sudo bash data-lab-platform/scripts/install-ego-process-watcher-systemd.sh

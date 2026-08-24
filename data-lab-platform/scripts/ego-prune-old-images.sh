@@ -9,7 +9,7 @@
 set -euo pipefail
 
 IMAGE_REPO="${LEROBOT_IMAGE_REPO:-data-lab-lerobot-studio}"
-KEEP_TAGS="${KEEP_TAGS:-v0.1.1 v0.1.0}"
+KEEP_TAGS="${KEEP_TAGS:-v0.1.2 v0.1.1}"
 APPLY=0
 
 for arg in "$@"; do

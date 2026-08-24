@@ -13,6 +13,7 @@ install_units() {
   local dest_dir="$1"
   local ctl="$2"
   local linger_hint="${3:-}"
+  local unit_mode="${4:-system}"
 
   for unit in \
     data-lab-ego-process-watcher.service \
@@ -25,6 +26,10 @@ install_units() {
   # Patch absolute paths for this checkout (units ship with default workspace path).
   sed -i "s|/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab|${ROOT}|g" \
     "${dest_dir}"/data-lab-ego-*.service
+  if [[ "$unit_mode" == "user" ]]; then
+    # User units already run as the logged-in user; User=/Group= breaks with status=216/GROUP.
+    sed -i '/^User=/d; /^Group=/d' "${dest_dir}"/data-lab-ego-*.service
+  fi
 
   ${ctl} daemon-reload
   ${ctl} enable data-lab-ego-process-watcher.timer
@@ -41,7 +46,7 @@ install_units() {
 if [[ "$MODE" == "--user" ]]; then
   DEST_DIR="${HOME}/.config/systemd/user"
   mkdir -p "${DEST_DIR}"
-  install_units "${DEST_DIR}" "systemctl --user" "--user"
+  install_units "${DEST_DIR}" "systemctl --user" "--user" "user"
   echo ""
   echo "User units enabled. For boot without login:"
   echo "  sudo loginctl enable-linger $(whoami)"

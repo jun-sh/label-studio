@@ -37,8 +37,8 @@ export PYTHONPATH=/home/server/workspace/ego-studio/src
 可选：上传后自动通知 34 排队处理：
 
 ```bash
-ego-upload ego-001 --notify
-# 34 侧: ego-process-watcher.sh watch  （或 cron 每分钟 once）
+ego-upload ego-001
+# 默认通知 34 排队 ego-process；仅上传：ego-upload ego-001 --no-notify
 ```
 
 - `ego_upload` / 逐帧 multipart：**已废弃**，勿用。

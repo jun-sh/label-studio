@@ -85,6 +85,7 @@ EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/${STATION
 STATION_UPLOAD_TOKEN=dl-upload-${STATION_ID}-v1
 DATALAB_CAPTURE_HOST=${CAPTURE_HOST}
 EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
+EGO_NOTIFY_PROCESS=1
 UPLOAD_PROTOCOL=tarzst
 EOF
 cat > "\$HOME/.config/ego-station.env.d/station.conf" <<EOF

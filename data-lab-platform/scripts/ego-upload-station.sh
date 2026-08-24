@@ -9,28 +9,30 @@ set -euo pipefail
 
 STATION=""
 EXTRA=()
-NOTIFY_PROCESS=0
+NOTIFY_FLAG=""
 for arg in "$@"; do
   case "$arg" in
     -h|--help)
       cat <<'EOF'
 用法: ego-upload [station] [选项]
 
-  ego-upload ego-001     上传该站所有待传 closed segment（--limit 0）
+  ego-upload ego-001     上传 + 默认通知 34 跑 ego-process（Collection + egodome）
   ego-upload             使用 EGO_STATION_ID / ego-station.env 中的站点
-  ego-upload --notify    上传完成后通知 34 排队 ego-process（需 watcher）
+  ego-upload --no-notify 仅上传，不通知 34（egodome 不会自动更新）
 
 幂等：本地已 UPLOADED 的段跳过；34 对已 commit 段返回 duplicate。
 上传成功后默认删除本地段（EGO_SEGMENT_DELETE_AFTER_UPLOAD=1）。
 
 等价于:
   upload_segments --limit 0 --ensure-session --segment-root … --upload-url …
+  + POST …/process-notify（默认开启，34 watcher 约 30s 内 ego-process）
 EOF
       exit 0
       ;;
     -*)
       case "$arg" in
-        --notify) NOTIFY_PROCESS=1 ;;
+        --notify) NOTIFY_FLAG=1 ;;
+        --no-notify) NOTIFY_FLAG=0 ;;
         *) EXTRA+=("$arg") ;;
       esac
       ;;
@@ -57,8 +59,12 @@ STATION="${STATION:-${EGO_STATION_ID:-${STATION_ID:-}}}"
   exit 2
 }
 
-if [[ "$NOTIFY_PROCESS" -eq 0 && "${EGO_NOTIFY_PROCESS:-0}" == "1" ]]; then
+if [[ -n "$NOTIFY_FLAG" ]]; then
+  NOTIFY_PROCESS="$NOTIFY_FLAG"
+elif [[ "${EGO_NOTIFY_PROCESS:-1}" == "1" ]]; then
   NOTIFY_PROCESS=1
+else
+  NOTIFY_PROCESS=0
 fi
 
 _resolve_python() {
@@ -121,5 +127,5 @@ if [[ "$NOTIFY_PROCESS" -eq 1 ]]; then
     echo "   ⚠️  跳过 notify（缺少 STATION_UPLOAD_TOKEN 或 curl）" >&2
   fi
 else
-  echo "   34 侧执行: ego-process ${STATION}"
+  echo "   已跳过 process-notify（egodome 需手动在 34 执行: ego-process ${STATION}）"
 fi

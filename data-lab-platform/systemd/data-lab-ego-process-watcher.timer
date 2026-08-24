@@ -3,7 +3,8 @@ Description=Poll ego upload process-notify every 30s (P-Ops-3)
 
 [Timer]
 OnBootSec=90
-OnUnitActiveSec=30
+# Fire again 30s after each oneshot service run completes (not OnUnitActiveSec — that stops after one shot).
+OnUnitInactiveSec=30
 AccuracySec=5
 Persistent=true
 

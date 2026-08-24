@@ -28,9 +28,11 @@ bash data-lab-platform/scripts/rc-ego-001-p2-ops-async-preflight.sh
 ## 日常 SOP
 
 ```text
-130:  ego-upload ego-001 [--notify]
-34:   ego-process ego-001
+130:  ego-upload ego-001
+34:   （watcher 自动 ego-process，或手动 ego-process ego-001）
 浏览器: /collection?station=ego-001 + /data/egodome
+
+手册: docs/ego-001-使用手册.md
 ```
 
 ## 重启后

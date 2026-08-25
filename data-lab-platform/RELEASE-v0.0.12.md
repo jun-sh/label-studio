@@ -56,4 +56,4 @@ EGO_PIPELINE_BACKEND=oak EGO_OAK_MODE=hands data-lab-platform/scripts/ego-run-pi
 | 130 systemd drop-in | `v0.0.8-segment-mp4.conf` |
 | 34 stream-ingest | `data-lab-lerobot-studio:v0.0.11+`（rebuild） |
 
-详见 [docs/STABLE-v0.0.12.md](docs/STABLE-v0.0.12.md)。
+详见 [docs/_deprecated/STABLE-v0.0.12.md](docs/_deprecated/STABLE-v0.0.12.md)。

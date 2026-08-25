@@ -13,10 +13,12 @@ from segment_store import (
     check_segment_integrity,
     clear_segment_uploaded,
     finalize_segment_manifest_after_persist,
+    flush_pending_segment_deletes,
     gc_segment_dir,
     list_closed_pending_segments,
     manifest_status,
     mark_segment_uploaded,
+    purge_uploaded_segments,
     read_manifest,
     reconcile_orphan_active_segment,
     scan_orphan_active_segments,
@@ -252,6 +254,46 @@ def test_mark_uploaded_and_clear_for_force_retry(tmp_path: Path, monkeypatch: py
     assert read_manifest(seg)["upload"]["remote_ack_at"] is None
 
     mark_segment_uploaded(seg, delete=True)
+    assert not seg.exists()
+
+
+def test_mark_uploaded_delete_sync_even_when_async_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import segment_store as ss
+
+    monkeypatch.setattr(ss, "SEGMENT_ASYNC_DELETE", True)
+    seg = tmp_path / "seg_000001"
+    _write_valid_segment(seg, status="CLOSED")
+
+    mark_segment_uploaded(seg, delete=True)
+    assert not seg.exists()
+
+
+def test_purge_uploaded_segments_strict(tmp_path: Path) -> None:
+    root = tmp_path / "segments"
+    session_id = "sess_purge"
+    uploaded = root / "sessions" / session_id / "segments" / "seg_uploaded"
+    closed = root / "sessions" / session_id / "segments" / "seg_closed"
+    _write_valid_segment(uploaded, session_id=session_id, status="UPLOADED")
+    _write_valid_segment(closed, session_id=session_id, status="CLOSED")
+
+    removed = purge_uploaded_segments(root, session_id, strict=True)
+    assert removed == 1
+    assert not uploaded.exists()
+    assert closed.exists()
+
+
+def test_flush_pending_segment_deletes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import segment_store as ss
+
+    monkeypatch.setattr(ss, "SEGMENT_ASYNC_DELETE", True)
+    seg = tmp_path / "seg_async"
+    _write_valid_segment(seg, status="UPLOADED")
+
+    gc_segment_dir(seg, sync=False)
+    assert seg.exists()
+    assert flush_pending_segment_deletes(timeout_s=5.0) == 0
     assert not seg.exists()
 
 

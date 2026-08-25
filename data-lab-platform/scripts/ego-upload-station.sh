@@ -16,16 +16,14 @@ for arg in "$@"; do
       cat <<'EOF'
 用法: ego-upload [station] [选项]
 
-  ego-upload ego-001     上传 + 默认通知 34 跑 ego-process（Collection + egodome）
+  ego-upload ego-001     上传全站所有 session 的待传段 + 通知 34 ego-process
   ego-upload             使用 EGO_STATION_ID / ego-station.env 中的站点
   ego-upload --no-notify 仅上传，不通知 34（egodome 不会自动更新）
+  ego-upload ego-001 --session-id sess_xxx   只上传指定 session（高级）
 
+默认扫描 segments/sessions/sess_*/ 下全部 CLOSED 待传段（跨所有录制批次）。
 幂等：本地已 UPLOADED 的段跳过；34 对已 commit 段返回 duplicate。
 上传成功后默认删除本地段（EGO_SEGMENT_DELETE_AFTER_UPLOAD=1）。
-
-等价于:
-  upload_segments --limit 0 --ensure-session --segment-root … --upload-url …
-  + POST …/process-notify（默认开启，34 watcher 约 30s 内 ego-process）
 EOF
       exit 0
       ;;
@@ -93,30 +91,132 @@ LOG_DIR="${EGO_UPLOAD_LOG_DIR:-${HOME}/cache/${STATION}/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/ego-upload-$(date +%Y%m%d-%H%M%S).log"
 
+_has_session_id_flag() {
+  local a
+  for a in "${EXTRA[@]}"; do
+    [[ "$a" == --session-id || "$a" == --session-id=* ]] && return 0
+  done
+  return 1
+}
+
+_list_sessions_with_pending() {
+  SEG_ROOT="$SEG_ROOT" "$PY" - <<'PY'
+import os
+from pathlib import Path
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+
+root = Path(os.environ["SEG_ROOT"])
+sessions = root / "sessions"
+if not sessions.is_dir():
+    raise SystemExit(0)
+for sess in sorted(sessions.iterdir()):
+    if not sess.is_dir() or not sess.name.startswith("sess_"):
+        continue
+    if list_closed_pending_segments(root, sess.name):
+        print(sess.name)
+PY
+}
+
+_upload_one_session() {
+  local sid="$1"
+  local n start_line
+  echo "[ego-upload] >>> session=${sid}" | tee -a "$LOG_FILE" >&2
+  start_line=$(wc -l < "$LOG_FILE")
+  start_line=$((start_line + 1))
+  set +e
+  "$PY" -m ego_capture_studio.cli.upload_segments \
+    --session-id "$sid" \
+    --limit 0 \
+    --ensure-session \
+    --segment-root "$SEG_ROOT" \
+    --upload-url "$UPLOAD_URL" \
+    "${EXTRA[@]}" 2>&1 | tee -a "$LOG_FILE" >&2
+  UPLOAD_RC=${PIPESTATUS[0]}
+  set -e
+  n="$(sed -n "${start_line},\$p" "$LOG_FILE" | grep -E '^uploaded_segments=' | tail -1 | cut -d= -f2 || true)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  UPLOAD_N="$n"
+}
+
 echo "[ego-upload] station=${STATION} segment-root=${SEG_ROOT}" | tee -a "$LOG_FILE"
 echo "[ego-upload] upload-url=${UPLOAD_URL}" >>"$LOG_FILE"
 
-set +e
-"$PY" -m ego_capture_studio.cli.upload_segments \
-  --limit 0 \
-  --ensure-session \
-  --segment-root "$SEG_ROOT" \
-  --upload-url "$UPLOAD_URL" \
-  "${EXTRA[@]}" 2>&1 | tee -a "$LOG_FILE"
-rc=${PIPESTATUS[0]}
-set -e
+TOTAL_UPLOADED=0
+SESSIONS_OK=0
+SESSIONS_FAIL=0
+FAILED_SIDS=()
 
-if [[ "$rc" -ne 0 ]]; then
-  echo "❌ 上传失败，详见: ${LOG_FILE}" >&2
-  exit "$rc"
+if _has_session_id_flag; then
+  echo "[ego-upload] mode=single-session (--session-id)" | tee -a "$LOG_FILE"
+  set +e
+  "$PY" -m ego_capture_studio.cli.upload_segments \
+    --limit 0 \
+    --ensure-session \
+    --segment-root "$SEG_ROOT" \
+    --upload-url "$UPLOAD_URL" \
+    "${EXTRA[@]}" 2>&1 | tee -a "$LOG_FILE"
+  rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    echo "❌ 上传失败，详见: ${LOG_FILE}" >&2
+    exit "$rc"
+  fi
+  TOTAL_UPLOADED="$(grep -E '^uploaded_segments=' "$LOG_FILE" | tail -1 | cut -d= -f2 || echo 0)"
+  [[ "$TOTAL_UPLOADED" =~ ^[0-9]+$ ]] || TOTAL_UPLOADED=0
+else
+  echo "[ego-upload] mode=all-sessions (pending CLOSED segments)" | tee -a "$LOG_FILE"
+  mapfile -t PENDING_SESSIONS < <(_list_sessions_with_pending)
+  if [[ ${#PENDING_SESSIONS[@]} -eq 0 ]]; then
+    echo "无待传段（所有 session 均已 UPLOADED 或尚无 closed 段）" | tee -a "$LOG_FILE"
+  else
+    echo "[ego-upload] sessions_with_pending=${#PENDING_SESSIONS[@]}: ${PENDING_SESSIONS[*]}" | tee -a "$LOG_FILE"
+    for sid in "${PENDING_SESSIONS[@]}"; do
+      [[ -n "$sid" ]] || continue
+      _upload_one_session "$sid"
+      if [[ "${UPLOAD_RC:-1}" -eq 0 ]]; then
+        SESSIONS_OK=$((SESSIONS_OK + 1))
+        TOTAL_UPLOADED=$((TOTAL_UPLOADED + ${UPLOAD_N:-0}))
+      else
+        SESSIONS_FAIL=$((SESSIONS_FAIL + 1))
+        FAILED_SIDS+=("$sid")
+        echo "❌ session ${sid} 上传失败 (exit ${UPLOAD_RC})" | tee -a "$LOG_FILE" >&2
+      fi
+    done
+  fi
+  if [[ "$SESSIONS_FAIL" -gt 0 ]]; then
+    echo "❌ ${SESSIONS_FAIL} 个 session 上传失败: ${FAILED_SIDS[*]} · 日志: ${LOG_FILE}" >&2
+    exit 1
+  fi
 fi
 
-echo "✅ 上传完成 · station=${STATION} · 日志: ${LOG_FILE}"
+if [[ "${EGO_SEGMENT_DELETE_AFTER_UPLOAD:-1}" == "1" ]]; then
+  PURGE_LEFT="$(
+    SEG_ROOT="$SEG_ROOT" "$PY" - <<'PY'
+import os
+from pathlib import Path
+from ego_capture_studio.capture.segment_store import purge_all_uploaded_segments
+
+root = Path(os.environ["SEG_ROOT"])
+remaining = purge_all_uploaded_segments(root, strict=True)
+print(remaining)
+PY
+  )" || {
+    echo "❌ 上传后本地段清理失败（仍有 UPLOADED 段残留）· 日志: ${LOG_FILE}" >&2
+    exit 1
+  }
+  if [[ "${PURGE_LEFT:-0}" -gt 0 ]]; then
+    echo "[ego-upload] purged_uploaded_segments=${PURGE_LEFT}" | tee -a "$LOG_FILE"
+  fi
+fi
+
+echo "✅ 上传完成 · station=${STATION} · sessions_ok=${SESSIONS_OK:-1} · uploaded_segments=${TOTAL_UPLOADED} · 日志: ${LOG_FILE}"
 
 if [[ "$NOTIFY_PROCESS" -eq 1 ]]; then
   NOTIFY_URL="${EGO_PROCESS_NOTIFY_URL:-${EGO_UPLOAD_URL%/upload}/process-notify}"
   TOKEN="${STATION_UPLOAD_TOKEN:-}"
-  if [[ -n "$TOKEN" ]] && command -v curl >/dev/null 2>&1; then
+  if [[ "${TOTAL_UPLOADED:-0}" -le 0 ]]; then
+    :
+  elif [[ -n "$TOKEN" ]] && command -v curl >/dev/null 2>&1; then
     echo "[ego-upload] 通知 34 排队 ego-process: ${NOTIFY_URL}"
     if curl -sf -X POST "${NOTIFY_URL}" -H "X-Station-Token: ${TOKEN}" -H "Content-Type: application/json" -d '{}' >/dev/null; then
       echo "   34 已收到 process-notify（需 ego-process-watcher 或手动 ego-process）"

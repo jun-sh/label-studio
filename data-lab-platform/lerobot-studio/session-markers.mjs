@@ -61,6 +61,7 @@ export function clearSessionMarker(root, sessionId, marker) {
 
 export function markSessionUploadDone(root, sessionId, meta = {}) {
   if (hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) return;
+  clearSessionMarker(root, sessionId, SESSION_MARKERS.FAILED);
   writeSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD, meta);
 }
 

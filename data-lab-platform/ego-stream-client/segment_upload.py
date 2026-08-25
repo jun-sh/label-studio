@@ -22,12 +22,15 @@ except ImportError:
 from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
 from ego_capture_studio.capture.frame_bin_codec import unpack_frame_bin
 from ego_capture_studio.capture.segment_store import (
+    GC_ELIGIBLE_STATUS,
     clear_segment_uploaded,
+    flush_pending_segment_deletes,
     list_closed_pending_segments,
     manifest_status,
     mark_segment_upload_failed,
     mark_segment_uploaded,
     mark_segment_uploading,
+    purge_uploaded_segments,
     read_manifest,
     segment_file_key,
 )
@@ -444,6 +447,18 @@ def _segment_upload_skip_reason(segment_dir: Path) -> str | None:
     return None
 
 
+def _dedupe_pending_segment_dirs(pending: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for segment_dir in pending:
+        key = str(segment_dir.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(segment_dir)
+    return out
+
+
 def _prepare_segment_for_upload(segment_dir: Path, *, force: bool) -> str | None:
     """Apply --force reset and validate segment is uploadable. Returns skip reason or None."""
     skip = _segment_upload_skip_reason(segment_dir)
@@ -478,7 +493,16 @@ def _upload_one_segment(
     for attempt in range(1, UPLOAD_MAX_RETRIES + 1):
         t0 = time.monotonic()
         try:
-            mark_segment_uploading(segment_dir)
+            try:
+                mark_segment_uploading(segment_dir)
+            except FileNotFoundError:
+                _log(
+                    "segment_skip",
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    reason="vanished_manifest",
+                )
+                return False
             archive_bytes = _segment_archive_bytes(segment_dir)
             status.set_uploading(
                 session_id=session_id,
@@ -488,10 +512,12 @@ def _upload_one_segment(
             out = uploader.upload_segment_dir(segment_dir)
             if archive_bytes <= 0:
                 archive_bytes = _segment_archive_bytes(segment_dir) or 78 * 1024 * 1024
-            mark_segment_uploaded(segment_dir, delete=DELETE_AFTER_UPLOAD)
+            # Defer local delete until upload_pending_segments() finishes the batch so
+            # concurrent workers never race on deleted dirs / post-delete manifests.
+            mark_segment_uploaded(segment_dir, delete=False)
             elapsed = time.monotonic() - t0
             duplicate = bool(out.get("duplicate"))
-            manifest = read_manifest(segment_dir)
+            manifest = read_manifest(segment_dir) if segment_dir.is_dir() else None
             _log(
                 "segment_ok",
                 session_id=session_id,
@@ -501,8 +527,8 @@ def _upload_one_segment(
                 duplicate=duplicate,
                 protocol=uploader.protocol,
                 attempt=attempt,
-                manifest_status=manifest_status(manifest),
-                remote_ack_at=(manifest.get("upload") or {}).get("remote_ack_at"),
+                manifest_status=manifest_status(manifest) if manifest else GC_ELIGIBLE_STATUS,
+                remote_ack_at=((manifest or {}).get("upload") or {}).get("remote_ack_at"),
             )
             human = status.record_ok(
                 session_id=session_id,
@@ -518,14 +544,17 @@ def _upload_one_segment(
             last_error = str(exc)
             if attempt >= UPLOAD_MAX_RETRIES:
                 mark_segment_upload_failed(segment_dir, last_error)
-                manifest = read_manifest(segment_dir)
+                try:
+                    manifest = read_manifest(segment_dir)
+                except FileNotFoundError:
+                    manifest = {}
                 _log(
                     "segment_fail",
                     session_id=session_id,
                     segment_id=segment_id,
                     err=last_error[:200],
                     attempts=int((manifest.get("upload") or {}).get("attempts") or attempt),
-                    manifest_status=manifest_status(manifest),
+                    manifest_status=manifest_status(manifest) if manifest else "missing",
                 )
                 human = status.record_fail(
                     session_id=session_id,
@@ -796,6 +825,9 @@ def upload_pending_segments(
     )
     if limit is not None:
         pending = pending[:limit]
+    pending = _dedupe_pending_segment_dirs(pending)
+
+    uploader.session_segment_total = len(pending)
 
     uploaded = 0
     if UPLOAD_CONCURRENCY <= 1 or len(pending) <= 1:
@@ -807,21 +839,23 @@ def upload_pending_segments(
                 force=force,
             ):
                 uploaded += 1
-        return uploaded
-
-    workers = min(UPLOAD_CONCURRENCY, len(pending))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(
-                _upload_one_segment,
-                segment_dir=segment_dir,
-                session_id=session_id,
-                uploader=uploader,
-                force=force,
-            ): segment_dir
-            for segment_dir in pending
-        }
-        for fut in as_completed(futures):
-            if fut.result():
-                uploaded += 1
+    else:
+        workers = min(UPLOAD_CONCURRENCY, len(pending))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _upload_one_segment,
+                    segment_dir=segment_dir,
+                    session_id=session_id,
+                    uploader=uploader,
+                    force=force,
+                ): segment_dir
+                for segment_dir in pending
+            }
+            for fut in as_completed(futures):
+                if fut.result():
+                    uploaded += 1
+    if DELETE_AFTER_UPLOAD:
+        flush_pending_segment_deletes()
+        purge_uploaded_segments(root, session_id, strict=True)
     return uploaded

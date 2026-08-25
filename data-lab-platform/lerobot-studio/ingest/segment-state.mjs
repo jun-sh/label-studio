@@ -110,7 +110,11 @@ export function isSessionIngestComplete(root, sessionId, { expectedTotal = 0 } =
   if (expectedTotal > 0) {
     return pending.length >= expectedTotal;
   }
-  return states.every((s) => TERMINAL_OK.has(s.status));
+  // Single-segment sessions without a declared total remain supported.
+  if (states.length === 1 && pending.length === 1) {
+    return true;
+  }
+  return false;
 }
 
 export function segmentStateForApi(state) {

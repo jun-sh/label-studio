@@ -19,6 +19,7 @@ import {
 } from "./unit-paths.mjs";
 import { buildMainTableRows } from "./parquet-writer.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
+import { frameBinName, readSegmentManifest, resolveFrameIndex, stagingFrameName } from "../ingest/frame-index.mjs";
 import { unpackFrameBin } from "../frame_bin_codec.mjs";
 import { probeMp4FrameCount } from "../mux-exec.mjs";
 import {
@@ -79,25 +80,25 @@ function unitFramesDir(tmpRoot, videoKey) {
   return path.join(tmpRoot, "frames", videoKey.replace(/\./g, "_"));
 }
 
-function materializeUnitFrames(tmpRoot, extractDir, stationId, globalStart = 0) {
+function materializeUnitFrames(tmpRoot, extractDir, stationId) {
+  const manifest = readSegmentManifest(extractDir);
   const rows = readJsonl(path.join(extractDir, "rows.jsonl"));
   const keys = videoKeysForStation(stationId);
   let written = 0;
   for (const row of rows) {
-    const localIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
-    if (!Number.isInteger(localIndex) || localIndex < 0) continue;
-    const binPath = path.join(extractDir, "frames", `${String(localIndex).padStart(8, "0")}.bin`);
+    const frameIndex = resolveFrameIndex(row, manifest, 0);
+    if (frameIndex < 0) continue;
+    const binPath = path.join(extractDir, "frames", frameBinName(frameIndex));
     if (!fs.existsSync(binPath)) {
-      throw new Error(`missing frame bin for index ${localIndex}`);
+      throw new Error(`missing frame bin for index ${frameIndex}`);
     }
     const cameraJpegs = unpackFrameBin(fs.readFileSync(binPath));
-    const globalIndex = globalStart + localIndex;
     for (const videoKey of keys) {
       const jpeg = cameraJpegs[videoKey];
       if (!jpeg) continue;
       const outDir = unitFramesDir(tmpRoot, videoKey);
       ensureDir(outDir);
-      const dest = path.join(outDir, `frame_${String(globalIndex).padStart(6, "0")}.jpg`);
+      const dest = path.join(outDir, stagingFrameName(frameIndex));
       fs.writeFileSync(dest, jpeg);
       written += 1;
     }
@@ -292,7 +293,6 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   );
   const segmentExtracts = [];
   const extractDirs = [];
-  let globalStart = 0;
   let imuReplace = true;
 
   for (const seg of segments) {
@@ -304,11 +304,10 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     extractDirs.push(extractDir);
     try {
       extractTarZstSync(seg.archivePath, extractDir);
-      materializeUnitFrames(tmpRoot, extractDir, stationId, globalStart);
+      materializeUnitFrames(tmpRoot, extractDir, stationId);
       ingestUnitImu(tmpRoot, extractDir, sessionId, seg.segmentId, { replace: imuReplace });
       imuReplace = false;
       segmentExtracts.push({ sessionId, segmentId: seg.segmentId, extractDir });
-      globalStart += seg.frameCount;
     } catch (err) {
       for (const dir of extractDirs) cleanupExtractDir(dir);
       throw err;

@@ -180,6 +180,12 @@ systemctl --user start ecs-station-heartbeat.service 2>/dev/null || true
     sftp.put(str(scripts / "ego-upload-station.sh"), "/tmp/ego-upload-station.sh")
     sftp.close()
     run(c, "mkdir -p ~/.local/bin && cp /tmp/ego-upload-station.sh ~/.local/bin/ego-upload && chmod +x ~/.local/bin/ego-upload")
+    run(
+        c,
+        "echo '1' | sudo -S cp /tmp/ego-upload-station.sh /usr/local/bin/ego-upload "
+        "&& sudo chmod +x /usr/local/bin/ego-upload",
+        timeout=30,
+    )
     run(c, "grep -q '\\.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc")
     run(c, "~/.local/bin/ego-upload --help 2>&1 | grep -q notify")
 

@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { unpackFrameBin } from "../frame_bin_codec.mjs";
+import { frameBinName, readSegmentManifest, resolveFrameIndex, stagingFrameName } from "./frame-index.mjs";
 import { ensureDir } from "./io.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,12 +39,11 @@ function readRows(extractDir) {
     .map((line) => JSON.parse(line));
 }
 
-export function materializeStagingFromExtractDir(root, extractDir, { stationId, globalStart = 0 }) {
-  const manifestPath = path.join(extractDir, "manifest.json");
-  if (!fs.existsSync(manifestPath)) {
+export function materializeStagingFromExtractDir(root, extractDir, { stationId }) {
+  const manifest = readSegmentManifest(extractDir);
+  if (!manifest) {
     throw new Error("missing manifest.json in extract dir");
   }
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   const videoKeys = videoKeysForStation(stationId);
   for (const key of videoKeys) {
     ensureDir(stagingDir(root, key));
@@ -52,18 +52,17 @@ export function materializeStagingFromExtractDir(root, extractDir, { stationId, 
   const rows = readRows(extractDir);
   let framesWritten = 0;
   for (const row of rows) {
-    const localIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
-    if (!Number.isInteger(localIndex) || localIndex < 0) continue;
-    const globalIndex = globalStart + localIndex;
-    const binPath = path.join(extractDir, "frames", `${String(localIndex).padStart(8, "0")}.bin`);
+    const frameIndex = resolveFrameIndex(row, manifest, 0);
+    if (frameIndex < 0) continue;
+    const binPath = path.join(extractDir, "frames", frameBinName(frameIndex));
     if (!fs.existsSync(binPath)) {
-      throw new Error(`missing frame bin for index ${localIndex}`);
+      throw new Error(`missing frame bin for index ${frameIndex}`);
     }
     const cameraJpegs = unpackFrameBin(fs.readFileSync(binPath));
     for (const videoKey of videoKeys) {
       const jpeg = cameraJpegs[videoKey];
       if (!jpeg) continue;
-      const out = path.join(stagingDir(root, videoKey), `frame_${String(globalIndex).padStart(6, "0")}.jpg`);
+      const out = path.join(stagingDir(root, videoKey), stagingFrameName(frameIndex));
       fs.writeFileSync(out, jpeg);
     }
     framesWritten += 1;

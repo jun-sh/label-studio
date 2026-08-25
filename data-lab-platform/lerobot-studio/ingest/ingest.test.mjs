@@ -114,6 +114,17 @@ describe("ingest session-coordinator", () => {
     assert.equal(done.marked, true);
     assert.equal(hasSessionMarker(root, sessionId, "session.DONE_UPLOAD"), true);
   });
+
+  it("does not mark DONE_UPLOAD for partial multi-segment upload without declared total", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_multi";
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    transitionSegmentState(root, sessionId, "seg_000002", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    const gate = evaluateSessionUploadGate(root, sessionId);
+    assert.equal(gate.complete, false);
+    const done = maybeMarkSessionDoneUpload(root, sessionId);
+    assert.equal(done.marked, false);
+  });
 });
 
 describe("ingest io raw landing", () => {

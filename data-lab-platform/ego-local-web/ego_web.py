@@ -74,6 +74,7 @@ _lock = threading.Lock()
 _busy = False
 _busy_action: str | None = None
 _last_action_mono = 0.0
+_last_completed_action: str | None = None
 _last_error = ""
 _capture_writing_since: float | None = None
 _journal_cache: tuple[float, float | None, bool] | None = None
@@ -315,6 +316,19 @@ def _capture_stopping() -> bool:
     return state in ("activating", "deactivating")
 
 
+def _wait_for_stop_release(timeout_s: float | None = None) -> bool:
+    """Block start until an in-flight stop finishes (rapid stop→start UX)."""
+    deadline = time.monotonic() + (timeout_s if timeout_s is not None else STOP_TIMEOUT_S + 15.0)
+    while time.monotonic() < deadline:
+        with _lock:
+            if not _busy:
+                return True
+            if _busy_action != "stop":
+                return False
+        time.sleep(0.2)
+    return False
+
+
 def _ensure_capture_fully_stopped(timeout_s: float = 25.0) -> bool:
     """Stop lingering capture unit before a new start (avoids OAK in-use / 120s stop wait)."""
     state = _capture_unit_state(CAPTURE_RECORD_UNIT)
@@ -489,7 +503,7 @@ def _build_status() -> dict[str, Any]:
         msg = err if err else ""
     elif active:
         state = "warming"
-        msg = err or "开始写入数据后计时"
+        msg = err or "正在准备录制，相机初始化中…"
     elif err:
         state = "error"
         msg = err
@@ -511,13 +525,23 @@ def _build_status() -> dict[str, Any]:
 
 
 def _run_capture_action(action: str) -> tuple[bool, str]:
-    global _busy, _busy_action, _last_error, _last_action_mono
+    global _busy, _busy_action, _last_error, _last_action_mono, _last_completed_action
 
     now = time.monotonic()
+    if action == "start":
+        with _lock:
+            if _busy and _busy_action != "stop":
+                return False, "操作进行中，请稍候"
+        if not _wait_for_stop_release():
+            return False, "上一段仍在保存，请稍后再试"
+
     with _lock:
         if _busy:
             return False, "操作进行中，请稍候"
-        if now - _last_action_mono < MIN_ACTION_INTERVAL_S:
+        if (
+            now - _last_action_mono < MIN_ACTION_INTERVAL_S
+            and _last_completed_action == action
+        ):
             return False, "操作过快，请稍后再试"
         _busy = True
         _busy_action = action
@@ -606,6 +630,8 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             _busy = False
             _busy_action = None
             _last_action_mono = time.monotonic()
+            if action in ("start", "stop"):
+                _last_completed_action = action
 
 
 def _grab_preview_bytes() -> bytes | None:
@@ -690,6 +716,10 @@ INDEX_HTML = """<!DOCTYPE html>
       transition: background .25s;
     }
     .status-card[data-link="live"] .status-dot { background: var(--green); }
+    .status-card[data-link="warming"] .status-dot {
+      background: var(--orange);
+      animation: pulse 1.2s ease infinite;
+    }
     .status-card[data-link="busy"] .status-dot { background: var(--orange); animation: pulse 1.2s ease infinite; }
     .status-card[data-link="error"] .status-dot { background: var(--err); }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
@@ -702,6 +732,7 @@ INDEX_HTML = """<!DOCTYPE html>
       margin: 4px 0 0; font-size: .875rem; color: var(--muted); line-height: 1.4;
     }
     .status-sub.live { color: var(--green); font-weight: 600; }
+    .status-sub.warming { color: var(--warn); font-weight: 600; }
     .status-sub.err { color: var(--err); }
     .status-wifi {
       flex-shrink: 0; width: 28px; height: 28px;
@@ -920,7 +951,7 @@ INDEX_HTML = """<!DOCTYPE html>
 
   function updatePreviewOverlays(st, data) {
     var showRec = st === "recording" && (data.frames_writing || (data.duration || 0) > 0);
-    var showTimer = showRec || st === "warming";
+    var showTimer = showRec;
     previewTimer.hidden = !showTimer;
     previewRec.hidden = !showRec;
     if (showTimer) {
@@ -940,8 +971,12 @@ INDEX_HTML = """<!DOCTYPE html>
       showPreviewPlaceholder("开始录制后显示实时画面");
       updatePreviewOverlays(st, data);
     } else if (st === "warming") {
-      setStatusLink("live");
-      setHeader("设备已连接", "正在录制中", { subClass: "live" });
+      setStatusLink("warming");
+      setHeader(
+        "设备已连接",
+        data.msg || "正在准备录制，相机初始化中…",
+        { subClass: "warming", spinner: true }
+      );
       setBtnMode("stop", "结束录制", false);
       updatePreviewOverlays(st, data);
       startPreview();

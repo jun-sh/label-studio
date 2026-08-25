@@ -52,6 +52,8 @@ SEGMENT_ASYNC_DELETE = os.environ.get("EGO_SEGMENT_ASYNC_DELETE", "1").strip().l
     "true",
     "yes",
 )
+_pending_delete_lock = threading.Lock()
+_pending_delete_threads: list[threading.Thread] = []
 SEGMENT_BACKPRESSURE_SLEEP_S = float(os.environ.get("EGO_SEGMENT_BACKPRESSURE_SLEEP_S", "0.02"))
 _bp_pending = (
     os.environ.get("SEGMENT_BACKPRESSURE_PENDING")
@@ -1079,17 +1081,92 @@ def _delete_segment_dir(segment_dir: Path) -> None:
     shutil.rmtree(segment_dir, ignore_errors=True)
 
 
-def gc_segment_dir(segment_dir: Path) -> None:
-    """Delete a segment directory only when status == UPLOADED."""
-    if SEGMENT_ASYNC_DELETE:
-        threading.Thread(
-            target=_delete_segment_dir,
-            args=(segment_dir,),
-            name=f"ego-seg-delete-{segment_dir.name}",
-            daemon=True,
-        ).start()
-    else:
+def gc_segment_dir(segment_dir: Path, *, sync: bool | None = None) -> None:
+    """Delete a segment directory only when status == UPLOADED.
+
+    Post-upload deletes must pass sync=True so the directory is gone before the
+    upload process exits (async daemon threads are killed on interpreter exit).
+    """
+    if sync is None:
+        sync = not SEGMENT_ASYNC_DELETE
+    if sync:
         _delete_segment_dir(segment_dir)
+        return
+
+    def _run() -> None:
+        try:
+            _delete_segment_dir(segment_dir)
+        finally:
+            with _pending_delete_lock:
+                _pending_delete_threads[:] = [t for t in _pending_delete_threads if t.is_alive()]
+
+    thread = threading.Thread(
+        target=_run,
+        name=f"ego-seg-delete-{segment_dir.name}",
+        daemon=True,
+    )
+    with _pending_delete_lock:
+        _pending_delete_threads.append(thread)
+    thread.start()
+
+
+def flush_pending_segment_deletes(timeout_s: float = 600.0) -> int:
+    """Wait for in-flight async segment deletes. Returns count still alive after timeout."""
+    deadline = time.monotonic() + max(0.1, float(timeout_s))
+    while True:
+        with _pending_delete_lock:
+            alive = [t for t in _pending_delete_threads if t.is_alive()]
+            _pending_delete_threads[:] = alive
+        if not alive:
+            return 0
+        if time.monotonic() >= deadline:
+            return len(alive)
+        for thread in alive:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            thread.join(timeout=min(1.0, remaining))
+
+
+def purge_uploaded_segments(root: Path, session_id: str, *, strict: bool = False) -> int:
+    """Synchronously delete all UPLOADED segment dirs for one session."""
+    removed = 0
+    for segment_dir in list_uploaded_segments(root, session_id):
+        _delete_segment_dir(segment_dir)
+        removed += 1
+    if strict:
+        remaining = list_uploaded_segments(root, session_id)
+        if remaining:
+            names = ", ".join(p.name for p in remaining[:5])
+            suffix = f" (+{len(remaining) - 5} more)" if len(remaining) > 5 else ""
+            raise RuntimeError(
+                f"purge_uploaded_segments: {len(remaining)} UPLOADED segment(s) remain "
+                f"for {session_id}: {names}{suffix}"
+            )
+    return removed
+
+
+def purge_all_uploaded_segments(root: Path, *, strict: bool = False) -> int:
+    """Synchronously delete UPLOADED segment dirs across all sessions."""
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return 0
+    removed = 0
+    for sess in sorted(sessions.iterdir()):
+        if not sess.is_dir() or not sess.name.startswith("sess_"):
+            continue
+        removed += purge_uploaded_segments(root, sess.name, strict=False)
+    if strict:
+        for sess in sorted(sessions.iterdir()):
+            if not sess.is_dir() or not sess.name.startswith("sess_"):
+                continue
+            remaining = list_uploaded_segments(root, sess.name)
+            if remaining:
+                raise RuntimeError(
+                    f"purge_all_uploaded_segments: {len(remaining)} UPLOADED segment(s) remain "
+                    f"for {sess.name}"
+                )
+    return removed
 
 
 def _update_manifest_status(
@@ -1131,7 +1208,10 @@ def mark_segment_uploading(segment_dir: Path) -> None:
 
 
 def mark_segment_upload_failed(segment_dir: Path, error: str) -> None:
-    manifest = read_manifest(segment_dir)
+    try:
+        manifest = read_manifest(segment_dir)
+    except FileNotFoundError:
+        return
     status = manifest_status(manifest)
     if status not in {"UPLOADING", *UPLOADABLE_STATUSES}:
         raise ValueError(f"cannot mark upload failed from status {status}")
@@ -1164,5 +1244,5 @@ def mark_segment_uploaded(segment_dir: Path, *, delete: bool = False) -> None:
     upload["last_error"] = None
     _update_manifest_status(segment_dir, GC_ELIGIBLE_STATUS, upload_patch=upload)
     if delete:
-        gc_segment_dir(segment_dir)
+        gc_segment_dir(segment_dir, sync=True)
 

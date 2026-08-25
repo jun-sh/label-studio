@@ -124,6 +124,7 @@ ssh "${TARGET}" "mkdir -p ~/.local/bin"
 scp -q "${REPO_ROOT}/data-lab-platform/scripts/ego-upload-station.sh" \
   "${TARGET}:~/.local/bin/ego-upload"
 ssh "${TARGET}" "chmod +x ~/.local/bin/ego-upload"
+ssh "${TARGET}" "echo '1' | sudo -S cp ~/.local/bin/ego-upload /usr/local/bin/ego-upload"
 ssh "${TARGET}" 'grep -q "\.local/bin" ~/.bashrc 2>/dev/null || echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> ~/.bashrc'
 
 echo "==> Verify ego-upload supports --notify (P-Ops-3)"

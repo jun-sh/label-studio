@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { ensureDir, readJsonl, writeJsonlAtomic } from "./io.mjs";
 import { findSegmentEntry } from "./frame-map.mjs";
+import { readSegmentManifest, resolveFrameIndex } from "../ingest/frame-index.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ALIGN_SCRIPT = path.join(__dirname, "imu", "align-main.py");
@@ -42,12 +43,12 @@ export function remapSegmentRows(frameMap, sessionId, segmentId, extractDir) {
     throw new Error(`frame_segments entry missing for ${sessionId}/${segmentId}`);
   }
   const rows = readSegmentRows(extractDir);
+  const manifest = readSegmentManifest(extractDir);
   return rows.map((row) => {
-    const localIndex = Number(row.frame_index ?? row.frameIndex ?? -1);
-    if (!Number.isInteger(localIndex) || localIndex < 0) {
-      throw new Error(`invalid local frame_index in ${segmentId}`);
+    const globalIndex = resolveFrameIndex(row, manifest, entry.global_start);
+    if (globalIndex < 0) {
+      throw new Error(`invalid frame_index in ${segmentId}`);
     }
-    const globalIndex = entry.global_start + localIndex;
     return {
       ...row,
       frame_index: globalIndex,

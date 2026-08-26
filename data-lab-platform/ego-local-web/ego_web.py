@@ -493,6 +493,48 @@ def _delete_session_data(session_id: str) -> None:
             shutil.rmtree(root)
 
 
+def _session_is_completely_empty(session_id: str) -> bool:
+    for root in (_session_disk_root(session_id), _session_shm_root(session_id)):
+        if not root.is_dir():
+            continue
+        if any(p.is_file() for p in root.rglob("*")):
+            return False
+    return True
+
+
+def _cleanup_orphan_session(session_id: str, reason: str) -> None:
+    if not session_id:
+        return
+    _delete_session_data(session_id)
+    print(f"capture_session_cleanup session_id={session_id} reason={reason}", flush=True)
+
+
+def _maybe_cleanup_failed_empty_session() -> None:
+    """Remove checkpoint session dir when capture died with no files (e.g. no OAK)."""
+    if _capture_active() or _capture_stopping():
+        with _lock:
+            if _busy:
+                return
+    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    if rec not in ("failed", "inactive", ""):
+        return
+    checkpoint = _read_checkpoint()
+    session_id = str(checkpoint.get("sessionId") or "").strip()
+    if not session_id or _session_has_uploaded_segments(session_id):
+        return
+    if _session_is_completely_empty(session_id):
+        _cleanup_orphan_session(session_id, "empty_after_failed")
+
+
+def _fail_start_capture(session_id: str, msg: str) -> tuple[bool, str]:
+    global _last_error
+    _last_error = msg
+    _ensure_capture_fully_stopped(timeout_s=30.0)
+    _cleanup_orphan_session(session_id, "start_failed")
+    _start_standby_preview()
+    return False, msg
+
+
 def _log_abandon(session_id: str) -> None:
     log_dir = SEGMENT_ROOT.parent / "logs"
     try:
@@ -606,6 +648,7 @@ def _build_status() -> dict[str, Any]:
         state = "idle"
         msg = ""
         _last_error = ""
+        _maybe_cleanup_failed_empty_session()
 
     return {
         "state": state,
@@ -662,22 +705,21 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 _last_error = "预览端口 8765 未释放，请等待 10 秒后重试"
                 _start_standby_preview()
                 return False, _last_error
-            _begin_new_capture_session()
+            session_id = _begin_new_capture_session()
             proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
-                _last_error = f"无法启动采集：{detail}"
-                _start_standby_preview()
-                return False, _last_error
+                return _fail_start_capture(session_id, f"无法启动采集：{detail}")
             deadline = time.monotonic() + START_TIMEOUT_S
             while time.monotonic() < deadline:
                 if _capture_active():
                     return True, ""
                 time.sleep(0.5)
-            _last_error = "相机启动超时，请检查 OAK 设备是否连接"
             _systemctl("stop", CAPTURE_TARGET, timeout=30)
-            _start_standby_preview()
-            return False, _last_error
+            return _fail_start_capture(
+                session_id,
+                "相机启动超时，请检查 OAK 设备是否连接",
+            )
 
         if action == "stop":
             if not _stop_capture_wait():

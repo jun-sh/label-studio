@@ -64,6 +64,15 @@ class CaptureAbandonTest(unittest.TestCase):
             (meta / "camera_intrinsics.json").write_text("{}", encoding="utf-8")
             self.assertFalse(ego_web._session_is_completely_empty("sess_meta"))
 
+    def test_session_has_segment_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ego_web.SEGMENT_ROOT = Path(tmp)
+            sid = "sess_seg"
+            seg = Path(tmp) / "sessions" / sid / "segments" / "seg_000001"
+            seg.mkdir(parents=True)
+            self.assertTrue(ego_web._session_has_segment_dirs(sid))
+            self.assertFalse(ego_web._session_has_segment_dirs("sess_none"))
+
 
 if __name__ == "__main__":
     unittest.main()

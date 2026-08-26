@@ -493,6 +493,20 @@ def _delete_session_data(session_id: str) -> None:
             shutil.rmtree(root)
 
 
+def _session_has_segment_dirs(session_id: str) -> bool:
+    seg_root = _session_disk_root(session_id) / "segments"
+    if seg_root.is_dir():
+        for seg in seg_root.iterdir():
+            if seg.is_dir() and seg.name.startswith("seg_"):
+                return True
+    shm_seg = _session_shm_root(session_id) / "segments"
+    if shm_seg.is_dir():
+        for seg in shm_seg.iterdir():
+            if seg.is_dir() and seg.name.startswith("seg_"):
+                return True
+    return False
+
+
 def _session_is_completely_empty(session_id: str) -> bool:
     for root in (_session_disk_root(session_id), _session_shm_root(session_id)):
         if not root.is_dir():
@@ -509,8 +523,13 @@ def _cleanup_orphan_session(session_id: str, reason: str) -> None:
     print(f"capture_session_cleanup session_id={session_id} reason={reason}", flush=True)
 
 
-def _maybe_cleanup_failed_empty_session() -> None:
-    """Remove checkpoint session dir when capture died with no files (e.g. no OAK)."""
+_prune_sessions_last_mono = 0.0
+PRUNE_SESSIONS_INTERVAL_S = float(os.environ.get("EGO_PRUNE_SESSIONS_INTERVAL_S", "30"))
+
+
+def _maybe_prune_stale_session_dirs() -> None:
+    """Drop sess_* dirs with no seg_* on disk (empty or intrinsics-only leftovers)."""
+    global _prune_sessions_last_mono
     if _capture_active() or _capture_stopping():
         with _lock:
             if _busy:
@@ -518,12 +537,24 @@ def _maybe_cleanup_failed_empty_session() -> None:
     rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
     if rec not in ("failed", "inactive", ""):
         return
-    checkpoint = _read_checkpoint()
-    session_id = str(checkpoint.get("sessionId") or "").strip()
-    if not session_id or _session_has_uploaded_segments(session_id):
+    now = time.monotonic()
+    if now - _prune_sessions_last_mono < PRUNE_SESSIONS_INTERVAL_S:
         return
-    if _session_is_completely_empty(session_id):
-        _cleanup_orphan_session(session_id, "empty_after_failed")
+    _prune_sessions_last_mono = now
+
+    sessions_root = SEGMENT_ROOT / "sessions"
+    if not sessions_root.is_dir():
+        return
+
+    for sess in sessions_root.iterdir():
+        if not sess.is_dir() or not sess.name.startswith("sess_"):
+            continue
+        session_id = sess.name
+        if _session_has_segment_dirs(session_id):
+            continue
+        if _session_has_uploaded_segments(session_id):
+            continue
+        _cleanup_orphan_session(session_id, "no_segments_on_disk")
 
 
 def _fail_start_capture(session_id: str, msg: str) -> tuple[bool, str]:
@@ -648,7 +679,7 @@ def _build_status() -> dict[str, Any]:
         state = "idle"
         msg = ""
         _last_error = ""
-        _maybe_cleanup_failed_empty_session()
+        _maybe_prune_stale_session_dirs()
 
     return {
         "state": state,

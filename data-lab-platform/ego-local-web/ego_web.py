@@ -458,6 +458,98 @@ def _count_segments(root: Path) -> int:
     return count
 
 
+def _session_disk_root(session_id: str) -> Path:
+    return SEGMENT_ROOT / "sessions" / session_id
+
+
+def _session_shm_root(session_id: str) -> Path:
+    return SEGMENT_ACTIVE_ROOT / "sessions" / session_id
+
+
+def _session_has_uploaded_segments(session_id: str) -> bool:
+    seg_root = _session_disk_root(session_id) / "segments"
+    if not seg_root.is_dir():
+        return False
+    for seg in seg_root.iterdir():
+        if not seg.is_dir() or not seg.name.startswith("seg_"):
+            continue
+        manifest = seg / "manifest.json"
+        if not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("uploaded"):
+            return True
+    return False
+
+
+def _delete_session_data(session_id: str) -> None:
+    if not session_id or not session_id.startswith("sess_"):
+        return
+    for root in (_session_shm_root(session_id), _session_disk_root(session_id)):
+        if root.is_dir():
+            shutil.rmtree(root)
+
+
+def _log_abandon(session_id: str) -> None:
+    log_dir = SEGMENT_ROOT.parent / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        payload = {
+            "sessionId": session_id,
+            "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "action": "abandon",
+        }
+        (log_dir / f"abandon-{stamp}-{session_id}.json").write_text(
+            json.dumps(payload, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        print(f"capture_abandon session_id={session_id}", flush=True)
+
+
+def _stop_capture_wait() -> bool:
+    """Stop capture stack and wait until the record unit is idle."""
+    global _last_error
+    if not _capture_active():
+        return True
+    _systemctl("stop", CAPTURE_RECORD_UNIT, timeout=30)
+    _systemctl("stop", CAPTURE_TARGET, timeout=15)
+    deadline = time.monotonic() + STOP_TIMEOUT_S
+    ok = False
+    deactivating_since: float | None = None
+    while time.monotonic() < deadline:
+        rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+        if rec == "deactivating":
+            if deactivating_since is None:
+                deactivating_since = time.monotonic()
+            elif time.monotonic() - deactivating_since >= STOP_DEACTIVATING_KILL_S:
+                _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
+                deactivating_since = time.monotonic()
+        else:
+            deactivating_since = None
+        if _capture_fully_idle():
+            ok = True
+            break
+        time.sleep(0.5)
+    if not ok:
+        _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
+        deadline = time.monotonic() + 45.0
+        while time.monotonic() < deadline:
+            if _capture_fully_idle():
+                ok = True
+                break
+            time.sleep(0.5)
+    if not ok:
+        _last_error = "停止超时，请再次点击结束录制"
+        return False
+    _start_standby_preview()
+    return True
+
+
 def _build_status() -> dict[str, Any]:
     global _busy, _busy_action, _last_error, _capture_writing_since, _journal_cache
 
@@ -489,6 +581,9 @@ def _build_status() -> dict[str, Any]:
     if busy and busy_action == "start":
         state = "starting"
         msg = "正在启动采集服务，请稍候…"
+    elif busy and busy_action == "abandon":
+        state = "stopping"
+        msg = "正在放弃录制，请稍候…"
     elif busy and busy_action == "stop":
         state = "stopping"
         rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
@@ -585,40 +680,8 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             return False, _last_error
 
         if action == "stop":
-            if not _capture_active():
-                ok = True
-            else:
-                _systemctl("stop", CAPTURE_RECORD_UNIT, timeout=30)
-                _systemctl("stop", CAPTURE_TARGET, timeout=15)
-                deadline = time.monotonic() + STOP_TIMEOUT_S
-                ok = False
-                deactivating_since: float | None = None
-                while time.monotonic() < deadline:
-                    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
-                    if rec == "deactivating":
-                        if deactivating_since is None:
-                            deactivating_since = time.monotonic()
-                        elif time.monotonic() - deactivating_since >= STOP_DEACTIVATING_KILL_S:
-                            _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
-                            deactivating_since = time.monotonic()
-                    else:
-                        deactivating_since = None
-                    if _capture_fully_idle():
-                        ok = True
-                        break
-                    time.sleep(0.5)
-                if not ok:
-                    _systemctl("kill", CAPTURE_RECORD_UNIT, timeout=20)
-                    deadline = time.monotonic() + 45.0
-                    while time.monotonic() < deadline:
-                        if _capture_fully_idle():
-                            ok = True
-                            break
-                        time.sleep(0.5)
-                if not ok:
-                    _last_error = "停止超时，请再次点击结束录制"
-                    return False, _last_error
-            _start_standby_preview()
+            if not _stop_capture_wait():
+                return False, _last_error
             return True, ""
 
         return False, "未知操作"
@@ -630,8 +693,50 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             _busy = False
             _busy_action = None
             _last_action_mono = time.monotonic()
-            if action in ("start", "stop"):
+            if action in ("start", "stop", "abandon"):
                 _last_completed_action = action
+
+
+def _run_capture_abandon() -> tuple[bool, str]:
+    global _busy, _busy_action, _last_error, _last_action_mono, _last_completed_action
+
+    if not _capture_active():
+        return False, "当前未在录制"
+
+    checkpoint = _read_checkpoint()
+    session_id = str(checkpoint.get("sessionId") or "").strip()
+    if session_id and _session_has_uploaded_segments(session_id):
+        return False, "本场已有已上传段，无法放弃"
+
+    now = time.monotonic()
+    with _lock:
+        if _busy:
+            return False, "操作进行中，请稍候"
+        if (
+            now - _last_action_mono < MIN_ACTION_INTERVAL_S
+            and _last_completed_action == "abandon"
+        ):
+            return False, "操作过快，请稍后再试"
+        _busy = True
+        _busy_action = "abandon"
+        _last_error = ""
+
+    try:
+        if not _stop_capture_wait():
+            return False, _last_error
+        if session_id:
+            _delete_session_data(session_id)
+            _log_abandon(session_id)
+        return True, ""
+    except Exception as exc:
+        _last_error = f"操作异常：{exc}"
+        return False, _last_error
+    finally:
+        with _lock:
+            _busy = False
+            _busy_action = None
+            _last_action_mono = time.monotonic()
+            _last_completed_action = "abandon"
 
 
 def _grab_preview_bytes() -> bytes | None:
@@ -1228,6 +1333,15 @@ class EgoWebHandler(BaseHTTPRequestHandler):
 
         if path == "/api/capture/stop":
             ok, msg = _run_capture_action("stop")
+            _json_response(
+                self,
+                HTTPStatus.OK if ok else HTTPStatus.CONFLICT,
+                {"success": ok, "msg": msg},
+            )
+            return
+
+        if path == "/api/capture/abandon":
+            ok, msg = _run_capture_abandon()
             _json_response(
                 self,
                 HTTPStatus.OK if ok else HTTPStatus.CONFLICT,

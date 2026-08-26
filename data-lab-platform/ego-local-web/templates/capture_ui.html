@@ -247,6 +247,77 @@
       border-radius: 2px;
       flex-shrink: 0;
     }
+    .btn-abandon {
+      width: 100%;
+      min-height: 44px;
+      margin-top: 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      background: #fff;
+      color: var(--muted);
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .2s, background .2s;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .btn-abandon:active:not(:disabled) { background: #f3f4f6; }
+    .btn-abandon:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-abandon[hidden] { display: none !important; }
+
+    .modal[hidden] { display: none !important; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(15, 23, 42, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-box {
+      width: 100%;
+      max-width: 320px;
+      background: #fff;
+      border-radius: 16px;
+      padding: 22px 20px 16px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    }
+    .modal-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 0 0 10px;
+    }
+    .modal-body {
+      font-size: .9rem;
+      line-height: 1.5;
+      color: var(--muted);
+      margin: 0 0 18px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .modal-btn {
+      flex: 1;
+      min-height: 42px;
+      border-radius: 999px;
+      border: none;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .modal-btn-cancel {
+      background: #f3f4f6;
+      color: var(--text);
+    }
+    .modal-btn-confirm {
+      background: var(--stop);
+      color: #fff;
+    }
 
   /* ---- metrics ---- */
     .info {
@@ -339,6 +410,18 @@
       <span class="btn-stop-icon" id="btnIconStop" hidden></span>
       <span id="mainBtnLabel">开始录制</span>
     </button>
+    <button type="button" class="btn-abandon" id="abandonBtn" hidden>放弃录制</button>
+
+    <div class="modal" id="abandonModal" hidden>
+      <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="abandonModalTitle">
+        <h2 class="modal-title" id="abandonModalTitle">确认放弃本段录制？</h2>
+        <p class="modal-body">将停止录制并删除本场未上传数据，无法恢复。</p>
+        <div class="modal-actions">
+          <button type="button" class="modal-btn modal-btn-cancel" id="abandonCancel">取消</button>
+          <button type="button" class="modal-btn modal-btn-confirm" id="abandonConfirm">确认放弃</button>
+        </div>
+      </div>
+    </div>
 
     <section class="info">
       <div class="info-card">
@@ -377,6 +460,10 @@
   var statusWifi = document.getElementById("statusWifi");
   var mainBtn = document.getElementById("mainBtn");
   var mainBtnLabel = document.getElementById("mainBtnLabel");
+  var abandonBtn = document.getElementById("abandonBtn");
+  var abandonModal = document.getElementById("abandonModal");
+  var abandonCancel = document.getElementById("abandonCancel");
+  var abandonConfirm = document.getElementById("abandonConfirm");
   var btnIconPlay = document.getElementById("btnIconPlay");
   var btnIconStop = document.getElementById("btnIconStop");
   var previewImg = document.getElementById("previewImg");
@@ -463,6 +550,11 @@
     }
   }
 
+  function setAbandonVisible(visible) {
+    abandonBtn.hidden = !visible;
+    if (!visible) abandonModal.hidden = true;
+  }
+
   function applyStatus(data) {
     var st = data.state || "idle";
     lastState = st;
@@ -483,6 +575,7 @@
       previewHasFrame = false;
       showPreviewPlaceholder("开始录制后显示实时画面");
       updatePreviewOverlays(st, data);
+      setAbandonVisible(false);
     } else if (st === "warming") {
       setStatusLink("warming");
       setHeader(
@@ -493,18 +586,21 @@
       setBtnMode("stop", "结束录制", false);
       updatePreviewOverlays(st, data);
       startPreview();
+      setAbandonVisible(true);
     } else if (st === "recording") {
       setStatusLink("live");
       setHeader("设备已连接", "正在录制中", { subClass: "live", spinner: false });
       setBtnMode("stop", "结束录制", false);
       updatePreviewOverlays(st, data);
       startPreview();
+      setAbandonVisible(true);
     } else if (st === "starting") {
       setStatusLink("busy");
       setHeader("设备连接中", data.msg || "正在启动相机…", { spinner: true });
       setBtnMode("start", "启动中…", true);
       stopPreview();
       updatePreviewOverlays(st, data);
+      setAbandonVisible(false);
     } else if (st === "stopping") {
       setStatusLink("busy");
       if (pendingStart) {
@@ -517,6 +613,7 @@
       stopPreview();
       showPreviewPlaceholder("正在写入磁盘，请勿断电…");
       updatePreviewOverlays(st, data);
+      setAbandonVisible(false);
     } else if (st === "error") {
       setStatusLink("error");
       setHeader("出现问题", data.msg || "请稍后重试", { subClass: "err" });
@@ -524,12 +621,15 @@
       else setBtnMode("start", "开始录制", false);
       stopPreview();
       updatePreviewOverlays(st, data);
+      setAbandonVisible(false);
     }
 
     if (st === "stopping") {
       mainBtn.disabled = !!pendingStart;
+      abandonBtn.disabled = true;
     } else if (st !== "starting" && st !== "stopping" && !actionInFlight) {
       mainBtn.disabled = false;
+      abandonBtn.disabled = false;
     }
 
     parseStorage(data.storage_free || "—");
@@ -610,7 +710,15 @@
     if (actionInFlight) return;
     actionInFlight = true;
     mainBtn.disabled = true;
-    if (path === "/api/capture/stop") {
+    abandonBtn.disabled = true;
+    if (path === "/api/capture/abandon") {
+      pendingStart = false;
+      setStatusLink("busy");
+      setHeader("正在放弃录制", "请稍候…", { spinner: true });
+      setAbandonVisible(false);
+      abandonModal.hidden = true;
+      stopPreview();
+    } else if (path === "/api/capture/stop") {
       setStatusLink("busy");
       setHeader("正在保存数据", "请勿断电", { spinner: true });
       setBtnMode("stop", "保存中…", true);
@@ -623,6 +731,10 @@
     fetch(path, { method: "POST", cache: "no-store" })
       .then(function (r) { return r.json(); })
       .then(function (res) {
+        if (path === "/api/capture/abandon" && !res.success) {
+          setStatusLink("error");
+          setHeader("放弃失败", res.msg || "请稍后重试", { subClass: "err" });
+        }
         if (path === "/api/capture/stop" && res.success) {
           if (pendingStart) {
             return fetchStatus().then(function () { maybeStartQueued(); });
@@ -650,6 +762,20 @@
     }
     if (mode === "stop") doAction("/api/capture/stop");
     else if (mode === "start") doAction("/api/capture/start");
+  });
+
+  abandonBtn.addEventListener("click", function () {
+    if (actionInFlight || lastState !== "warming" && lastState !== "recording") return;
+    abandonModal.hidden = false;
+  });
+
+  abandonCancel.addEventListener("click", function () {
+    abandonModal.hidden = true;
+  });
+
+  abandonConfirm.addEventListener("click", function () {
+    if (actionInFlight) return;
+    doAction("/api/capture/abandon");
   });
 
   fetchStatus();

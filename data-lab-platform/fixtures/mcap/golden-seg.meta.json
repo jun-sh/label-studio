@@ -1,0 +1,20 @@
+{
+  "fixture": "golden-seg.mcap",
+  "frame_count": 3,
+  "schema_version": 1,
+  "summary": {
+    "path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/fixtures/mcap/golden-seg.mcap",
+    "topics": {
+      "/ego/session_meta": 1,
+      "/ego/camera/front_left": 3,
+      "/ego/camera/front_right": 3,
+      "/ego/camera/rear_left": 3,
+      "/ego/camera/rear_right": 3,
+      "/ego/observation/state": 3,
+      "/ego/observation/pose": 3,
+      "/ego/task": 3,
+      "/ego/imu/raw": 6
+    },
+    "message_count": 28
+  }
+}

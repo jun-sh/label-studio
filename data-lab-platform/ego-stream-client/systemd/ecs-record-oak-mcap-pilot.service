@@ -1,0 +1,32 @@
+[Unit]
+Description=EGO OAK MCAP pilot capture (ego-mcap-pilot, isolated from production)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Conflicts=ecs-record-oak-stream.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
+  --fps 30 --imu-hz 200
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-record-oak-mcap-pilot
+
+[Install]
+WantedBy=default.target

@@ -81,7 +81,14 @@ SEGMENT_FRAME_BIN = os.environ.get("SEGMENT_FRAME_BIN", "1").strip().lower() in 
     "true",
     "yes",
 )
-if not SEGMENT_FRAME_BIN:
+SEGMENT_MCAP = os.environ.get("SEGMENT_MCAP", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+if SEGMENT_MCAP:
+    pass
+elif not SEGMENT_FRAME_BIN:
     raise RuntimeError("SEGMENT_FRAME_BIN=1 is required (JPEG DLB1 frame bins only)")
 SEGMENT_PERSIST_WORKERS = max(1, int(os.environ.get("SEGMENT_PERSIST_WORKERS", "2")))
 SEGMENT_FINALIZE_ASYNC = os.environ.get("SEGMENT_FINALIZE_ASYNC", "1").strip().lower() in (
@@ -191,6 +198,15 @@ def check_segment_integrity(
     frame_count = int(manifest.get("frame_count") or 0)
     if frame_count <= 0:
         issues.append("invalid_frame_count")
+
+    storage_format = str(manifest.get("storage_format") or ("mcap" if SEGMENT_MCAP else "dlb1"))
+    if storage_format == "mcap":
+        mcap_path = segment_dir / "segment.mcap"
+        if not mcap_path.is_file():
+            issues.append("missing_segment_mcap")
+        elif mcap_path.stat().st_size < 64:
+            issues.append("empty_segment_mcap")
+        return len(issues) == 0, issues
 
     rows_path = segment_dir / "rows.jsonl"
     if not rows_path.is_file():
@@ -485,6 +501,74 @@ class _OpenSegmentWriter:
                 pass
 
 
+class _OpenSegmentMcapWriter:
+    """MCAP persist adapter (SEGMENT_MCAP=1 only)."""
+
+    def __init__(
+        self,
+        segment_dir: Path,
+        *,
+        session_id: str,
+        segment_id: str,
+        task: str,
+    ) -> None:
+        from ego_capture_studio.capture.mcap_segment_writer import McapSegmentWriter
+
+        station_id = os.environ.get("EGO_STATION_ID", "ego-mcap-pilot").strip() or "ego-mcap-pilot"
+        self.segment_dir = segment_dir
+        self._writer = McapSegmentWriter(
+            segment_dir,
+            session_id=session_id,
+            segment_id=segment_id,
+            station_id=station_id,
+            task=task,
+        )
+        self._writer.open()
+
+    def write_frame(self, job: _PersistJob) -> None:
+        row = build_lerobot_row(
+            frame_index=job.frame_index,
+            timestamp_ns=job.timestamp_ns,
+            imu6=job.imu6,
+            task=job.task,
+            camera_ts_offset_ns=job.camera_ts_offset_ns,
+        )
+        self._writer.write_frame(
+            frame_index=job.frame_index,
+            timestamp_ns=job.timestamp_ns,
+            camera_jpegs=job.camera_jpegs,
+            row=row,
+            camera_ts_offset_ns=(
+                job.camera_ts_offset_ns.get("primary") if job.camera_ts_offset_ns else None
+            ),
+        )
+        if job.imu_raw_batch:
+            self._writer.append_imu_raw_records(job.imu_raw_batch)
+
+    def append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
+        self._writer.append_imu_raw_records(records)
+
+    def close(self) -> None:
+        self._writer.close()
+
+
+def _new_open_segment_writer(
+    segment_dir: Path,
+    *,
+    session_id: str,
+    segment_id: str,
+    task: str,
+) -> _OpenSegmentWriter | _OpenSegmentMcapWriter:
+    if SEGMENT_MCAP:
+        return _OpenSegmentMcapWriter(
+            segment_dir,
+            session_id=session_id,
+            segment_id=segment_id,
+            task=task,
+        )
+    return _OpenSegmentWriter(segment_dir)
+
+
 class SegmentCaptureWriter:
     """Append frames into rotating on-disk segments (batched async persist)."""
 
@@ -737,6 +821,11 @@ class SegmentCaptureWriter:
         payload["frame_interval_ms"] = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
         payload["capture_fps"] = int(os.environ.get("EGO_CAPTURE_FPS", "30"))
         payload["imu_hz"] = int(os.environ.get("EGO_CAPTURE_IMU_HZ", "200"))
+        if SEGMENT_MCAP:
+            payload["storage_format"] = "mcap"
+            payload["upload_protocol"] = "mcap"
+        else:
+            payload["storage_format"] = "dlb1"
         return payload
 
     def _write_manifest(self, segment_dir: Path, manifest: SegmentManifest) -> None:
@@ -762,7 +851,8 @@ class SegmentCaptureWriter:
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
         self._write_manifest(segment_dir, manifest)
-        (segment_dir / "rows.jsonl").touch()
+        if not SEGMENT_MCAP:
+            (segment_dir / "rows.jsonl").touch()
         return segment_id
 
     def _ensure_open_segment(self) -> str:
@@ -938,7 +1028,15 @@ class SegmentCaptureWriter:
                             active_dir = self._active_segments_dir() / seg_id
                             if not active_dir.is_dir():
                                 active_dir = self._segments_dir() / seg_id
-                            self._open_writers[seg_id] = _OpenSegmentWriter(active_dir)
+                            task = self.task
+                            if isinstance(work, _PersistJob):
+                                task = work.task
+                            self._open_writers[seg_id] = _new_open_segment_writer(
+                                active_dir,
+                                session_id=self.session_id,
+                                segment_id=seg_id,
+                                task=task,
+                            )
                         if isinstance(work, _ImuRawPersistJob):
                             self._open_writers[seg_id].append_imu_raw_records(work.records)
                         else:

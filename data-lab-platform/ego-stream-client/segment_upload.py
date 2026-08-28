@@ -35,6 +35,7 @@ from ego_capture_studio.capture.segment_store import (
     segment_file_key,
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
+from ego_capture_studio.capture.segment_mcap import pack_segment_mcap_zst, parse_mcap_archive_name
 from ego_capture_studio.capture.upload_status import UploadStatusWriter, live_ui_enabled
 
 STATION_TOKEN_HEADER = "X-Station-Token"
@@ -120,7 +121,68 @@ class SegmentUploader:
             return self._upload_segment_multipart(segment_dir)
         if self.protocol == "tarzst":
             return self._upload_segment_tarzst(segment_dir)
+        if self.protocol == "mcap":
+            return self._upload_segment_mcap(segment_dir)
         raise ValueError(f"unknown UPLOAD_PROTOCOL: {self.protocol!r}")
+
+    def _upload_segment_mcap(self, segment_dir: Path) -> dict[str, Any]:
+        segment_dir = Path(segment_dir).resolve()
+        manifest_path = segment_dir / "manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"missing manifest: {segment_dir}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        session_id = str(manifest["session_id"])
+        segment_id = str(manifest["segment_id"])
+        seg_seq = manifest.get("segment_seq")
+        if seg_seq is None:
+            try:
+                seg_seq = int(segment_id.rsplit("_", 1)[-1])
+            except ValueError:
+                seg_seq = 0
+
+        mcap_path = segment_dir / "segment.mcap"
+        if not mcap_path.is_file():
+            raise FileNotFoundError(f"missing segment.mcap: {segment_dir}")
+
+        cache_dir = segment_dir / ".upload"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = cache_dir / f"{segment_id}.mcap.zst"
+        if not archive_path.is_file():
+            packed = pack_segment_mcap_zst(mcap_path, level=1)
+            if packed.resolve() != archive_path.resolve():
+                archive_path.write_bytes(packed.read_bytes())
+        digest = sha256_file(archive_path)
+
+        headers = self._headers(
+            {
+                "Content-Type": "application/zstd",
+                "X-Upload-Protocol": "mcap",
+                "X-Session-Id": session_id,
+                "X-Segment-Id": segment_id,
+                "X-Segment-Seq": str(seg_seq),
+                "X-Content-Sha256": digest,
+            }
+        )
+        if self._http_session is not None:
+            with archive_path.open("rb") as body_fp:
+                resp = self._http_session.post(
+                    self.upload_url,
+                    data=body_fp,
+                    headers=headers,
+                    timeout=self.timeout_s,
+                )
+            resp.raise_for_status()
+            return self._parse_response(resp.text)
+
+        with archive_path.open("rb") as body_fp:
+            req = urllib.request.Request(
+                self.upload_url,
+                data=body_fp.read(),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                return self._parse_response(resp.read().decode("utf-8"))
 
     def _upload_segment_tarzst(self, segment_dir: Path) -> dict[str, Any]:
         segment_dir = Path(segment_dir).resolve()

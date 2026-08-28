@@ -1,13 +1,9 @@
-# v0.1.4-mcap-pilot overlay — isolated MCAP pilot on 34 (does not replace v0.1.3 production).
-# Usage (after image build):
-#   docker compose -f docker-compose.yml \
-#     -f data-lab-platform/docker-compose.platform.yml \
-#     -f data-lab-platform/docker-compose.v0.1.4-mcap-pilot.yml up -d stream-ingest-mcap-pilot derive-worker-mcap-pilot
-
+# v0.1.4-mcap-pilot overlay — MCAP pilot on 34 (:7863), production v0.1.3 on :7862 unchanged.
 services:
   stream-ingest-mcap-pilot:
     image: data-lab-lerobot-studio:v0.1.4-mcap-rc
     profiles: ["mcap-pilot"]
+    command: ["node", "/app/stream-ingest.mjs"]
     volumes:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro

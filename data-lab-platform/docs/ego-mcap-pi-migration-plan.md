@@ -728,8 +728,21 @@ bash data-lab-platform/scripts/rc-ego-mcap-pilot.sh   # Phase P2 起新增
 | 单元测试 | `ego-stream-client/tests/test_mcap_segment_writer.py` | P1 |
 | 依赖 | `requirements-edge.txt` → `mcap>=1.1.0` | P1 |
 
-**下一步（P2）：** `receive-mcap.mjs`、`segment_upload` mcap 协议、34 pilot overlay 实装。
+**下一步（P2）：** `receive-mcap.mjs`、`segment_upload` mcap 协议、34 pilot overlay `:7863` — **已落地（工作区，待 commit）**。
+
+| P2 交付物 | 状态 |
+|-----------|------|
+| `ingest/receive-mcap.mjs` + `mcap-validator.mjs` | ✅ |
+| `scripts/validate-mcap-archive.py` | ✅ |
+| `stream-ingest.mjs` `X-Upload-Protocol: mcap` 路由 | ✅ |
+| `segment_upload.py` `.mcap.zst` 上传 | ✅ |
+| `docker-compose.v0.1.4-mcap-pilot.yml` `:7863` | ✅ |
+| `ego-130-provision-mcap-pilot.sh` | ✅ |
+| `ingest/ingest-mcap.test.mjs` | ✅ |
+| 130 录 3 段 + Foxglove 验收 | ⏳ 需现场执行 |
+
+**下一步（P3）：** derive `mcap-reader` + unit 分支 `sourceFormat=mcap`。
 
 ---
 
-*文档版本：v0.3 · 2026-08-28 · §15 已确认，P0/P1 实施中*
+*文档版本：v0.3 · 2026-08-28 · §15 已确认；P0/P1 已 commit；P2 工作区待 commit*

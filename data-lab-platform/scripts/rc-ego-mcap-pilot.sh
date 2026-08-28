@@ -26,5 +26,7 @@ for f in \
   rg -q 'ego-mcap-pilot' "$f" || { log "FAIL: missing ego-mcap-pilot in $f"; exit 1; }
 done
 
-log "TODO P3: derive mcap-reader + unit branch"
-log "OK: mcap-pilot-rc P2 passed"
+log "=== mcap derive unit tests ==="
+node --test "${STUDIO}/derive/mcap-reader.test.mjs" "${STUDIO}/derive/unit-mcap.test.mjs"
+
+log "OK: mcap-pilot-rc P3 passed"

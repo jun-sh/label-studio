@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -230,27 +231,112 @@ def ingest_imu_jsonl(
         "rows_written": written,
         "total_rows": total_rows,
         "path": SENSOR_RAW_REL,
+        "source": "imu_raw.jsonl",
+    }
+
+
+def _decompress_mcap_if_needed(archive_path: Path) -> tuple[Path, tempfile.TemporaryDirectory | None]:
+    if archive_path.suffix == ".zst" or archive_path.name.endswith(".mcap.zst"):
+        import zstandard as zstd
+
+        tmp = tempfile.TemporaryDirectory(prefix="ego-imu-mcap-")
+        out = Path(tmp.name) / "segment.mcap"
+        dctx = zstd.ZstdDecompressor()
+        with open(archive_path, "rb") as src, open(out, "wb") as dst:
+            dctx.copy_stream(src, dst)
+        return out, tmp
+    return archive_path, None
+
+
+def load_imu_records_from_mcap(mcap_path: Path) -> list[dict[str, Any]]:
+    from mcap.reader import make_reader
+
+    records: list[dict[str, Any]] = []
+    with open(mcap_path, "rb") as fp:
+        reader = make_reader(fp)
+        for _schema, channel, message in reader.iter_messages():
+            if channel.topic != "/ego/imu/raw":
+                continue
+            try:
+                rec = json.loads(message.data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if rec.get("sensor") in ("accel", "gyro"):
+                records.append(rec)
+    records.sort(key=lambda r: int(r.get("ts_ns") or r.get("timestamp_ns") or 0))
+    return records
+
+
+def ingest_imu_mcap(
+    station_root: Path,
+    mcap_archive: Path,
+    *,
+    segment_id: str,
+    session_id: str,
+    append: bool = True,
+    episode_index: int = EPISODE_INDEX_DEFAULT,
+) -> dict[str, Any]:
+    mcap_path, tmp = _decompress_mcap_if_needed(mcap_archive.resolve())
+    try:
+        lines = load_imu_records_from_mcap(mcap_path)
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+    rows = jsonl_to_vector_rows(lines, segment_id=segment_id, episode_index=episode_index)
+    if not rows:
+        raise RuntimeError(f"no imu rows parsed from mcap {mcap_archive}")
+
+    out_path = station_root / SENSOR_RAW_REL
+    written = write_rows_atomic(out_path, rows, append=append)
+    total_rows = pq.read_metadata(out_path).num_rows if out_path.is_file() else written
+
+    info_path = station_root / "meta" / "info.json"
+    if info_path.is_file():
+        update_info_sensor_raw(info_path, station_root, total_rows)
+
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "segment_id": segment_id,
+        "rows_written": written,
+        "total_rows": total_rows,
+        "path": SENSOR_RAW_REL,
+        "source": "mcap:/ego/imu/raw",
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ingest imu_raw.jsonl to sensor_raw parquet")
     parser.add_argument("station_root", type=Path)
-    parser.add_argument("--imu-jsonl", type=Path, required=True)
+    parser.add_argument("--imu-jsonl", type=Path, default=None)
+    parser.add_argument("--imu-mcap", type=Path, default=None)
     parser.add_argument("--segment-id", required=True)
     parser.add_argument("--session-id", required=True)
     parser.add_argument("--append", action="store_true", default=False)
     parser.add_argument("--replace", action="store_true", default=False)
     args = parser.parse_args()
 
+    if bool(args.imu_jsonl) == bool(args.imu_mcap):
+        print(json.dumps({"ok": False, "error": "specify exactly one of --imu-jsonl or --imu-mcap"}), file=sys.stderr)
+        return 2
+
     try:
-        report = ingest_imu_jsonl(
-            args.station_root.resolve(),
-            args.imu_jsonl.resolve(),
-            segment_id=args.segment_id,
-            session_id=args.session_id,
-            append=args.append and not args.replace,
-        )
+        if args.imu_mcap:
+            report = ingest_imu_mcap(
+                args.station_root.resolve(),
+                args.imu_mcap.resolve(),
+                segment_id=args.segment_id,
+                session_id=args.session_id,
+                append=args.append and not args.replace,
+            )
+        else:
+            report = ingest_imu_jsonl(
+                args.station_root.resolve(),
+                args.imu_jsonl.resolve(),
+                segment_id=args.segment_id,
+                session_id=args.session_id,
+                append=args.append and not args.replace,
+            )
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1

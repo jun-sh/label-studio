@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2] / "ego-stream-client"
@@ -14,10 +16,34 @@ from mcap_segment_writer import McapSegmentWriter, summarize_mcap_segment  # noq
 
 OUT = Path(__file__).resolve().parent / "golden-seg.mcap"
 FRAME_COUNT = 3
+_JPEG_CACHE: bytes | None = None
 
 
 def _fake_jpeg(tag: bytes) -> bytes:
-    return b"\xff\xd8\xff\xe0" + tag + b"\xff\xd9"
+    global _JPEG_CACHE
+    if _JPEG_CACHE is not None:
+        return _JPEG_CACHE
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        out = Path(tmp.name)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=0.04",
+            "-frames:v",
+            "1",
+            str(out),
+        ],
+        check=True,
+    )
+    _JPEG_CACHE = out.read_bytes()
+    out.unlink(missing_ok=True)
+    return _JPEG_CACHE
 
 
 def main() -> None:

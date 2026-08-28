@@ -51,3 +51,7 @@ export function appendJsonlAtomic(filePath, rows) {
 export function rawSegmentArchivePath(root, sessionId, segmentId) {
   return path.join(root, "raw", "segments", sessionId, `${segmentId}.tar.zst`);
 }
+
+export function rawMcapArchivePath(root, sessionId, segmentId) {
+  return path.join(root, "raw", "segments", sessionId, `${segmentId}.mcap.zst`);
+}

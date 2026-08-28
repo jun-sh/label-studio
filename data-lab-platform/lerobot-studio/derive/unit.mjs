@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { rawSegmentArchivePath, ensureDir, readJsonl, writeJsonlAtomic } from "./io.mjs";
+import { rawSegmentArchivePath, rawMcapArchivePath, ensureDir, readJson, readJsonl, writeJsonlAtomic } from "./io.mjs";
 import { DEFAULT_FPS, deriveLog } from "./station-context.mjs";
 import { appendJournalEvent } from "./manifest.mjs";
 import { encodeFramesToMp4 } from "./encode-pool.mjs";
@@ -30,6 +30,7 @@ import {
 } from "./tar-io.mjs";
 import { readManifestFromArchive } from "./frame-map.mjs";
 import { alignMainTableImu, syncMainParquet } from "./parquet-writer.mjs";
+import { materializeMcapExtract, materializeMcapUnitFrames, summarizeMcapArchive } from "./mcap-reader.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -106,36 +107,31 @@ function materializeUnitFrames(tmpRoot, extractDir, stationId) {
   return { written, frameCount: rows.length };
 }
 
-function readJson(p, fallback = null) {
-  if (!fs.existsSync(p)) return fallback;
-  try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
-  } catch {
-    return fallback;
-  }
+function readSegmentIngestState(root, sessionId, segmentId) {
+  return readJson(path.join(root, "state", "segments", sessionId, `${segmentId}.json`), null);
 }
 
-function ingestUnitImu(tmpRoot, extractDir, sessionId, segmentId, { replace = true } = {}) {
+function ingestUnitImu(tmpRoot, extractDir, sessionId, segmentId, { replace = true, mcapArchivePath = null } = {}) {
   const imuPath = path.join(extractDir, "imu_raw.jsonl");
-  if (!fs.existsSync(imuPath)) {
-    throw new Error(`imu_raw.jsonl missing for ${segmentId}`);
-  }
   const py = resolvePython();
-  const res = spawnSync(
-    py,
-    [
-      IMU_INGEST_SCRIPT,
-      tmpRoot,
-      "--imu-jsonl",
-      imuPath,
-      "--segment-id",
-      segmentId,
-      "--session-id",
-      sessionId,
-      replace ? "--replace" : "--append",
-    ],
-    { encoding: "utf8" },
-  );
+  const args = [
+    IMU_INGEST_SCRIPT,
+    tmpRoot,
+    "--segment-id",
+    segmentId,
+    "--session-id",
+    sessionId,
+    replace ? "--replace" : "--append",
+  ];
+  if (mcapArchivePath && !fs.existsSync(imuPath)) {
+    args.push("--imu-mcap", mcapArchivePath);
+  } else {
+    if (!fs.existsSync(imuPath)) {
+      throw new Error(`imu_raw.jsonl missing for ${segmentId}`);
+    }
+    args.push("--imu-jsonl", imuPath);
+  }
+  const res = spawnSync(py, args, { encoding: "utf8" });
   if (res.status !== 0) {
     throw new Error(String(res.stderr || res.stdout || "imu ingest failed").slice(0, 500));
   }
@@ -177,6 +173,9 @@ function writeUnitTable(tmpRoot, stationId, frameMap, segmentExtracts, stationRo
 }
 
 export function runUnitReadyGate(unitRoot, stationId, expectedFrames) {
+  // Unit layout runs G1–G3 inline (G4–G6 apply at publish / legacy staging layout).
+  // MCAP sourceFormat uses the same thresholds: continuous frame_index (G1),
+  // four-camera MP4 frame coverage (G2), sensor_raw IMU parquet present (G3).
   const checks = [];
   const jsonl = readJsonl(path.join(unitRoot, "data.jsonl"));
   const indices = jsonl.map((r) => Number(r.frame_index)).sort((a, b) => a - b);
@@ -213,24 +212,43 @@ export function runUnitReadyGate(unitRoot, stationId, expectedFrames) {
   };
 }
 
-function collectSegmentArchives(root, sessionId) {
+function collectSegmentSources(root, sessionId) {
   const rawDir = path.join(root, "raw", "segments", sessionId);
   if (!fs.existsSync(rawDir)) return [];
-  return fs
-    .readdirSync(rawDir)
-    .filter((n) => n.endsWith(".tar.zst"))
-    .sort()
-    .map((archive) => {
-      const segmentId = archive.replace(/\.tar\.zst$/, "");
-      const archivePath = rawSegmentArchivePath(root, sessionId, segmentId);
-      const manifest = readManifestFromArchive(archivePath);
-      return {
+  const segments = [];
+  for (const archive of fs.readdirSync(rawDir).sort()) {
+    if (archive.endsWith(".mcap.zst")) {
+      const segmentId = archive.replace(/\.mcap\.zst$/, "");
+      const archivePath = rawMcapArchivePath(root, sessionId, segmentId);
+      const state = readSegmentIngestState(root, sessionId, segmentId);
+      let frameCount = Number(state?.frame_count || 0);
+      if (frameCount <= 0) {
+        const summary = summarizeMcapArchive(archivePath);
+        frameCount = Number(summary?.frame_count || 0);
+      }
+      segments.push({
         segmentId,
         archivePath,
-        frameCount: Number(manifest?.frame_count || manifest?.frameCount || 0),
+        frameCount,
         sha256: sha256File(archivePath),
-      };
+        sourceFormat: state?.sourceFormat || "mcap",
+      });
+      continue;
+    }
+    if (!archive.endsWith(".tar.zst")) continue;
+    const segmentId = archive.replace(/\.tar\.zst$/, "");
+    const archivePath = rawSegmentArchivePath(root, sessionId, segmentId);
+    const manifest = readManifestFromArchive(archivePath);
+    const state = readSegmentIngestState(root, sessionId, segmentId);
+    segments.push({
+      segmentId,
+      archivePath,
+      frameCount: Number(manifest?.frame_count || manifest?.frameCount || state?.frame_count || 0),
+      sha256: sha256File(archivePath),
+      sourceFormat: state?.sourceFormat || "tarzst",
     });
+  }
+  return segments;
 }
 
 function buildUnitJson(unitRoot, stationId, sessionId, sourceSegments, gate, deriveMeta) {
@@ -264,6 +282,7 @@ function buildUnitJson(unitRoot, stationId, sessionId, sourceSegments, gate, der
       segment_id: s.segmentId,
       sha256: s.sha256,
       frame_count: s.frameCount,
+      source_format: s.sourceFormat || "tarzst",
     })),
     artifacts,
     gate: { version: 2, checks_passed: gate.checksPassed, checks_total: gate.checksTotal },
@@ -282,7 +301,7 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
 
   appendJournalEvent(root, { event: "derive_started", session_id: sessionId, attempt });
 
-  const segments = collectSegmentArchives(root, sessionId);
+  const segments = collectSegmentSources(root, sessionId);
   if (!segments.length) {
     throw new Error(`no raw segments for ${sessionId}`);
   }
@@ -296,16 +315,25 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   let imuReplace = true;
 
   for (const seg of segments) {
-    const validation = await validateRawArchive(seg.archivePath);
-    if (!validation.ok) {
-      throw new Error(`tar validation failed: ${(validation.issues || []).join("; ")}`);
-    }
     const extractDir = makeExtractDir(root, sessionId, seg.segmentId);
     extractDirs.push(extractDir);
     try {
-      extractTarZstSync(seg.archivePath, extractDir);
-      materializeUnitFrames(tmpRoot, extractDir, stationId);
-      ingestUnitImu(tmpRoot, extractDir, sessionId, seg.segmentId, { replace: imuReplace });
+      if (seg.sourceFormat === "mcap") {
+        materializeMcapExtract(seg.archivePath, extractDir);
+        materializeMcapUnitFrames(tmpRoot, extractDir, stationId);
+        ingestUnitImu(tmpRoot, extractDir, sessionId, seg.segmentId, {
+          replace: imuReplace,
+          mcapArchivePath: seg.archivePath,
+        });
+      } else {
+        const validation = await validateRawArchive(seg.archivePath);
+        if (!validation.ok) {
+          throw new Error(`tar validation failed: ${(validation.issues || []).join("; ")}`);
+        }
+        extractTarZstSync(seg.archivePath, extractDir);
+        materializeUnitFrames(tmpRoot, extractDir, stationId);
+        ingestUnitImu(tmpRoot, extractDir, sessionId, seg.segmentId, { replace: imuReplace });
+      }
       imuReplace = false;
       segmentExtracts.push({ sessionId, segmentId: seg.segmentId, extractDir });
     } catch (err) {
@@ -365,6 +393,7 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     },
     frames: frameMap.length,
     rows: table.rows,
+    source_format: segments.some((s) => s.sourceFormat === "mcap") ? "mcap" : "tarzst",
   };
   const unitJson = buildUnitJson(tmpRoot, stationId, sessionId, segments, gate, deriveMeta);
   fs.writeFileSync(path.join(tmpRoot, "unit.json"), `${JSON.stringify(unitJson, null, 2)}\n`);

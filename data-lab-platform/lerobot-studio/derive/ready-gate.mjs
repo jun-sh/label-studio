@@ -1,5 +1,7 @@
 /**
  * READY gate checks G1–G6 (Phase0 §7).
+ * MCAP sourceFormat sessions use the same thresholds; unit layout runs G1–G3 inline
+ * and defers G4–G6 to publish-time checks on the LeRobot layout tree.
  */
 
 import fs from "node:fs";

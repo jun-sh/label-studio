@@ -10,7 +10,11 @@ echo "[deploy-mcap-pilot] build image ${IMAGE} (reuses v0.1.3 base until P2 code
 docker build -t "${IMAGE}" "${ROOT}/data-lab-platform/lerobot-studio"
 
 cd "${ROOT}"
-docker compose -f docker-compose.yml \
+COMPOSE="${COMPOSE:-docker-compose}"
+if ! command -v docker-compose >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+fi
+"${COMPOSE}" -f docker-compose.yml \
   -f data-lab-platform/docker-compose.platform.yml \
   -f data-lab-platform/docker-compose.v0.1.4-mcap-pilot.yml \
   --profile mcap-pilot up -d stream-ingest-mcap-pilot derive-worker-mcap-pilot

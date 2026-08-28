@@ -3,13 +3,15 @@ services:
   stream-ingest-mcap-pilot:
     image: data-lab-lerobot-studio:v0.1.4-mcap-rc
     profiles: ["mcap-pilot"]
-    command: ["node", "/app/stream-ingest.mjs"]
+    entrypoint: ["node", "/app/ingest-server.mjs"]
+    user: "1000:1000"
     volumes:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
     environment:
+      - INGEST_PORT=7862
       - STREAM_DATA_ROOT=/srv/stream
       - STATION_ID=ego-mcap-pilot
       - DERIVE_STANDALONE=1
@@ -19,6 +21,8 @@ services:
   derive-worker-mcap-pilot:
     image: data-lab-lerobot-studio:v0.1.4-mcap-rc
     profiles: ["mcap-pilot"]
+    entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+    user: "1000:1000"
     volumes:
       - ./data-storage/stream:/srv/stream
     environment:

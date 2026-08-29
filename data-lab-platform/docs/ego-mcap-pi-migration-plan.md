@@ -1,6 +1,6 @@
 # EGO 全链路 MCAP 对齐规划（Physical Intelligence 模式）
 
-> **状态：** 规划稿 v0.3 草案 · §15 待确认  
+> **状态：** 规划稿 v0.4 · P0–P3 已落地并现场签收；**P4 代码就绪**（待现场 E2E 验收 + 7 天试点）  
 > **执行：** 确认后在 **`feat/ego-mcap-pi` 测试支路** 实施；**主线 `deploy-release` / ego-001 零变更**  
 > **目标：** 采集端 MCAP → 服务器/工作站转 LeRobot v3 → 训练/交付  
 > **基线版本：** v0.1.3 async（`tar.zst` + DLB1 + unit derive）  
@@ -29,7 +29,7 @@
 | 项 | 说明 |
 |----|------|
 | 边缘 MP4 / H.264 软编 | 130 为 GPD MicroPC 2 低功耗设备；**禁止**在端侧做 4 路 x264 |
-| 废弃现有 LeRobot v3 交付物 | `data/`、`videos/`、`high_freq/imu_200hz.parquet`、`vendor_meta` 等继续保留 |
+| 废弃现有 LeRobot v3 交付物 | `data/`、`videos/`、`sensor_raw/imu/`（unit layout；非 v0.0.11 `high_freq/`）、`vendor_meta` 等继续保留 |
 | 一次性切生产 | 必须支持 **tar.zst 与 MCAP 双协议并行** 过渡期 |
 | 重写 ego-platform convert | convert 仍消费 derive 后的 LeRobot 视图 |
 
@@ -141,7 +141,7 @@ Track 1 满足 PI「MCAP 容器 + 服务端转 LeRobot」与 Foxglove 可观测�
 derive 负责从 MCAP 生成：
 
 - LeRobot 主表 parquet 行
-- `high_freq/imu_200hz.parquet`（延续 v0.0.11+ 能力）
+- `sensor_raw/imu/chunk-000/file-000.parquet`（unit layout；unit 目录内别名为 `imu.parquet`；**非** v0.0.11 遗留 `high_freq/imu_200hz.parquet`）
 - 各相机 MP4
 
 ---
@@ -160,14 +160,15 @@ derive 负责从 MCAP 生成：
 ┌──────────── 34 平台 ──────────────────────────┐
 │ stream-ingest                                   │
 │   raw/segments/{sess}/{seg}.mcap                │
-│   segment state → DERIVE_PENDING                │
-│   session.DONE_UPLOAD                           │
+│   segment → DERIVE_PENDING（终态，含 sourceFormat）│
+│   session.DONE_UPLOAD → DERIVING → READY        │
 │                                                 │
 │ derive-worker (layout=unit)                     │
 │   McapReader → frames / imu / rows              │
-│   encode-pool → H264 MP4（与现网相同）          │
-│   parquet + high_freq IMU + ready-gate          │
-│   session.READY → LeRobot v3 view               │
+│   libx264 MP4（Track1 JPEG→x264，与现网相同）   │
+│   parquet + sensor_raw IMU + ready-gate G1–G3   │
+│   session.DERIVING → session.READY              │
+│   derived/<session_id>/unit.json（unit layout） │
 │                                                 │
 │ ego-process-watcher → ego-process               │
 │   ego-platform convert → corpus / samples       │
@@ -265,12 +266,19 @@ Track 2（Foxglove 性能，依赖 POC Gate）  P2b → P3b → P4b →（P5 与
 | progress | phase 命名保持 EXTRACT→TABLE→MUX_*→READY |
 | 删除路径 | **不**删 DLB1 路径，保留至 Phase 5 |
 
-**验收：**
+**验收（P3 scope：仅 derive 链路，不含 ego-process / Collection / egodome）：**
 
-- 同一物理录制：MCAP 路线与 tar.zst 路线在 Collection 上 episode 数一致
-- `/collection?station=ego-001` 可预览
-- `high_freq/imu_200hz.parquet` 存在且行数合理
-- `rc-ego-001-production.sh` 子集通过（MCAP 模式）
+- **Session 状态机（权威）：** `session.DONE_UPLOAD` → `session.DERIVING` → `session.READY`；全程**不得**出现 `session.FAILED`
+- **Segment 状态机（勿误判）：** ingest 完成后 segment 终态为 `DERIVE_PENDING`（`sourceFormat: mcap`）；**不存在** segment 级 `DERIVING` / `READY`——segment 保持 `DERIVE_PENDING` 属正常现象
+- **产出路径（unit layout）：** `data-storage/stream/ego-mcap-pilot/derived/<session_id>/`
+  - `unit.json`（`derive.source_format: "mcap"`）
+  - `data.parquet`、4× `videos/observation.images.camera_*.mp4`
+  - IMU：`sensor_raw/imu/chunk-000/file-000.parquet`（derive 中间产物）；unit 顶层别名 `imu.parquet`
+  - ❌ **非** `derived/sessions/{session}/segments/{seg_id}/`（旧 per-segment 布局）
+  - ❌ **非** `high_freq/imu_200hz.parquet`（v0.0.11 遗留路径）
+- golden + 现场 `*.mcap.zst` 样本均可 derive 至 `session.READY`；ready-gate G1–G3 通过
+- `rc-ego-001-production.sh` fail=0（tar.zst 主线零回归）
+- Collection 预览、ego-process、egodome convert → **P4 范围**，P3 不验收
 
 ---
 
@@ -360,7 +368,7 @@ main (生产 tar.zst，不动直到 Phase 4 评审)
 | 断点重传 / 幂等 | ✓ | ✓ |
 | derive READY | ✓ | ✓ |
 | ego-process → egodome | ✓ | ✓ |
-| high_freq IMU parquet | ✓ | ✓ |
+| sensor_raw IMU parquet | ✓ | ✓ |
 | 多 worker derive | ✓ | ✓ |
 | 低功耗 30min 连续录 | ✓ | ✓ 不比 tar 更差 |
 
@@ -615,7 +623,7 @@ deploy-release          ← 生产主线，Phase 4 前只读
 | **130 segment_root** | `~/cache/ego-mcap-pilot/segments` | 不与 `~/cache/ego-001` 混用 |
 | **130 active_root** | `/tmp/ego-mcap-pilot-active` 或独立 shm | 避免占生产 tmpfs |
 | **34 raw** | `data-storage/stream/ego-mcap-pilot/raw/segments/` | ingest 落盘 |
-| **34 derived** | `.../ego-mcap-pilot/derived/` | LeRobot 视图 |
+| **34 derived** | `.../ego-mcap-pilot/derived/<session_id>/` | unit layout（`unit.json` + parquet + 4×MP4 + `imu.parquet`） |
 | **Collection URL** | `/collection?station=ego-mcap-pilot` | 验收入口 |
 
 ### 15.5 分 Phase 执行表（测试支路）
@@ -639,8 +647,8 @@ deploy-release          ← 生产主线，Phase 4 前只读
 |-------|------|----------|-------------------|
 | **P1** | `feat/mcap-p1-edge-writer` | 130：`mcap_segment_writer.py`、`SEGMENT_MCAP=1` 分支、`z-mcap-pilot.conf` | 本地 3 段 MCAP；Foxglove 回放；**ego-001 服务未停** |
 | **P2** | `feat/mcap-p2-ingest` | 34：`receive-mcap.mjs`、upload 扩展；pilot overlay 部署 | MCAP 入库 `raw/`；tar.zst ingest 测试全绿 |
-| **P3** | `feat/mcap-p3-derive` | 34：`mcap-reader`、unit 分支 `sourceFormat=mcap` | pilot session → `session.READY`；Collection 可预览 |
-| **P4** | `feat/mcap-p4-pilot-e2e` | provision/RC 脚本；7 天 pilot | `ego-upload ego-mcap-pilot` → derive → egodome 端到端 |
+| **P3** | `feat/mcap-p3-derive` | 34：`mcap-reader`、unit 分支 `sourceFormat=mcap` | 真实现场 `*.mcap.zst` → `session.READY`；unit layout 产出完整；**不含** Collection 预览（见 §15.10） |
+| **P4** | `feat/mcap-p4-pilot-e2e` | ego-process-watcher 多站；session 发现；provision/deploy 脚本 | `ego-process ego-mcap-pilot` → Collection + egodome；7 天 §15.9 |
 
 **Track 1 不承诺 derive 加速**（34 仍 JPEG→x264）；价值是 **PI 容器 + Foxglove 可观测**。
 
@@ -728,21 +736,160 @@ bash data-lab-platform/scripts/rc-ego-mcap-pilot.sh   # Phase P2 起新增
 | 单元测试 | `ego-stream-client/tests/test_mcap_segment_writer.py` | P1 |
 | 依赖 | `requirements-edge.txt` → `mcap>=1.1.0` | P1 |
 
-**下一步（P2）：** `receive-mcap.mjs`、`segment_upload` mcap 协议、34 pilot overlay `:7863` — **已落地（工作区，待 commit）**。
+**P2 已落地（`7029e62` + 热修 `25ecf82`）：** ingest/upload mcap.zst 全链路；pilot overlay `:7863`。
 
 | P2 交付物 | 状态 |
 |-----------|------|
 | `ingest/receive-mcap.mjs` + `mcap-validator.mjs` | ✅ |
 | `scripts/validate-mcap-archive.py` | ✅ |
-| `stream-ingest.mjs` `X-Upload-Protocol: mcap` 路由 | ✅ |
+| `stream-ingest.mjs` `X-Upload-Protocol: mcap` / `tarzst` | ✅ |
 | `segment_upload.py` `.mcap.zst` 上传 | ✅ |
 | `docker-compose.v0.1.4-mcap-pilot.yml` `:7863` | ✅ |
 | `ego-130-provision-mcap-pilot.sh` | ✅ |
 | `ingest/ingest-mcap.test.mjs` | ✅ |
-| 130 录 3 段 + Foxglove 验收 | ⏳ 需现场执行 |
+| 130 录段 + Foxglove / 现场 upload 验收 | ✅（ingest 链路已验证） |
 
-**下一步（P3）：** derive `mcap-reader` + unit 分支 `sourceFormat=mcap`。
+**P3 已落地（`10b807d`）：** `mcap-reader` + `unit.mjs` `sourceFormat=mcap` 分支 + IMU 适配 + 单元测试。
+
+| P3 交付物 | 状态 |
+|-----------|------|
+| `derive/mcap-reader.mjs` + `mcap-materialize.py` | ✅ |
+| `derive/unit.mjs` mcap 分支（DLB1 路径保留） | ✅ |
+| `derive/imu/ingest-raw.py` `--imu-mcap` | ✅ |
+| `mcap-reader.test.mjs` + `unit-mcap.test.mjs` | ✅ |
+| P3 现场 derive 验收 | ⏳ 见 §15.10 |
+
+**下一步（P4）：** ego-process → Collection 预览 → egodome convert；7 天 pilot 指标（§15.9）。
+
+### 15.10 P3 现场验收（derive 链路 · pilot overlay）
+
+> **分支：** `feat/ego-mcap-pi` @ `10b807d`  
+> **Scope：** 仅 34 derive-worker + `mcap-reader`；**不进入** ego-process / Collection / egodome。  
+> **前置：** pilot overlay `:7863` 已部署；`raw/segments/*/*.mcap.zst` 已有 P2 现场样本；`rc-ego-001-production.sh` fail=0。
+
+#### 易误判点（必读）
+
+| # | 正确理解 | 常见误判 |
+|---|----------|----------|
+| 1 | **Session** 流转：`DONE_UPLOAD` → `DERIVING` → `READY` | 期待 segment 出现 `DERIVING` / `READY` |
+| 2 | **Segment** 终态：`DERIVE_PENDING`（含 `sourceFormat: mcap`）全程不变 | 认为 segment 卡在 `DERIVE_PENDING` 是故障 |
+| 3 | 产出在 `derived/<session_id>/`（unit layout） | 查找 `derived/sessions/.../segments/...` |
+| 4 | IMU：`sensor_raw/imu/...` + unit 内 `imu.parquet` | 查找 `high_freq/imu_200hz.parquet` |
+
+#### 预置环境变量（34 主机）
+
+```bash
+export DATALAB_ROOT=/path/to/data-lab
+export PILOT_DERIVE_CTR="${PILOT_DERIVE_CTR:-data-lab-derive-worker-mcap-pilot-1}"
+export PILOT_INGEST_CTR="${PILOT_INGEST_CTR:-data-lab-stream-ingest-mcap-pilot-1}"
+export STATION=ego-mcap-pilot
+export STREAM_ROOT="${DATALAB_ROOT}/data-storage/stream/${STATION}"
+```
+
+#### 一、derive-worker 健康检查
+
+```bash
+# 1. 容器 Up + 镜像标签
+docker ps --filter "name=derive-worker-mcap-pilot" \
+  --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+
+# 2. PID 1 = ego-derive-watch.mjs
+docker exec "${PILOT_DERIVE_CTR}" sh -c "tr '\0' ' ' < /proc/1/cmdline; echo"
+
+# 3. 启动 banner
+docker logs "${PILOT_DERIVE_CTR}" 2>&1 | head -20
+# 预期：ego-derive-worker-entry → ego-derive-watch → derive_watch_started
+
+# 4. 环境变量
+docker exec "${PILOT_DERIVE_CTR}" printenv | grep -E '^(STATION_ID|STREAM_DATA_ROOT|DERIVE_STANDALONE)='
+
+# 5. 轮询（无 pending → derive_watch_skip；有 pending → derive_watch_kick）
+docker logs "${PILOT_DERIVE_CTR}" --since 30s 2>&1 | tail -20
+
+# 6. API（pilot 端口 7863，非生产 7862）
+curl -s "http://10.10.10.34:7863/lerobot/api/collection/stations/${STATION}/derive-status" | jq .
+```
+
+#### 二、日志查看
+
+```bash
+docker logs -f "${PILOT_DERIVE_CTR}" 2>&1
+docker logs -f "${PILOT_DERIVE_CTR}" 2>&1 | grep -E 'derive_watch_|derive_unit_|mcap|FAILED|materialize'
+ls -la "${STREAM_ROOT}/state/sessions/<SESSION_ID>/"
+tail -20 "${STREAM_ROOT}/manifest/journal.jsonl"
+```
+
+| 日志关键字 | 含义 |
+|------------|------|
+| `derive_watch_started` | watch 循环启动 |
+| `derive_watch_kick` | 拾取待派生 session |
+| `derive_unit_pipeline_start` | unit derive 开始 |
+| `derive_unit_ready` | derive 成功，gate 通过 |
+| `derive_unit_failed` | 失败，查 reason |
+| `mcap summary failed` / `mcap materialize failed` | mcap-reader 异常 |
+
+#### 三、mcap-reader 五层校验
+
+mcap-reader **延迟加载**，仅在处理 `sourceFormat=mcap` 时导入。
+
+```bash
+# L1 镜像文件
+docker exec "${PILOT_DERIVE_CTR}" ls -la /app/derive/mcap-reader.mjs /app/derive/mcap-materialize.py
+
+# L2 Node import
+docker exec "${PILOT_DERIVE_CTR}" node --input-type=module -e \
+  "import '/app/derive/mcap-reader.mjs'; console.log('OK')"
+
+# L3 Python 依赖
+docker exec "${PILOT_DERIVE_CTR}" python3 -c "from mcap.reader import make_reader; print('OK')"
+
+# L4 现场样本 summary
+SAMPLE=$(find "${STREAM_ROOT}/raw/segments" -name '*.mcap.zst' | head -1)
+docker exec "${PILOT_DERIVE_CTR}" python3 /app/derive/mcap-materialize.py "$SAMPLE" --summary-only
+
+# L5 手动触发 derive（优先复用 P2 已上传样本）
+STREAM_INGEST_CONTAINER="${PILOT_INGEST_CTR}" STATION_ID="${STATION}" \
+bash data-lab-platform/scripts/ego-derive run \
+  --station "${STATION}" --session "<SESSION_ID>" --json | tee /tmp/p3-derive.json
+```
+
+#### 四、产出物与通过判定
+
+```bash
+SESSION_ID="<SESSION_ID>"
+UNIT="${STREAM_ROOT}/derived/${SESSION_ID}"
+test -f "${UNIT}/unit.json"
+jq -e '.derive.source_format == "mcap"' "${UNIT}/unit.json"
+test -f "${UNIT}/data.parquet" && test -f "${UNIT}/imu.parquet"
+test "$(ls "${UNIT}/videos/"*.mp4 2>/dev/null | wc -l)" -eq 4
+test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
+! test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.FAILED"
+```
+
+**P3 通过：** worker 健康 + mcap-reader 五层 OK + 现场样本 `session.READY` + unit 产出完整 + `rc-ego-001-production.sh` fail=0。  
+**不阻塞：** 130 persist 队列 2048 背压（独立 backlog）。  
+**P4 已落地（工作区）：** ego-process-watcher 多站、`ego-pipeline-sessions` unit/MCAP 发现、`ego-station-runtime.sh`、`deploy-stream-ingest-v0.1.4-mcap.sh`、provision/verify profile、手册 §九。
+
+#### P1 调优 backlog（不阻塞 P4）
+
+| 项 | 说明 |
+|----|------|
+| JPEG payload 有效性 | `mcap_segment_writer` 写入须为可解码 JPEG；P2 现场样本曾出现 9B 占位导致 derive mux 失败 |
+| persist 队列 2048 | 130 背压饱和、段卡 RECORDING；独立 pilot 调优 |
+
+**P3 现场签收：** `sess_p3_accept_golden` → `session.READY`（2026-08-29）；P2 样本 JPEG 问题记入上表。
+
+### 15.11 P4 现场验收（ego-process → Collection → egodome）
+
+1. `deploy-stream-ingest-v0.1.4-mcap.sh` — pilot `:7863` Up，`:7862` 生产不变
+2. `ego-pipeline-sessions.py all-sessions` / `source-format` — READY session 且 `mcap`
+3. `ego-process ego-mcap-pilot --skip-derive` — convert + Viewer sync
+4. Collection `/collection?station=ego-mcap-pilot` — episode 数 = READY 数，四路 MP4 可播
+5. egodome `/data/ego_mcap_pilot` — episode 与 Collection 一致；`samples/ego_mcap_pilot.zip`
+6. Watcher `EGO_PROCESS_WATCH_STATIONS=ego-001,ego-mcap-pilot`；`ego-upload --notify` 触发后处理
+7. `rc-ego-001-production.sh` + `rc-ego-mcap-pilot.sh` 全绿
+8. **7 天试点** §15.9 — 达标后 PR → `deploy-release`
 
 ---
 
-*文档版本：v0.3 · 2026-08-28 · §15 已确认；P0/P1 已 commit；P2 工作区待 commit*
+*文档版本：v0.4 · P3 现场签收；P4 代码就绪；§15.10 P3 / §15.11 P4 现场验收*

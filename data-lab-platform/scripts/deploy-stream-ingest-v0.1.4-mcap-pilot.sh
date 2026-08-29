@@ -20,3 +20,4 @@ fi
   --profile mcap-pilot up -d stream-ingest-mcap-pilot derive-worker-mcap-pilot
 
 echo "Done. Pilot ingest :7863 (production :7862 unchanged)."
+echo "Optional full wrapper: bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.4-mcap.sh"

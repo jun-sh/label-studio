@@ -29,4 +29,28 @@ done
 log "=== mcap derive unit tests ==="
 node --test "${STUDIO}/derive/mcap-reader.test.mjs" "${STUDIO}/derive/unit-mcap.test.mjs"
 
-log "OK: mcap-pilot-rc P3 passed"
+log "=== P4 session discovery (sourceFormat=mcap, unit layout) ==="
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
+python3 "${SESSIONS_PY}" slug ego-mcap-pilot --datalab-root "${DATALAB_ROOT}" | grep -q '^ego_mcap_pilot$' \
+  || { log "FAIL: ego-mcap-pilot slug"; exit 1; }
+READY="$(python3 "${SESSIONS_PY}" ready-sessions ego-mcap-pilot --datalab-root "${DATALAB_ROOT}" 2>/dev/null | head -1 || true)"
+if [[ -n "${READY}" ]]; then
+  FMT="$(python3 "${SESSIONS_PY}" source-format ego-mcap-pilot "${READY}" --datalab-root "${DATALAB_ROOT}")"
+  [[ "${FMT}" == "mcap" ]] || { log "FAIL: ${READY} source-format=${FMT} (want mcap)"; exit 1; }
+  log "OK: ready session ${READY} sourceFormat=${FMT}"
+else
+  log "WARN: no session.READY on disk — skip live source-format check (run P3 field accept first)"
+fi
+ALL="$(python3 "${SESSIONS_PY}" all-sessions ego-mcap-pilot --datalab-root "${DATALAB_ROOT}" | wc -l)"
+[[ "${ALL}" -ge 1 ]] || log "WARN: all-sessions empty (pilot stream may be clean)"
+
+log "=== P4 watcher runtime ==="
+bash "${SCRIPT_DIR}/ego-process-watcher.sh" --help >/dev/null
+test -f "${SCRIPT_DIR}/ego-station-runtime.sh"
+bash -c "source ${SCRIPT_DIR}/ego-station-runtime.sh; ego_station_runtime_env ego-mcap-pilot; test \"\${STREAM_INGEST_CONTAINER}\" = data-lab-stream-ingest-mcap-pilot-1"
+
+log "=== P4 pilot meta bootstrap ==="
+bash "${SCRIPT_DIR}/ego-mcap-pilot-bootstrap-34.sh" >/dev/null
+
+log "OK: mcap-pilot-rc P4 passed"

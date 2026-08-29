@@ -1,0 +1,51 @@
+{
+  "codebase": "depthai_eeprom_v1",
+  "status": "valid",
+  "calibration_source": "golden-fixture",
+  "cameras": {
+    "observation.images.camera_front_left": {
+      "width": 64,
+      "height": 64,
+      "fx": 32.0,
+      "fy": 32.0,
+      "ppx": 32.0,
+      "ppy": 32.0,
+      "distortion_model": "fisheye",
+      "coeffs": [0.05, -0.01, 0.001, -0.0002],
+      "valid": true
+    },
+    "observation.images.camera_front_right": {
+      "width": 64,
+      "height": 64,
+      "fx": 32.0,
+      "fy": 32.0,
+      "ppx": 32.0,
+      "ppy": 32.0,
+      "distortion_model": "fisheye",
+      "coeffs": [0.05, -0.01, 0.001, -0.0002],
+      "valid": true
+    },
+    "observation.images.camera_rear_left": {
+      "width": 64,
+      "height": 64,
+      "fx": 32.0,
+      "fy": 32.0,
+      "ppx": 32.0,
+      "ppy": 32.0,
+      "distortion_model": "fisheye",
+      "coeffs": [0.05, -0.01, 0.001, -0.0002],
+      "valid": true
+    },
+    "observation.images.camera_rear_right": {
+      "width": 64,
+      "height": 64,
+      "fx": 32.0,
+      "fy": 32.0,
+      "ppx": 32.0,
+      "ppy": 32.0,
+      "distortion_model": "fisheye",
+      "coeffs": [0.05, -0.01, 0.001, -0.0002],
+      "valid": true
+    }
+  }
+}

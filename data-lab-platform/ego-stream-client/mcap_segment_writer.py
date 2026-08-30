@@ -52,6 +52,55 @@ def _ns_to_sec_nsec(timestamp_ns: int) -> tuple[int, int]:
     return ts // 1_000_000_000, ts % 1_000_000_000
 
 
+def normalize_camera_jpegs(camera_jpegs: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Map capture keys (LeRobot feature names) to MCAP camera role keys."""
+    if not camera_jpegs:
+        return {}
+    out: dict[str, bytes] = {}
+    for cam_key in CAMERA_TOPICS:
+        jpeg = camera_jpegs.get(cam_key)
+        if jpeg:
+            out[cam_key] = jpeg
+    if out:
+        return out
+    lerobot_to_role: dict[str, str] = {}
+    try:
+        try:
+            from ego_capture_studio.capture.topology import active_topology
+        except ImportError:
+            from topology import active_topology
+
+        role_to_key = active_topology().get("role_to_lerobot_key") or {}
+        lerobot_to_role = {str(v): str(k) for k, v in role_to_key.items()}
+    except Exception:
+        pass
+    for input_key, jpeg in camera_jpegs.items():
+        if not jpeg:
+            continue
+        role = lerobot_to_role.get(input_key)
+        if role and role in CAMERA_TOPICS:
+            out[role] = jpeg
+    if out:
+        return out
+    try:
+        try:
+            from ego_capture_studio.capture.preview_hub import PREVIEW_CAMERAS
+        except ImportError:
+            from preview_hub import PREVIEW_CAMERAS
+
+        for short, aliases in PREVIEW_CAMERAS:
+            if short in out:
+                continue
+            for alias in aliases:
+                jpeg = camera_jpegs.get(alias)
+                if jpeg:
+                    out[short] = jpeg
+                    break
+    except Exception:
+        pass
+    return out
+
+
 def _compressed_image_payload(*, timestamp_ns: int, frame_id: str, jpeg: bytes) -> bytes:
     import base64
 
@@ -165,8 +214,9 @@ class McapSegmentWriter:
         camera_ts_offset_ns: int | None = None,
     ) -> None:
         ts = int(timestamp_ns)
+        normalized = normalize_camera_jpegs(camera_jpegs)
         for cam_key, topic in CAMERA_TOPICS.items():
-            jpeg = camera_jpegs.get(cam_key)
+            jpeg = normalized.get(cam_key)
             if not jpeg:
                 continue
             assert self._writer is not None

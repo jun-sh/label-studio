@@ -58,6 +58,33 @@ def test_mcap_writer_topics_and_counts(tmp_path: Path) -> None:
         assert topics[topic] == 3
 
 
+def test_mcap_writer_accepts_lerobot_camera_keys(tmp_path: Path) -> None:
+    writer = McapSegmentWriter(
+        tmp_path,
+        session_id="sess_test",
+        segment_id="seg_000001",
+        station_id="ego-mcap-pilot",
+        task="unit-test",
+    )
+    writer.open()
+    lerobot_jpegs = {
+        "observation.images.camera_front_left": _fake_jpeg(b"fl"),
+        "observation.images.camera_front_right": _fake_jpeg(b"fr"),
+        "observation.images.camera_rear_left": _fake_jpeg(b"rl"),
+        "observation.images.camera_rear_right": _fake_jpeg(b"rr"),
+    }
+    writer.write_frame(
+        frame_index=0,
+        timestamp_ns=33_333_333,
+        camera_jpegs=lerobot_jpegs,
+        row={"observation.state": [0.0] * 6, "observation.pose": [0.0] * 7, "task": "unit-test"},
+    )
+    mcap_path = writer.close()
+    summary = summarize_mcap_segment(mcap_path)
+    for topic in CAMERA_TOPICS.values():
+        assert summary["topics"][topic] == 1
+
+
 def test_golden_fixture_matches_meta() -> None:
     fixture_dir = Path(__file__).resolve().parents[2] / "fixtures" / "mcap"
     mcap_path = fixture_dir / "golden-seg.mcap"

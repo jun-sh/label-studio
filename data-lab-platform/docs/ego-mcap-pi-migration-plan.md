@@ -879,6 +879,19 @@ test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
 
 **P3 现场签收：** `sess_p3_accept_golden` → `session.READY`（2026-08-29）；P2 样本 JPEG 问题记入上表。
 
+#### 130 真机完整流程坑点（2026-08-30 · `sess_104229409ad24b9e97fad0150ad32b09`）
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | 相机 key：`observation.images.camera_*` vs MCAP 短键 `front_left` | `mcap_segment_writer.normalize_camera_jpegs()` + 单元测试 |
+| 2 | 上传误走生产 `:8080` | pilot 固定 `EGO_UPLOAD_URL=…:7863/…/ego-mcap-pilot/upload` |
+| 3 | `--episode-seconds` 无效 | 显式 `EGO_STRICT_EPISODE_SECONDS`；短测前清 checkpoint |
+| 4 | `ego-station.env` 固化 `ego-001` | pilot 上传须覆盖 `EGO_SEGMENT_ROOT` / `EGO_UPLOAD_URL` |
+| 5 | `raw/` 残留 `tar.zst` + `mcap.zst` 双归档 | 删 stale `tar.zst`；derive 帧数恢复 |
+| 6 | `ego-process` 被 registry 脏 session 阻塞 | 标记 `session.FAILED` 或清 `session-registry.json` 条目后 `--skip-derive` |
+
+真机签收：950 帧 · 4 路 1280×800 · `rc-ego-mcap-pilot.sh` P4 ✅；纳入 §15.9 试点基线。
+
 ### 15.11 P4 现场验收（ego-process → Collection → egodome）
 
 1. `deploy-stream-ingest-v0.1.4-mcap.sh` — pilot `:7863` Up，`:7862` 生产不变
@@ -892,4 +905,4 @@ test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
 
 ---
 
-*文档版本：v0.4 · P3 现场签收；P4 代码就绪；§15.10 P3 / §15.11 P4 现场验收*
+*文档版本：v0.5 · 130 真机签收 `sess_104229409ad24b9e97fad0150ad32b09`；§15.10 P3 / §15.11 P4 现场验收*

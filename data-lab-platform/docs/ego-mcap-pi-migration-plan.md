@@ -51,6 +51,8 @@ Track 1 满足 PI「MCAP 容器 + 服务端转 LeRobot」与 Foxglove 可观测�
 
 **禁止项不变：** 130 端 **4 路 libx264 软编**（GPD CPU 扛不住）；VPU H.264 属于 Track 2 允许范围。
 
+**编解码澄清：** 代码库仅有 `OAK_H264`（OAK VPU **H.264**）开关，**无 H.265/HEVC 采集链路或规划**。全文「边缘 VPU 编码」均专指 **Track 2 VPU-H.264**；Track 1 试点与 ego-001 生产均 **不启用** VPU 编码。
+
 ---
 
 ## 2. 现状 vs 目标
@@ -315,7 +317,18 @@ Track 2（Foxglove 性能，依赖 POC Gate）  P2b → P3b → P4b →（P5 与
 
 ### 5.2 Track 2 — VPU H.264 + derive remux（Foxglove 性能轨）
 
-> **前置：** §14 POC 已证明 VPU 可行，但 **未 production-ready**；本节在 POC Gate 通过后实施。
+> **前置：** §14 POC 已证明 VPU 可行，但 **未 production-ready**；本节在 POC Gate 通过后实施。  
+> **7 天试点：** Track 2 **完全不启用**；仅 Track 1（`OAK_HW_JPEG=1`、`OAK_H264=0`）运行。试点 G1–G8 全部达标后，再重新评审 POC Gate 是否放行 P4b 开发。
+
+**编解码边界（避免与 H.265/HEVC 混淆）：**
+
+| 项 | 说明 |
+|----|------|
+| **Track 1 当前生效** | `OAK_HW_JPEG=1`、`OAK_H264=0`、`SEGMENT_H264=0`、`EGO_CAPTURE_JPEG_ONLY=1`（`z-mcap-pilot.conf` / `z-production-egoverse.conf`） |
+| **边缘 VPU 编码** | **Track 2 专属**，仅指 OAK **VPU H.264**（`OAK_H264=1`）；34 derive 走 copy/remux，跳过 `MUX_ENCODE` |
+| **H.265 / HEVC** | 代码库**无**相关开关、采集链路或规划；不存在「VPU H.265」路径 |
+
+**PI 对齐（重申）：** PI 约束「边缘输出标准 MCAP + 服务端 LeRobot 转换」；**不强制**边缘 VPU 编码。Track 1 HW-JPEG→MCAP **已满足** PI 格式对齐目标；VPU-H.264 仅为 Track 2 性能选项，须 POC Gate（段关闭 persist 队列、rollover trim、帧奇偶对齐等）通过后另开 P4b。
 
 | Phase | 任务 | Gate |
 |-------|------|------|
@@ -845,11 +858,32 @@ curl -s "http://10.10.10.34:7863/lerobot/api/collection/stations/ego-mcap-pilot/
 
 #### 15.9.4 缓解路径（按规划优先级，试点期不实施 Track 2）
 
-1. **Track 2（P4b）VPU H.264 + 34 remux【根治】** — 130 OAK VPU 写 H.264 进 MCAP；34 **copy/remux**，跳过 `MUX_ENCODE`；目标 derive ↓50%+。状态：**暂缓**（硬件可行，软件 POC Gate 未过；v0.0.12 时代即使 130 出 H.264，34 仍走 JPEG→x264，瓶颈未消）。
+**当前 Track 1 编码配置（130 pilot + ego-001 生产，无 VPU 编码）：**
+
+```ini
+# z-mcap-pilot.conf / z-production-egoverse.conf
+Environment=OAK_HW_JPEG=1
+Environment=OAK_H264=0
+Environment=SEGMENT_H264=0
+Environment=EGO_CAPTURE_JPEG_ONLY=1
+```
+
+- **边缘：** OAK 硬件输出 HW-JPEG 写入 MCAP
+- **34 derive：** JPEG → libx264 CPU 软编码（已知慢、脆，属于结构性瓶颈）
+- **无 H.265/HEVC：** 代码库无 H.265 相关开关；「边缘 VPU 编码」**仅指 Track 2 VPU-H.264**，当前试点 **不启用**
+
+| 轨道 | 130 边缘输出 | 34 derive 行为 | 状态 |
+|------|-------------|----------------|------|
+| **Track 1**（当前试点） | HW-JPEG → MCAP | JPEG → libx264 软编码 | 7 天 pilot 运行中 |
+| **Track 2**（待 POC Gate） | **VPU H.264** → MCAP | copy/remux，跳过 libx264 `MUX_ENCODE` | 硬件可行，软件 Gate 未过，**暂缓** |
+
+**缓解优先级（试点期仅执行 #3）：**
+
+1. **Track 2（P4b）VPU H.264 + 34 remux【根治】** — 130 OAK VPU 写 H.264 进 MCAP；34 **copy/remux**，跳过 `MUX_ENCODE`；目标 derive ↓50%+。状态：**暂缓**（硬件 POC 已验证 4 路 VPU-H.264 可行；段关闭 persist 队列、rollover trim、帧奇偶对齐等软件 Gate 未达成，**不混入 7 天试点**）。
 2. **工程优化（不根治）** — chunk 并行（`encode-pool.mjs`）、unit layout、async derive-worker；**不改变 codec 路径**。
 3. **运维规避（7 天 pilot 实用）** — 录前清 checkpoint；`EGO_STRICT_EPISODE_SECONDS=35` 短段；`c687858` systemd/upload 隔离减少路径污染。
 
-> **PI 澄清：** PI 对齐是「边缘 MCAP + 服务端转 LeRobot」，**不强制** 130 VPU H.264。先跑通 Track 1 7 天试点合理；性能瓶颈留给 Track 2。
+> **PI 澄清：** PI 对齐是「边缘 MCAP + 服务端转 LeRobot」，**不强制** 130 边缘 VPU 编码。Track 1 HW-JPEG+MCAP **已满足** PI 格式对齐；性能瓶颈留给 Track 2，**仅当 7 天试点 G1–G8 达标且 derive SLA 成为业务阻塞时**，再重新评审 Track 2 POC Gate 是否启动 P4b。
 
 #### 15.9.5 试点 SOP（130 → 34）
 
@@ -1008,4 +1042,4 @@ test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
 
 ---
 
-*文档版本：v0.6 · 试点基线 `c687858`；§15.9 七天指标 + derive 耗时观测；§15.10 P3 / §15.11 P4 现场验收*
+*文档版本：v0.6.1 · 试点基线 `c687858`；§15.9 七天指标 + derive 耗时观测；§5.2/§15.9.4 编解码澄清（无 H.265，VPU 仅 Track 2 H.264）；§15.10 P3 / §15.11 P4 现场验收*

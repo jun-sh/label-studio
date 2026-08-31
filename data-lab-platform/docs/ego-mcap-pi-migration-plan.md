@@ -710,6 +710,8 @@ bash data-lab-platform/scripts/rc-ego-mcap-pilot.sh   # Phase P2 起新增
 
 #### P4 七天稳定期验收指标（C5 补充）
 
+> **完整每日指标、derive 耗时观测字段与采集命令见 §15.9.1。** 下表为 gate 摘要（与 §15.9.1 G1–G8 一致）。
+
 | 指标 | 阈值 |
 |------|------|
 | pilot session `FAILED` 率 | 0（7 天内无 `session.FAILED`） |
@@ -719,6 +721,8 @@ bash data-lab-platform/scripts/rc-ego-mcap-pilot.sh   # Phase P2 起新增
 | 主线回归 | 每日 `rc-ego-001-production.sh` 全绿 |
 | 130 生产采集 | `ego-001` 连续 7 天无掉帧告警（与 pilot 并行期间） |
 | Foxglove 抽检 | 每日 ≥1 段 MCAP 可完整回放 4 路相机 |
+| RC pilot | 每日 `rc-ego-mcap-pilot.sh` P4 ✅ |
+| derive 耗时（O1/O2） | **仅观测，非 gate**（§15.9.1） |
 
 **状态：** 已确认 → `feat/ego-mcap-pi` **P0 + P1 首批已落地**（见下表）。
 
@@ -759,7 +763,106 @@ bash data-lab-platform/scripts/rc-ego-mcap-pilot.sh   # Phase P2 起新增
 | `mcap-reader.test.mjs` + `unit-mcap.test.mjs` | ✅ |
 | P3 现场 derive 验收 | ⏳ 见 §15.10 |
 
-**下一步（P4）：** ego-process → Collection 预览 → egodome convert；7 天 pilot 指标（§15.9）。
+**下一步（P4）：** ego-process → Collection 预览 → egodome convert；7 天 pilot 指标见 **§15.9**。
+
+### 15.9 七天试点运行与每日指标（2026-08-29 → 2026-09-05）
+
+> **分支基线：** `feat/ego-mcap-pi` @ `c687858`（含 pilot systemd 隔离、`ego-upload` pilot 配置、mcap `frame_count` 推断、`ego-130-record-mcap-pilot.sh`）  
+> **试点站：** `ego-mcap-pilot` · ingest `:7863` · 与生产 `ego-001` 硬隔离  
+> **核心定位：** Track 1 只解决 **PI 格式对齐 + Foxglove 可观测**；**不解决 derive 性能瓶颈**（见下文 §15.9.2）。
+
+#### 15.9.1 每日指标表（gate vs 观测）
+
+**阻断 gate（7 天达标才合入 `deploy-release`）：**
+
+| # | 指标 | 阈值 / 规则 |
+|---|------|-------------|
+| G1 | pilot `session.FAILED` 率 | 0（7 天内无 `session.FAILED`） |
+| G2 | MCAP 段完整性 | 100% 段通过 `mcap-validator`（topic 齐全、时间单调） |
+| G3 | derive READY 成功率 | 上传 session 100% 达 `session.READY` |
+| G4 | Collection 可预览 | `/collection?station=ego-mcap-pilot` episode 数 = 上传 session 数 |
+| G5 | 主线回归 | 每日 `rc-ego-001-production.sh` fail=0 |
+| G6 | 130 生产采集 | `ego-001` 连续 7 天无掉帧告警（与 pilot 并行期间） |
+| G7 | Foxglove 抽检 | 每日 ≥1 段 MCAP 可完整回放 4 路相机 |
+| G8 | RC pilot | 每日 `rc-ego-mcap-pilot.sh` P4 ✅ |
+
+**观测统计（仅记录，不设阻断阈值）：**
+
+| # | 字段 | 说明 | 采集方式 |
+|---|------|------|----------|
+| O1 | **`derive_total_s`** | 单 session 从 `DONE_UPLOAD` 到 `session.READY` 总耗时（秒） | `unit.json` → `derive.elapsed_ms` ÷ 1000；或 `ego-derive run --json` → `elapsedMs` |
+| O2 | **`mux_encode_s`** | `MUX_ENCODE` 阶段耗时（秒） | `derive-status --detail` → `unitProgress.phase=MUX_ENCODE` 的 `elapsedMs` ÷ 1000；或 derive-worker 日志 `derive_unit_ready` 前后 `MUX_ENCODE` progress |
+
+```bash
+# 示例：记录 O1 / O2（34 主机，替换 SESSION_ID）
+SESSION_ID=sess_xxxx
+UNIT="${DATALAB_ROOT}/data-storage/stream/ego-mcap-pilot/derived/${SESSION_ID}/unit.json"
+jq -r '.derive.elapsed_ms // 0' "${UNIT}" | awk '{printf "derive_total_s=%.1f\n", $1/1000}'
+curl -s "http://10.10.10.34:7863/lerobot/api/collection/stations/ego-mcap-pilot/derive-status?sessionId=${SESSION_ID}&detail=1" \
+  | jq -r '.unitProgress | select(.phase=="MUX_ENCODE") | .elapsedMs // 0' \
+  | awk '{printf "mux_encode_s=%.1f\n", $1/1000}'
+```
+
+**每日记录模板（建议 spreadsheet / §15.9 附录）：**
+
+| 日期 | session_id | 帧数 | G1–G8 | derive_total_s (O1) | mux_encode_s (O2) | 备注 |
+|------|------------|------|-------|---------------------|-------------------|------|
+| 2026-08-31 | sess_b4bc… | 1042 | ✅ | 47 | _(填)_ | 清 checkpoint 后 derive 通过 |
+
+> **规则：** O1/O2 **仅做观测统计**，不作为 7 天试点是否达标的 gate。试点结束后若 derive SLA 成为业务阻塞，再启动 Track 2 POC Gate + P4b remux；**不在 Track 1 上继续堆砌 x264 软编码优化**。
+
+#### 15.9.2 derive 瓶颈确认：JPEG → libx264 慢且脆（结构性，Track 1 未改）
+
+**慢 — 根因在 34 侧 `MUX_ENCODE`：**
+
+```text
+解压 JPEG → staging 帧落盘 → 4 路独立 libx264 软编码 → MP4 合并
+```
+
+- 算力压力全部落在 **34 工作站**；130 GPD 低功耗端 **不做** libx264 软编（`OAK_H264=0`）。
+- 文档 SLA 基准：单 session **MUX_ENCODE 约 6 分钟**（`ego-derive-p1-commercial-sla.md`）。
+- MCAP 替换 `tar.zst` **未改动**上述编码链路；Track 1 **不承诺 derive 加速**。
+
+**脆 — 典型失败模式：**
+
+| 故障现象 | 根因 |
+|----------|------|
+| `empty_chunk` | checkpoint 续录造成 `frame_index` / 帧文件名错位 |
+| `mux_fail` / MJPEG decode | JPEG 载荷损坏或非标准 JPEG |
+| `PARQUET_INDEX_GAP` | 脏 session、多段 / 双协议归档混杂 |
+| rollover trim 失败 | 段边界触发 libx264 重编码（v0.0.12 POC） |
+
+**现场案例：** `sess_24f349` checkpoint 续录 → `empty_chunk`；清 checkpoint 后 `sess_b4bc` derive **47s** 完成（短段 ~1042 帧）。
+
+#### 15.9.3 Track 1 变更边界
+
+| | 变化 | 不变 |
+|---|------|------|
+| 边缘 | `tar.zst`+DLB1 → **MCAP** 容器 | 仍 **OAK HW-JPEG**（`OAK_H264=0`） |
+| 上传 | pilot **`:7863`** 独立 ingest | — |
+| 34 ingest | 读 MCAP 代替解 tar | — |
+| **34 derive** | mcap-reader 读入路径 | 仍 **JPEG → libx264** `MUX_ENCODE` |
+
+#### 15.9.4 缓解路径（按规划优先级，试点期不实施 Track 2）
+
+1. **Track 2（P4b）VPU H.264 + 34 remux【根治】** — 130 OAK VPU 写 H.264 进 MCAP；34 **copy/remux**，跳过 `MUX_ENCODE`；目标 derive ↓50%+。状态：**暂缓**（硬件可行，软件 POC Gate 未过；v0.0.12 时代即使 130 出 H.264，34 仍走 JPEG→x264，瓶颈未消）。
+2. **工程优化（不根治）** — chunk 并行（`encode-pool.mjs`）、unit layout、async derive-worker；**不改变 codec 路径**。
+3. **运维规避（7 天 pilot 实用）** — 录前清 checkpoint；`EGO_STRICT_EPISODE_SECONDS=35` 短段；`c687858` systemd/upload 隔离减少路径污染。
+
+> **PI 澄清：** PI 对齐是「边缘 MCAP + 服务端转 LeRobot」，**不强制** 130 VPU H.264。先跑通 Track 1 7 天试点合理；性能瓶颈留给 Track 2。
+
+#### 15.9.5 试点 SOP（130 → 34）
+
+```bash
+# 130（推荐一键）
+bash data-lab-platform/scripts/ego-130-record-mcap-pilot.sh --notify
+
+# 34
+ego-process ego-mcap-pilot          # derive 已 READY 时 --skip-derive
+# 记录 O1/O2 填入每日表
+```
+
+---
 
 ### 15.10 P3 现场验收（derive 链路 · pilot overlay）
 
@@ -890,7 +993,7 @@ test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
 | 5 | `raw/` 残留 `tar.zst` + `mcap.zst` 双归档 | 删 stale `tar.zst`；derive 帧数恢复 |
 | 6 | `ego-process` 被 registry 脏 session 阻塞 | 标记 `session.FAILED` 或清 `session-registry.json` 条目后 `--skip-derive` |
 
-真机签收：950 帧 · 4 路 1280×800 · `rc-ego-mcap-pilot.sh` P4 ✅；纳入 §15.9 试点基线。
+真机签收：950 帧 · 4 路 1280×800 · `rc-ego-mcap-pilot.sh` P4 ✅；重测签收 `sess_b4bc`（1042f）· 纳入 §15.9 试点基线。
 
 ### 15.11 P4 现场验收（ego-process → Collection → egodome）
 
@@ -905,4 +1008,4 @@ test -f "${STREAM_ROOT}/state/sessions/${SESSION_ID}/session.READY"
 
 ---
 
-*文档版本：v0.5 · 130 真机签收 `sess_104229409ad24b9e97fad0150ad32b09`；§15.10 P3 / §15.11 P4 现场验收*
+*文档版本：v0.6 · 试点基线 `c687858`；§15.9 七天指标 + derive 耗时观测；§15.10 P3 / §15.11 P4 现场验收*

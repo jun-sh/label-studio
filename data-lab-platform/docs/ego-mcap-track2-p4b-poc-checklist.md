@@ -46,10 +46,10 @@
 | T2-01 | `systemd/.../z-mcap-track2-h264.conf` | 🟡 骨架 | `OAK_HW_JPEG=0` `OAK_H264=1` `SEGMENT_MCAP=1`；合回 v0.0.12 调参 |
 | T2-02 | `ecs-record-oak-mcap-track2.service` | 🟡 骨架 | 独立 unit，不读 `ego-station.env` |
 | T2-03 | `oak_4p_capture.py` | ⬜ | 确认 4 路 `H264_MAIN` @ 1280×800；`OAK_H264_BITRATE_KBPS` 默认对齐 POC |
-| T2-04 | `record_oak_stream.py` | ⬜ | Track2 profile 放宽 JPEG-only 硬门禁（`EGO_CAPTURE_CODEC=h264` 或 station 判别） |
+| T2-04 | `record_oak_stream.py` | ✅ | Track2 profile 放宽 JPEG-only 硬门禁（`EGO_CAPTURE_JPEG_ONLY=0` + `SEGMENT_MCAP=1`） |
 | T2-05 | `segment_store.py` | ⬜ | 段关闭 **异步 persist**；采集线程禁止 await mux/trim |
 | T2-06 | rollover / 段尾 mux | ⬜ | **copy-only**（`SEGMENT_H264_MUX_MODE=copy`）；删除 libx264 trim 分支 |
-| T2-07 | FIFO 消费 | ⬜ | `OAK_H264_SEQUENTIAL=1`；禁止最近邻子采样（GOP 破坏） |
+| T2-07 | FIFO 消费 | ✅ | `OAK_H264_SEQUENTIAL=1` 已在 `iter_strict_sync_frames` 实现 FIFO popleft |
 | T2-08 | USB 队列 | ⬜ | `OAK_CAM_QUEUE_MAX=32` |
 | T2-09 | 运行时观测 | ⬜ | 日志/指标输出 `persist_q`、`dropped`、段关闭耗时 |
 | T2-10 | `scripts/ego-130-provision-mcap-track2.sh` | ⬜ | 部署 track2 drop-in + verify（**不改** pilot provision） |
@@ -85,7 +85,7 @@ Environment=EGO_CAPTURE_CHECKPOINT=/home/server/cache/ego-mcap-track2/checkpoint
 
 | 任务 | 文件 / 模块 | 状态 | 说明 |
 |------|------------|------|------|
-| T2-20 | `mcap_segment_writer.py` | ⬜ | 新增 H.264 分支：`foxglove.CompressedVideo`（Annex-B 或 AVCC + metadata） |
+| T2-20 | `mcap_segment_writer.py` | ✅ | H.264 分支：`foxglove.CompressedVideo` + `session_meta.video_codec=h264` |
 | T2-21 | topic schema | ⬜ | 4 路 `/ego/camera/{role}` 或独立 `/ego/camera/{role}/h264`；`session_meta.video_codec=h264` |
 | T2-22 | `fixtures/mcap/` | ⬜ | golden H.264 MCAP fixture + validator |
 | T2-23 | Foxglove 人工验收 | ⬜ | Studio 打开 POC 段，4 路同步回放无花屏 |

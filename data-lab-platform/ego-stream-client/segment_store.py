@@ -512,7 +512,7 @@ class _OpenSegmentMcapWriter:
         segment_id: str,
         task: str,
     ) -> None:
-        from ego_capture_studio.capture.mcap_segment_writer import McapSegmentWriter
+        from ego_capture_studio.capture.mcap_segment_writer import McapSegmentWriter, mcap_video_codec_from_env
 
         station_id = os.environ.get("EGO_STATION_ID", "ego-mcap-pilot").strip() or "ego-mcap-pilot"
         self.segment_dir = segment_dir
@@ -522,6 +522,7 @@ class _OpenSegmentMcapWriter:
             segment_id=segment_id,
             station_id=station_id,
             task=task,
+            video_codec=mcap_video_codec_from_env(),
         )
         self._writer.open()
 

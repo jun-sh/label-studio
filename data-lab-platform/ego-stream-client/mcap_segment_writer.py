@@ -1,4 +1,4 @@
-"""MCAP segment writer for ego-mcap-pilot (Track 1: HW JPEG CompressedImage topics)."""
+"""MCAP segment writer for ego-mcap (Track 1: HW JPEG; Track 2: VPU H.264 CompressedVideo)."""
 
 from __future__ import annotations
 
@@ -44,6 +44,24 @@ _COMPRESSED_IMAGE_JSONSCHEMA = json.dumps(
     }
 ).encode("utf-8")
 
+_COMPRESSED_VIDEO_JSONSCHEMA = json.dumps(
+    {
+        "type": "object",
+        "properties": {
+            "timestamp": {
+                "type": "object",
+                "properties": {
+                    "sec": {"type": "integer"},
+                    "nsec": {"type": "integer"},
+                },
+            },
+            "frame_id": {"type": "string"},
+            "format": {"type": "string"},
+            "data": {"type": "string", "contentEncoding": "base64"},
+        },
+    }
+).encode("utf-8")
+
 _JSON_OBJECT_SCHEMA = json.dumps({"type": "object"}).encode("utf-8")
 
 
@@ -52,15 +70,29 @@ def _ns_to_sec_nsec(timestamp_ns: int) -> tuple[int, int]:
     return ts // 1_000_000_000, ts % 1_000_000_000
 
 
+def mcap_video_codec_from_env() -> str:
+    explicit = os.environ.get("MCAP_VIDEO_CODEC", "").strip().lower()
+    if explicit in ("h264", "jpeg"):
+        return explicit
+    if os.environ.get("OAK_H264", "0").strip().lower() in ("1", "true", "yes"):
+        return "h264"
+    return "jpeg"
+
+
 def normalize_camera_jpegs(camera_jpegs: Mapping[str, bytes]) -> dict[str, bytes]:
     """Map capture keys (LeRobot feature names) to MCAP camera role keys."""
-    if not camera_jpegs:
+    return normalize_camera_payloads(camera_jpegs)
+
+
+def normalize_camera_payloads(camera_payloads: Mapping[str, bytes]) -> dict[str, bytes]:
+    """Map capture keys (LeRobot feature names) to MCAP camera role keys."""
+    if not camera_payloads:
         return {}
     out: dict[str, bytes] = {}
     for cam_key in CAMERA_TOPICS:
-        jpeg = camera_jpegs.get(cam_key)
-        if jpeg:
-            out[cam_key] = jpeg
+        payload = camera_payloads.get(cam_key)
+        if payload:
+            out[cam_key] = payload
     if out:
         return out
     lerobot_to_role: dict[str, str] = {}
@@ -74,12 +106,12 @@ def normalize_camera_jpegs(camera_jpegs: Mapping[str, bytes]) -> dict[str, bytes
         lerobot_to_role = {str(v): str(k) for k, v in role_to_key.items()}
     except Exception:
         pass
-    for input_key, jpeg in camera_jpegs.items():
-        if not jpeg:
+    for input_key, payload in camera_payloads.items():
+        if not payload:
             continue
         role = lerobot_to_role.get(input_key)
         if role and role in CAMERA_TOPICS:
-            out[role] = jpeg
+            out[role] = payload
     if out:
         return out
     try:
@@ -92,9 +124,9 @@ def normalize_camera_jpegs(camera_jpegs: Mapping[str, bytes]) -> dict[str, bytes
             if short in out:
                 continue
             for alias in aliases:
-                jpeg = camera_jpegs.get(alias)
-                if jpeg:
-                    out[short] = jpeg
+                payload = camera_payloads.get(alias)
+                if payload:
+                    out[short] = payload
                     break
     except Exception:
         pass
@@ -114,11 +146,25 @@ def _compressed_image_payload(*, timestamp_ns: int, frame_id: str, jpeg: bytes) 
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
 
 
+def _compressed_video_payload(*, timestamp_ns: int, frame_id: str, h264: bytes) -> bytes:
+    import base64
+
+    sec, nsec = _ns_to_sec_nsec(timestamp_ns)
+    body = {
+        "timestamp": {"sec": sec, "nsec": nsec},
+        "frame_id": frame_id,
+        "format": "h264",
+        "data": base64.b64encode(h264).decode("ascii"),
+    }
+    return json.dumps(body, separators=(",", ":")).encode("utf-8")
+
+
 @dataclass(frozen=True)
 class McapSegmentStats:
     frame_count: int
     imu_message_count: int
     camera_message_counts: dict[str, int]
+    video_codec: str
 
 
 class McapSegmentWriter:
@@ -133,6 +179,7 @@ class McapSegmentWriter:
         station_id: str,
         task: str,
         topology_id: str = "ego-standard",
+        video_codec: str | None = None,
     ) -> None:
         self.segment_dir = Path(segment_dir)
         self.session_id = session_id
@@ -140,6 +187,10 @@ class McapSegmentWriter:
         self.station_id = station_id
         self.task = task
         self.topology_id = topology_id
+        codec = (video_codec or mcap_video_codec_from_env()).strip().lower()
+        if codec not in ("jpeg", "h264"):
+            raise ValueError(f"unsupported MCAP video_codec={codec!r}")
+        self.video_codec = codec
         self._mcap_path = self.segment_dir / MCAP_SEGMENT_FILENAME
         self._fp: BinaryIO | None = None
         self._writer: Writer | None = None
@@ -167,16 +218,21 @@ class McapSegmentWriter:
             topic=topic,
             message_encoding="json",
             schema_id=schema_id,
-            metadata={"schema_version": str(MCAP_SCHEMA_VERSION)},
+            metadata={"schema_version": str(MCAP_SCHEMA_VERSION), "video_codec": self.video_codec},
         )
 
     def _register_channels(self) -> None:
-        compressed_schema = "foxglove.CompressedImage"
+        if self.video_codec == "h264":
+            compressed_schema = "foxglove.CompressedVideo"
+            schema_bytes = _COMPRESSED_VIDEO_JSONSCHEMA
+        else:
+            compressed_schema = "foxglove.CompressedImage"
+            schema_bytes = _COMPRESSED_IMAGE_JSONSCHEMA
         for cam_key, topic in CAMERA_TOPICS.items():
             self._channels[f"camera:{cam_key}"] = self._register_channel(
                 topic,
                 compressed_schema,
-                schema_bytes=_COMPRESSED_IMAGE_JSONSCHEMA,
+                schema_bytes=schema_bytes,
             )
         self._channels["session_meta"] = self._register_channel(TOPIC_SESSION_META, "ego.SessionMeta")
         self._channels["imu_raw"] = self._register_channel(TOPIC_IMU_RAW, "ego.ImuRaw")
@@ -199,7 +255,9 @@ class McapSegmentWriter:
             "station_id": self.station_id,
             "topology_id": self.topology_id,
             "task": self.task,
-            "video_codec": "jpeg",
+            "video_codec": self.video_codec,
+            "frame_width": int(os.environ.get("OAK_DEFAULT_FRAME_WIDTH", "1280")),
+            "frame_height": int(os.environ.get("OAK_DEFAULT_FRAME_HEIGHT", "800")),
             "camera_topics": CAMERA_TOPICS,
         }
         self._add_json("session_meta", payload, log_time_ns=0)
@@ -214,14 +272,17 @@ class McapSegmentWriter:
         camera_ts_offset_ns: int | None = None,
     ) -> None:
         ts = int(timestamp_ns)
-        normalized = normalize_camera_jpegs(camera_jpegs)
+        normalized = normalize_camera_payloads(camera_jpegs)
         for cam_key, topic in CAMERA_TOPICS.items():
-            jpeg = normalized.get(cam_key)
-            if not jpeg:
+            payload_bytes = normalized.get(cam_key)
+            if not payload_bytes:
                 continue
             assert self._writer is not None
             channel_id = self._channels[f"camera:{cam_key}"]
-            data = _compressed_image_payload(timestamp_ns=ts, frame_id=cam_key, jpeg=jpeg)
+            if self.video_codec == "h264":
+                data = _compressed_video_payload(timestamp_ns=ts, frame_id=cam_key, h264=payload_bytes)
+            else:
+                data = _compressed_image_payload(timestamp_ns=ts, frame_id=cam_key, jpeg=payload_bytes)
             self._writer.add_message(channel_id=channel_id, log_time=ts, publish_time=ts, data=data)
             self._camera_message_counts[cam_key] += 1
 
@@ -263,6 +324,7 @@ class McapSegmentWriter:
             frame_count=self._frame_count,
             imu_message_count=self._imu_message_count,
             camera_message_counts=dict(self._camera_message_counts),
+            video_codec=self.video_codec,
         )
 
 

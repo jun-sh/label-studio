@@ -11,6 +11,7 @@ from mcap_segment_writer import (
     CAMERA_TOPICS,
     McapSegmentWriter,
     TOPIC_IMU_RAW,
+    mcap_video_codec_from_env,
     summarize_mcap_segment,
 )
 
@@ -83,6 +84,60 @@ def test_mcap_writer_accepts_lerobot_camera_keys(tmp_path: Path) -> None:
     summary = summarize_mcap_segment(mcap_path)
     for topic in CAMERA_TOPICS.values():
         assert summary["topics"][topic] == 1
+
+
+def _fake_h264(tag: bytes) -> bytes:
+    return b"\x00\x00\x00\x01" + tag + b"\x00\x00\x00\x01"
+
+
+def test_mcap_writer_h264_compressed_video(tmp_path: Path) -> None:
+    writer = McapSegmentWriter(
+        tmp_path,
+        session_id="sess_h264",
+        segment_id="seg_000001",
+        station_id="ego-mcap-track2",
+        task="unit-test",
+        video_codec="h264",
+    )
+    writer.open()
+    for i in range(2):
+        ts = (i + 1) * 33_333_333
+        writer.write_frame(
+            frame_index=i,
+            timestamp_ns=ts,
+            camera_jpegs={k: _fake_h264(k.encode()) for k in CAMERA_TOPICS},
+            row={
+                "observation.state": [0.0] * 6,
+                "observation.pose": [0.0] * 7,
+                "task": "unit-test",
+            },
+        )
+    mcap_path = writer.close()
+    stats = writer.stats()
+    assert stats.video_codec == "h264"
+    assert stats.frame_count == 2
+
+    from mcap.reader import make_reader
+
+    with open(mcap_path, "rb") as fp:
+        reader = make_reader(fp)
+        schemas = {s.id: s.name for s in reader.get_summary().schemas.values()}
+        for _schema, channel, message in reader.iter_messages():
+            if channel.topic.startswith("/ego/camera/"):
+                assert schemas[channel.schema_id] == "foxglove.CompressedVideo"
+                body = json.loads(message.data.decode("utf-8"))
+                assert body["format"] == "h264"
+                assert body["data"]
+
+
+def test_mcap_video_codec_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MCAP_VIDEO_CODEC", raising=False)
+    monkeypatch.setenv("OAK_H264", "0")
+    assert mcap_video_codec_from_env() == "jpeg"
+    monkeypatch.setenv("OAK_H264", "1")
+    assert mcap_video_codec_from_env() == "h264"
+    monkeypatch.setenv("MCAP_VIDEO_CODEC", "h264")
+    assert mcap_video_codec_from_env() == "h264"
 
 
 def test_golden_fixture_matches_meta() -> None:

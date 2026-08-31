@@ -77,6 +77,12 @@ OAK_HW_PREVIEW_H264 = os.environ.get("OAK_HW_PREVIEW_H264", "1").strip().lower()
 # Phase-2 POC: H.264 bitstream per cam (local segment only; ingest still expects JPEG upload).
 OAK_H264 = os.environ.get("OAK_H264", "0").strip().lower() in ("1", "true", "yes")
 OAK_H264_BITRATE_KBPS = int(os.environ.get("OAK_H264_BITRATE_KBPS", "8000"))
+# FIFO ring consumption for H.264 (preserves GOP); required for Track 2 MCAP.
+OAK_H264_SEQUENTIAL = os.environ.get("OAK_H264_SEQUENTIAL", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # Phase-2: depth socket capture rate divisor vs RGB (1=every frame, 2=half, etc.)
 OAK_DEPTH_FRAME_DIVISOR = max(1, int(os.environ.get("OAK_DEPTH_FRAME_DIVISOR", "1")))
 EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
@@ -1231,27 +1237,44 @@ class Oak4pEgoRecorder:
                 continue
 
             t_grid_ns = int(epoch_ns) + global_idx * interval_ns
-            primary_sample = self._nearest_ring_sample(
-                cam_rings[PRIMARY_OAK_SOCKET], t_grid_ns
-            )
-            if primary_sample is None:
-                _strict_sync_miss()
-                continue
-            primary_ts_ns = int(primary_sample.ts_ns)
-            capture_out: dict[str, bytes] | dict[str, np.ndarray] = {}
-            offsets: dict[str, int] = {}
-            for oak in self._cam_list:
-                lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak]
-                if oak == PRIMARY_OAK_SOCKET:
-                    sample = primary_sample
-                else:
-                    sample = self._nearest_ring_sample(
-                        cam_rings[oak], primary_ts_ns
-                    )
-                if sample is None:
-                    break
-                offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
-                capture_out[lerobot_key] = sample.payload
+            if self._hw_h264 and OAK_H264_SEQUENTIAL:
+                if not all(cam_rings[oak] for oak in self._cam_list):
+                    _strict_sync_miss()
+                    continue
+                samples_by_oak: dict[str, _CamRingSample] = {}
+                for oak in self._cam_list:
+                    samples_by_oak[oak] = cam_rings[oak].popleft()
+                primary_sample = samples_by_oak[PRIMARY_OAK_SOCKET]
+                primary_ts_ns = int(primary_sample.ts_ns)
+                capture_out: dict[str, bytes] | dict[str, np.ndarray] = {}
+                offsets: dict[str, int] = {}
+                for oak in self._cam_list:
+                    lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak]
+                    sample = samples_by_oak[oak]
+                    capture_out[lerobot_key] = sample.payload
+                    offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
+            else:
+                primary_sample = self._nearest_ring_sample(
+                    cam_rings[PRIMARY_OAK_SOCKET], t_grid_ns
+                )
+                if primary_sample is None:
+                    _strict_sync_miss()
+                    continue
+                primary_ts_ns = int(primary_sample.ts_ns)
+                capture_out = {}
+                offsets = {}
+                for oak in self._cam_list:
+                    lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak]
+                    if oak == PRIMARY_OAK_SOCKET:
+                        sample = primary_sample
+                    else:
+                        sample = self._nearest_ring_sample(
+                            cam_rings[oak], primary_ts_ns
+                        )
+                    if sample is None:
+                        break
+                    offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
+                    capture_out[lerobot_key] = sample.payload
             if len(capture_out) < len(self._cam_list):
                 _strict_sync_miss()
                 continue

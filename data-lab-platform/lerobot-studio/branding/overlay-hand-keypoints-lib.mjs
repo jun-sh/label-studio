@@ -178,18 +178,11 @@ export function parsePlaybackClockFromLabel(label) {
       seconds: normalizeEpisodeNumber(compact[3]),
     };
   }
-  const spaced = label.match(/#\s*\d+\s+(\d{1,2})[:：](\d{2})(?:\s|[^\d]|$)/);
+  const spaced = label.match(/#\s*\d+[ \t]+(\d{1,2})[:：](\d{2})(?:\s|[^\d]|$)/);
   if (spaced) {
     return {
       minutes: normalizeEpisodeNumber(spaced[1]),
       seconds: normalizeEpisodeNumber(spaced[2]),
-    };
-  }
-  const plain = label.match(/\b(\d{1,2})[:：](\d{2})\b/);
-  if (plain) {
-    return {
-      minutes: normalizeEpisodeNumber(plain[1]),
-      seconds: normalizeEpisodeNumber(plain[2]),
     };
   }
   return null;
@@ -215,6 +208,11 @@ export function resolveFrameIndexFromHeaders(headerNodes, payload) {
   const maxIdx = frames.length ? Number(frames[frames.length - 1]) : null;
   let best = null;
   for (const node of headerNodes || []) {
+    if (typeof node !== "string") {
+      const inList = !!(node.inEpisodeSidebar || node.inNavigation);
+      const isCurrent = !!(node.ariaCurrent || node.ariaSelected);
+      if (inList && !isCurrent) continue;
+    }
     const text = typeof node === "string" ? node : node.text;
     const clock = parsePlaybackClockFromLabel(text);
     if (!clock) continue;

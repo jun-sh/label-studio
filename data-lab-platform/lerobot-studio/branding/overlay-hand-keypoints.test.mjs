@@ -257,6 +257,31 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.equal(idx, 12 * 30);
   });
 
+  it("resolveFrameIndexForVideo ignores egodome sidebar duration labels when paused", () => {
+    const payload = {
+      fps: 30,
+      frame_index: Array.from({ length: 1461 }, (_, i) => i),
+    };
+    const idx = resolveFrameIndexForVideo(
+      { currentTime: 0, paused: true },
+      payload,
+      {
+        headerNodes: [
+          {
+            text: "# 1\n00:48\nEGO-001 · 18fe4583 · 08-28 (1461f)",
+            inEpisodeSidebar: true,
+          },
+        ],
+      },
+    );
+    assert.equal(idx, 0);
+  });
+
+  it("parsePlaybackClockFromLabel ignores bare MM:SS duration lines", () => {
+    assert.equal(parsePlaybackClockFromLabel("00:48"), null);
+    assert.equal(parsePlaybackClockFromLabel("# 1\n00:48\nEGO-001"), null);
+  });
+
   it("resolveFrameIndexForVideo uses video time during play when header drifts", () => {
     const payload = {
       fps: 30,

@@ -9,8 +9,9 @@ CAPTURE_SRC="${ROOT}/ego-stream-client"
 REMOTE_STUDIO="/home/server/workspace/ego-studio"
 REMOTE_CAPTURE="${REMOTE_STUDIO}/src/ego_capture_studio/capture"
 REMOTE_CLI="${REMOTE_STUDIO}/src/ego_capture_studio/cli"
-REMOTE_SYSTEMD="${HOME}/.config/systemd/user"
+REMOTE_SYSTEMD="/home/server/.config/systemd/user"
 CACHE_ROOT="/home/server/cache/${STATION_ID}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> Provision MCAP pilot ${TARGET} station=${STATION_ID}"
 
@@ -32,11 +33,14 @@ rsync -av "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap-pilot.service" \
 rsync -av "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap-pilot.service.d/z-mcap-pilot.conf" \
   "${TARGET}:${REMOTE_SYSTEMD}/ecs-record-oak-mcap-pilot.service.d/z-mcap-pilot.conf"
 
+echo "==> Install ego-upload wrapper"
+rsync -av "${SCRIPT_DIR}/ego-upload-station.sh" "${TARGET}:/tmp/ego-upload-station.sh"
+ssh "${TARGET}" "mkdir -p ~/.local/bin && cp /tmp/ego-upload-station.sh ~/.local/bin/ego-upload && chmod +x ~/.local/bin/ego-upload"
+
 ssh "${TARGET}" "systemctl --user daemon-reload"
-echo "==> Pilot unit installed (not started). Start with:"
+echo "==> Pilot unit installed (not started). Record + upload with:"
+echo "    bash data-lab-platform/scripts/ego-130-record-mcap-pilot.sh ${TARGET} --notify"
+echo "==> Or manually:"
 echo "    ssh ${TARGET} 'systemctl --user start ecs-record-oak-mcap-pilot.service'"
 echo "==> Upload (pilot :7863, not production :8080):"
-echo "    export EGO_UPLOAD_URL=http://10.10.10.34:7863/lerobot/api/collection/stations/${STATION_ID}/upload"
-echo "    export EGO_SEGMENT_ROOT=/home/server/cache/${STATION_ID}/segments"
-echo "    UPLOAD_PROTOCOL=mcap STATION_UPLOAD_TOKEN=dl-upload-ego-mcap-pilot-v1 ego-upload ${STATION_ID} --notify"
-echo "==> Short test record: export EGO_STRICT_EPISODE_SECONDS=35; rm -f checkpoint.json strict_emit_ts.json"
+echo "    ego-upload ${STATION_ID} --notify"

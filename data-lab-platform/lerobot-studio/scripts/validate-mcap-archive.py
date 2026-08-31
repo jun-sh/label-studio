@@ -66,18 +66,17 @@ def validate_mcap_archive(archive_path: Path) -> dict:
     frame_count = 0
     session_id = None
     segment_id = None
+    cam_counts = [topics.get(t, 0) for t in REQUIRED_CAMERA_TOPICS]
     if session_meta:
         session_id = session_meta.get("session_id")
         segment_id = session_meta.get("segment_id")
         frame_count = int(session_meta.get("frame_count") or 0)
-    if not session_id or not segment_id:
-        cam_counts = [topics.get(t, 0) for t in REQUIRED_CAMERA_TOPICS]
-        if cam_counts and min(cam_counts) > 0:
-            frame_count = frame_count or min(cam_counts)
-        if not session_id:
-            issues.append("missing_session_id")
-        if not segment_id:
-            issues.append("missing_segment_id")
+    if frame_count <= 0 and cam_counts and min(cam_counts) > 0:
+        frame_count = min(cam_counts)
+    if not session_id:
+        issues.append("missing_session_id")
+    if not segment_id:
+        issues.append("missing_segment_id")
 
     ok = len(issues) == 0 and sum(topics.values()) > 0
     return {

@@ -57,6 +57,23 @@ STATION="${STATION:-${EGO_STATION_ID:-${STATION_ID:-}}}"
   exit 2
 }
 
+_apply_station_upload_profile() {
+  case "${STATION}" in
+    ego-mcap-pilot)
+      export EGO_STATION_ID=ego-mcap-pilot
+      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-mcap-pilot/segments"
+      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-mcap-pilot/checkpoint.json"
+      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-mcap-pilot/logs"
+      export EGO_UPLOAD_URL="http://10.10.10.34:7863/lerobot/api/collection/stations/ego-mcap-pilot/upload"
+      export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
+      export STATION_UPLOAD_TOKEN="${STATION_UPLOAD_TOKEN:-dl-upload-ego-mcap-pilot-v1}"
+      export UPLOAD_PROTOCOL="${UPLOAD_PROTOCOL:-mcap}"
+      ;;
+  esac
+}
+
+_apply_station_upload_profile
+
 if [[ -n "$NOTIFY_FLAG" ]]; then
   NOTIFY_PROCESS="$NOTIFY_FLAG"
 elif [[ "${EGO_NOTIFY_PROCESS:-1}" == "1" ]]; then
@@ -139,7 +156,7 @@ _upload_one_session() {
 }
 
 echo "[ego-upload] station=${STATION} segment-root=${SEG_ROOT}" | tee -a "$LOG_FILE"
-echo "[ego-upload] upload-url=${UPLOAD_URL}" >>"$LOG_FILE"
+echo "[ego-upload] upload-url=${UPLOAD_URL}" | tee -a "$LOG_FILE"
 
 TOTAL_UPLOADED=0
 SESSIONS_OK=0

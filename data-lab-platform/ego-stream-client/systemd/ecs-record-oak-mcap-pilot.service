@@ -10,8 +10,7 @@ StartLimitIntervalSec=0
 Type=simple
 WorkingDirectory=/home/server/workspace/ego-studio
 
-EnvironmentFile=-%h/.config/ego-station.env
-EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+# Do NOT load ~/.config/ego-station.env (production ego-001) — pilot env is in z-mcap-pilot.conf only.
 
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin

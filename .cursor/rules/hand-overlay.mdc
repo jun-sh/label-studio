@@ -25,7 +25,7 @@ alwaysApply: false
 
 ## Episode switching (multi-session corpus)
 
-1. Episode detection priority: `URL ?episode=` > **session fingerprint** (`081a430e` / `f2710d2c` from title) > scored main header `# N` > scored `aria-current` > user click > last known
+1. Episode detection priority: **playback JSON `episode_index`** > **aria-current** > click > session fingerprint (main header only) > header `# N` (main only) > `URL ?episode=` > last
 2. Export must include `episode_meta` with `session_fingerprint` per episode (from corpus `publish_history`)
 2. Never default to episode `0` when `lastEpisodeIndex` is known
 3. Overlay JSON keys: `000000`, `000001`, … — resolve via `episodeKeyCandidates()` + `episode_index` field validation

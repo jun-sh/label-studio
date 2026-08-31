@@ -32,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 describe("overlay-hand-keypoints-lib", () => {
   it("exports stable overlay version", () => {
     assert.equal(typeof OVERLAY_VERSION, "number");
-    assert.ok(OVERLAY_VERSION >= 26);
+    assert.ok(OVERLAY_VERSION >= 27);
   });
 
   it("resolveRenderStyle defaults to rich and respects overrides", () => {
@@ -236,13 +236,34 @@ describe("overlay-hand-keypoints-lib", () => {
     });
   });
 
-  it("resolveFrameIndexForVideo prefers header clock over video time", () => {
+  it("resolveFrameIndexForVideo prefers video when header shows episode duration", () => {
+    const payload = {
+      fps: 30,
+      frame_index: Array.from({ length: 1461 }, (_, i) => i),
+    };
+    const idx = resolveFrameIndexForVideo(
+      { currentTime: 10, paused: true },
+      payload,
+      {
+        headerNodes: [
+          {
+            text: "# 100:48EGO-001 · 18fe4583 · 08-28 (1461f)",
+            tagName: "H2",
+            inMainContent: true,
+          },
+        ],
+      },
+    );
+    assert.equal(idx, 300);
+  });
+
+  it("resolveFrameIndexForVideo uses header clock when close to video time", () => {
     const payload = {
       fps: 30,
       frame_index: Array.from({ length: 400 }, (_, i) => i),
     };
     const idx = resolveFrameIndexForVideo(
-      { currentTime: 0 },
+      { currentTime: 12, paused: true },
       payload,
       {
         headerNodes: [
@@ -418,11 +439,34 @@ describe("overlay-hand-keypoints-lib", () => {
     assert.equal(ep, "1");
   });
 
-  it("resolveActiveEpisodeIndex prefers URL episode over aria-current", () => {
+  it("resolveActiveEpisodeIndex prefers aria-current over stale URL episode", () => {
     const ep = resolveActiveEpisodeIndex({
       search: "?episode=1",
       lastEpisodeIndex: "0",
       episodeAriaNodes: [{ ariaLabel: "选择 Episode 0", text: "# 0", ariaCurrent: true }],
+    });
+    assert.equal(ep, "0");
+  });
+
+  it("resolveActiveEpisodeIndex prefers playback JSON over stale URL episode", () => {
+    const ep = resolveActiveEpisodeIndex({
+      search: "?episode=1",
+      playbackEpisodeIndex: "0",
+      lastEpisodeIndex: "1",
+    });
+    assert.equal(ep, "0");
+  });
+
+  it("resolveActiveEpisodeIndex ignores concatenated sidebar header text", () => {
+    const ep = resolveActiveEpisodeIndex({
+      lastEpisodeIndex: "0",
+      headerNodes: [
+        {
+          text: "# 000:34EGO-001 · 11baae09 · 08-28 (1043f)# 100:48EGO-001 · 18fe4583 · 08-28 (1461f)",
+          inEpisodeSidebar: true,
+        },
+      ],
+      episodeAriaNodes: [{ text: "# 100:48EGO-001 · 18fe4583 · 08-28 (1461f)", ariaCurrent: true }],
     });
     assert.equal(ep, "1");
   });

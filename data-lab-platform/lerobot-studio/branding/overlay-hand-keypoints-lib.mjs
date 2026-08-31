@@ -2,7 +2,7 @@
  * Pure hand-kp2d overlay logic (testable, no DOM).
  * Invariants: see .cursor/rules/hand-overlay.mdc
  */
-export const OVERLAY_VERSION = 26;
+export const OVERLAY_VERSION = 27;
 
 export const OVERLAY_RENDER_STYLE = Object.freeze({
   CLASSIC: "classic",
@@ -233,15 +233,14 @@ function frameIndexFromVideoTime(video, payload) {
   return clampFrameIndex(idx, payload);
 }
 
-/** Prefer LeRobot transport clock when paused/in sync; during play trust video if header drifts. */
+/** Prefer LeRobot transport clock when in sync; trust video.currentTime when header drifts (e.g. duration labels). */
 export function resolveFrameIndexForVideo(video, payload, ctx = {}) {
   if (!payload) return 0;
   const fps = Number(payload.fps) || 30;
   const fromHeader = resolveFrameIndexFromHeaders(ctx.headerNodes, payload);
   const fromVideo = frameIndexFromVideoTime(video, payload);
-  const isPlaying = !!(video && video.paused === false && !video.ended);
 
-  if (fromHeader != null && fromVideo != null && isPlaying) {
+  if (fromHeader != null && fromVideo != null) {
     const tolerance = Math.max(2, Math.ceil(fps / 15));
     if (Math.abs(fromHeader - fromVideo) > tolerance) {
       return fromVideo;
@@ -362,6 +361,7 @@ export function resolveActiveEpisodeByFingerprint(rootPayload, headerNodes) {
     const ep = byFingerprint[fp];
     let score = 0;
     for (const node of headerNodes || []) {
+      if (isEpisodeListNode(node)) continue;
       const text = typeof node === "string" ? node : node.text;
       if (!text || text.toLowerCase().indexOf(fp) < 0) continue;
       score += scoreHeaderNode(node);
@@ -372,9 +372,19 @@ export function resolveActiveEpisodeByFingerprint(rootPayload, headerNodes) {
   return null;
 }
 
+export function isEpisodeListNode(node) {
+  if (!node || typeof node === "string") return false;
+  return !!(
+    node.inEpisodeSidebar ||
+    node.inNavigation ||
+    node.inEpisodesList
+  );
+}
+
 export function scoreHeaderEpisodes(headerNodes) {
   let best = null;
   for (const node of headerNodes || []) {
+    if (isEpisodeListNode(node)) continue;
     const text = typeof node === "string" ? node : node.text;
     const ep = parseEpisodeFromLabel(text);
     if (ep === null) continue;
@@ -384,33 +394,56 @@ export function scoreHeaderEpisodes(headerNodes) {
   return best ? best.ep : null;
 }
 
+/** LeRobot message panel JSON is authoritative for the playing episode. */
+export function parsePlaybackEpisodeFromMessagePanel(doc) {
+  if (!doc) return null;
+  const nodes = doc.querySelectorAll(
+    'pre, code, textarea, [class*="message" i], [class*="json" i], [class*="Message" i]'
+  );
+  for (const node of nodes) {
+    const text = node.textContent || "";
+    if (!text.includes("episode_index")) continue;
+    const match = text.match(/"episode_index"\s*:\s*(\d+)/);
+    if (!match) continue;
+    return String(normalizeEpisodeNumber(match[1]));
+  }
+  return null;
+}
+
 /**
  * Resolve active episode index from UI context.
- * Priority: URL > aria-current episode button > session fingerprint > header > click > last.
+ * Priority: playback JSON > aria-current > click > fingerprint/header (main only) > URL > last.
  */
 export function resolveActiveEpisodeIndex(ctx = {}) {
   const last = ctx.lastEpisodeIndex != null ? String(ctx.lastEpisodeIndex) : null;
-  try {
-    const q = new URLSearchParams(ctx.search || "").get("episode");
-    if (q !== null && q !== "") return String(normalizeEpisodeNumber(q));
-  } catch {
-    /* ignore */
+
+  if (ctx.playbackEpisodeIndex != null && ctx.playbackEpisodeIndex !== "") {
+    return String(normalizeEpisodeNumber(ctx.playbackEpisodeIndex));
   }
 
   const ariaNodes = ctx.episodeAriaNodes || ctx.ariaCurrentNodes;
   const fromAria = scoreAriaCurrentEpisodes(ariaNodes);
   if (fromAria !== null) return fromAria;
 
-  const headerNodes = ctx.headerNodes || ctx.headerTexts;
+  if (ctx.clickedEpisode != null) return String(ctx.clickedEpisode);
+
+  const headerNodes = (ctx.headerNodes || ctx.headerTexts || []).filter(
+    (node) => !isEpisodeListNode(node),
+  );
   const fromFingerprint = resolveActiveEpisodeByFingerprint(ctx.rootPayload, headerNodes);
   if (fromFingerprint !== null) return fromFingerprint;
 
   const fromHeaders = scoreHeaderEpisodes(headerNodes);
   if (fromHeaders !== null) return fromHeaders;
 
-  if (ctx.clickedEpisode != null) return String(ctx.clickedEpisode);
-
   if (ctx.selectedEpisode != null) return String(ctx.selectedEpisode);
+
+  try {
+    const q = new URLSearchParams(ctx.search || "").get("episode");
+    if (q !== null && q !== "") return String(normalizeEpisodeNumber(q));
+  } catch {
+    /* ignore */
+  }
 
   if (last != null) return last;
   return "0";

@@ -371,7 +371,7 @@ function injectBranding(html, search = "") {
     '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=71"></script>' +
-    '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=26"></script>' +
+    '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=27"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
   if (collectionEmbed) {

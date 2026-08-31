@@ -681,6 +681,21 @@ class Oak4pEgoRecorder:
         manip.setMaxOutputFrameSize(max(1, width * height * 3))
         return manip
 
+    def _create_h264_input_manip(self, pipeline: Any, width: int, height: int) -> Any:
+        """Resize ISP output to NV12 for VideoEncoder H.264 (DepthAI 3.x)."""
+        dai = self._dai
+        manip = pipeline.create(dai.node.ImageManip)
+        manip.initialConfig.setResize(int(width), int(height))
+        try:
+            manip.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
+        except Exception:
+            try:
+                manip.initialConfig.setFrameType(dai.RawImgFrame.Type.NV12)
+            except Exception:
+                pass
+        manip.setMaxOutputFrameSize(max(1, int(width) * int(height) * 3 // 2))
+        return manip
+
     def _create_mjpeg_encoder(self, pipeline: Any) -> Any:
         dai = self._dai
         enc = pipeline.create(dai.node.VideoEncoder)
@@ -742,9 +757,10 @@ class Oak4pEgoRecorder:
                 cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
                 if self._hw_h264:
-                    cam.setVideoSize(cap_w, cap_h)
+                    manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
+                    cam.isp.link(manip_cap.inputImage)
                     enc_cap = self._create_h264_encoder(pipeline)
-                    cam.video.link(enc_cap.input)
+                    manip_cap.out.link(enc_cap.input)
                     enc_cap.bitstream.link(xout.input)
                     if pv_w > 0 and pv_h > 0 and OAK_HW_PREVIEW_H264:
                         cam.setPreviewSize(pv_w, pv_h)

@@ -187,22 +187,26 @@ def _kick_heartbeat(heartbeat: FrameStreamUploader | None) -> None:
         print(f"heartbeat warning: {exc}", flush=True)
 
 
+def _station_id() -> str:
+    return os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
+
+
 def main() -> None:
     global _SHUTDOWN
     _SHUTDOWN = False
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
 
+    station = _station_id()
     p = argparse.ArgumentParser(
         description="OAK edge capture (Scheme A): segments on disk + MJPEG preview, no live upload.",
     )
-    _STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
     p.add_argument(
         "--heartbeat-url",
         type=str,
         default=os.environ.get(
             "DATALAB_HEARTBEAT_URL",
-            f"http://10.10.10.34:8080/lerobot/api/collection/stations/{_STATION}/upload",
+            f"http://10.10.10.34:8080/lerobot/api/collection/stations/{station}/upload",
         ),
         help="Optional ingest URL for heartbeat only (station online in collection UI)",
     )
@@ -216,13 +220,13 @@ def main() -> None:
         type=str,
         default=os.environ.get(
             "EGO_CAPTURE_CHECKPOINT",
-            f"/home/server/cache/{_STATION}/segments/checkpoint.json",
+            f"/home/server/cache/{station}/segments/checkpoint.json",
         ),
     )
     p.add_argument(
         "--segment-root",
         type=str,
-        default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{_STATION}/segments"),
+        default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{station}/segments"),
     )
     p.add_argument("--episode-seconds", type=float, default=600.0)
     p.add_argument("--fps", type=int, default=OAK_CAPTURE_FPS)

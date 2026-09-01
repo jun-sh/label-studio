@@ -43,6 +43,7 @@
   },
   "stations": {
     "ego-001": { "topology_id": "ego-standard" },
-    "ego-mcap-pilot": { "topology_id": "ego-standard" }
+    "ego-mcap-pilot": { "topology_id": "ego-standard" },
+    "ego-mcap-track2": { "topology_id": "ego-standard" }
   }
 }

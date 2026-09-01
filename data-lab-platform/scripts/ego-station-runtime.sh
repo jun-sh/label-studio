@@ -11,6 +11,10 @@ ego_station_runtime_env() {
       export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-mcap-pilot-1}"
       export DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-mcap-pilot-1}"
       ;;
+    ego-mcap-track2)
+      export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-mcap-track2-1}"
+      export DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-mcap-track2-1}"
+      ;;
     ego-001|ego-lab-01|ego-field-02|ego-lan-02|ego-wan-01)
       : # production defaults (stream-ingest-1 / derive-worker-1)
       ;;

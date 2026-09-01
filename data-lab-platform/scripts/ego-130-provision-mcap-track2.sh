@@ -32,5 +32,13 @@ rsync -av "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap-track2.service.d/z-mcap-tr
   "${TARGET}:${REMOTE_SYSTEMD}/ecs-record-oak-mcap-track2.service.d/z-mcap-track2-h264.conf"
 
 ssh "${TARGET}" "systemctl --user daemon-reload"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "==> Install ego-upload (track2 profile: :7864 + mcap protocol)"
+rsync -av "${SCRIPT_DIR}/ego-upload-station.sh" "${TARGET}:/tmp/ego-upload-station.sh"
+ssh "${TARGET}" "mkdir -p ~/.local/bin && cp /tmp/ego-upload-station.sh ~/.local/bin/ego-upload && chmod +x ~/.local/bin/ego-upload"
+ssh "${TARGET}" "echo '1' | sudo -S cp /tmp/ego-upload-station.sh /usr/local/bin/ego-upload && sudo chmod +x /usr/local/bin/ego-upload" \
+  || ssh "${TARGET}" "cp /tmp/ego-upload-station.sh /usr/local/bin/ego-upload && chmod +x /usr/local/bin/ego-upload"
+
 echo "==> Track2 unit installed (not started). Record with:"
 echo "    bash data-lab-platform/scripts/ego-130-record-mcap-track2-poc.sh ${TARGET}"

@@ -24,6 +24,7 @@
 
 | 日期 | session_id | 段数 | 总帧数 | 录制时长_s | MCAP 原始_MB | MCAP.zst_MB | MB/千帧 | 4路均码率_kbps | persist_q 峰值 | persist_q 30s后 | ffprobe 4/4 parity | derive_total_s | MUX 阶段 | 备注 |
 |------|------------|------|--------|-----------|-------------|-------------|---------|---------------|---------------|----------------|-------------------|---------------|----------|------|
+| 2026-08-31 | `sess_5a86abed47324de78fd587302e3a1e98` | 1 | 1585 | 61.9 | 155.88 | _(待上传)_ | ~98.4 (原始) | ~5037 | 1 | _(待补)_ | ✅ 4/4 parity | **57.5** (P4b remux) | **MUX_REMUX** | Round3 @ `55affc1`；capture_fps 25.6；Foxglove schema ✅；视觉核验待人工；4×remux ~200ms；归一化 1042 帧 ≈37.8s vs T1 47s |
 | YYYY-MM-DD | sess_… | 1 | | | | | | | | | ☐ | | remux / encode | |
 | | | | | | | | | | | | | | | |
 | | | | | | | | | | | | | | | |
@@ -86,8 +87,8 @@ cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '{print $1/1000}'
 
 | 轨道 | MB/千帧（实测） | 30fps 可存小时（同盘） | 备注 |
 |------|----------------|----------------------|------|
-| Track 1 JPEG | | | pilot 段填入 |
-| Track 2 H.264 | | | POC 段填入 |
+| Track 1 JPEG | _(pilot 段待填)_ | | `sess_b4bc` 1042 帧 |
+| Track 2 H.264 | **~98.4** | _(同盘估算待补)_ | Round3 1585 帧 / 155.88 MB 原始 |
 | 比值 Track2/Track1 | | | <1 表示 H.264 更省空间 |
 
 ---
@@ -96,12 +97,12 @@ cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | awk '{print $1/1000}'
 
 | Gate | 通过 | 证据 |
 |------|------|------|
-| G-T2-01 GOP / 4路 parity | ☐ | ffprobe vs rows 截图或日志 |
-| G-T2-02 persist_q | ☐ | 峰值 ___ / 30s后 ___ |
-| G-T2-03 rollover copy-only | ☐ | 无 libx264 in mux 日志 |
-| G-T2-04 单路帧差 = 0 | ☐ | FL/FR/RL/RR: / / / |
-| G-T2-05 parquet 无 gap | ☐ | unit fsck / derive 日志 |
-| G-T2-07 derive ↓50%+ vs Track1 | ☐ | O1 ___ s vs 基线 47 s |
+| G-T2-01 GOP / 4路 parity | ✅ 初过 | 1585×4 对齐；Foxglove schema 通过；视觉 GOP 待人工 |
+| G-T2-02 persist_q | ✅ 初过 | 峰值 **1** / 30s后 _(待补)_ |
+| G-T2-03 rollover copy-only | ⏳ 专项 | 留到 `EGO_SEGMENT_MAX_FRAMES` 触发测试 |
+| G-T2-04 单路帧差 = 0 | ✅ | FL/FR/RL/RR: 1585 / 1585 / 1585 / 1585 |
+| G-T2-05 parquet 无 gap | ✅ 初过 | P4b derive unit READY；G1/G3 pass |
+| G-T2-07 derive ↓50%+ vs Track1 | ⏳ 部分 | 57.5s@1585帧；归一化1042帧≈37.8s（↓19% vs 47s）；MUX 阶段 ↓99% |
 
 ---
 

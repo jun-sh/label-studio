@@ -66,8 +66,18 @@ _apply_station_upload_profile() {
       export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-mcap-pilot/logs"
       export EGO_UPLOAD_URL="http://10.10.10.34:7863/lerobot/api/collection/stations/ego-mcap-pilot/upload"
       export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
-      export STATION_UPLOAD_TOKEN="${STATION_UPLOAD_TOKEN:-dl-upload-ego-mcap-pilot-v1}"
-      export UPLOAD_PROTOCOL="${UPLOAD_PROTOCOL:-mcap}"
+      export STATION_UPLOAD_TOKEN=dl-upload-ego-mcap-pilot-v1
+      export UPLOAD_PROTOCOL=mcap
+      ;;
+    ego-mcap-track2)
+      export EGO_STATION_ID=ego-mcap-track2
+      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-mcap-track2/segments"
+      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-mcap-track2/checkpoint.json"
+      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-mcap-track2/logs"
+      export EGO_UPLOAD_URL="http://10.10.10.34:7864/lerobot/api/collection/stations/ego-mcap-track2/upload"
+      export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
+      export STATION_UPLOAD_TOKEN=dl-upload-ego-mcap-track2-v1
+      export UPLOAD_PROTOCOL=mcap
       ;;
   esac
 }

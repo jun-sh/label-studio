@@ -373,6 +373,7 @@ def station_slug(pipe_root: Path, station: str) -> str:
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
         "ego-mcap-pilot": "ego_mcap_pilot",
+        "ego-mcap-track2": "ego_mcap_track2",
     }
     cfg = pipe_root / "configs" / "stations.yaml"
     if cfg.is_file():

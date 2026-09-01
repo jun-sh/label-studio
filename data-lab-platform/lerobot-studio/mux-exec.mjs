@@ -283,6 +283,34 @@ export async function concatMp4FromList(listPath, destPath, codecMode = "copy") 
   return concatMp4OnceLegacy(listPath, destPath, codecMode);
 }
 
+/** Remux annex-B H.264 elementary stream to MP4 (copy, no libx264). */
+export async function remuxH264AnnexBToMp4(h264Path, destPath, { fps = 30 } = {}) {
+  if (!h264Path || !fs.existsSync(h264Path)) {
+    return { ok: false, error: "h264_missing", backend: "legacy" };
+  }
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-fflags",
+    "+genpts",
+    "-f",
+    "h264",
+    "-r",
+    String(fps),
+    "-i",
+    h264Path,
+    "-c:v",
+    "copy",
+    "-movflags",
+    "+faststart",
+    destPath,
+  ];
+  const res = await spawnFfmpeg(args);
+  return { ...res, ok: res.ok && fs.existsSync(destPath), mode: "remux" };
+}
+
 /** Concat two MP4 files; fluent backend uses duration-aware ffconcat. */
 export async function concatMp4Files(firstPath, secondPath, destPath, listPath) {
   const useDuration = deriveMuxBackend() === "fluent";

@@ -71,3 +71,20 @@ export function releaseDeriverLock(root) {
 export function readDeriverLock(root) {
   return readLock(root);
 }
+
+/** Best-effort lock heartbeat while long derive phases run. */
+export function renewDeriverLock(root, meta = {}) {
+  const p = lockPath(root);
+  if (!fs.existsSync(p)) return null;
+  const existing = readLock(root);
+  if (!existing || existing.pid !== process.pid) return existing;
+  const payload = {
+    ...existing,
+    ...meta,
+    renewedAt: new Date().toISOString(),
+  };
+  const tmp = `${p}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmp, p);
+  return payload;
+}

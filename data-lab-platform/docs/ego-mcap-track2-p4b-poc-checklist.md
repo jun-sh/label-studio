@@ -99,15 +99,15 @@ Environment=EGO_CAPTURE_CHECKPOINT=/home/server/cache/ego-mcap-track2/checkpoint
 
 | 任务 | 文件 / 模块 | 状态 | 说明 |
 |------|------------|------|------|
-| T2-30 | `derive/mcap-materialize.py` | ⬜ | 读 `CompressedVideo` → 落盘 Annex-B / 直接 pipe ffmpeg |
-| T2-31 | `derive/mcap-reader.mjs` | ⬜ | `summarizeMcapArchive` 识别 `videoCodec=h264` |
-| T2-32 | `derive/unit.mjs` | ⬜ | `videoCodec=h264` 分支：**remux/copy** MP4，不调用 `encodeFramesToMp4` |
-| T2-33 | `mux-exec.mjs` | ⬜ | `ffmpeg -c copy` 或 `h264_mp4toannexb` + remux；禁止 libx264 |
-| T2-34 | `derive/progress.mjs` | ⬜ | H.264 路径 phase 标 `MUX_REMUX`（非 `MUX_ENCODE`） |
-| T2-35 | ingest / registry | ⬜ | `ego-mcap-track2` station + `:7864` overlay compose |
-| T2-36 | `unit.json` | ⬜ | 标注 `derive.video_codec=h264` `derive.mux_mode=copy` |
-| T2-37 | 对比基准 | ⬜ | 同帧数 sess_b4bc（Track1 ~47s / O2 mux_encode）vs Track2 remux 耗时 |
-| T2-38 | `rc-ego-mcap-track2.sh` | ⬜ | Track2 专用 RC（**不影响** `rc-ego-mcap-pilot.sh`） |
+| T2-30 | `derive/mcap-materialize.py` | ✅ | 读 `CompressedVideo` → `streams/{cam}.h264` |
+| T2-31 | `derive/mcap-reader.mjs` | ✅ | `summarizeMcapArchive` 返回 `video_codec=h264` |
+| T2-32 | `derive/unit.mjs` | ✅ | `video_codec=h264` 分支 remux，不调用 `encodeFramesToMp4` |
+| T2-33 | `mux-exec.mjs` | ✅ | `remuxH264AnnexBToMp4` ffmpeg `-c copy` |
+| T2-34 | `derive/progress.mjs` | ✅ | H.264 路径 phase `MUX_REMUX` |
+| T2-35 | ingest / registry | ✅ | `ego-mcap-track2` + `:7864` overlay |
+| T2-36 | `unit.json` | ✅ | `derive.video_codec=h264` `derive.mux_mode=remux` |
+| T2-37 | 对比基准 | ✅ | sess_5a86 derive 57.5s@1585帧；归一化1042≈37.8s vs T1 47s；4×remux ~200ms |
+| T2-38 | `rc-ego-mcap-track2.sh` | ✅ | Track2 专用 RC |
 
 **P4b Gate：** derive 跳过 `MUX_ENCODE`；`derive_total_s` 较 Track1 同量级 session ↓50%+；`session.READY` + 4×MP4 ffprobe 帧数 = parquet rows。
 

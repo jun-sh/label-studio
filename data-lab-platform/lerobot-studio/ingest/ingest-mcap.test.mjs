@@ -10,7 +10,7 @@ import {
   SEGMENT_INGEST_STATUS,
   readSegmentState,
 } from "./segment-state.mjs";
-import { rawMcapArchivePath } from "./io.mjs";
+import { rawMcapArchivePath, rawSegmentArchivePath } from "./io.mjs";
 import { ingestMcapArchive } from "./receive-mcap.mjs";
 import { validateMcapArchive } from "./mcap-validator.mjs";
 import { hasSessionMarker } from "../session-markers.mjs";
@@ -71,6 +71,42 @@ describe("mcap ingest", () => {
       assert.equal(state.sourceFormat, "mcap");
       assert.ok(Array.isArray(state.mcapTopics));
       assert.equal(hasSessionMarker(root, sessionId, "session.DONE_UPLOAD"), true);
+    } finally {
+      if (prev === undefined) delete process.env.STREAM_DATA_ROOT;
+      else process.env.STREAM_DATA_ROOT = prev;
+    }
+  });
+
+  it("purges stale tar.zst when mcap ingest succeeds", async () => {
+    if (!fs.existsSync(GOLDEN)) {
+      return;
+    }
+    const stationId = "ego-mcap-track2";
+    const stationRootDir = tmpRoot();
+    const prev = process.env.STREAM_DATA_ROOT;
+    process.env.STREAM_DATA_ROOT = stationRootDir;
+    const root = path.join(stationRootDir, stationId);
+    fs.mkdirSync(root, { recursive: true });
+
+    const sessionId = "sess_tar_purge";
+    const segmentId = "seg_000001";
+    const work = tmpRoot();
+    const archivePath = path.join(work, `${segmentId}.mcap.zst`);
+    zstdPack(GOLDEN, archivePath);
+    const tarStale = rawSegmentArchivePath(root, sessionId, segmentId);
+    fs.mkdirSync(path.dirname(tarStale), { recursive: true });
+    fs.writeFileSync(tarStale, "stale-tar-artifact");
+
+    try {
+      await ingestMcapArchive(stationId, {
+        archivePath,
+        sessionId,
+        segmentId,
+        expectedSegmentTotal: 1,
+        source: "test",
+      });
+      assert.equal(fs.existsSync(tarStale), false, "stale tar should be purged");
+      assert.ok(fs.existsSync(rawMcapArchivePath(root, sessionId, segmentId)));
     } finally {
       if (prev === undefined) delete process.env.STREAM_DATA_ROOT;
       else process.env.STREAM_DATA_ROOT = prev;

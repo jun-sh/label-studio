@@ -1,0 +1,31 @@
+# v0.1.4-mcap-track2 overlay — Track2 VPU-H.264 on 34 (:7864), pilot :7863 unchanged.
+services:
+  stream-ingest-mcap-track2:
+    image: data-lab-lerobot-studio:v0.1.4-mcap-rc
+    profiles: ["mcap-track2"]
+    entrypoint: ["node", "/app/ingest-server.mjs"]
+    user: "1000:1000"
+    volumes:
+      - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
+      - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
+    environment:
+      - INGEST_PORT=7862
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=ego-mcap-track2
+      - DERIVE_STANDALONE=1
+    ports:
+      - "7864:7862"
+
+  derive-worker-mcap-track2:
+    image: data-lab-lerobot-studio:v0.1.4-mcap-rc
+    profiles: ["mcap-track2"]
+    entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+    user: "1000:1000"
+    volumes:
+      - ./data-storage/stream:/srv/stream
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=ego-mcap-track2
+      - DERIVE_STANDALONE=1

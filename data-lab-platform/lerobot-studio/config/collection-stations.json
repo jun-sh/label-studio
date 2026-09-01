@@ -26,6 +26,19 @@
     "viewerUrl": "/collection?station=ego-mcap-pilot"
   },
   {
+    "id": "ego-mcap-track2",
+    "name": "EGO MCAP Track2 · ego-mcap-track2",
+    "name_en": "EGO MCAP Track2 VPU-H.264 station",
+    "scope": "lan",
+    "host": "10.10.10.130",
+    "online": false,
+    "stream": true,
+    "datasetUrl": "stream://ego-mcap-track2",
+    "streamUrl": "/lerobot/api/collection/stations/ego-mcap-track2/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-mcap-track2/upload",
+    "viewerUrl": "/collection?station=ego-mcap-track2"
+  },
+  {
     "id": "ego-lan-02",
     "name": "EGO 采集站 · 实验室 B",
     "name_en": "EGO station · Lab B",

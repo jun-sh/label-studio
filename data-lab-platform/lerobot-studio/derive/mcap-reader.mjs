@@ -15,7 +15,7 @@ import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MATERIALIZE_SCRIPT = path.join(__dirname, "mcap-materialize.py");
 
-const CAMERA_KEY_TO_VIDEO = {
+export const CAMERA_KEY_TO_VIDEO = {
   front_left: "observation.images.camera_front_left",
   front_right: "observation.images.camera_front_right",
   rear_left: "observation.images.camera_rear_left",

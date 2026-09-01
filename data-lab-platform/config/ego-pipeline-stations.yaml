@@ -46,6 +46,13 @@ stations:
     manifest_id: ego_mcap_pilot
     cover_webp: ego_mcap_pilot.webp
 
+  ego-mcap-track2:
+    title: Ego-MCAP-Track2
+    dataset_slug: ego_mcap_track2
+    aggregate_dir_name: Ego-MCAP-Track2
+    manifest_id: ego_mcap_track2
+    cover_webp: ego_mcap_track2.webp
+
   ego-field-02:
     title: Ego-Field-02-Hand-Pose
     dataset_slug: ego_field_02_hand_pose

@@ -11,6 +11,7 @@ import { ingestLog, stationRoot } from "./station-context.mjs";
 import {
   atomicMoveFile,
   ensureDir,
+  purgeConflictingTarArchive,
   rawMcapArchivePath,
   sha256File,
 } from "./io.mjs";
@@ -105,6 +106,11 @@ export async function ingestMcapArchive(stationId, options = {}) {
     } catch {
       /* ignore */
     }
+  }
+
+  const purgedTar = purgeConflictingTarArchive(root, sessionId, segmentId);
+  if (purgedTar) {
+    ingestLog(stationId, "ingest_mcap_purge_tar", { sessionId, segmentId });
   }
 
   const bytes = fs.statSync(rawDest).size;

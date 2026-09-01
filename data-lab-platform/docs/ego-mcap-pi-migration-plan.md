@@ -125,9 +125,10 @@ Track 1 满足 PI「MCAP 容器 + 服务端转 LeRobot」与 Foxglove 可观测�
 | `/ego/camera/rear_left` | 同上 | 30 Hz | |
 | `/ego/camera/rear_right` | 同上 | 30 Hz | |
 | `/ego/imu/raw` | 自定义或 `sensor_msgs/Imu` 等价 | 200 Hz | 与现 `imu_raw.jsonl` 对齐 |
-| `/ego/observation/state` | `json` | 30 Hz | 与现 `rows.jsonl` 中 `observation.state` 对齐 |
-| `/ego/observation/pose` | `json` | 30 Hz | 与现 `observation.pose` 对齐 |
+| `/ego/observation/state` | `json` | 30 Hz | IMU6 融合状态（边端真值） |
 | `/ego/task` | `json` | 30 Hz | task 字符串 |
+
+**P0 起边端不再写入** `/ego/observation/pose`、`observation.hands`（历史段 derive 会跳过占位 pose）。真手部/姿态仅在 `ego-process convert`（HAMER）后进入 corpus。
 
 **LeRobot video key 映射**（写入 MCAP metadata 或 sidecar）：
 
@@ -145,6 +146,22 @@ derive 负责从 MCAP 生成：
 - LeRobot 主表 parquet 行
 - `sensor_raw/imu/chunk-000/file-000.parquet`（unit layout；unit 目录内别名为 `imu.parquet`；**非** v0.0.11 遗留 `high_freq/imu_200hz.parquet`）
 - 各相机 MP4
+
+### 3.4 三层资产契约（P0，对齐 Lightwheel 语义）
+
+| 层级 | 路径 / 产物 | 内容 | `pose_ready` |
+|------|-------------|------|--------------|
+| **Raw MCAP** | `raw/segments/{sess}/{seg}.mcap` | 仅传感器：4 路相机、IMU、`session_meta`、可选 `task` | — |
+| **Stream LeRobot** | derive → `data/`、`videos/`、`unit.json` | 预览用；parquet 可含 schema 占位列，**无真实手部** | `false` |
+| **Egodome corpus** | `ego-process convert` → `pipeline/`、`corpus/` | HAMER 重建后的真值手部/姿态，用于训练 | `true`（`finalize.done`） |
+
+**溯源字段**（`unit.json`、`meta/info.json` → `episode_provenance[]`）：
+
+- `source_session_id` — 与 `sess_*` 一一对应
+- `video_codec` — `jpeg` \| `h264`
+- `pose_ready` — convert 是否完成
+
+**历史兼容：** 旧 MCAP 若含占位 `observation.pose`（identity quaternion / 全零），`mcap-materialize.py` 读取时跳过，不写入 `rows.jsonl`。
 
 ---
 

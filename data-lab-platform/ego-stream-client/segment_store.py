@@ -20,8 +20,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
     write_camera_intrinsics_json,
 )
 from ego_capture_studio.capture.intrinsics_store import write_session_intrinsics
-from ego_capture_studio.capture.ego_spec import OBS_HANDS_DIM, OBS_POSE_DIM, OBS_STATE_DIM
-from ego_capture_studio.capture.lerobot_episode import identity_pose_xyzw
+from ego_capture_studio.capture.ego_spec import OBS_STATE_DIM
 
 SEGMENT_STORE_VERSION = 2
 MANIFEST_SCHEMA_VERSION = 2
@@ -337,14 +336,12 @@ def build_lerobot_row(
     task: str,
     camera_ts_offset_ns: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    pose = identity_pose_xyzw()
+    # Raw capture rows: sensors + task only. Pose/hands are produced offline by ego-process convert.
     row: dict[str, Any] = {
         "frame_index": frame_index,
         "timestamp_ns": timestamp_ns,
         "task": task,
         "observation.state": imu6.reshape(OBS_STATE_DIM).astype(float).tolist(),
-        "observation.pose": pose.astype(float).tolist(),
-        "observation.hands": [0.0] * OBS_HANDS_DIM,
         "action": [0.0],
     }
     if camera_ts_offset_ns:

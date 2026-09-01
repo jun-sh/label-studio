@@ -21,7 +21,7 @@ import { buildMainTableRows } from "./parquet-writer.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 import { frameBinName, readSegmentManifest, resolveFrameIndex, stagingFrameName } from "../ingest/frame-index.mjs";
 import { unpackFrameBin } from "../frame_bin_codec.mjs";
-import { probeMp4FrameCount } from "../mux-exec.mjs";
+import { probeMp4FrameCount, remuxH264AnnexBToMp4 } from "../mux-exec.mjs";
 import {
   cleanupExtractDir,
   extractTarZstSync,
@@ -30,7 +30,13 @@ import {
 } from "./tar-io.mjs";
 import { readManifestFromArchive } from "./frame-map.mjs";
 import { alignMainTableImu, syncMainParquet } from "./parquet-writer.mjs";
-import { materializeMcapExtract, materializeMcapUnitFrames, summarizeMcapArchive } from "./mcap-reader.mjs";
+import {
+  CAMERA_KEY_TO_VIDEO,
+  materializeMcapExtract,
+  materializeMcapUnitFrames,
+  summarizeMcapArchive,
+} from "./mcap-reader.mjs";
+import { DERIVE_PROGRESS_PHASES, writeDeriveProgress } from "./progress.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -172,10 +178,12 @@ function writeUnitTable(tmpRoot, stationId, frameMap, segmentExtracts, stationRo
   return { rows: rows.length, jsonlDest, parquetDest };
 }
 
-export function runUnitReadyGate(unitRoot, stationId, expectedFrames) {
+export function runUnitReadyGate(unitRoot, stationId, expectedFrames, options = {}) {
   // Unit layout runs G1–G3 inline (G4–G6 apply at publish / legacy staging layout).
   // MCAP sourceFormat uses the same thresholds: continuous frame_index (G1),
   // four-camera MP4 frame coverage (G2), sensor_raw IMU parquet present (G3).
+  const remux = options.muxMode === "remux";
+  const minFrames = remux ? Math.max(1, expectedFrames - 5) : expectedFrames;
   const checks = [];
   const jsonl = readJsonl(path.join(unitRoot, "data.jsonl"));
   const indices = jsonl.map((r) => Number(r.frame_index)).sort((a, b) => a - b);
@@ -189,8 +197,12 @@ export function runUnitReadyGate(unitRoot, stationId, expectedFrames) {
   for (const videoKey of videoKeysForStation(stationId)) {
     const mp4 = path.join(unitRoot, "videos", `${videoKey}.mp4`);
     const frames = fs.existsSync(mp4) ? probeMp4FrameCount(mp4, { defaultFps: DEFAULT_FPS }) : 0;
-    if (frames < expectedFrames) {
-      checks.push({ ok: false, checkId: "G2", reason: `${videoKey}: ${frames} < ${expectedFrames}` });
+    if (frames < minFrames) {
+      checks.push({
+        ok: false,
+        checkId: "G2",
+        reason: `${videoKey}: ${frames} < ${minFrames}${remux ? ` (remux tol ${expectedFrames - minFrames})` : ""}`,
+      });
     }
   }
   if (!checks.some((c) => c.checkId === "G2" && !c.ok)) {
@@ -216,7 +228,11 @@ function collectSegmentSources(root, sessionId) {
   const rawDir = path.join(root, "raw", "segments", sessionId);
   if (!fs.existsSync(rawDir)) return [];
   const segments = [];
-  for (const archive of fs.readdirSync(rawDir).sort()) {
+  const archives = fs.readdirSync(rawDir).sort();
+  const mcapSegmentIds = new Set(
+    archives.filter((name) => name.endsWith(".mcap.zst")).map((name) => name.replace(/\.mcap\.zst$/, "")),
+  );
+  for (const archive of archives) {
     if (archive.endsWith(".mcap.zst")) {
       const segmentId = archive.replace(/\.mcap\.zst$/, "");
       const archivePath = rawMcapArchivePath(root, sessionId, segmentId);
@@ -237,6 +253,7 @@ function collectSegmentSources(root, sessionId) {
     }
     if (!archive.endsWith(".tar.zst")) continue;
     const segmentId = archive.replace(/\.tar\.zst$/, "");
+    if (mcapSegmentIds.has(segmentId)) continue;
     const archivePath = rawSegmentArchivePath(root, sessionId, segmentId);
     const manifest = readManifestFromArchive(archivePath);
     const state = readSegmentIngestState(root, sessionId, segmentId);
@@ -275,7 +292,10 @@ function buildUnitJson(unitRoot, stationId, sessionId, sourceSegments, gate, der
   return {
     version: UNIT_JSON_VERSION,
     session_id: sessionId,
+    source_session_id: sessionId,
     station_id: stationId,
+    video_codec: String(deriveMeta.video_codec || "jpeg").trim().toLowerCase(),
+    pose_ready: false,
     fps: DEFAULT_FPS,
     frames: deriveMeta.frames,
     source_segments: sourceSegments.map((s) => ({
@@ -313,14 +333,27 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   const segmentExtracts = [];
   const extractDirs = [];
   let imuReplace = true;
+  let mcapVideoCodec = "jpeg";
+  const h264StreamsDir = path.join(tmpRoot, "_h264_streams");
 
   for (const seg of segments) {
     const extractDir = makeExtractDir(root, sessionId, seg.segmentId);
     extractDirs.push(extractDir);
     try {
       if (seg.sourceFormat === "mcap") {
-        materializeMcapExtract(seg.archivePath, extractDir);
-        materializeMcapUnitFrames(tmpRoot, extractDir, stationId);
+        const mat = materializeMcapExtract(seg.archivePath, extractDir);
+        if (mat.video_codec === "h264") {
+          mcapVideoCodec = "h264";
+          ensureDir(h264StreamsDir);
+          for (const camKey of Object.keys(CAMERA_KEY_TO_VIDEO)) {
+            const src = path.join(extractDir, "streams", `${camKey}.h264`);
+            if (fs.existsSync(src)) {
+              fs.copyFileSync(src, path.join(h264StreamsDir, `${camKey}.h264`));
+            }
+          }
+        } else {
+          materializeMcapUnitFrames(tmpRoot, extractDir, stationId);
+        }
         ingestUnitImu(tmpRoot, extractDir, sessionId, seg.segmentId, {
           replace: imuReplace,
           mcapArchivePath: seg.archivePath,
@@ -351,17 +384,41 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   const videoKeys = videoKeysForStation(stationId);
   const muxResults = [];
   for (const videoKey of videoKeys) {
+    const dest = path.join(tmpRoot, "videos", `${videoKey}.mp4`);
+    const started = Date.now();
+    if (mcapVideoCodec === "h264") {
+      const camKey = Object.entries(CAMERA_KEY_TO_VIDEO).find(([, vk]) => vk === videoKey)?.[0];
+      const h264Path = path.join(h264StreamsDir, `${camKey}.h264`);
+      writeDeriveProgress(root, sessionId, {
+        stationId,
+        phase: DERIVE_PROGRESS_PHASES.MUX_REMUX,
+        camera: videoKey,
+        done: muxResults.length,
+        total: videoKeys.length,
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const enc = await remuxH264AnnexBToMp4(h264Path, dest, { fps: DEFAULT_FPS });
+      muxResults.push({ videoKey, mode: "remux", ...enc, elapsedMs: Date.now() - started });
+      if (!enc.ok) {
+        throw new Error(`unit remux failed ${videoKey}: ${enc.error || enc.stderr || "remux_failed"}`);
+      }
+      continue;
+    }
     const inDir = unitFramesDir(tmpRoot, videoKey);
     const indices = [];
     for (let i = 0; i < frameMap.length; i += 1) indices.push(i);
-    const dest = path.join(tmpRoot, "videos", `${videoKey}.mp4`);
-    const started = Date.now();
     // eslint-disable-next-line no-await-in-loop
     const enc = await encodeFramesToMp4(inDir, indices, dest, { workDir: `${dest}.chunks` });
-    muxResults.push({ videoKey, ...enc, elapsedMs: Date.now() - started });
+    muxResults.push({ videoKey, mode: "encode", ...enc, elapsedMs: Date.now() - started });
     if (!enc.ok) {
       throw new Error(`unit mux failed ${videoKey}: ${enc.error || "encode_failed"}`);
     }
+  }
+
+  try {
+    fs.rmSync(h264StreamsDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
   }
 
   try {
@@ -380,12 +437,16 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     /* ignore */
   }
 
-  const gate = runUnitReadyGate(tmpRoot, stationId, frameMap.length);
+  const gate = runUnitReadyGate(tmpRoot, stationId, frameMap.length, {
+    muxMode: mcapVideoCodec === "h264" ? "remux" : "encode",
+  });
   const deriveMeta = {
     attempt,
     pipeline_version: UNIT_PIPELINE_VERSION,
     started_at: startedAt,
     elapsed_ms: Date.now() - new Date(startedAt).getTime(),
+    video_codec: mcapVideoCodec,
+    mux_mode: mcapVideoCodec === "h264" ? "remux" : "encode",
     encode: {
       preset: process.env.DERIVE_MUX_X264_PRESET || "veryfast",
       chunk_frames: Number(process.env.DERIVE_MUX_CHUNK_FRAMES || 256),

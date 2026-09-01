@@ -37,7 +37,6 @@ def test_mcap_writer_topics_and_counts(tmp_path: Path) -> None:
             camera_jpegs={k: _fake_jpeg(k.encode()) for k in CAMERA_TOPICS},
             row={
                 "observation.state": [0.0] * 6,
-                "observation.pose": [0.0] * 7,
                 "task": "unit-test",
             },
         )
@@ -57,6 +56,7 @@ def test_mcap_writer_topics_and_counts(tmp_path: Path) -> None:
     assert topics[TOPIC_IMU_RAW] == 3
     for topic in CAMERA_TOPICS.values():
         assert topics[topic] == 3
+    assert "/ego/observation/pose" not in topics
 
 
 def test_mcap_writer_accepts_lerobot_camera_keys(tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_mcap_writer_accepts_lerobot_camera_keys(tmp_path: Path) -> None:
         frame_index=0,
         timestamp_ns=33_333_333,
         camera_jpegs=lerobot_jpegs,
-        row={"observation.state": [0.0] * 6, "observation.pose": [0.0] * 7, "task": "unit-test"},
+        row={"observation.state": [0.0] * 6, "task": "unit-test"},
     )
     mcap_path = writer.close()
     summary = summarize_mcap_segment(mcap_path)
@@ -108,7 +108,6 @@ def test_mcap_writer_h264_compressed_video(tmp_path: Path) -> None:
             camera_jpegs={k: _fake_h264(k.encode()) for k in CAMERA_TOPICS},
             row={
                 "observation.state": [0.0] * 6,
-                "observation.pose": [0.0] * 7,
                 "task": "unit-test",
             },
         )

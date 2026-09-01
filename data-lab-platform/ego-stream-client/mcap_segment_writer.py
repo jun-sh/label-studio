@@ -23,7 +23,6 @@ CAMERA_TOPICS: dict[str, str] = {
 TOPIC_SESSION_META = "/ego/session_meta"
 TOPIC_IMU_RAW = "/ego/imu/raw"
 TOPIC_OBS_STATE = "/ego/observation/state"
-TOPIC_OBS_POSE = "/ego/observation/pose"
 TOPIC_TASK = "/ego/task"
 
 _COMPRESSED_IMAGE_JSONSCHEMA = json.dumps(
@@ -237,7 +236,6 @@ class McapSegmentWriter:
         self._channels["session_meta"] = self._register_channel(TOPIC_SESSION_META, "ego.SessionMeta")
         self._channels["imu_raw"] = self._register_channel(TOPIC_IMU_RAW, "ego.ImuRaw")
         self._channels["obs_state"] = self._register_channel(TOPIC_OBS_STATE, "ego.ObservationState")
-        self._channels["obs_pose"] = self._register_channel(TOPIC_OBS_POSE, "ego.ObservationPose")
         self._channels["task"] = self._register_channel(TOPIC_TASK, "ego.Task")
 
     def _add_json(self, channel_key: str, payload: Mapping[str, Any], *, log_time_ns: int) -> None:
@@ -259,6 +257,7 @@ class McapSegmentWriter:
             "frame_width": int(os.environ.get("OAK_DEFAULT_FRAME_WIDTH", "1280")),
             "frame_height": int(os.environ.get("OAK_DEFAULT_FRAME_HEIGHT", "800")),
             "camera_topics": CAMERA_TOPICS,
+            "asset_semantics": "raw_sensors_only",
         }
         self._add_json("session_meta", payload, log_time_ns=0)
 
@@ -291,13 +290,6 @@ class McapSegmentWriter:
             self._add_json(
                 "obs_state",
                 {"frame_index": frame_index, "timestamp_ns": ts, "observation.state": obs_state},
-                log_time_ns=ts,
-            )
-        obs_pose = row.get("observation.pose")
-        if obs_pose is not None:
-            self._add_json(
-                "obs_pose",
-                {"frame_index": frame_index, "timestamp_ns": ts, "observation.pose": obs_pose},
                 log_time_ns=ts,
             )
         task = row.get("task", self.task)

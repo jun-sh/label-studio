@@ -1,0 +1,11 @@
+"""EGO capture constants (edge host ego_capture_studio.capture.ego_spec)."""
+
+OAK_CAPTURE_RES_KEY = "800"
+OAK_CAPTURE_FPS = 30
+OAK_CAPTURE_IMU_HZ = 200
+OAK_DEFAULT_FRAME_HEIGHT = 800
+OAK_DEFAULT_FRAME_WIDTH = 1280
+
+OBS_STATE_DIM = 6
+OBS_POSE_DIM = 7
+OBS_HANDS_DIM = 63

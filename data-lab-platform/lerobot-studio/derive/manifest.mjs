@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { appendJsonlAtomic, readJson, writeJsonAtomic } from "./io.mjs";
+import { episodeProvenance } from "./provenance.mjs";
 import {
   MANIFEST_VERSION,
   derivedRoot,
@@ -82,12 +83,16 @@ export function rebuildManifestFromDisk(root, stationId) {
     const fromIndex = cursor;
     const toIndex = frames > 0 ? cursor + frames - 1 : cursor - 1;
     cursor += frames;
+    const provenance = episodeProvenance(root, stationId, unit.session_id, {
+      video_codec: unit.video_codec || unit.derive?.video_codec || "jpeg",
+    });
     return {
       episode_index: episodeIndex,
       session_id: unit.session_id,
       frames,
       from_index: fromIndex,
       to_index: toIndex,
+      ...provenance,
     };
   });
 

@@ -1,11 +1,63 @@
 #!/usr/bin/env bash
 # Provision ego capture host (130) from this repo: code sync, ffmpeg, systemd, JPEG production path.
-# Usage: ego-130-provision.sh [ssh_target] [station_id]
+# Usage:
+#   ego-130-provision.sh [ssh_target] [station_id]
+#   ego-130-provision.sh --profile mcap-pilot [ssh_target] [station_id]
+#   ego-130-provision.sh --profile mcap-production [ssh_target] [station_id]
 # Example: ego-130-provision.sh server@10.10.10.130 ego-001
+#          ego-130-provision.sh --profile mcap-pilot server@10.10.10.130 ego-mcap-pilot
 set -euo pipefail
 
-TARGET="${1:-server@10.10.10.130}"
-STATION_ID="${2:-ego-001}"
+PROFILE="production"
+TARGET=""
+STATION_ID=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile)
+      PROFILE="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-130-provision.sh [--profile production|mcap-pilot|mcap-production] [ssh_target] [station_id]
+
+  production (默认)  ego-001 JPEG tar.zst 生产路径（ecs-record-oak-stream）
+  mcap-pilot         独立 pilot unit（ecs-record-oak-mcap-pilot，:7863 上传）
+  mcap-production    同 mcap-pilot（预留生产切流 profile 名）
+EOF
+      exit 0
+      ;;
+    *)
+      if [[ -z "$TARGET" ]]; then
+        TARGET="$1"
+      elif [[ -z "$STATION_ID" ]]; then
+        STATION_ID="$1"
+      else
+        echo "多余参数: $1" >&2
+        exit 2
+      fi
+      shift
+      ;;
+  esac
+done
+
+TARGET="${TARGET:-server@10.10.10.130}"
+case "$PROFILE" in
+  production)
+    STATION_ID="${STATION_ID:-ego-001}"
+    ;;
+  mcap-pilot|mcap-production)
+    STATION_ID="${STATION_ID:-ego-mcap-pilot}"
+    ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    exec bash "${ROOT}/scripts/ego-130-provision-mcap-pilot.sh" "${TARGET}"
+    ;;
+  *)
+    echo "未知 profile: ${PROFILE}" >&2
+    exit 2
+    ;;
+esac
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "${ROOT}/.." && pwd)"
 CAPTURE_SRC="${ROOT}/ego-stream-client"

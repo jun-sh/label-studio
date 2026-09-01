@@ -3323,7 +3323,15 @@ function headerValue(req, name) {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+function isMcapUploadRequest(req) {
+  const protocol = headerValue(req, "x-upload-protocol").toLowerCase();
+  if (protocol === "mcap") return true;
+  const contentType = (req.headers["content-type"] || "").toLowerCase();
+  return contentType.includes("application/mcap");
+}
+
 function isTarZstUploadRequest(req) {
+  if (isMcapUploadRequest(req)) return false;
   const contentType = (req.headers["content-type"] || "").toLowerCase();
   const protocol = headerValue(req, "x-upload-protocol").toLowerCase();
   return contentType.includes("application/zstd") || protocol === "tarzst";
@@ -3789,6 +3797,54 @@ async function handleTarZstSegmentUpload(stationId, req) {
   }
 }
 
+async function handleMcapSegmentUpload(stationId, req) {
+  const sessionId = headerValue(req, "x-session-id");
+  const segmentId = headerValue(req, "x-segment-id");
+  const expectedSha = headerValue(req, "x-content-sha256").toLowerCase();
+  const expectedSegmentTotal = Number(headerValue(req, "x-session-segment-total") || 0);
+  if (!sessionId || !segmentId) {
+    throw new Error("X-Session-Id and X-Segment-Id required for mcap upload");
+  }
+  const root = stationRoot(stationId);
+
+  if (isStationSegmentCommitted(stationId, sessionId, segmentId)) {
+    streamLog(stationId, "mcap_early_duplicate", { sessionId, segmentId, reason: "committed" });
+    return {
+      status: "derived",
+      sessionId,
+      segmentId,
+      duplicate: true,
+      sha256: expectedSha || null,
+      sourceFormat: "mcap",
+      deriveAsync: false,
+      message: "segment already committed",
+      framesCommitted: 0,
+    };
+  }
+
+  const incomingDir = path.join(root, ".upload", "incoming");
+  ensureDir(incomingDir);
+  const archivePath = path.join(incomingDir, `${segmentId}_${Date.now()}.mcap.zst`);
+  try {
+    await streamRequestToFile(req, archivePath);
+    const { handleMcapIngestUpload } = await import("./ingest/index.mjs");
+    return await handleMcapIngestUpload(stationId, {
+      archivePath,
+      sessionId,
+      segmentId,
+      expectedSha,
+      expectedSegmentTotal,
+      source: "edge",
+    });
+  } finally {
+    try {
+      if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { force: true });
+    } catch {
+      /* raw archive retained under raw/segments */
+    }
+  }
+}
+
 export async function handleStreamUploadRequest(stationId, req) {
   const auth = verifyStationUploadToken(stationId, req);
   if (!auth.ok) {
@@ -3796,6 +3852,9 @@ export async function handleStreamUploadRequest(stationId, req) {
     err.statusCode = 401;
     err.reason = auth.reason;
     throw err;
+  }
+  if (isMcapUploadRequest(req)) {
+    return handleMcapSegmentUpload(stationId, req);
   }
   if (isTarZstUploadRequest(req)) {
     return handleTarZstSegmentUpload(stationId, req);

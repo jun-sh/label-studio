@@ -20,4 +20,6 @@ export {
 
 export { handleTarZstIngestUpload, ingestTarZstArchive } from "./receive-tar.mjs";
 
-export { rawSegmentArchivePath } from "./io.mjs";
+export { handleMcapIngestUpload, ingestMcapArchive } from "./receive-mcap.mjs";
+
+export { rawSegmentArchivePath, rawMcapArchivePath } from "./io.mjs";

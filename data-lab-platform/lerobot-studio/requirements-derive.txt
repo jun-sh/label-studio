@@ -1,2 +1,3 @@
 # Batch-1: stream tar.zst extract (Alpine: py3-zstandard apk; pin for non-Alpine pip installs)
 zstandard==0.22.0
+mcap>=1.1.0

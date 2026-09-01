@@ -22,20 +22,31 @@ def stream_root_for(datalab_root: Path, station: str) -> Path:
     return datalab_root / "data-storage" / "stream" / station
 
 
+def _session_marker_exists(stream_root: Path, session_id: str, marker: str) -> bool:
+    return (stream_root / "state" / "sessions" / session_id / marker).is_file()
+
+
+def _session_failed(stream_root: Path, session_id: str) -> bool:
+    return _session_marker_exists(stream_root, session_id, "session.FAILED")
+
+
+def _add_session_id(sessions: set[str], session_id: object) -> None:
+    sid = str(session_id or "").strip()
+    if sid.startswith("sess_"):
+        sessions.add(sid)
+
+
 def list_stream_sessions(stream_root: Path) -> list[str]:
     sessions: set[str] = set()
 
     live = _read_json(stream_root / "live" / "session.json", {})
     if isinstance(live, dict):
-        sid = str(live.get("sessionId") or "").strip()
-        if sid:
-            sessions.add(sid)
+        _add_session_id(sessions, live.get("sessionId"))
 
     registry = _read_json(stream_root / "live" / "session-registry.json", {})
     if isinstance(registry, dict):
         for sid in (registry.get("sessions") or {}):
-            if str(sid).strip():
-                sessions.add(str(sid).strip())
+            _add_session_id(sessions, sid)
 
     archive = stream_root / "archive"
     if archive.is_dir():
@@ -48,7 +59,74 @@ def list_stream_sessions(stream_root: Path) -> list[str]:
                 if len(parts) >= 2:
                     sessions.add(f"{parts[0]}_{parts[1]}")
 
-    return sorted(sessions)
+    # Unit layout + MCAP pilot: session markers / derived units / manifest episodes.
+    sessions_dir = stream_root / "state" / "sessions"
+    if sessions_dir.is_dir():
+        for sess_dir in sessions_dir.iterdir():
+            if not sess_dir.is_dir() or not sess_dir.name.startswith("sess_"):
+                continue
+            if (sess_dir / "session.READY").is_file():
+                sessions.add(sess_dir.name)
+
+    derived = stream_root / "derived"
+    if derived.is_dir():
+        for sess_dir in derived.iterdir():
+            if sess_dir.is_dir() and sess_dir.name.startswith("sess_"):
+                if (sess_dir / "unit.json").is_file():
+                    sessions.add(sess_dir.name)
+
+    manifest = _read_json(stream_root / "manifest" / "manifest.json", {})
+    if isinstance(manifest, dict):
+        for ep in manifest.get("episodes") or []:
+            if isinstance(ep, dict):
+                _add_session_id(sessions, ep.get("session_id"))
+
+    return sorted(sid for sid in sessions if not _session_failed(stream_root, sid))
+
+
+def session_source_format(stream_root: Path, session_id: str) -> str:
+    """Return dominant ingest sourceFormat for a session (mcap | tarzst | mixed | unknown)."""
+    unit_path = stream_root / "derived" / session_id / "unit.json"
+    if unit_path.is_file():
+        unit = _read_json(unit_path, {})
+        if isinstance(unit, dict):
+            derive = unit.get("derive")
+            if isinstance(derive, dict):
+                fmt = str(derive.get("source_format") or "").strip()
+                if fmt:
+                    return fmt
+            for seg in unit.get("source_segments") or []:
+                if isinstance(seg, dict):
+                    fmt = str(seg.get("source_format") or "").strip()
+                    if fmt:
+                        return fmt
+
+    seg_dir = stream_root / "state" / "segments" / session_id
+    formats: set[str] = set()
+    if seg_dir.is_dir():
+        for state_file in seg_dir.glob("*.json"):
+            state = _read_json(state_file, {})
+            if isinstance(state, dict):
+                fmt = str(state.get("sourceFormat") or "").strip()
+                if fmt:
+                    formats.add(fmt)
+    if formats == {"mcap"}:
+        return "mcap"
+    if formats == {"tarzst"}:
+        return "tarzst"
+    if len(formats) > 1:
+        return "mixed"
+    if (stream_root / "raw" / "segments" / session_id).is_dir():
+        raw_dir = stream_root / "raw" / "segments" / session_id
+        has_mcap = any(raw_dir.glob("*.mcap.zst"))
+        has_tar = any(raw_dir.glob("*.tar.zst"))
+        if has_mcap and not has_tar:
+            return "mcap"
+        if has_tar and not has_mcap:
+            return "tarzst"
+        if has_mcap and has_tar:
+            return "mixed"
+    return "unknown"
 
 
 def stream_has_ingested_data(stream_root: Path) -> bool:
@@ -274,6 +352,8 @@ def derive_pending_sessions(stream_root: Path) -> list[str]:
             continue
         if (sess_dir / "session.READY").is_file():
             continue
+        if (sess_dir / "session.FAILED").is_file():
+            continue
         marker = sess_dir / "session.DONE_UPLOAD"
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
@@ -292,6 +372,8 @@ def station_slug(pipe_root: Path, station: str) -> str:
         "ego-001": "egodome",
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
+        "ego-mcap-pilot": "ego_mcap_pilot",
+        "ego-mcap-track2": "ego_mcap_track2",
     }
     cfg = pipe_root / "configs" / "stations.yaml"
     if cfg.is_file():
@@ -323,9 +405,12 @@ def main() -> int:
             "all-sessions",
             "doctor",
             "reconcile-markers",
+            "source-format",
+            "ready-sessions",
         ],
     )
     parser.add_argument("station")
+    parser.add_argument("session_id", nargs="?", default="", help="for source-format")
     parser.add_argument("--datalab-root", type=Path, default=None)
     parser.add_argument("--pipe-root", type=Path, default=None)
     parser.add_argument(
@@ -372,6 +457,22 @@ def main() -> int:
     if args.command == "all-sessions":
         for sid in list_stream_sessions(stream):
             print(sid)
+        return 0
+    if args.command == "ready-sessions":
+        sessions_dir = stream / "state" / "sessions"
+        ready: list[str] = []
+        if sessions_dir.is_dir():
+            for sess_dir in sorted(sessions_dir.glob("sess_*")):
+                if (sess_dir / "session.READY").is_file():
+                    ready.append(sess_dir.name)
+        for sid in ready:
+            print(sid)
+        return 0
+    if args.command == "source-format":
+        if not str(args.session_id or "").strip():
+            print("missing session_id (usage: source-format <station> <session_id>)", file=sys.stderr)
+            return 2
+        print(session_source_format(stream, str(args.session_id).strip()))
         return 0
     if args.command == "pending":
         for sid in pending_sessions(stream, pipe, args.station, backend=backend, datalab_root=datalab):

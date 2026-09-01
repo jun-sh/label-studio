@@ -56,8 +56,10 @@ COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
 COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
 COPY session-markers.mjs derive-lock.mjs ego-derive-run.mjs ego-derive-watch.mjs /app/
 COPY scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py
+COPY scripts/validate-mcap-archive.py /app/scripts/validate-mcap-archive.py
 COPY scripts/export-videos-from-parquet.py /app/scripts/export-videos-from-parquet.py
 COPY scripts/sync-vendor-annotations.py /app/scripts/sync-vendor-annotations.py
+COPY scripts/ego-derive-worker-entry.sh /app/scripts/ego-derive-worker-entry.sh
 COPY patches/apply-branding.sh /app/patches/apply-branding.sh
 COPY patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
 COPY patches/patch-playback-mode.sh /app/patches/patch-playback-mode.sh
@@ -70,7 +72,7 @@ COPY config/station-topology.json /app/config/station-topology.json
 
 RUN chmod +x /app/download-assets.sh /app/docker-entrypoint.sh /app/prepare-bundled-dataset.sh \
   /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh /app/patches/patch-dockview-scalar-chart.sh \
-  /app/patches/patch-playback-mode.sh
+  /app/patches/patch-playback-mode.sh /app/scripts/ego-derive-worker-entry.sh
 
 ENV PORT=7860
 ENV LEROBOT_STUDIO_ROOT=/srv/lerobot

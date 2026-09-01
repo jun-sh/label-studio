@@ -1295,7 +1295,7 @@
           /* keep shell */
         });
 
-      var infoUrl = streamInfoUrl(datasetUrl);
+      var infoUrl = streamInfoUrl(station.datasetUrl || "stream://" + station.id);
       if (!infoUrl) {
         if (g.__datalabCollectionSetDatasetReady) {
           g.__datalabCollectionSetDatasetReady(false);

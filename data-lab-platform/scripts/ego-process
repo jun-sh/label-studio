@@ -57,13 +57,17 @@ EOF
   esac
 done
 
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-station-runtime.sh
+source "${SCRIPT_DIR}/ego-station-runtime.sh"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
 [[ -n "$STATION" ]] || {
   echo "❌ 请指定采集站，例如: ego-process ego-001" >&2
   exit 2
 }
 
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ego_station_runtime_env "$STATION"
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 DERIVE_SH="${SCRIPT_DIR}/ego-derive"
 WAIT_DERIVE_SH="${SCRIPT_DIR}/ego-wait-derive-sessions.sh"

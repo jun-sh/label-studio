@@ -10,6 +10,7 @@ User=user01
 Group=user01
 WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 Environment=STATION_ID=ego-001
+Environment=EGO_PROCESS_WATCH_STATIONS=ego-001,ego-mcap-pilot
 Environment=EGO_DATALAB_ROOT=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/scripts/ego-process-watcher.sh once
 StandardOutput=journal

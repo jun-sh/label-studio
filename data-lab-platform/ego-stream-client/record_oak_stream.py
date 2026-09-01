@@ -92,19 +92,41 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
 
 
-def _require_jpeg_capture(recorder: Oak4pEgoRecorder) -> None:
-    """Production path: HW JPEG frame bins only (no H264 in DLB1)."""
-    if not _env_flag("EGO_CAPTURE_JPEG_ONLY", "1"):
+def _capture_codec_mode(recorder: Oak4pEgoRecorder) -> str:
+    if recorder.use_hw_h264:
+        return "h264"
+    if recorder.use_hw_jpeg:
+        return "jpeg"
+    return "bgr"
+
+
+def _require_capture_codec(recorder: Oak4pEgoRecorder) -> None:
+    """Validate capture codec against env profile (JPEG production vs Track2 H.264 MCAP)."""
+    jpeg_only = _env_flag("EGO_CAPTURE_JPEG_ONLY", "1")
+    mode = _capture_codec_mode(recorder)
+    if jpeg_only:
+        if mode != "jpeg":
+            raise SystemExit(
+                "capture codec must be HW JPEG (OAK_HW_JPEG=1, OAK_H264=0). "
+                f"got hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264}. "
+                "Fix ~/.config/ego-station.env.d/station.conf and restart capture."
+            )
         return
-    if recorder.use_hw_h264 or not recorder.use_hw_jpeg:
-        raise SystemExit(
-            "capture codec must be HW JPEG (OAK_HW_JPEG=1, OAK_H264=0). "
-            f"got hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264}. "
-            "Fix ~/.config/ego-station.env.d/station.conf and restart capture."
-        )
+    if mode == "h264":
+        if not _env_flag("SEGMENT_MCAP", "0"):
+            raise SystemExit(
+                "Track2 VPU H.264 capture requires SEGMENT_MCAP=1. "
+                f"got hw_h264={recorder.use_hw_h264} SEGMENT_MCAP unset."
+            )
+        return
+    raise SystemExit(
+        f"unsupported capture codec mode={mode!r} "
+        f"(hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264}). "
+        "Set EGO_CAPTURE_JPEG_ONLY=1 for JPEG or OAK_H264=1+SEGMENT_MCAP=1 for Track2."
+    )
 
 
-def _append_visual_frame(
+def _append_capture_frame(
     writer: SegmentCaptureWriter,
     preview_hub,
     recorder: Oak4pEgoRecorder,
@@ -116,9 +138,11 @@ def _append_visual_frame(
     camera_ts_offset_ns: dict[str, int] | None = None,
     imu_raw_batch: list | tuple | None = None,
 ) -> None:
-    if not recorder.use_hw_jpeg:
-        raise RuntimeError("only HW JPEG capture is supported")
-    preview_hub.offer_jpegs(capture_out)
+    mode = _capture_codec_mode(recorder)
+    if mode not in ("jpeg", "h264"):
+        raise RuntimeError(f"only HW JPEG or VPU H.264 capture is supported (mode={mode})")
+    if mode == "jpeg":
+        preview_hub.offer_jpegs(capture_out)
     if preview_out:
         preview_hub.offer_jpegs(preview_out)
     writer.append_frame(
@@ -163,22 +187,26 @@ def _kick_heartbeat(heartbeat: FrameStreamUploader | None) -> None:
         print(f"heartbeat warning: {exc}", flush=True)
 
 
+def _station_id() -> str:
+    return os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
+
+
 def main() -> None:
     global _SHUTDOWN
     _SHUTDOWN = False
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
 
+    station = _station_id()
     p = argparse.ArgumentParser(
         description="OAK edge capture (Scheme A): segments on disk + MJPEG preview, no live upload.",
     )
-    _STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
     p.add_argument(
         "--heartbeat-url",
         type=str,
         default=os.environ.get(
             "DATALAB_HEARTBEAT_URL",
-            f"http://10.10.10.34:8080/lerobot/api/collection/stations/{_STATION}/upload",
+            f"http://10.10.10.34:8080/lerobot/api/collection/stations/{station}/upload",
         ),
         help="Optional ingest URL for heartbeat only (station online in collection UI)",
     )
@@ -192,13 +220,13 @@ def main() -> None:
         type=str,
         default=os.environ.get(
             "EGO_CAPTURE_CHECKPOINT",
-            f"/home/server/cache/{_STATION}/segments/checkpoint.json",
+            f"/home/server/cache/{station}/segments/checkpoint.json",
         ),
     )
     p.add_argument(
         "--segment-root",
         type=str,
-        default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{_STATION}/segments"),
+        default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{station}/segments"),
     )
     p.add_argument("--episode-seconds", type=float, default=600.0)
     p.add_argument("--fps", type=int, default=OAK_CAPTURE_FPS)
@@ -243,7 +271,7 @@ def main() -> None:
         force_imu=force_imu,
     )
     recorder.connect()
-    _require_jpeg_capture(recorder)
+    _require_capture_codec(recorder)
 
     resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
     if resumed_emit is not None:
@@ -308,7 +336,7 @@ def main() -> None:
                 break
             imu_raw_batch = recorder.pop_pending_imu_raw()
             emit_mono = time.monotonic()
-            _append_visual_frame(
+            _append_capture_frame(
                 writer,
                 preview_hub,
                 recorder,

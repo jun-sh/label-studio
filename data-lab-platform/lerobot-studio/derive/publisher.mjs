@@ -84,6 +84,18 @@ export function updateInfoFromManifest(root, manifest) {
   }
   if (!info.splits) info.splits = { train: `0:${Math.max(1, episodes.length)}` };
   else info.splits.train = `0:${Math.max(1, episodes.length)}`;
+  info.episode_provenance = episodes.map((ep) => ({
+    episode_index: ep.episode_index,
+    session_id: ep.session_id,
+    source_session_id: ep.source_session_id || ep.session_id,
+    video_codec: ep.video_codec || "jpeg",
+    pose_ready: Boolean(ep.pose_ready),
+  }));
+  info.asset_layers = {
+    raw_mcap: "sensors_only",
+    stream_lerobot: "preview_no_real_pose",
+    corpus: "convert_hamer_pose",
+  };
   writeJsonAtomic(infoPath, info);
   return info;
 }

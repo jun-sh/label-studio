@@ -52,3 +52,19 @@ export function atomicMoveFile(srcPath, destPath) {
 export function rawSegmentArchivePath(root, sessionId, segmentId) {
   return path.join(root, "raw", "segments", sessionId, `${segmentId}.tar.zst`);
 }
+
+export function rawMcapArchivePath(root, sessionId, segmentId) {
+  return path.join(root, "raw", "segments", sessionId, `${segmentId}.mcap.zst`);
+}
+
+/** Remove stale tar.zst for the same segment when MCAP ingest wins (POC hardening). */
+export function purgeConflictingTarArchive(root, sessionId, segmentId) {
+  const tarPath = rawSegmentArchivePath(root, sessionId, segmentId);
+  if (!fs.existsSync(tarPath)) return false;
+  try {
+    fs.rmSync(tarPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}

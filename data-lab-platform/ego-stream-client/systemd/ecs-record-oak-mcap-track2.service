@@ -1,0 +1,33 @@
+[Unit]
+Description=EGO OAK MCAP Track2 VPU-H.264 POC capture (ego-mcap-track2, isolated from pilot/production)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap-pilot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+
+# Track2 env is in z-mcap-track2-h264.conf only — do NOT load ego-station.env (ego-001).
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
+  --fps 30 --imu-hz 200 --no-heartbeat \
+  --segment-root /home/server/cache/ego-mcap-track2/segments \
+  --checkpoint-path /home/server/cache/ego-mcap-track2/checkpoint.json
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-record-oak-mcap-track2
+
+[Install]
+WantedBy=default.target

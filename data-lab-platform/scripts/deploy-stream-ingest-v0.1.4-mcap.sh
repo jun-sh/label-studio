@@ -24,4 +24,13 @@ fi
 echo "[deploy-mcap] bootstrap ego-001 stream meta"
 bash "${ROOT}/data-lab-platform/scripts/ego-mcap-bootstrap-34.sh"
 
+# stream-ingest recreate changes container IP; nginx caches upstream DNS until reload.
+NGINX_CONTAINER="${NGINX_CONTAINER:-data-lab-nginx-1}"
+if docker ps --format '{{.Names}}' | grep -qx "${NGINX_CONTAINER}"; then
+  echo "[deploy-mcap] restart ${NGINX_CONTAINER} (refresh stream-ingest upstream)"
+  docker restart "${NGINX_CONTAINER}" >/dev/null
+else
+  echo "[deploy-mcap] skip nginx restart (${NGINX_CONTAINER} not running)"
+fi
+
 echo "Done. ego-001 MCAP production on :7862 (nginx :8080/lerobot)."

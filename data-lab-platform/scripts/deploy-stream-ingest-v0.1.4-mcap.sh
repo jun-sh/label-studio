@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
-# Deploy MCAP stack on 34: pilot overlay (:7863) + image build.
-# Production stream-ingest on :7862 (v0.1.3) is NOT replaced.
+# Deploy MCAP v0.1.4 production on 34 — ego-001 on main :7862 / derive-worker.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PILOT_SH="${ROOT}/data-lab-platform/scripts/deploy-stream-ingest-v0.1.4-mcap-pilot.sh"
+TAG="${LEROBOT_IMAGE_TAG:-v0.1.4-mcap-rc}"
+IMAGE="data-lab-lerobot-studio:${TAG}"
 
-echo "[deploy-mcap] building + starting MCAP pilot overlay (ingest :7863, derive-worker-mcap-pilot)"
-bash "${PILOT_SH}"
+echo "[deploy-mcap] build image ${IMAGE}"
+docker build -t "${IMAGE}" "${ROOT}/data-lab-platform/lerobot-studio"
 
-echo "[deploy-mcap] bootstrap pilot stream meta (camera intrinsics)"
-bash "${ROOT}/data-lab-platform/scripts/ego-mcap-pilot-bootstrap-34.sh"
+cd "${ROOT}"
+COMPOSE="${COMPOSE:-docker-compose}"
+if ! command -v docker-compose >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+fi
 
-echo ""
-echo "[deploy-mcap] post-deploy checks:"
-echo "  docker ps --filter name=mcap-pilot --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'"
-echo "  curl -s http://127.0.0.1:7863/lerobot/api/collection/stations/ego-mcap-pilot/derive-status | jq ."
-echo "  production ingest unchanged: curl -s http://127.0.0.1:7862/health"
-echo ""
-echo "Done. Pilot :7863 only; ego-001 production path on :7862 unchanged."
+"${COMPOSE}" -f docker-compose.yml \
+  -f data-lab-platform/docker-compose.platform.yml \
+  -f data-lab-platform/docker-compose.v0.1.3-async.yml \
+  -f data-lab-platform/docker-compose.v0.1.4-mcap.yml \
+  up -d stream-ingest derive-worker lerobot
+
+echo "[deploy-mcap] bootstrap ego-001 stream meta"
+bash "${ROOT}/data-lab-platform/scripts/ego-mcap-bootstrap-34.sh"
+
+echo "Done. ego-001 MCAP production on :7862 (nginx :8080/lerobot)."

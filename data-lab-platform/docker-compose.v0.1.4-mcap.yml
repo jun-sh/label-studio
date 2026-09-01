@@ -1,0 +1,12 @@
+# v0.1.4 — ego-001 MCAP production (VPU H.264 ingest + remux derive).
+# Replaces tar.zst path on main stream-ingest :7862 / derive-worker.
+services:
+  stream-ingest:
+    image: data-lab-lerobot-studio:v0.1.4-mcap-rc
+
+  derive-worker:
+    image: data-lab-lerobot-studio:v0.1.4-mcap-rc
+    entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+
+  lerobot:
+    image: data-lab-lerobot-studio:v0.1.4-mcap-rc

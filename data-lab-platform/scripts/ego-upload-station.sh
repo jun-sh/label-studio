@@ -59,24 +59,14 @@ STATION="${STATION:-${EGO_STATION_ID:-${STATION_ID:-}}}"
 
 _apply_station_upload_profile() {
   case "${STATION}" in
-    ego-mcap-pilot)
-      export EGO_STATION_ID=ego-mcap-pilot
-      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-mcap-pilot/segments"
-      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-mcap-pilot/checkpoint.json"
-      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-mcap-pilot/logs"
-      export EGO_UPLOAD_URL="http://10.10.10.34:7863/lerobot/api/collection/stations/ego-mcap-pilot/upload"
+    ego-001)
+      export EGO_STATION_ID=ego-001
+      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-001/segments"
+      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-001/checkpoint.json"
+      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-001/logs"
+      export EGO_UPLOAD_URL="http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload"
       export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
-      export STATION_UPLOAD_TOKEN=dl-upload-ego-mcap-pilot-v1
-      export UPLOAD_PROTOCOL=mcap
-      ;;
-    ego-mcap-track2)
-      export EGO_STATION_ID=ego-mcap-track2
-      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-mcap-track2/segments"
-      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-mcap-track2/checkpoint.json"
-      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-mcap-track2/logs"
-      export EGO_UPLOAD_URL="http://10.10.10.34:7864/lerobot/api/collection/stations/ego-mcap-track2/upload"
-      export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
-      export STATION_UPLOAD_TOKEN=dl-upload-ego-mcap-track2-v1
+      export STATION_UPLOAD_TOKEN=dl-upload-ego-001-v1
       export UPLOAD_PROTOCOL=mcap
       ;;
   esac

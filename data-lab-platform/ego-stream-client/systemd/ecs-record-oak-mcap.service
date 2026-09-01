@@ -1,0 +1,18 @@
+[Unit]
+Description=EGO OAK 4-cam MCAP capture (ego-001 production, VPU H.264)
+After=network-online.target
+Wants=network-online.target
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap-pilot.service ecs-record-oak-mcap-track2.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/workspace/ego-studio
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+EnvironmentFile=-/etc/ego/ego-station.env
+ExecStart=%h/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

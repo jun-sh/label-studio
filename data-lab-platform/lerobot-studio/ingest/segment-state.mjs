@@ -106,6 +106,8 @@ export function listSessionSegmentStates(root, sessionId) {
 export function isSessionIngestComplete(root, sessionId, { expectedTotal = 0 } = {}) {
   const states = listSessionSegmentStates(root, sessionId);
   if (!states.length) return false;
+  const failed = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.INGEST_FAILED);
+  if (failed.length) return false;
   const pending = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.DERIVE_PENDING);
   if (expectedTotal > 0) {
     return pending.length >= expectedTotal;

@@ -9,7 +9,14 @@ STUDIO="${SCRIPT_DIR}/../lerobot-studio"
 log() { echo "[mcap-rc] $*"; }
 
 log "=== mcap derive unit tests ==="
-node --test "${STUDIO}/derive/mcap-reader.test.mjs" "${STUDIO}/derive/unit-mcap.test.mjs"
+node --test \
+  "${STUDIO}/derive/mcap-reader.test.mjs" \
+  "${STUDIO}/derive/unit-mcap.test.mjs" \
+  "${STUDIO}/derive/session-retry.test.mjs" \
+  "${STUDIO}/ingest/session-coordinator.test.mjs"
+
+log "=== mcap python preflight tests ==="
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest "${SCRIPT_DIR}/../ego-stream-client/tests/test_mcap_preflight.py" -q
 
 log "=== ego-001 station registry ==="
 for f in \

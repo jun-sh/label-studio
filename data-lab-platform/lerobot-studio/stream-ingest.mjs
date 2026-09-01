@@ -1365,7 +1365,22 @@ function repairStreamViewerScaffold(stationId) {
   saveEpisodesIndex(root, { version: 1, episodes: [] });
   const py = resolveParquetPython();
   if (py && fs.existsSync(SYNC_SCRIPT)) {
-    spawnSync(py, [SYNC_SCRIPT, "--viewer-scaffold", root], parquetSpawnOptions());
+    const child = spawn(py, [SYNC_SCRIPT, "--viewer-scaffold", root], parquetSpawnOptions());
+    child.on("close", (code) => {
+      if (code !== 0) {
+        streamLog(stationId, "viewer_scaffold_repair_failed", { exitCode: code });
+        return;
+      }
+      writeViewerScaffoldSnapshot(root, 1);
+      finalizeViewerScaffoldArtifacts(root);
+      streamLog(stationId, "viewer_scaffold_repair", { total_frames: 1 });
+    });
+    child.on("error", (err) => {
+      streamLog(stationId, "viewer_scaffold_repair_failed", {
+        message: String(err?.message || err),
+      });
+    });
+    return true;
   }
   writeViewerScaffoldSnapshot(root, 1);
   finalizeViewerScaffoldArtifacts(root);
@@ -3825,17 +3840,35 @@ async function handleMcapSegmentUpload(stationId, req) {
   const incomingDir = path.join(root, ".upload", "incoming");
   ensureDir(incomingDir);
   const archivePath = path.join(incomingDir, `${segmentId}_${Date.now()}.mcap.zst`);
-  try {
-    await streamRequestToFile(req, archivePath);
-    const { handleMcapIngestUpload } = await import("./ingest/index.mjs");
-    return await handleMcapIngestUpload(stationId, {
-      archivePath,
+  await streamRequestToFile(req, archivePath);
+
+  const ingestOpts = {
+    archivePath,
+    sessionId,
+    segmentId,
+    expectedSha,
+    expectedSegmentTotal,
+    source: "edge",
+  };
+  const asyncIngest = String(process.env.INGEST_MCAP_ASYNC ?? "1").trim() !== "0";
+  if (asyncIngest) {
+    queueMcapIngestBackground(stationId, ingestOpts);
+    return {
+      status: "accepted",
       sessionId,
       segmentId,
-      expectedSha,
-      expectedSegmentTotal,
-      source: "edge",
-    });
+      sha256: expectedSha || null,
+      sourceFormat: "mcap",
+      async: true,
+      deriveAsync: true,
+      message: "mcap upload accepted; validation in progress",
+      framesCommitted: 0,
+    };
+  }
+
+  try {
+    const { handleMcapIngestUpload } = await import("./ingest/index.mjs");
+    return await handleMcapIngestUpload(stationId, ingestOpts);
   } finally {
     try {
       if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { force: true });
@@ -3843,6 +3876,30 @@ async function handleMcapSegmentUpload(stationId, req) {
       /* raw archive retained under raw/segments */
     }
   }
+}
+
+function queueMcapIngestBackground(stationId, ingestOpts) {
+  setImmediate(() => {
+    void (async () => {
+      const { archivePath, sessionId, segmentId } = ingestOpts;
+      try {
+        const { handleMcapIngestUpload } = await import("./ingest/index.mjs");
+        await handleMcapIngestUpload(stationId, ingestOpts);
+      } catch (err) {
+        streamLog(stationId, "mcap_ingest_async_failed", {
+          sessionId,
+          segmentId,
+          message: String(err?.message || err),
+        });
+      } finally {
+        try {
+          if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { force: true });
+        } catch {
+          /* ignore */
+        }
+      }
+    })();
+  });
 }
 
 export async function handleStreamUploadRequest(stationId, req) {
@@ -4617,10 +4674,22 @@ export function ensureStreamViewerScaffoldForAllStations() {
   } catch {
     return;
   }
+  let i = 0;
   for (const ent of entries) {
     if (!ent.isDirectory() || ent.name.startsWith(".")) continue;
-    ensureStreamViewerScaffold(ent.name);
-    repairStreamViewerScaffold(ent.name);
+    const stationId = ent.name;
+    const delayMs = i * Number(process.env.INGEST_STARTUP_STATION_STAGGER_MS || 1500);
+    setTimeout(() => {
+      try {
+        ensureStreamViewerScaffold(stationId);
+        repairStreamViewerScaffold(stationId);
+      } catch (err) {
+        streamLog(stationId, "viewer_scaffold_startup_failed", {
+          message: String(err?.message || err),
+        });
+      }
+    }, delayMs);
+    i += 1;
   }
 }
 
@@ -4744,17 +4813,23 @@ export function refreshStreamEpisodesCatalog(stationId) {
 /** Resume video mux for stations that still have staging jpgs or unfinished mp4 publish flags. */
 export function resumePendingStreamMuxForAllStations() {
   if (!fs.existsSync(STREAM_ROOT)) return;
-  for (const stationId of fs.readdirSync(STREAM_ROOT)) {
-    const root = stationRoot(stationId);
-    if (!fs.existsSync(path.join(root, "meta", "info.json"))) continue;
-    if (shouldDeferSessionPublish(stationId)) continue;
-    const manifest = readChunksManifest(root);
-    const videosPending = Object.entries(manifest.publish || {}).some(
-      ([rel, st]) => rel.startsWith("videos/") && st?.status !== "finished",
-    );
-    const hasStaging = countStagingFramesScan(root) > 0;
-    if (videosPending || hasStaging) {
-      scheduleMux(stationId);
-    }
+  const stations = fs.readdirSync(STREAM_ROOT).filter((name) => !name.startsWith("."));
+  const staggerMs = Number(process.env.INGEST_STARTUP_STATION_STAGGER_MS || 1500);
+  stations.forEach((stationId, index) => {
+    setTimeout(() => resumePendingStreamMuxForStation(stationId), index * staggerMs);
+  });
+}
+
+function resumePendingStreamMuxForStation(stationId) {
+  const root = stationRoot(stationId);
+  if (!fs.existsSync(path.join(root, "meta", "info.json"))) return;
+  if (shouldDeferSessionPublish(stationId)) return;
+  const manifest = readChunksManifest(root);
+  const videosPending = Object.entries(manifest.publish || {}).some(
+    ([rel, st]) => rel.startsWith("videos/") && st?.status !== "finished",
+  );
+  const hasStaging = countStagingFramesScan(root) > 0;
+  if (videosPending || hasStaging) {
+    scheduleMux(stationId);
   }
 }

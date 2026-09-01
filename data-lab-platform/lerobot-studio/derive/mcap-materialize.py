@@ -211,7 +211,12 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
         if tmp is not None:
             tmp.cleanup()
 
-    if session_meta:
+    has_h264_samples = any(camera_h264[k] for k in CAMERA_TOPICS.values())
+    video_codec = str((session_meta or {}).get("video_codec") or "jpeg").strip().lower()
+    if has_h264_samples:
+        video_codec = "h264"
+
+    if session_meta and not has_h264_samples:
         declared = int(session_meta.get("frame_count") or 0)
         if declared > 0:
             for i in range(declared):
@@ -223,10 +228,6 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
                         "task": session_meta.get("task") or "unknown",
                     },
                 )
-
-    video_codec = str((session_meta or {}).get("video_codec") or "jpeg").strip().lower()
-    if any(camera_h264[k] for k in CAMERA_TOPICS.values()):
-        video_codec = "h264"
 
     rows = [rows_by_index[i] for i in sorted(rows_by_index)]
     if not rows and video_codec == "h264":

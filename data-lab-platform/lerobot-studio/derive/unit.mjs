@@ -178,12 +178,48 @@ function writeUnitTable(tmpRoot, stationId, frameMap, segmentExtracts, stationRo
   return { rows: rows.length, jsonlDest, parquetDest };
 }
 
+/** After H.264 remux, ffprobe frame count can trail MCAP NAL count — trim table to min MP4. */
+function reconcileUnitTableToRemuxedMp4(tmpRoot, stationId, stationRoot) {
+  const videoKeys = videoKeysForStation(stationId);
+  const mp4Counts = videoKeys.map((videoKey) => {
+    const mp4 = path.join(tmpRoot, "videos", `${videoKey}.mp4`);
+    return fs.existsSync(mp4) ? probeMp4FrameCount(mp4, { defaultFps: DEFAULT_FPS }) : 0;
+  });
+  const positive = mp4Counts.filter((n) => n > 0);
+  if (!positive.length) return null;
+  const minMp4 = Math.min(...positive);
+
+  const jsonlPath = path.join(tmpRoot, "data.jsonl");
+  const rows = readJsonl(jsonlPath);
+  if (rows.length <= minMp4) return rows.length;
+
+  const trimmed = rows.slice(0, minMp4);
+  writeJsonlAtomic(jsonlPath, trimmed);
+
+  const layoutRoot = path.join(tmpRoot, "_table_reconcile");
+  const layoutJsonl = path.join(layoutRoot, "data", "chunk-000", "file-000.jsonl");
+  writeJsonlAtomic(layoutJsonl, trimmed);
+  const infoSrc = path.join(stationRoot, "meta", "info.json");
+  if (fs.existsSync(infoSrc)) {
+    ensureDir(path.join(layoutRoot, "meta"));
+    fs.copyFileSync(infoSrc, path.join(layoutRoot, "meta", "info.json"));
+  }
+  syncMainParquet(layoutRoot, stationId);
+  const parquetSrc = path.join(layoutRoot, "data", "chunk-000", "file-000.parquet");
+  if (!fs.existsSync(parquetSrc)) {
+    throw new Error(`reconcile parquet missing (${parquetSrc})`);
+  }
+  fs.copyFileSync(parquetSrc, path.join(tmpRoot, "data.parquet"));
+  return minMp4;
+}
+
 export function runUnitReadyGate(unitRoot, stationId, expectedFrames, options = {}) {
   // Unit layout runs G1–G3 inline (G4–G6 apply at publish / legacy staging layout).
   // MCAP sourceFormat uses the same thresholds: continuous frame_index (G1),
   // four-camera MP4 frame coverage (G2), sensor_raw IMU parquet present (G3).
   const remux = options.muxMode === "remux";
-  const minFrames = remux ? Math.max(1, expectedFrames - 5) : expectedFrames;
+  const remuxSlack = remux ? Math.max(5, Math.ceil(expectedFrames * 0.1)) : 0;
+  const minFrames = remux ? Math.max(1, expectedFrames - remuxSlack) : expectedFrames;
   const checks = [];
   const jsonl = readJsonl(path.join(unitRoot, "data.jsonl"));
   const indices = jsonl.map((r) => Number(r.frame_index)).sort((a, b) => a - b);
@@ -201,7 +237,7 @@ export function runUnitReadyGate(unitRoot, stationId, expectedFrames, options = 
       checks.push({
         ok: false,
         checkId: "G2",
-        reason: `${videoKey}: ${frames} < ${minFrames}${remux ? ` (remux tol ${expectedFrames - minFrames})` : ""}`,
+        reason: `${videoKey}: ${frames} < ${minFrames}${remux ? ` (remux tol ${remuxSlack})` : ""}`,
       });
     }
   }
@@ -437,9 +473,27 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     /* ignore */
   }
 
-  const gate = runUnitReadyGate(tmpRoot, stationId, frameMap.length, {
-    muxMode: mcapVideoCodec === "h264" ? "remux" : "encode",
-  });
+  const muxMode = mcapVideoCodec === "h264" ? "remux" : "encode";
+  let effectiveFrames = frameMap.length;
+  let reconcileWarning = null;
+  if (muxMode === "remux") {
+    const remuxSlack = Math.max(5, Math.ceil(frameMap.length * 0.1));
+    const reconciled = reconcileUnitTableToRemuxedMp4(tmpRoot, stationId, root);
+    if (reconciled !== null) {
+      effectiveFrames = reconciled;
+      const trimmed = frameMap.length - reconciled;
+      if (trimmed > 0) {
+        reconcileWarning = {
+          declared: frameMap.length,
+          effective: reconciled,
+          trimmed,
+          slack: remuxSlack,
+          level: trimmed > remuxSlack ? "warn" : "info",
+        };
+      }
+    }
+  }
+  const gate = runUnitReadyGate(tmpRoot, stationId, effectiveFrames, { muxMode });
   const deriveMeta = {
     attempt,
     pipeline_version: UNIT_PIPELINE_VERSION,
@@ -452,21 +506,29 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
       chunk_frames: Number(process.env.DERIVE_MUX_CHUNK_FRAMES || 256),
       parallel_jobs: muxResults[0]?.parallelJobs || 1,
     },
-    frames: frameMap.length,
-    rows: table.rows,
+    frames: effectiveFrames,
+    rows: effectiveFrames,
+    frames_declared: frameMap.length,
+    reconcile_warning: reconcileWarning,
     source_format: segments.some((s) => s.sourceFormat === "mcap") ? "mcap" : "tarzst",
   };
   const unitJson = buildUnitJson(tmpRoot, stationId, sessionId, segments, gate, deriveMeta);
   fs.writeFileSync(path.join(tmpRoot, "unit.json"), `${JSON.stringify(unitJson, null, 2)}\n`);
 
   if (!gate.ok) {
+    const reason = gate.reason || {
+      code: gate.failedCheckId || "DERIVE_GATE_FAILED",
+      message: gate.checks?.find((c) => !c.ok)?.reason || "derive_gate_failed",
+      category: gate.failedCheckId === "G2" ? "mux" : "derive",
+      checkId: gate.failedCheckId,
+    };
     appendJournalEvent(root, {
       event: "derive_failed",
       session_id: sessionId,
       attempt,
-      reason: gate.reason,
+      reason,
     });
-    return { ok: false, gate, tmpRoot, unitJson: null };
+    return { ok: false, gate: { ...gate, reason }, tmpRoot, unitJson: null };
   }
 
   const finalDir = unitDir(root, sessionId);

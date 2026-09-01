@@ -19,6 +19,9 @@ class EpisodeBuffers:
     camera_frames: dict[str, list[Any]] = field(default_factory=lambda: defaultdict(list))
     camera_intrinsics: dict[str, Any] = field(default_factory=dict)
 
+    def frame_count(self) -> int:
+        return len(self.rgb_ts_ns)
+
     def video_shapes(self) -> dict[str, tuple[int, int]]:
         shapes: dict[str, tuple[int, int]] = {}
         for key, frames in self.camera_frames.items():

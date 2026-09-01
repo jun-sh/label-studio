@@ -324,6 +324,13 @@ def main() -> None:
         )
 
         strict_duration_s = float(os.environ.get("EGO_STRICT_EPISODE_SECONDS", "86400"))
+        if args.episode_seconds and args.episode_seconds > 0:
+            strict_duration_s = min(strict_duration_s, float(args.episode_seconds))
+        print(
+            f"episode_limit_s={strict_duration_s:.1f} "
+            f"(cli={args.episode_seconds}, env={os.environ.get('EGO_STRICT_EPISODE_SECONDS', '86400')})",
+            flush=True,
+        )
         frame_iter = recorder.iter_strict_sync_frames(
             strict_duration_s,
             interval_ms=interval_ms,

@@ -68,6 +68,9 @@ _apply_station_upload_profile() {
       export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
       export STATION_UPLOAD_TOKEN=dl-upload-ego-001-v1
       export UPLOAD_PROTOCOL=mcap
+      export DATALAB_UPLOAD_TIMEOUT_S="${DATALAB_UPLOAD_TIMEOUT_S:-900}"
+      export EGO_UPLOAD_MAX_FRAMES="${EGO_UPLOAD_MAX_FRAMES:-2000}"
+      export EGO_UPLOAD_MAX_FRAMES_MODE="${EGO_UPLOAD_MAX_FRAMES_MODE:-warn}"
       ;;
   esac
 }
@@ -134,6 +137,85 @@ for sess in sorted(sessions.iterdir()):
 PY
 }
 
+_check_upload_frame_budget() {
+  local max_frames="${EGO_UPLOAD_MAX_FRAMES:-2000}"
+  local mode="${EGO_UPLOAD_MAX_FRAMES_MODE:-warn}"
+  SEG_ROOT="$SEG_ROOT" MAX_FRAMES="$max_frames" MODE="$mode" "$PY" - <<'PY' || return 1
+import json
+import os
+import sys
+from pathlib import Path
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+
+root = Path(os.environ["SEG_ROOT"])
+max_frames = int(os.environ.get("MAX_FRAMES", "2000"))
+mode = os.environ.get("MODE", "warn").strip().lower()
+sessions = root / "sessions"
+if not sessions.is_dir():
+    raise SystemExit(0)
+violations = []
+for sess in sorted(sessions.iterdir()):
+    if not sess.is_dir() or not sess.name.startswith("sess_"):
+        continue
+    for seg_dir in list_closed_pending_segments(root, sess.name):
+        manifest = seg_dir / "manifest.json"
+        frames = 0
+        if manifest.is_file():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                frames = int(data.get("frame_count") or data.get("frames") or 0)
+            except Exception:
+                frames = 0
+        if frames > max_frames:
+            violations.append(f"{sess.name}/{seg_dir.name}: {frames}>{max_frames}")
+if violations:
+    prefix = "⚠️" if mode == "warn" else "❌"
+    print(f"{prefix} 待上传段超过帧数上限 ({max_frames})：", file=sys.stderr)
+    for line in violations:
+        print(f"   {line}", file=sys.stderr)
+    print(
+        f"   提示: export EGO_STRICT_EPISODE_SECONDS=35 并清 checkpoint 后重录；"
+        f"或提高 EGO_UPLOAD_MAX_FRAMES",
+        file=sys.stderr,
+    )
+    if mode != "warn":
+        raise SystemExit(1)
+PY
+}
+
+_preflight_mcap_segments() {
+  local protocol="${UPLOAD_PROTOCOL:-}"
+  [[ "${protocol}" == "mcap" ]] || return 0
+  SEG_ROOT="$SEG_ROOT" "$PY" - <<'PY' || return 1
+import os
+import sys
+from pathlib import Path
+
+from ego_capture_studio.capture.segment_store import list_closed_pending_segments
+from ego_capture_studio.capture.mcap_preflight import preflight_segment_dir_or_raise, McapPreflightError
+
+root = Path(os.environ["SEG_ROOT"])
+sessions = root / "sessions"
+if not sessions.is_dir():
+    raise SystemExit(0)
+failures = []
+for sess in sorted(sessions.iterdir()):
+    if not sess.is_dir() or not sess.name.startswith("sess_"):
+        continue
+    for seg_dir in list_closed_pending_segments(root, sess.name):
+        try:
+            preflight_segment_dir_or_raise(seg_dir)
+        except McapPreflightError as exc:
+            failures.append(f"{sess.name}/{seg_dir.name}: {exc}")
+if failures:
+    print("❌ MCAP preflight 未通过，已阻断上传：", file=sys.stderr)
+    for line in failures:
+        print(f"   {line}", file=sys.stderr)
+    raise SystemExit(1)
+print("[ego-upload] mcap_preflight_ok", file=sys.stderr)
+PY
+}
+
 _upload_one_session() {
   local sid="$1"
   local n start_line
@@ -182,6 +264,8 @@ if _has_session_id_flag; then
   [[ "$TOTAL_UPLOADED" =~ ^[0-9]+$ ]] || TOTAL_UPLOADED=0
 else
   echo "[ego-upload] mode=all-sessions (pending CLOSED segments)" | tee -a "$LOG_FILE"
+  _check_upload_frame_budget | tee -a "$LOG_FILE" >&2
+  _preflight_mcap_segments | tee -a "$LOG_FILE" >&2
   mapfile -t PENDING_SESSIONS < <(_list_sessions_with_pending)
   if [[ ${#PENDING_SESSIONS[@]} -eq 0 ]]; then
     echo "无待传段（所有 session 均已 UPLOADED 或尚无 closed 段）" | tee -a "$LOG_FILE"

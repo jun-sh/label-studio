@@ -36,10 +36,14 @@ from ego_capture_studio.capture.segment_store import (
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
 from ego_capture_studio.capture.segment_mcap import pack_segment_mcap_zst, parse_mcap_archive_name
+try:
+    from ego_capture_studio.capture.mcap_preflight import McapPreflightError, preflight_segment_dir_or_raise
+except ImportError:  # pragma: no cover - local dev / pytest layout
+    from mcap_preflight import McapPreflightError, preflight_segment_dir_or_raise
 from ego_capture_studio.capture.upload_status import UploadStatusWriter, live_ui_enabled
 
 STATION_TOKEN_HEADER = "X-Station-Token"
-DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "300"))
+DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "900"))
 UPLOAD_PROTOCOL = os.environ.get("UPLOAD_PROTOCOL", "tarzst").strip().lower()
 UPLOAD_MAX_RETRIES = max(1, int(os.environ.get("EGO_UPLOAD_MAX_RETRIES", "3")))
 UPLOAD_CONCURRENCY = max(1, int(os.environ.get("EGO_UPLOAD_CONCURRENCY", "2")))
@@ -127,6 +131,7 @@ class SegmentUploader:
 
     def _upload_segment_mcap(self, segment_dir: Path) -> dict[str, Any]:
         segment_dir = Path(segment_dir).resolve()
+        preflight_segment_dir_or_raise(segment_dir)
         manifest_path = segment_dir / "manifest.json"
         if not manifest_path.is_file():
             raise FileNotFoundError(f"missing manifest: {segment_dir}")
@@ -604,6 +609,22 @@ def _upload_one_segment(
             return True
         except Exception as exc:
             last_error = str(exc)
+            if isinstance(exc, McapPreflightError):
+                mark_segment_upload_failed(segment_dir, last_error)
+                _log(
+                    "segment_preflight_fail",
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    err=last_error[:200],
+                )
+                human = status.record_fail(
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    error=last_error,
+                )
+                if not live_ui_enabled():
+                    print(human, flush=True)
+                return False
             if attempt >= UPLOAD_MAX_RETRIES:
                 mark_segment_upload_failed(segment_dir, last_error)
                 try:

@@ -15,6 +15,13 @@ import {
   markSessionReady,
   SESSION_MARKERS,
 } from "../session-markers.mjs";
+import {
+  maxDeriveRetryAttempts,
+  prepareSessionDeriveRetry,
+  readDeriveAttempt,
+  structuredDeriveFailure,
+  isDeriveFailureRetryable,
+} from "./session-retry.mjs";
 import { unitDir } from "./unit-paths.mjs";
 
 function pickSessionId(root, forcedSessionId) {
@@ -56,20 +63,40 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
     return { ok: true, phase: "READY", sessionId, publish: pub };
   }
 
-  const unitResult = await deriveUnit(stationId, root, sessionId, { attempt: 1 });
-  if (!unitResult.ok) {
-    markSessionFailed(root, sessionId, unitResult.gate.reason, { gate: unitResult.gate });
-    deriveLog(stationId, "derive_unit_failed", {
+  let attempt = Math.max(1, Number(options.attempt || readDeriveAttempt(root, sessionId) + 1));
+  const maxAttempts = maxDeriveRetryAttempts();
+  let unitResult = null;
+  while (attempt <= maxAttempts) {
+    unitResult = await deriveUnit(stationId, root, sessionId, { attempt });
+    if (unitResult.ok) break;
+    const reason = structuredDeriveFailure(unitResult.gate?.reason);
+    if (attempt >= maxAttempts || !isDeriveFailureRetryable(reason)) {
+      markSessionFailed(root, sessionId, reason, { gate: unitResult.gate, attempt });
+      deriveLog(stationId, "derive_unit_failed", {
+        sessionId,
+        reasonCode: reason.code,
+        attempt,
+      });
+      return {
+        ok: false,
+        phase: "FAILED",
+        sessionId,
+        gate: unitResult.gate,
+        reason,
+        attempt,
+      };
+    }
+    deriveLog(stationId, "derive_unit_retry", {
       sessionId,
-      reasonCode: unitResult.gate.reason?.code,
+      reasonCode: reason.code,
+      attempt,
+      nextAttempt: attempt + 1,
     });
-    return {
-      ok: false,
-      phase: "FAILED",
-      sessionId,
-      gate: unitResult.gate,
-      reason: unitResult.gate.reason,
-    };
+    prepareSessionDeriveRetry(root, sessionId, { attempt: attempt + 1 });
+    attempt += 1;
+  }
+  if (!unitResult?.ok) {
+    return { ok: false, phase: "FAILED", sessionId, reason: "derive_exhausted" };
   }
 
   const pub = publishSessionIfNeeded(root, stationId, sessionId);

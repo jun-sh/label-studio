@@ -66,29 +66,42 @@ function spawnFfmpeg(args) {
   });
 }
 
-function probeMp4StreamJson(filePath) {
-  const res = spawnSync(
-    "ffprobe",
-    [
-      "-v",
-      "error",
-      "-select_streams",
-      "v:0",
-      "-show_entries",
-      "stream=nb_frames,nb_read_frames,duration,r_frame_rate",
-      "-count_frames",
-      "-of",
-      "json",
-      filePath,
-    ],
-    { encoding: "utf8" },
-  );
+function probeMp4StreamJson(filePath, { countFrames = false } = {}) {
+  const args = [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=nb_frames,nb_read_frames,duration,r_frame_rate",
+    "-of",
+    "json",
+  ];
+  if (countFrames) args.push("-count_frames");
+  args.push(filePath);
+  const res = spawnSync("ffprobe", args, { encoding: "utf8" });
   if (res.status !== 0) return null;
   try {
     return JSON.parse(res.stdout || "{}")?.streams?.[0] || null;
   } catch {
     return null;
   }
+}
+
+function frameCountFromStream(stream, defaultFps = 30) {
+  if (!stream) return 0;
+  const nb = Number(stream.nb_read_frames ?? stream.nb_frames);
+  if (Number.isFinite(nb) && nb > 0) return Math.floor(nb);
+  const duration = Number(stream.duration);
+  const rateParts = String(stream.r_frame_rate || "0/1").split("/");
+  const fps =
+    rateParts.length === 2 && Number(rateParts[1])
+      ? Number(rateParts[0]) / Number(rateParts[1])
+      : defaultFps;
+  if (Number.isFinite(duration) && duration > 0 && fps > 0) {
+    return Math.max(1, Math.round(duration * fps));
+  }
+  return 0;
 }
 
 export function probeMp4DurationSec(filePath, fallbackFps = 30) {
@@ -106,22 +119,20 @@ export function probeMp4DurationSec(filePath, fallbackFps = 30) {
   return 0;
 }
 
-export function probeMp4FrameCount(filePath, { defaultFps = 30 } = {}) {
+export function probeMp4FrameCount(filePath, { defaultFps = 30, exact = false } = {}) {
   if (!filePath || !fs.existsSync(filePath)) return 0;
-  const stream = probeMp4StreamJson(filePath);
-  if (!stream) return 0;
-  const nb = Number(stream.nb_read_frames ?? stream.nb_frames);
-  if (Number.isFinite(nb) && nb > 0) return Math.floor(nb);
-  const duration = Number(stream.duration);
-  const rateParts = String(stream.r_frame_rate || "0/1").split("/");
-  const fps =
-    rateParts.length === 2 && Number(rateParts[1])
-      ? Number(rateParts[0]) / Number(rateParts[1])
-      : defaultFps;
-  if (Number.isFinite(duration) && duration > 0 && fps > 0) {
-    return Math.max(1, Math.round(duration * fps));
+  const wantExact =
+    exact || String(process.env.DERIVE_FFPROBE_COUNT_FRAMES || "").trim() === "1";
+  const fast = frameCountFromStream(probeMp4StreamJson(filePath), defaultFps);
+  if (fast > 0 && !wantExact) return fast;
+  if (wantExact) {
+    const exactCount = frameCountFromStream(
+      probeMp4StreamJson(filePath, { countFrames: true }),
+      defaultFps,
+    );
+    if (exactCount > 0) return exactCount;
   }
-  return 0;
+  return fast;
 }
 
 /** Build ffconcat for MP4 concat with explicit duration on first segment (batch-2 drift fix). */

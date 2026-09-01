@@ -103,6 +103,8 @@ def _install_ego_capture_studio_stubs() -> None:
 
     segment_store = importlib.import_module("segment_store")
     sys.modules["ego_capture_studio.capture.segment_store"] = segment_store
+    mcap_preflight = importlib.import_module("mcap_preflight")
+    sys.modules["ego_capture_studio.capture.mcap_preflight"] = mcap_preflight
 
 
 _install_ego_capture_studio_stubs()

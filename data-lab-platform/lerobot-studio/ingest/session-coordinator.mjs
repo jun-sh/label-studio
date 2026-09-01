@@ -5,7 +5,13 @@
 
 import path from "node:path";
 
-import { markSessionUploadDone } from "../session-markers.mjs";
+import {
+  clearSessionMarker,
+  hasSessionMarker,
+  markSessionUploadDone,
+  readSessionMarker,
+  SESSION_MARKERS,
+} from "../session-markers.mjs";
 import { ensureDir, readJson, writeJsonAtomic } from "./io.mjs";
 import { isSessionIngestComplete, listSessionSegmentStates, SEGMENT_INGEST_STATUS } from "./segment-state.mjs";
 
@@ -54,7 +60,7 @@ export function evaluateSessionUploadGate(root, sessionId) {
 
 export function maybeMarkSessionDoneUpload(root, sessionId, meta = {}) {
   const gate = evaluateSessionUploadGate(root, sessionId);
-  if (!gate.complete) {
+  if (!gate.complete || gate.failedCount > 0) {
     return { marked: false, gate };
   }
   markSessionUploadDone(root, sessionId, {
@@ -64,4 +70,30 @@ export function maybeMarkSessionDoneUpload(root, sessionId, meta = {}) {
     gate,
   });
   return { marked: true, gate };
+}
+
+/**
+ * Reconcile session.DONE_UPLOAD when segment ingest state no longer matches.
+ * Clears stale DONE_UPLOAD if segments failed or are incomplete.
+ */
+export function reconcileSessionUploadMarkers(root, sessionId) {
+  const actions = [];
+  const gate = evaluateSessionUploadGate(root, sessionId);
+  const hasDone = hasSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD);
+  const hasReady = hasSessionMarker(root, sessionId, SESSION_MARKERS.READY);
+  if (hasReady) {
+    return { sessionId, actions, gate, phase: "READY" };
+  }
+  if (hasDone && (gate.failedCount > 0 || (!gate.complete && gate.segmentCount > 0))) {
+    clearSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD);
+    actions.push("cleared_stale_done_upload");
+  }
+  if (hasSessionMarker(root, sessionId, SESSION_MARKERS.FAILED)) {
+    const failed = readSessionMarker(root, sessionId, SESSION_MARKERS.FAILED);
+    return { sessionId, actions, gate, phase: "FAILED", failed };
+  }
+  if (hasDone && gate.complete) {
+    return { sessionId, actions, gate, phase: "DONE_UPLOAD" };
+  }
+  return { sessionId, actions, gate, phase: gate.complete ? "INGEST_COMPLETE" : "INGESTING" };
 }

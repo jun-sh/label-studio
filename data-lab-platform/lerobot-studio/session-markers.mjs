@@ -137,3 +137,40 @@ export function listSessionsPendingDerive(root) {
   }
   return pending.sort();
 }
+
+/**
+ * Pending derive plus retryable FAILED sessions (idempotent worker kick).
+ */
+export function listSessionsEligibleForDerive(root, { maxAttempts = 2 } = {}) {
+  const base = path.join(root, "state", "sessions");
+  if (!fs.existsSync(base)) return [];
+  const eligible = new Set(listSessionsPendingDerive(root));
+  if (!fs.existsSync(base)) return [...eligible].sort();
+  for (const sessionId of fs.readdirSync(base)) {
+    if (sessionId.startsWith(".")) continue;
+    const dir = path.join(base, sessionId);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    if (hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) continue;
+    if (hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) continue;
+    if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.FAILED)) continue;
+    const failed = readSessionMarker(root, sessionId, SESSION_MARKERS.FAILED);
+    const reason = failed?.reason || failed;
+    const attempt = Number(failed?.attempt || 0);
+    if (attempt >= maxAttempts) continue;
+    const code = typeof reason === "object" ? reason.code : "";
+    const retryable =
+      code === "GATE_INTERNAL_ERROR" ||
+      code === "DERIVE_TRANSIENT" ||
+      code === "MUX_TRANSIENT" ||
+      code === "DERIVE_FAILED";
+    const blocked =
+      code === "PARQUET_INDEX_GAP" ||
+      code === "SEGMENT_LIMIT_EXCEEDED" ||
+      code === "MUX_FRAME_MISMATCH" ||
+      code === "INGEST_FAILED";
+    if (!blocked && retryable && hasSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD)) {
+      eligible.add(sessionId);
+    }
+  }
+  return [...eligible].sort();
+}

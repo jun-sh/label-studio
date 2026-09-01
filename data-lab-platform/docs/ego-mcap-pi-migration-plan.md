@@ -902,7 +902,23 @@ Environment=EGO_CAPTURE_JPEG_ONLY=1
 
 > **PI 澄清：** PI 对齐是「边缘 MCAP + 服务端转 LeRobot」，**不强制** 130 边缘 VPU 编码。Track 1 HW-JPEG+MCAP **已满足** PI 格式对齐；性能瓶颈留给 Track 2，**仅当 7 天试点 G1–G8 达标且 derive SLA 成为业务阻塞时**，再重新评审 Track 2 POC Gate 是否启动 P4b。
 
-#### 15.9.5 试点 SOP（130 → 34）
+#### 15.9.6 Phase 0 零失败基线（deploy-release · ego-001 · 2026-09-01）
+
+> **目标：** 上传后 derive **零失败**（G1–G3）+ SLO-A derive P95 < 30s（见 `ego-derive-p1-commercial-sla.md`）。convert 异步，不计入主 SLA。
+
+| 项 | 实现 |
+|----|------|
+| 130 preflight | `mcap_preflight.py` + `ego-upload` 上传前校验 |
+| 帧数策略 | `EGO_UPLOAD_MAX_FRAMES=2000` + `EGO_UPLOAD_MAX_FRAMES_MODE=warn` |
+| ingest gate | `INGEST_FAILED` 阻断 `session.DONE_UPLOAD`；`reconcileSessionUploadMarkers` |
+| derive retry | `session-retry.mjs` 幂等重试（可重试码 only，`DERIVE_MAX_RETRY_ATTEMPTS=2`） |
+| 每日指标 | `scripts/ego-daily-pilot-metrics.py --station ego-001` |
+
+**退出标准：** 连续 3 天短段录制 derive 失败率 0 → 进入 Phase 1（秒级 derive 调参）。
+
+---
+
+### 15.9.5 试点 SOP（130 → 34）
 
 ```bash
 # 130（推荐一键）

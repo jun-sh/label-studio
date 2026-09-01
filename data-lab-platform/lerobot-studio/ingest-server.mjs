@@ -224,14 +224,34 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Stream ingest on :${PORT} (upload ${BASE}/api/collection/stations/*/upload)`);
-  setImmediate(() => {
-    console.log("[stream-ingest] running startup disk cleanup for all stations…");
-    cleanupOrphanIncomingArchives();
-    runDiskCleanupForAllStations();
-    ensurePeriodicDiskCleanupForAllStations();
-    resumePendingStreamMuxForAllStations();
-    resumeDeriveQueuesForAllStations();
-    ensureIdleDeriveWatcher();
-    ensureStreamViewerScaffoldForAllStations();
-  });
+  scheduleStartupMaintenance();
 });
+
+const STARTUP_MUX_DELAY_MS = Number(process.env.INGEST_STARTUP_MUX_DELAY_MS || 8000);
+const STARTUP_STATION_STAGGER_MS = Number(process.env.INGEST_STARTUP_STATION_STAGGER_MS || 1500);
+
+function runStartupStep(label, fn) {
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      try {
+        fn();
+      } catch (err) {
+        console.warn(`[stream-ingest] startup ${label} failed:`, err?.message || err);
+      }
+      resolve();
+    });
+  });
+}
+
+async function scheduleStartupMaintenance() {
+  console.log("[stream-ingest] running startup maintenance (non-blocking)…");
+  await runStartupStep("orphan_cleanup", cleanupOrphanIncomingArchives);
+  await runStartupStep("disk_cleanup", runDiskCleanupForAllStations);
+  await runStartupStep("periodic_disk_cleanup", ensurePeriodicDiskCleanupForAllStations);
+  await runStartupStep("derive_resume", resumeDeriveQueuesForAllStations);
+  await runStartupStep("idle_watcher", ensureIdleDeriveWatcher);
+  await runStartupStep("viewer_scaffold", ensureStreamViewerScaffoldForAllStations);
+  setTimeout(() => {
+    runStartupStep("mux_resume", resumePendingStreamMuxForAllStations);
+  }, STARTUP_MUX_DELAY_MS);
+}

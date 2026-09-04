@@ -1374,10 +1374,13 @@ class Oak4pEgoRecorder:
                 _strict_sync_miss()
                 continue
 
-            yield_block = self._strict_exceeds_yield_limits(offsets)
-            if yield_block is not None:
-                _strict_sync_miss()
-                continue
+            # H264 sequential pops one packet per cam from device queues; device ts
+            # offsets can exceed STRICT_RGB_YIELD_MAX_MS even when frames are valid.
+            if not (self._hw_h264 and OAK_H264_SEQUENTIAL):
+                yield_block = self._strict_exceeds_yield_limits(offsets)
+                if yield_block is not None:
+                    _strict_sync_miss()
+                    continue
 
             grid_ticks = (
                 global_idx - last_yield_global_idx

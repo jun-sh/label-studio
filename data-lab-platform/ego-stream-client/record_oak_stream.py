@@ -300,7 +300,25 @@ def main() -> None:
         if recorder.use_hw_h264:
             writer.register_pre_segment_rotate_hook(recorder.prepare_h264_segment_boundary)
 
-        resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
+        resumed_emit: int | None = None
+        if not _env_flag("EGO_STRICT_EMIT_RESUME", "0"):
+            try:
+                _strict_emit_path(checkpoint_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        else:
+            resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
+            try:
+                ck_raw = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+                next_idx = int(ck_raw.get("nextFrameIndex", 0))
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                next_idx = 0
+            if resumed_emit is not None and next_idx <= 0:
+                try:
+                    _strict_emit_path(checkpoint_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                resumed_emit = None
         if resumed_emit is not None:
             recorder._strict_last_emit_ts_ns = int(resumed_emit)
             print(f"strict_emit_resume ts_ns={resumed_emit}", flush=True)

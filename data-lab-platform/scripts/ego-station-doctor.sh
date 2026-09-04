@@ -67,6 +67,10 @@ if systemctl --user is-active ecs-record-oak-mcap.service >/dev/null 2>&1; then
     [[ "$preview_env" == "OAK_HW_PREVIEW_H264=1" ]] \
       || die "capture process ${preview_env:-unset} (expected =1; delete from station.conf)"
     ok "capture process OAK_HW_PREVIEW_H264=1"
+    ck_env="$(tr '\0' '\n' < "/proc/${pid}/environ" | grep '^EGO_CAPTURE_CHECKPOINT=' || true)"
+    [[ -n "$ck_env" && "$ck_env" != *"/segments/checkpoint.json" ]] \
+      || die "capture process ${ck_env:-missing EGO_CAPTURE_CHECKPOINT} (z-mcap UnsetEnvironment bug? daemon-reload + restart)"
+    ok "capture process unified checkpoint"
     preview_code="$(curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8765/preview/front_left/jpg 2>/dev/null || echo 000)"
     case "$preview_code" in
       200) ok "preview HTTP 200" ;;

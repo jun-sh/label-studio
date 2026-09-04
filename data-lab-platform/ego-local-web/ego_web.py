@@ -112,10 +112,23 @@ def _unit_active_since_epoch(unit: str) -> float | None:
 
 
 def _capture_run_since_epoch() -> float | None:
-    since = _unit_active_since_epoch(CAPTURE_RECORD_UNIT)
-    if since is not None:
-        return since
-    return _unit_active_since_epoch(CAPTURE_TARGET)
+    """Journal/timer scope: current record unit only (not orphan capture-stack.target)."""
+    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    if rec not in ("active", "activating", "deactivating"):
+        return None
+    return _unit_active_since_epoch(CAPTURE_RECORD_UNIT)
+
+
+def _reconcile_orphan_capture_stack() -> None:
+    """Record unit exited but stack.target still active → UI ghost 'recording'."""
+    global _journal_cache
+    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    if rec in ("active", "activating", "deactivating"):
+        return
+    if _capture_unit_state(CAPTURE_TARGET) != "active":
+        return
+    _systemctl("stop", CAPTURE_TARGET, timeout=15)
+    _journal_cache = None
 
 
 def _journal_beep_epoch(since_epoch: float | None) -> float | None:
@@ -207,6 +220,11 @@ def _begin_new_capture_session() -> str:
         strict_emit.unlink(missing_ok=True)
     except OSError:
         pass
+    legacy_ck = SEGMENT_ROOT / "checkpoint.json"
+    try:
+        legacy_ck.unlink(missing_ok=True)
+    except OSError:
+        pass
     print(f"capture_session_new session_id={session_id}", flush=True)
     return session_id
 
@@ -245,10 +263,11 @@ def _capture_unit_state(unit: str = CAPTURE_RECORD_UNIT) -> str:
 
 
 def _capture_active() -> bool:
-    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
-    if rec in ("active", "activating"):
-        return True
-    return _capture_unit_state(CAPTURE_TARGET) == "active"
+    return _capture_unit_state(CAPTURE_RECORD_UNIT) in (
+        "active",
+        "activating",
+        "deactivating",
+    )
 
 
 def _preview_port_in_use(port: int = 8765) -> bool:
@@ -589,6 +608,8 @@ def _stop_capture_wait() -> bool:
 
 def _build_status() -> dict[str, Any]:
     global _busy, _busy_action, _last_error, _journal_cache
+
+    _reconcile_orphan_capture_stack()
 
     with _lock:
         busy = _busy

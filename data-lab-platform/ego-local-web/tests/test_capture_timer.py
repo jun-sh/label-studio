@@ -42,6 +42,7 @@ class CaptureTimerTest(unittest.TestCase):
     def test_build_status_warming_before_beep(self) -> None:
         ego_web._journal_cache = None
         with (
+            mock.patch.object(ego_web, "_reconcile_orphan_capture_stack"),
             mock.patch.object(ego_web, "_capture_active", return_value=True),
             mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
             mock.patch.object(ego_web, "_journal_beep_epoch", return_value=None),
@@ -58,6 +59,7 @@ class CaptureTimerTest(unittest.TestCase):
         ego_web._journal_cache = None
         beep = time.time() - 3.0
         with (
+            mock.patch.object(ego_web, "_reconcile_orphan_capture_stack"),
             mock.patch.object(ego_web, "_capture_active", return_value=True),
             mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
             mock.patch.object(ego_web, "_journal_beep_epoch", return_value=beep),
@@ -70,6 +72,21 @@ class CaptureTimerTest(unittest.TestCase):
         self.assertTrue(status["frames_writing"])
         self.assertGreaterEqual(status["duration"], 2)
         self.assertLessEqual(status["duration"], 5)
+
+    def test_reconcile_orphan_capture_stack(self) -> None:
+        def _state(unit: str) -> str:
+            if unit == ego_web.CAPTURE_RECORD_UNIT:
+                return "inactive"
+            if unit == ego_web.CAPTURE_TARGET:
+                return "active"
+            return "inactive"
+
+        with (
+            mock.patch.object(ego_web, "_capture_unit_state", side_effect=_state),
+            mock.patch.object(ego_web, "_systemctl") as stop,
+        ):
+            ego_web._reconcile_orphan_capture_stack()
+        stop.assert_called_once_with("stop", ego_web.CAPTURE_TARGET, timeout=15)
 
 
 if __name__ == "__main__":

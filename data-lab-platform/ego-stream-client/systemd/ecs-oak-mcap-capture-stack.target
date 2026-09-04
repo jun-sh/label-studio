@@ -1,0 +1,12 @@
+[Unit]
+Description=EGO OAK MCAP capture stack (ego-001 production; VPU H.264)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Wants=ecs-record-oak-mcap.service
+BindsTo=ecs-record-oak-mcap.service
+After=ecs-record-oak-mcap.service
+Conflicts=ecs-preview-standby.service ecs-oak-standby-stack.target ecs-record-oak-stream.service
+
+[Install]
+WantedBy=default.target

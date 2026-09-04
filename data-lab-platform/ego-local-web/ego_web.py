@@ -76,8 +76,7 @@ _busy_action: str | None = None
 _last_action_mono = 0.0
 _last_completed_action: str | None = None
 _last_error = ""
-_capture_writing_since: float | None = None
-_journal_cache: tuple[float, float | None, bool] | None = None
+_journal_cache: tuple[float, float | None, float | None] | None = None
 _standby_preview_touch_mono = 0.0
 _last_preview_jpeg: bytes | None = None
 
@@ -112,22 +111,6 @@ def _unit_active_since_epoch(unit: str) -> float | None:
         return None
 
 
-def _manifest_created_epoch(data: dict[str, Any]) -> float | None:
-    raw = data.get("created_at")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        if raw.endswith("Z"):
-            dt = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-        else:
-            dt = datetime.fromisoformat(raw)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except ValueError:
-        return None
-
-
 def _capture_run_since_epoch() -> float | None:
     since = _unit_active_since_epoch(CAPTURE_RECORD_UNIT)
     if since is not None:
@@ -135,34 +118,11 @@ def _capture_run_since_epoch() -> float | None:
     return _unit_active_since_epoch(CAPTURE_TARGET)
 
 
-def _shm_open_segment_bin_count(since_epoch: float | None) -> int:
-    """Count frame bins only in open segments started during the current capture run."""
-    sessions = SEGMENT_ACTIVE_ROOT / "sessions"
-    if not sessions.is_dir():
-        return 0
-    best = 0
-    for manifest_path in sessions.glob("*/segments/seg_*/manifest.json"):
-        try:
-            data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if data.get("closed"):
-            continue
-        if since_epoch is not None:
-            created = _manifest_created_epoch(data)
-            # Ignore stale shm dirs left from prior failed stops.
-            if created is None or created < since_epoch - 2.0:
-                continue
-        frames_dir = manifest_path.parent / "frames"
-        if frames_dir.is_dir():
-            best = max(best, sum(1 for _ in frames_dir.glob("*.bin")))
-    return best
-
-
-def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
+def _journal_beep_epoch(since_epoch: float | None) -> float | None:
+    """Wall epoch of capture_ready_beep=played for the current capture run."""
     global _journal_cache
     if since_epoch is None:
-        return False
+        return None
     now = time.monotonic()
     if (
         _journal_cache is not None
@@ -182,30 +142,34 @@ def _journal_has_capture_only_since(since_epoch: float | None) -> bool:
             "200",
             "--no-pager",
             "-o",
-            "cat",
+            "short-unix",
         ],
         capture_output=True,
         text=True,
         timeout=5,
         check=False,
     )
-    if proc.returncode != 0:
-        _journal_cache = (now, since_epoch, False)
-        return False
-    text = proc.stdout
-    result = "capture-only session=" in text or "captured=" in text
-    _journal_cache = (now, since_epoch, result)
-    return result
+    beep_epoch: float | None = None
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            if "capture_ready_beep=played" not in line:
+                continue
+            token = line.split(" ", 1)[0]
+            try:
+                ts = float(token)
+            except ValueError:
+                continue
+            if beep_epoch is None or ts > beep_epoch:
+                beep_epoch = ts
+    _journal_cache = (now, since_epoch, beep_epoch)
+    return beep_epoch
 
 
 def _capture_frames_writing() -> bool:
     rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
     if rec in ("deactivating", "inactive", "failed", ""):
         return False
-    since = _capture_run_since_epoch()
-    if _shm_open_segment_bin_count(since) > 0:
-        return True
-    return _journal_has_capture_only_since(since)
+    return _journal_beep_epoch(_capture_run_since_epoch()) is not None
 
 
 def _new_session_id() -> str:
@@ -624,7 +588,7 @@ def _stop_capture_wait() -> bool:
 
 
 def _build_status() -> dict[str, Any]:
-    global _busy, _busy_action, _last_error, _capture_writing_since, _journal_cache
+    global _busy, _busy_action, _last_error, _journal_cache
 
     with _lock:
         busy = _busy
@@ -633,18 +597,17 @@ def _build_status() -> dict[str, Any]:
 
     active = _capture_active()
     rec_state = _capture_unit_state(CAPTURE_RECORD_UNIT)
-    frames_writing = active and rec_state not in ("deactivating",) and _capture_frames_writing()
+    since = _capture_run_since_epoch() if active else None
+    beep_epoch = _journal_beep_epoch(since) if active else None
+    frames_writing = active and rec_state not in ("deactivating",) and beep_epoch is not None
 
     if not active:
-        _capture_writing_since = None
         _journal_cache = None
         _maybe_stop_idle_standby_preview()
 
     duration = 0
-    if active and frames_writing:
-        if _capture_writing_since is None:
-            _capture_writing_since = time.time()
-        duration = max(0, int(time.time() - _capture_writing_since))
+    if frames_writing and beep_epoch is not None:
+        duration = max(0, int(time.time() - beep_epoch))
 
     free_bytes = _storage_free_bytes(SEGMENT_ROOT)
     storage_warn = (
@@ -695,6 +658,7 @@ def _build_status() -> dict[str, Any]:
 
 def _run_capture_action(action: str) -> tuple[bool, str]:
     global _busy, _busy_action, _last_error, _last_action_mono, _last_completed_action
+    global _journal_cache
 
     now = time.monotonic()
     if action == "start":
@@ -737,6 +701,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 _start_standby_preview()
                 return False, _last_error
             session_id = _begin_new_capture_session()
+            _journal_cache = None
             proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
@@ -1098,6 +1063,7 @@ INDEX_HTML = """<!DOCTYPE html>
   var actionInFlight = false;
   var previewWantLive = false;
   var previewHasFrame = false;
+  var lastState = "idle";
 
   function formatDuration(sec) {
     var h = Math.floor(sec / 3600);
@@ -1139,6 +1105,10 @@ INDEX_HTML = """<!DOCTYPE html>
 
   function applyStatus(data) {
     var st = data.state || "idle";
+    if (st === "recording" && lastState !== "recording") {
+      previewTimer.textContent = "00:00:00";
+    }
+    lastState = st;
 
     if (st === "idle") {
       setStatusLink("idle");

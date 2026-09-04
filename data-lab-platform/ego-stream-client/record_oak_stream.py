@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import signal
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -27,6 +28,7 @@ from ego_capture_studio.capture.frame_jpeg_codec import (
 )
 from ego_capture_studio.capture.oak_4p_capture import Oak4pEgoRecorder
 from ego_capture_studio.capture.preview_server import start_preview_stack
+from ego_capture_studio.capture.ready_beep import play_capture_ready_beep
 from ego_capture_studio.capture.segment_store import SegmentCaptureWriter, new_session_id
 
 _SHUTDOWN = False
@@ -169,6 +171,24 @@ def _run_warmup_probe(recorder: Oak4pEgoRecorder) -> tuple[Any, float]:
     return recorder.record_episode_probe(min_s=min_s, max_s=max_s)
 
 
+def _start_preview_feeder(
+    recorder: Oak4pEgoRecorder, preview_hub
+) -> threading.Event:
+    stop = threading.Event()
+    feed_fps = float(os.environ.get("PREVIEW_FPS", "8"))
+
+    def _run() -> None:
+        interval = 1.0 / max(feed_fps, 0.5)
+        while not stop.is_set() and not _SHUTDOWN:
+            jpegs = recorder.drain_preview_jpegs_for_hub()
+            if jpegs:
+                preview_hub.offer_jpegs(jpegs)
+            stop.wait(interval)
+
+    threading.Thread(target=_run, name="preview-feeder", daemon=True).start()
+    return stop
+
+
 def _kick_heartbeat(heartbeat: FrameStreamUploader | None) -> None:
     if heartbeat is None:
         return
@@ -270,50 +290,55 @@ def main() -> None:
         enable_imu=enable_imu,
         force_imu=force_imu,
     )
-    recorder.connect()
-    _require_capture_codec(recorder)
-
-    resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
-    if resumed_emit is not None:
-        recorder._strict_last_emit_ts_ns = int(resumed_emit)
-        print(f"strict_emit_resume ts_ns={resumed_emit}", flush=True)
-
-    try:
-        intrinsics_doc = recorder.build_session_camera_intrinsics_document()
-        if intrinsics_strict_required():
-            require_valid_intrinsics(intrinsics_doc)
-        intrinsics_path = writer.write_session_camera_intrinsics(intrinsics_doc)
-        calib_src = intrinsics_doc.get("calibration_source") or "unknown"
-        if is_intrinsics_valid(intrinsics_doc):
-            print(
-                f"camera_intrinsics OK {intrinsics_audit_line(intrinsics_doc, path=intrinsics_path)}",
-                flush=True,
-            )
-        else:
-            reasons = intrinsics_doc.get("invalid_reasons") or []
-            print(
-                f"camera_intrinsics {INTRINSICS_STATUS_INVALID} written={intrinsics_path} "
-                f"calibration_source={calib_src} reasons={reasons} "
-                f"device_mxid={intrinsics_doc.get('device_mxid')}",
-                flush=True,
-            )
-    except Exception as exc:
-        print(f"camera_intrinsics FATAL: {exc}", flush=True)
-        if intrinsics_strict_required():
-            raise SystemExit(1) from exc
-        print(f"camera_intrinsics warning: {exc}", flush=True)
-
-    if heartbeat is not None:
-        _kick_heartbeat(heartbeat)
-
+    preview_feed_stop: threading.Event | None = None
     frame_count = 0
     t0 = time.monotonic()
-    wall_emit_times: deque[float] = deque(maxlen=120)
     try:
+        recorder.connect()
+        _require_capture_codec(recorder)
+        preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
+        if recorder.use_hw_h264:
+            writer.register_pre_segment_rotate_hook(recorder.prepare_h264_segment_boundary)
+
+        resumed_emit = _load_strict_emit_ts_ns(checkpoint_path)
+        if resumed_emit is not None:
+            recorder._strict_last_emit_ts_ns = int(resumed_emit)
+            print(f"strict_emit_resume ts_ns={resumed_emit}", flush=True)
+
+        try:
+            intrinsics_doc = recorder.build_session_camera_intrinsics_document()
+            if intrinsics_strict_required():
+                require_valid_intrinsics(intrinsics_doc)
+            intrinsics_path = writer.write_session_camera_intrinsics(intrinsics_doc)
+            calib_src = intrinsics_doc.get("calibration_source") or "unknown"
+            if is_intrinsics_valid(intrinsics_doc):
+                print(
+                    f"camera_intrinsics OK {intrinsics_audit_line(intrinsics_doc, path=intrinsics_path)}",
+                    flush=True,
+                )
+            else:
+                reasons = intrinsics_doc.get("invalid_reasons") or []
+                print(
+                    f"camera_intrinsics {INTRINSICS_STATUS_INVALID} written={intrinsics_path} "
+                    f"calibration_source={calib_src} reasons={reasons} "
+                    f"device_mxid={intrinsics_doc.get('device_mxid')}",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"camera_intrinsics FATAL: {exc}", flush=True)
+            if intrinsics_strict_required():
+                raise SystemExit(1) from exc
+            print(f"camera_intrinsics warning: {exc}", flush=True)
+
+        if heartbeat is not None:
+            _kick_heartbeat(heartbeat)
+
+        wall_emit_times: deque[float] = deque(maxlen=120)
         probe, probe_s = _run_warmup_probe(recorder)
         if probe.frame_count() == 0:
             raise SystemExit("No frames captured during probe; check OAK device and USB.")
         print(f"probe_duration_s={probe_s:.3f}", flush=True)
+        play_capture_ready_beep()
         print(
             f"capture-only session={session_id} segment_root={args.segment_root} "
             f"fps_target={args.fps} device_fps={device_fps} imu_hz={args.imu_hz} "
@@ -375,9 +400,13 @@ def main() -> None:
                     flush=True,
                 )
     finally:
+        if preview_feed_stop is not None:
+            preview_feed_stop.set()
         remaining_imu = recorder.flush_remaining_imu_raw()
         if remaining_imu:
             writer.append_imu_raw(remaining_imu)
+        if recorder.use_hw_h264:
+            recorder.prepare_h264_segment_boundary()
         try:
             recorder.stop()
         except Exception as exc:

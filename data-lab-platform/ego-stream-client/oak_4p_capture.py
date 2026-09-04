@@ -69,14 +69,24 @@ OAK_HW_PREVIEW = os.environ.get("OAK_HW_PREVIEW", "0").strip().lower() in (
     "yes",
 )
 # Low-res MJPEG sidecar for collection UI when main path is H.264.
-OAK_HW_PREVIEW_H264 = os.environ.get("OAK_HW_PREVIEW_H264", "1").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-)
+def _env_bool(name: str, default: str) -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
+def oak_hw_preview_h264_enabled() -> bool:
+    """Read at pipeline connect time (systemd env must be set before process start)."""
+    return _env_bool("OAK_HW_PREVIEW_H264", "1")
+
+
+# Backward-compatible alias for tests and imports.
+OAK_HW_PREVIEW_H264 = oak_hw_preview_h264_enabled()
 # Phase-2 POC: H.264 bitstream per cam (local segment only; ingest still expects JPEG upload).
 OAK_H264 = os.environ.get("OAK_H264", "0").strip().lower() in ("1", "true", "yes")
 OAK_H264_BITRATE_KBPS = int(os.environ.get("OAK_H264_BITRATE_KBPS", "8000"))
+OAK_H264_KEYFRAME_FREQUENCY = int(os.environ.get("OAK_H264_KEYFRAME_FREQUENCY", str(OAK_DEVICE_FPS)))
+OAK_CAM_QUEUE_MAX = max(4, int(os.environ.get("OAK_CAM_QUEUE_MAX", "32")))
+OAK_H264_BOUNDARY_DRAIN_ROUNDS = max(1, int(os.environ.get("OAK_H264_BOUNDARY_DRAIN_ROUNDS", "48")))
+OAK_H264_BOUNDARY_DRAIN_MS = max(0, int(os.environ.get("OAK_H264_BOUNDARY_DRAIN_MS", "120")))
 # FIFO ring consumption for H.264 (preserves GOP); required for Track 2 MCAP.
 OAK_H264_SEQUENTIAL = os.environ.get("OAK_H264_SEQUENTIAL", "0").strip().lower() in (
     "1",
@@ -353,6 +363,8 @@ class Oak4pEgoRecorder:
         self._imu_flush_accel_idx = 0
         self._pending_imu_raw: list[dict[str, Any]] = []
         self._strict_imu_buf: Any = None
+        self._h264_enc_ctrl_queues: dict[str, Any] = {}
+        self._h264_ctrl_stream_names: list[str] = []
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -594,13 +606,17 @@ class Oak4pEgoRecorder:
         device.startPipeline(pipeline)
 
         self._cam_queues = {
-            name: device.getOutputQueue(name=name, maxSize=8, blocking=False)
+            name: device.getOutputQueue(name=name, maxSize=OAK_CAM_QUEUE_MAX, blocking=False)
             for name in self._cam_list
+        }
+        self._h264_enc_ctrl_queues = {
+            name: device.getInputQueue(name=name, maxSize=2, blocking=False)
+            for name in self._h264_ctrl_stream_names
         }
         self._preview_queues = {}
         preview_streams = (not self._hw_jpeg and OAK_USE_IMAGEMANIP) or (
             self._hw_jpeg and OAK_HW_PREVIEW
-        )
+        ) or (self._hw_h264 and oak_hw_preview_h264_enabled())
         if preview_streams:
             for name, props in self._cam_list.items():
                 if props.get("color"):
@@ -620,6 +636,8 @@ class Oak4pEgoRecorder:
             f"capture={cap_w}x{cap_h} preview={pv_w}x{pv_h} mjpeg_q={OAK_MJPEG_QUALITY}",
             flush=True,
         )
+        if self._hw_h264:
+            self.prepare_h264_segment_boundary()
 
     def _verify_camera_output_resolution(self, *, timeout_s: float = 8.0) -> None:
         """Ensure capture streams match ego_spec (1280x800 ISP output)."""
@@ -719,7 +737,7 @@ class Oak4pEgoRecorder:
         except Exception:
             pass
         try:
-            enc.setKeyframeFrequency(self.device_fps)
+            enc.setKeyframeFrequency(max(1, int(OAK_H264_KEYFRAME_FREQUENCY)))
         except Exception:
             pass
         return enc
@@ -762,10 +780,18 @@ class Oak4pEgoRecorder:
                     enc_cap = self._create_h264_encoder(pipeline)
                     manip_cap.out.link(enc_cap.input)
                     enc_cap.bitstream.link(xout.input)
-                    if pv_w > 0 and pv_h > 0 and OAK_HW_PREVIEW_H264:
+                    ctrl_stream = f"{cam_name}_h264_ctrl"
+                    if hasattr(enc_cap, "inputControl"):
+                        enc_ctrl_in = pipeline.create(dai.node.XLinkIn)
+                        enc_ctrl_in.setStreamName(ctrl_stream)
+                        enc_ctrl_in.out.link(enc_cap.inputControl)
+                        self._h264_ctrl_stream_names.append(ctrl_stream)
+                    if pv_w > 0 and pv_h > 0 and oak_hw_preview_h264_enabled():
                         cam.setPreviewSize(pv_w, pv_h)
+                        manip_pv = self._create_h264_input_manip(pipeline, pv_w, pv_h)
                         enc_pv = self._create_mjpeg_encoder(pipeline)
-                        cam.preview.link(enc_pv.input)
+                        cam.preview.link(manip_pv.inputImage)
+                        manip_pv.out.link(enc_pv.input)
                         xout_pv = pipeline.create(dai.node.XLinkOut)
                         xout_pv.setStreamName(f"{cam_name}_preview")
                         enc_pv.bitstream.link(xout_pv.input)
@@ -776,8 +802,10 @@ class Oak4pEgoRecorder:
                     enc_cap.bitstream.link(xout.input)
                     if pv_w > 0 and pv_h > 0 and OAK_HW_PREVIEW:
                         cam.setPreviewSize(pv_w, pv_h)
+                        manip_pv = self._create_h264_input_manip(pipeline, pv_w, pv_h)
                         enc_pv = self._create_mjpeg_encoder(pipeline)
-                        cam.preview.link(enc_pv.input)
+                        cam.preview.link(manip_pv.inputImage)
+                        manip_pv.out.link(enc_pv.input)
                         xout_pv = pipeline.create(dai.node.XLinkOut)
                         xout_pv.setStreamName(f"{cam_name}_preview")
                         enc_pv.bitstream.link(xout_pv.input)
@@ -826,6 +854,7 @@ class Oak4pEgoRecorder:
         self._device = None
         self._cam_queues = {}
         self._preview_queues = {}
+        self._h264_enc_ctrl_queues = {}
         self._imu_queue = None
 
     def _drain_imu(self, buf: EpisodeBuffers) -> None:
@@ -860,6 +889,69 @@ class Oak4pEgoRecorder:
         self._pending_imu_raw = []
         return out
 
+    def prepare_h264_segment_boundary(self) -> None:
+        """P1a: request IDR on all encoders and drain in-flight host queues before segment close."""
+        if not self._hw_h264:
+            return
+        dai = self._dai
+        if dai is None:
+            return
+        for q in self._h264_enc_ctrl_queues.values():
+            try:
+                if hasattr(dai, "VideoEncoderControl"):
+                    ctrl = dai.VideoEncoderControl()
+                    if hasattr(ctrl, "requestKeyframe"):
+                        ctrl.requestKeyframe()
+                    elif hasattr(ctrl, "setKeyframe"):
+                        ctrl.setKeyframe(True)
+                    q.send(ctrl)
+                else:
+                    ctrl = dai.CameraControl()
+                    q.send(ctrl)
+            except Exception:
+                pass
+        if OAK_H264_BOUNDARY_DRAIN_MS > 0:
+            time.sleep(OAK_H264_BOUNDARY_DRAIN_MS / 1000.0)
+
+    def _drain_cam_queues_to_rings(
+        self,
+        cam_rings: dict[str, deque[_CamRingSample]],
+    ) -> None:
+        """Move pending device packets into per-camera rings (no grid yield)."""
+        for cam_name, queue in self._cam_queues.items():
+            pkt = queue.tryGet()
+            while pkt is not None:
+                ts = _device_ts_ns(pkt.getTimestampDevice())
+                if self._hw_jpeg or self._hw_h264:
+                    payload = _jpeg_from_packet(pkt)
+                else:
+                    payload = _frame_from_packet(pkt)
+                if payload is not None:
+                    cam_rings[cam_name].append(_CamRingSample(ts, payload))
+                pkt = queue.tryGet()
+
+    def _yield_h264_sequential_sample(
+        self,
+        cam_rings: dict[str, deque[_CamRingSample]],
+    ) -> tuple[dict[str, bytes | np.ndarray], dict[str, int], int] | None:
+        from ego_capture_studio.capture.camera_map import OAK_SOCKET_TO_LEROBOT_VIDEO, PRIMARY_OAK_SOCKET
+
+        if not all(cam_rings[oak] for oak in self._cam_list):
+            return None
+        samples_by_oak: dict[str, _CamRingSample] = {}
+        for oak in self._cam_list:
+            samples_by_oak[oak] = cam_rings[oak].popleft()
+        primary_sample = samples_by_oak[PRIMARY_OAK_SOCKET]
+        primary_ts_ns = int(primary_sample.ts_ns)
+        capture_out: dict[str, bytes | np.ndarray] = {}
+        offsets: dict[str, int] = {}
+        for oak in self._cam_list:
+            lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak]
+            sample = samples_by_oak[oak]
+            capture_out[lerobot_key] = sample.payload
+            offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
+        return capture_out, offsets, primary_ts_ns
+
     def flush_remaining_imu_raw(self) -> list[dict[str, Any]]:
         buf = self._strict_imu_buf
         if buf is not None:
@@ -878,7 +970,7 @@ class Oak4pEgoRecorder:
             self._pending_imu_raw.extend(batch)
 
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
-        if self._hw_jpeg:
+        if self._hw_jpeg or (self._hw_h264 and oak_hw_preview_h264_enabled()):
             last_preview: dict[str, bytes] = {}
             for cam_name, queue in self._preview_queues.items():
                 pkt = queue.tryGet()
@@ -897,6 +989,17 @@ class Oak4pEgoRecorder:
                     last_preview_bgr[cam_name] = frame
                 pkt = queue.tryGet()
         return last_preview_bgr
+
+    def drain_preview_jpegs_for_hub(self) -> dict[str, bytes]:
+        """Latest per-camera MJPEG preview keyed for PreviewHub (lerobot video keys)."""
+        drained = self._drain_preview_queues()
+        if not drained:
+            return {}
+        return {
+            OAK_SOCKET_TO_LEROBOT_VIDEO[oak]: drained[oak]
+            for oak in self._cam_list
+            if oak in drained
+        }
 
     def record_episode(self, duration_s: float) -> EpisodeBuffers:
         if self._device is None:
@@ -1193,21 +1296,7 @@ class Oak4pEgoRecorder:
             self._trim_imu_buffer(buf)
             self._imu_flush_gyro_idx = len(buf.gyro_ts_ns)
             self._imu_flush_accel_idx = len(buf.accel_ts_ns)
-            for cam_name, queue in self._cam_queues.items():
-                pkt = queue.tryGet()
-                while pkt is not None:
-                    ts = _device_ts_ns(pkt.getTimestampDevice())
-                    if cam_name == PRIMARY_OAK_SOCKET and cam_rings[cam_name]:
-                        prev_ts = int(cam_rings[cam_name][-1].ts_ns)
-                        if abs(int(ts) - prev_ts) > STRICT_TS_JUMP_NS:
-                            pending_reanchor = True
-                    if self._hw_jpeg or self._hw_h264:
-                        payload = _jpeg_from_packet(pkt)
-                    else:
-                        payload = _frame_from_packet(pkt)
-                    if payload is not None:
-                        cam_rings[cam_name].append(_CamRingSample(ts, payload))
-                    pkt = queue.tryGet()
+            self._drain_cam_queues_to_rings(cam_rings)
 
             preview_drain = self._drain_preview_queues()
             if preview_drain:
@@ -1254,21 +1343,11 @@ class Oak4pEgoRecorder:
 
             t_grid_ns = int(epoch_ns) + global_idx * interval_ns
             if self._hw_h264 and OAK_H264_SEQUENTIAL:
-                if not all(cam_rings[oak] for oak in self._cam_list):
+                seq_sample = self._yield_h264_sequential_sample(cam_rings)
+                if seq_sample is None:
                     _strict_sync_miss()
                     continue
-                samples_by_oak: dict[str, _CamRingSample] = {}
-                for oak in self._cam_list:
-                    samples_by_oak[oak] = cam_rings[oak].popleft()
-                primary_sample = samples_by_oak[PRIMARY_OAK_SOCKET]
-                primary_ts_ns = int(primary_sample.ts_ns)
-                capture_out: dict[str, bytes] | dict[str, np.ndarray] = {}
-                offsets: dict[str, int] = {}
-                for oak in self._cam_list:
-                    lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[oak]
-                    sample = samples_by_oak[oak]
-                    capture_out[lerobot_key] = sample.payload
-                    offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
+                capture_out, offsets, primary_ts_ns = seq_sample
             else:
                 primary_sample = self._nearest_ring_sample(
                     cam_rings[PRIMARY_OAK_SOCKET], t_grid_ns

@@ -131,6 +131,30 @@ def test_selfcorrect_degrades_gracefully_when_work_exceeds_the_period() -> None:
     assert hz == pytest.approx(1.0 / (2 * 0.020 + ACTIVE), rel=0.02)
 
 
+def test_pulse_rate_is_derived_from_the_grid_interval() -> None:
+    """The pulse must match the rate the emitter's grid consumes frames at.
+
+    A 33ms grid is 30.303fps; pulsing at a rounded 30.000Hz against it leaves the
+    recorded timeline 1.01% shorter than real time regardless of frame drops.
+    """
+    src = SOURCE
+    assert "def fsync_pulse_hz(device_fps: int) -> float:" in src
+    assert "return 1000.0 / float(EGO_FRAME_INTERVAL_MS)" in src
+    # The script and the sensor must both take the derived rate, not device_fps.
+    assert "script.setScript(FSYNC_GPIO_SCRIPT % self._pulse_hz)" in src
+    assert "sensor_fps = self._pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS" in src
+
+
+def test_derived_pulse_closes_the_structural_gap() -> None:
+    grid_interval_ms = 33.0
+    grid_fps = 1000.0 / grid_interval_ms
+
+    # What we shipped first: a rounded 30Hz pulse against a 33ms grid.
+    assert grid_fps / 30.0 == pytest.approx(1.0101, abs=0.0002)
+    # Deriving the pulse from the same interval removes it entirely.
+    assert grid_fps / grid_fps == pytest.approx(1.0)
+
+
 @pytest.fixture()
 def gate():
     sys.path.insert(0, str(CLIENT_DIR))

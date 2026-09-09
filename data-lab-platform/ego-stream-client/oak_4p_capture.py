@@ -218,6 +218,11 @@ OAK_FSYNC_FIX = _env_bool("OAK_FSYNC_FIX", "1")
 OAK_FSYNC_SENSOR_HEADROOM_FPS = max(0, int(os.environ.get("OAK_FSYNC_SENSOR_HEADROOM_FPS", "3")))
 # Cap auto-exposure so readout always finishes inside one pulse period. 0 disables.
 OAK_AE_MAX_EXPOSURE_US = max(0, int(os.environ.get("OAK_AE_MAX_EXPOSURE_US", "20000")))
+# Pulse rate override in Hz; 0 derives it from the emitter's grid interval. Deriving is
+# the point: EGO_FRAME_INTERVAL_MS=33 is a 30.303fps grid, so pulsing at a rounded
+# 30.000Hz leaves the recorded timeline 1.01% short of real time no matter how few
+# frames are dropped. Taking both from one source keeps them from disagreeing.
+OAK_FSYNC_PULSE_HZ = max(0.0, float(os.environ.get("OAK_FSYNC_PULSE_HZ", "0") or 0))
 
 _FSYNC_GPIO_HEAD = """# coding=utf-8
 import time
@@ -304,6 +309,22 @@ while True:
 FSYNC_GPIO_SCRIPT = _FSYNC_GPIO_HEAD + (
     _FSYNC_LOOP_SELFCORRECT if OAK_FSYNC_FIX else _FSYNC_LOOP_LEGACY
 )
+
+
+def fsync_pulse_hz(device_fps: int) -> float:
+    """Pulse rate the FSYNC script should run at.
+
+    Derived from the emitter's grid interval so the sensors are triggered at exactly the
+    rate the grid consumes frames. With the fix off, the legacy behaviour of pulsing at
+    device_fps is kept.
+    """
+    if not OAK_FSYNC_FIX:
+        return float(device_fps)
+    if OAK_FSYNC_PULSE_HZ > 0:
+        return OAK_FSYNC_PULSE_HZ
+    if EGO_FRAME_INTERVAL_MS > 0:
+        return 1000.0 / float(EGO_FRAME_INTERVAL_MS)
+    return float(device_fps)
 
 MONO_RES_OPTS: dict[str, Any] = {}
 COLOR_RES_OPTS: dict[str, Any] = {}
@@ -459,6 +480,7 @@ class Oak4pEgoRecorder:
     ) -> None:
         self.device_fps = int(device_fps if device_fps is not None else OAK_DEVICE_FPS)
         self.fps = int(fps)
+        self._pulse_hz = fsync_pulse_hz(self.device_fps)
         self.imu_hz = int(imu_hz)
         self.enable_imu = enable_imu
         self.force_imu = force_imu
@@ -968,9 +990,9 @@ class Oak4pEgoRecorder:
             cam.setBoardSocket(CAM_SOCKET_OPTS[cam_name])
             # Headroom applies to the sensor only. Feeding it to the FSYNC script would
             # raise the pulse rate, which is the opposite of what it is for.
-            sensor_fps = self.device_fps
+            sensor_fps = float(self.device_fps)
             if OAK_FSYNC_FIX and OAK_GPIO_FSYNC:
-                sensor_fps = self.device_fps + OAK_FSYNC_SENSOR_HEADROOM_FPS
+                sensor_fps = self._pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS
             cam.setFps(sensor_fps)
 
             if OAK_GPIO_FSYNC:
@@ -991,12 +1013,12 @@ class Oak4pEgoRecorder:
         if OAK_GPIO_FSYNC and (self._use_gpio_fsync or revision >= 6):
             script = pipeline.create(dai.node.Script)
             script.setProcessor(dai.ProcessorType.LEON_CSS)
-            script.setScript(FSYNC_GPIO_SCRIPT % float(self.device_fps))
+            script.setScript(FSYNC_GPIO_SCRIPT % self._pulse_hz)
             # OAK_GPIO_FSYNC is necessarily true here, so headroom applies iff the fix is on.
             print(
                 f"[oak] fsync loop={'selfcorrect' if OAK_FSYNC_FIX else 'legacy'} "
-                f"pulse_fps={float(self.device_fps)} "
-                f"sensor_fps={self.device_fps + (OAK_FSYNC_SENSOR_HEADROOM_FPS if OAK_FSYNC_FIX else 0)} "
+                f"pulse_hz={self._pulse_hz:.4f} grid_ms={EGO_FRAME_INTERVAL_MS} "
+                f"sensor_fps={self._pulse_hz + (OAK_FSYNC_SENSOR_HEADROOM_FPS if OAK_FSYNC_FIX else 0):.4f} "
                 f"ae_max_us={OAK_AE_MAX_EXPOSURE_US if OAK_FSYNC_FIX else 0}",
                 flush=True,
             )

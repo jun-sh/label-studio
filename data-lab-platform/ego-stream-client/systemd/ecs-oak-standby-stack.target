@@ -5,7 +5,7 @@ After=network-online.target
 Wants=network-online.target
 Wants=ecs-preview-standby.service
 Wants=ecs-station-heartbeat.service
-Conflicts=ecs-record-oak-stream.service ecs-oak-capture-stack.target
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap.service ecs-oak-capture-stack.target ecs-oak-mcap-capture-stack.target
 
 [Install]
 WantedBy=default.target

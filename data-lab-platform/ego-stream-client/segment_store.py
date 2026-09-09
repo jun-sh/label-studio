@@ -205,6 +205,26 @@ def check_segment_integrity(
             issues.append("missing_segment_mcap")
         elif mcap_path.stat().st_size < 64:
             issues.append("empty_segment_mcap")
+        else:
+            try:
+                from ego_capture_studio.capture.mcap_segment_writer import summarize_mcap_segment
+            except ImportError:
+                from mcap_segment_writer import summarize_mcap_segment
+
+            summary = summarize_mcap_segment(mcap_path)
+            cam_topics = [f"/ego/camera/{k}" for k in ("front_left", "front_right", "rear_left", "rear_right")]
+            cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
+            if cam_counts and (min(cam_counts) <= 0 or len(set(cam_counts)) != 1):
+                issues.append(
+                    f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}",
+                )
+            try:
+                from ego_capture_studio.capture.strict_fps_gate import check_mcap_strict_fps
+            except ImportError:
+                from strict_fps_gate import check_mcap_strict_fps
+
+            fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
+            issues.extend(fps_issues)
         return len(issues) == 0, issues
 
     rows_path = segment_dir / "rows.jsonl"

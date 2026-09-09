@@ -272,6 +272,10 @@ class McapSegmentWriter:
     ) -> None:
         ts = int(timestamp_ns)
         normalized = normalize_camera_payloads(camera_jpegs)
+        if self.video_codec == "h264":
+            if len(normalized) != len(CAMERA_TOPICS):
+                missing = sorted(set(CAMERA_TOPICS) - set(normalized))
+                raise RuntimeError(f"mcap_h264_incomplete_frame:missing={','.join(missing)}")
         for cam_key, topic in CAMERA_TOPICS.items():
             payload_bytes = normalized.get(cam_key)
             if not payload_bytes:
@@ -305,6 +309,29 @@ class McapSegmentWriter:
     def close(self) -> Path:
         assert self._writer is not None
         assert self._fp is not None
+        if self.video_codec == "h264" and self._frame_count > 0:
+            try:
+                from ego_capture_studio.capture.h264_segment_boundary import require_camera_parity
+            except ImportError:
+                from h264_segment_boundary import require_camera_parity
+
+            require_camera_parity(self._camera_message_counts)
+            self._add_json(
+                "session_meta",
+                {
+                    "schema_version": MCAP_SCHEMA_VERSION,
+                    "session_id": self.session_id,
+                    "segment_id": self.segment_id,
+                    "station_id": self.station_id,
+                    "topology_id": self.topology_id,
+                    "task": self.task,
+                    "video_codec": self.video_codec,
+                    "frame_count": self._frame_count,
+                    "camera_message_counts": dict(self._camera_message_counts),
+                    "closed": True,
+                },
+                log_time_ns=0,
+            )
         self._writer.finish()
         self._fp.close()
         self._writer = None

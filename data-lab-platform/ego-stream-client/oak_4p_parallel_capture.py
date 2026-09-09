@@ -32,6 +32,11 @@ from ego_capture_studio.capture.oak_4p_capture import (
 )
 
 EGO_CAPTURE_SYNC_MODE = os.environ.get("EGO_CAPTURE_SYNC_MODE", "strict_grid").strip().lower()
+EGO_IMU_INCREMENTAL = os.environ.get("EGO_IMU_INCREMENTAL", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 _DEVICE_TICK_IDLE_SLEEP_S = max(0.0, float(os.environ.get("EGO_DEVICE_TICK_IDLE_SLEEP_US", "50")) / 1e6)
 _DEVICE_TICK_BURST_MAX = max(1, int(os.environ.get("EGO_DEVICE_TICK_BURST_MAX", "8")))
 
@@ -137,6 +142,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         self._parallel_preview_lock = threading.Lock()
         self._parallel_preview_last: dict[str, bytes | np.ndarray] = {}
         self._parallel_preview_hw = False
+        self._straggler_diag: Any = None
 
     def connect(self) -> None:
         super().connect()
@@ -149,6 +155,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         )
 
     def stop(self) -> None:
+        if self._straggler_diag is not None:
+            self._straggler_diag.report(prefix="straggler_final")
         self._stop_parallel_drains()
         super().stop()
 
@@ -338,8 +346,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
         from ego_capture_studio.capture.buffers import EpisodeBuffers
         from ego_capture_studio.capture.camera_map import OAK_SOCKET_TO_LEROBOT_VIDEO, PRIMARY_OAK_SOCKET
-        from ego_capture_studio.capture.imu_align import imu6_at_timestamp
-        from ego_capture_studio.capture.lerobot_episode import _buffers_to_numpy
+        from ego_capture_studio.capture.imu_align_incremental import imu6_for_frame
+        from ego_capture_studio.capture.straggler_diag import StragglerDiagnostics, straggler_log_enabled
 
         ms = int(interval_ms if interval_ms is not None else EGO_FRAME_INTERVAL_MS)
         interval_ns = int(ms) * 1_000_000
@@ -363,15 +371,19 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
         prof = FrameProfiler.get()
 
+        self._straggler_diag = StragglerDiagnostics() if straggler_log_enabled() else None
+
         print(
             f"device_tick_sync interval_ms={ms} burst_max={_DEVICE_TICK_BURST_MAX} "
-            f"h264_sequential={int(self._hw_h264 and OAK_H264_SEQUENTIAL)}",
+            f"h264_sequential={int(self._hw_h264 and OAK_H264_SEQUENTIAL)} "
+            f"imu_incremental={int(EGO_IMU_INCREMENTAL)} straggler_log={int(straggler_log_enabled())}",
             flush=True,
         )
 
         def _commit_one() -> tuple[int, dict, dict, Any, dict] | None:
             nonlocal last_emit_ts_ns, imu_flush_tick
             t_commit = time.perf_counter()
+            pre_depths = {oak: len(cam_rings[oak]) for oak in self._cam_list}
             if self._hw_h264 and OAK_H264_SEQUENTIAL:
                 seq_sample = self._yield_h264_sequential_sample(cam_rings)
                 if seq_sample is None:
@@ -412,10 +424,17 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             imu_flush_tick += 1
             if imu_flush_tick % 3 == 0:
                 self._flush_imu_raw_from_buf(buf)
-            g_ts, g, a_ts, a = _buffers_to_numpy(buf)
-            imu6 = imu6_at_timestamp(
-                g_ts, g, a_ts, a, t_emit_ns, interpolate=use_imu_interp
+            t_imu = time.perf_counter()
+            imu6 = imu6_for_frame(
+                buf,
+                t_emit_ns,
+                interpolate=use_imu_interp,
+                incremental=EGO_IMU_INCREMENTAL,
             )
+            if prof is not None:
+                prof.add("imu_query", time.perf_counter() - t_imu)
+            if self._straggler_diag is not None:
+                self._straggler_diag.note_pre_commit_depths(pre_depths, offsets)
             preview_out = {
                 OAK_SOCKET_TO_LEROBOT_VIDEO[oak]: last_preview_oak[oak]
                 for oak in self._cam_list
@@ -459,6 +478,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             if prof is not None and burst > 0:
                 prof.add("drain_xfer", drain_s, frames=burst)
             if burst == 0:
+                if self._straggler_diag is not None:
+                    self._straggler_diag.note_wait_empty(cam_rings, list(self._cam_list))
                 t_idle = time.perf_counter()
                 time.sleep(_DEVICE_TICK_IDLE_SLEEP_S)
                 idle_s = time.perf_counter() - t_idle

@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TextIO
+from typing import Any, Callable, Literal, TextIO
 
 import numpy as np
 
@@ -610,6 +610,7 @@ class SegmentCaptureWriter:
             self._persist_threads.append(t)
         self._pending_count = -1
         self._pending_last_scan_mono = 0.0
+        self._pre_segment_rotate_hooks: list[Callable[[], None]] = []
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
         self._finalize_thread: threading.Thread | None = None
         if SEGMENT_FINALIZE_ASYNC:
@@ -894,7 +895,19 @@ class SegmentCaptureWriter:
         self._open_frame_count = 0
         return segment_id
 
+    def register_pre_segment_rotate_hook(self, hook: Callable[[], None]) -> None:
+        """P1a: called on capture thread before closing a full segment (IDR flush)."""
+        self._pre_segment_rotate_hooks.append(hook)
+
+    def _invoke_pre_segment_rotate_hooks(self) -> None:
+        for hook in self._pre_segment_rotate_hooks:
+            try:
+                hook()
+            except Exception as exc:
+                print(f"pre_segment_rotate_hook warning: {exc}", flush=True)
+
     def _rotate_segment_locked(self) -> None:
+        self._invoke_pre_segment_rotate_hooks()
         closed_id = self._close_open_segment_locked()
         if closed_id:
             close_job = _SegmentCloseJob(session_id=self.session_id, segment_id=closed_id)

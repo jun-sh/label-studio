@@ -21,6 +21,12 @@ class CaptureStateTests(unittest.TestCase):
             self.assertEqual(resolve_capture_state(), "recording")
             self.assertFalse(remote_preview_allowed("recording"))
 
+    def test_recording_when_mcap_capture_active(self) -> None:
+        with patch("capture_state._systemctl_is_active") as active:
+            active.side_effect = lambda unit: unit == "ecs-record-oak-mcap.service"
+            self.assertEqual(resolve_capture_state(), "recording")
+            self.assertFalse(remote_preview_allowed("recording"))
+
     def test_offline_when_nothing_active(self) -> None:
         with patch("capture_state._systemctl_is_active", return_value=False):
             self.assertEqual(resolve_capture_state(), "offline")

@@ -7,7 +7,25 @@ import subprocess
 
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
+# ego-001 MCAP production uses a separate target/unit pair. preview_standby must treat
+# either stack as "recording" even when this process has no station-specific env.
+MCAP_CAPTURE_TARGET = os.environ.get(
+    "EGO_MCAP_CAPTURE_TARGET",
+    "ecs-oak-mcap-capture-stack.target",
+)
+MCAP_CAPTURE_RECORD_UNIT = os.environ.get(
+    "EGO_MCAP_CAPTURE_RECORD_UNIT",
+    "ecs-record-oak-mcap.service",
+)
 STANDBY_PREVIEW_UNIT = os.environ.get("EGO_STANDBY_PREVIEW_UNIT", "ecs-preview-standby.service")
+
+# Every unit that means "OAK is capturing"; checked on each resolve_capture_state() call.
+_CAPTURE_UNITS = (
+    CAPTURE_TARGET,
+    CAPTURE_RECORD_UNIT,
+    MCAP_CAPTURE_TARGET,
+    MCAP_CAPTURE_RECORD_UNIT,
+)
 
 VALID_CAPTURE_STATES = frozenset(
     {"offline", "idle", "starting", "warming", "recording", "stopping", "unknown"}
@@ -30,7 +48,7 @@ def _systemctl_is_active(unit: str) -> bool:
 
 def resolve_capture_state() -> str:
     """Best-effort state for 34 remote preview gating (fail-closed on capture stack)."""
-    capture_on = _systemctl_is_active(CAPTURE_TARGET) or _systemctl_is_active(CAPTURE_RECORD_UNIT)
+    capture_on = any(_systemctl_is_active(unit) for unit in _CAPTURE_UNITS)
     if capture_on:
         # Remote preview must stay off for the whole capture stack lifetime.
         return "recording"

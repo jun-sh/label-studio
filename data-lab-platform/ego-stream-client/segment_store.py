@@ -211,7 +211,18 @@ def check_segment_integrity(
             except ImportError:
                 from mcap_segment_writer import summarize_mcap_segment
 
-            summary = summarize_mcap_segment(mcap_path)
+            # A segment left truncated by an abrupt stop makes the reader raise while
+            # parsing its footer. This function runs on the capture process's startup
+            # path (orphan reconciliation) and on every segment rotation, so an escaping
+            # exception kills capture and the restart lands on the same unreadable file.
+            # That loop took ego-001 down twice today. An unreadable segment is a corrupt
+            # segment; report it and let rotation continue.
+            try:
+                summary = summarize_mcap_segment(mcap_path)
+            except Exception as exc:
+                issues.append(f"mcap_unreadable:{type(exc).__name__}")
+                return False, issues
+
             cam_topics = [f"/ego/camera/{k}" for k in ("front_left", "front_right", "rear_left", "rear_right")]
             cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
             if cam_counts and (min(cam_counts) <= 0 or len(set(cam_counts)) != 1):

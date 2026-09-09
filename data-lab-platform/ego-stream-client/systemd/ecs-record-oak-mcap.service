@@ -2,7 +2,7 @@
 Description=EGO OAK 4-cam MCAP capture (ego-001 production, VPU H.264)
 After=network-online.target
 Wants=network-online.target
-Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap-pilot.service ecs-record-oak-mcap-track2.service
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap-pilot.service ecs-record-oak-mcap-track2.service ecs-preview-standby.service ecs-oak-standby-stack.target
 
 [Service]
 Type=simple

@@ -263,10 +263,10 @@ def _capture_unit_state(unit: str = CAPTURE_RECORD_UNIT) -> str:
 
 
 def _capture_active() -> bool:
-    return _capture_unit_state(CAPTURE_RECORD_UNIT) in (
-        "active",
-        "activating",
-        "deactivating",
+    active_states = ("active", "activating", "deactivating")
+    return (
+        _capture_unit_state(CAPTURE_RECORD_UNIT) in active_states
+        or _capture_unit_state(CAPTURE_TARGET) in active_states
     )
 
 

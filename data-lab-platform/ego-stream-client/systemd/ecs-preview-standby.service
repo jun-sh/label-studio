@@ -2,7 +2,7 @@
 Description=EGO OAK idle preview probe (no disk writes; remote browse only)
 Documentation=file:///home/server/workspace/ego-studio/README.md
 After=network-online.target
-Conflicts=ecs-record-oak-stream.service
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap.service ecs-oak-mcap-capture-stack.target
 PartOf=ecs-oak-standby-stack.target
 
 [Service]

@@ -205,7 +205,21 @@ STRICT_REANCHOR_LOG = os.environ.get("STRICT_REANCHOR_LOG", "0").strip().lower()
     "yes",
 )
 
-FSYNC_GPIO_SCRIPT = """# coding=utf-8
+# FSYNC pulse-rate correction. The legacy loop below sleeps for a fixed
+# `period - active - overhead` with overhead hardcoded at 3ms; measured overhead on
+# OAK-FFC-4P R7 under 4x H.264 is ~8ms, so pulses landed 38.3ms apart (26.1Hz) and the
+# sensors, being FSYNC slaves, capped the pipeline there. The three settings below must
+# move together, hence one switch: a 30Hz pulse on its own is *worse* than the bug,
+# because a sensor at setFps(30) cannot accept a trigger every 33.33ms and drops ~13%
+# of them (measured 25.35fps).
+OAK_FSYNC_FIX = _env_bool("OAK_FSYNC_FIX", "1")
+# Sensor fps is raised above the pulse rate so its internal minimum frame time stays
+# shorter than the pulse period. Applied to setFps() only, never to the pulse rate.
+OAK_FSYNC_SENSOR_HEADROOM_FPS = max(0, int(os.environ.get("OAK_FSYNC_SENSOR_HEADROOM_FPS", "3")))
+# Cap auto-exposure so readout always finishes inside one pulse period. 0 disables.
+OAK_AE_MAX_EXPOSURE_US = max(0, int(os.environ.get("OAK_AE_MAX_EXPOSURE_US", "20000")))
+
+_FSYNC_GPIO_HEAD = """# coding=utf-8
 import time
 import GPIO
 
@@ -235,9 +249,14 @@ GPIO.write(GPIO_FSIN_MODE_SELECT, 1)
 
 period = 1 / fps
 active = 0.001
-overhead = 0.003
 
 node.warn(f'FSYNC GPIO script, rev={boardRev}, fps={fps}')
+"""
+
+# Sleeps a fixed span per pulse, so every microsecond of GPIO write and scheduling
+# latency is added on top of the period. Kept verbatim for OAK_FSYNC_FIX=0 rollback.
+_FSYNC_LOOP_LEGACY = """
+overhead = 0.003
 
 while True:
     GPIO.write(GPIO_FSIN_2LANE, 1)
@@ -245,6 +264,46 @@ while True:
     GPIO.write(GPIO_FSIN_2LANE, 0)
     time.sleep(period - active - overhead)
 """
+
+# Sleeps until an absolute deadline instead, so that latency is absorbed within a
+# period rather than accumulating into the pulse rate. Re-anchors when a period is
+# already overrun, so a one-off stall cannot make the loop chase a backlog of
+# deadlines. Reports the measured rate every 10s; that log is the only direct
+# evidence of the real pulse rate, since the host can only observe frame arrivals.
+_FSYNC_LOOP_SELFCORRECT = """
+try:
+    clock = time.monotonic
+except AttributeError:
+    clock = time.time
+
+next_t = clock()
+count = 0
+overrun = 0
+window_t = clock()
+
+while True:
+    GPIO.write(GPIO_FSIN_2LANE, 1)
+    time.sleep(active)
+    GPIO.write(GPIO_FSIN_2LANE, 0)
+    next_t = next_t + period
+    delay = next_t - clock()
+    if delay > 0:
+        time.sleep(delay)
+    else:
+        next_t = clock()
+        overrun = overrun + 1
+    count = count + 1
+    if count >= 300:
+        now = clock()
+        node.warn(f'FSYNC pulse rate={count / (now - window_t):.3f}Hz overrun={overrun}')
+        count = 0
+        overrun = 0
+        window_t = now
+"""
+
+FSYNC_GPIO_SCRIPT = _FSYNC_GPIO_HEAD + (
+    _FSYNC_LOOP_SELFCORRECT if OAK_FSYNC_FIX else _FSYNC_LOOP_LEGACY
+)
 
 MONO_RES_OPTS: dict[str, Any] = {}
 COLOR_RES_OPTS: dict[str, Any] = {}
@@ -907,7 +966,12 @@ class Oak4pEgoRecorder:
                 cam.out.link(xout.input)
 
             cam.setBoardSocket(CAM_SOCKET_OPTS[cam_name])
-            cam.setFps(self.device_fps)
+            # Headroom applies to the sensor only. Feeding it to the FSYNC script would
+            # raise the pulse rate, which is the opposite of what it is for.
+            sensor_fps = self.device_fps
+            if OAK_FSYNC_FIX and OAK_GPIO_FSYNC:
+                sensor_fps = self.device_fps + OAK_FSYNC_SENSOR_HEADROOM_FPS
+            cam.setFps(sensor_fps)
 
             if OAK_GPIO_FSYNC:
                 if self._use_gpio_fsync:
@@ -917,11 +981,25 @@ class Oak4pEgoRecorder:
                 else:
                     cam.initialControl.setFrameSyncMode(dai.CameraControl.FrameSyncMode.INPUT)
 
+            if OAK_FSYNC_FIX and OAK_AE_MAX_EXPOSURE_US > 0:
+                try:
+                    cam.initialControl.setAutoExposureLimit(OAK_AE_MAX_EXPOSURE_US)
+                except Exception as exc:  # older depthai lacks the setter
+                    print(f"[oak] setAutoExposureLimit unavailable: {exc}", flush=True)
+
         revision = parse_board_revision(board_rev)
         if OAK_GPIO_FSYNC and (self._use_gpio_fsync or revision >= 6):
             script = pipeline.create(dai.node.Script)
             script.setProcessor(dai.ProcessorType.LEON_CSS)
             script.setScript(FSYNC_GPIO_SCRIPT % float(self.device_fps))
+            # OAK_GPIO_FSYNC is necessarily true here, so headroom applies iff the fix is on.
+            print(
+                f"[oak] fsync loop={'selfcorrect' if OAK_FSYNC_FIX else 'legacy'} "
+                f"pulse_fps={float(self.device_fps)} "
+                f"sensor_fps={self.device_fps + (OAK_FSYNC_SENSOR_HEADROOM_FPS if OAK_FSYNC_FIX else 0)} "
+                f"ae_max_us={OAK_AE_MAX_EXPOSURE_US if OAK_FSYNC_FIX else 0}",
+                flush=True,
+            )
 
         return pipeline
 

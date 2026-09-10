@@ -228,12 +228,12 @@ def main() -> int:
     parser.add_argument(
         "--segment-root",
         type=Path,
-        default=Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-lan-214/segments")),
+        default=Path(os.environ.get("EGO_SEGMENT_ROOT", "/home/server/cache/ego-001/segments")),
     )
     parser.add_argument(
         "--export-root",
         type=Path,
-        default=Path(os.environ.get("EGO_EXPORT_ROOT", "/home/server/export/ego-lan-214")),
+        default=Path(os.environ.get("EGO_EXPORT_ROOT", "/home/server/export/ego-001")),
     )
     parser.add_argument(
         "--date",

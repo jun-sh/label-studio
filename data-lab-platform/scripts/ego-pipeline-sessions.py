@@ -610,27 +610,60 @@ def requeue_failed_sessions(
     return requeued
 
 
+def _station_yaml_block(pipe_root: Path, station: str) -> str | None:
+    cfg = pipe_root / "configs" / "stations.yaml"
+    if not cfg.is_file():
+        return None
+    import re
+
+    text = cfg.read_text(encoding="utf-8")
+    block = re.search(
+        rf"(?ms)^  {re.escape(station)}:\s*\n(.*?)(?=^  \w|\Z)",
+        text,
+    )
+    return block.group(1) if block else None
+
+
+def _station_yaml_field(pipe_root: Path, station: str, field: str) -> str | None:
+    block = _station_yaml_block(pipe_root, station)
+    if not block:
+        return None
+    import re
+
+    m = re.search(rf"{re.escape(field)}:\s*(\S+)", block)
+    return m.group(1) if m else None
+
+
 def station_slug(pipe_root: Path, station: str) -> str:
+    """Corpus / samples filesystem slug (dataset_slug), not viewer manifest id."""
     defaults = {
-        "ego-001": "egodome",
+        "ego-001": "ego_001",
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
         "ego-mcap-pilot": "ego_mcap_pilot",
         "ego-mcap-track2": "ego_mcap_track2",
     }
-    cfg = pipe_root / "configs" / "stations.yaml"
-    if cfg.is_file():
-        import re
+    slug = _station_yaml_field(pipe_root, station, "dataset_slug")
+    if slug:
+        return slug
+    manifest_id = _station_yaml_field(pipe_root, station, "manifest_id")
+    if manifest_id:
+        return manifest_id
+    return defaults.get(station, station.replace("-", "_"))
 
-        text = cfg.read_text(encoding="utf-8")
-        block = re.search(
-            rf"(?ms)^  {re.escape(station)}:\s*\n(.*?)(?=^  \w|\Z)",
-            text,
-        )
-        if block:
-            m = re.search(r"manifest_id:\s*(\S+)", block.group(1))
-            if m:
-                return m.group(1)
+
+def station_manifest_id(pipe_root: Path, station: str) -> str:
+    """Viewer /data/:id manifest entry id."""
+    defaults = {
+        "ego-001": "ego-001",
+        "ego-lab-01": "ego_lab_01_hand_pose",
+        "ego-field-02": "ego_field_02_hand_pose",
+        "ego-mcap-pilot": "ego_mcap_pilot",
+        "ego-mcap-track2": "ego_mcap_track2",
+    }
+    manifest_id = _station_yaml_field(pipe_root, station, "manifest_id")
+    if manifest_id:
+        return manifest_id
     return defaults.get(station, station.replace("-", "_"))
 
 
@@ -647,6 +680,7 @@ def main() -> int:
             "all-parquet-ready",
             "has-data",
             "slug",
+            "manifest-id",
             "all-sessions",
             "doctor",
             "reconcile-markers",
@@ -714,6 +748,9 @@ def main() -> int:
         return 0 if stream_has_ingested_data(stream) else 1
     if args.command == "slug":
         print(station_slug(pipe, args.station))
+        return 0
+    if args.command == "manifest-id":
+        print(station_manifest_id(pipe, args.station))
         return 0
     if args.command == "all-sessions":
         for sid in list_stream_sessions(stream):

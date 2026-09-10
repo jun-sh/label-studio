@@ -353,7 +353,6 @@ systemctl --user list-timers data-lab-ego-process-watcher.timer
 以下存在但**不属于最简主路径**，评审时可暂不展开：
 
 - 浏览器 bulk import（`/import/upload`）
-- `ego-lan-214` 历史 Agent 通道与 WAN 节点
 - LeRobot QC 终端（`/qc/`）
 - 多 derive-worker 水平扩展（`ego-derive-scale.sh`）
 - episode registry DB（`data-storage/registry/`）

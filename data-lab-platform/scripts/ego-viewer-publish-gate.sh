@@ -9,7 +9,7 @@ SLUG="${1:-}"
 STATION="${EGO_STATION:-ego-001}"
 
 if [[ -z "$SLUG" ]]; then
-  SLUG="$(python3 "$SESSIONS_PY" slug "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_214_hand_pose")"
+  SLUG="$(python3 "$SESSIONS_PY" slug "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_001")"
 fi
 
 [[ -n "$SLUG" ]] || {

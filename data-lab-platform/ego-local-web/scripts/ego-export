@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ego-export — 214 边缘站一键导出（幂等，默认安全）
+# ego-export — 边缘站一键导出（幂等，默认安全）
 # 用法: ego-export [--reset]
 set -euo pipefail
 
@@ -58,7 +58,7 @@ if [[ "$RESET" -eq 1 ]]; then
   EXTRA+=(--reset)
 fi
 
-LOG_DIR="${EGO_EXPORT_LOG_DIR:-/home/server/cache/ego-lan-214/logs}"
+LOG_DIR="${EGO_EXPORT_LOG_DIR:-/home/server/cache/ego-001/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/ego-export-$(date +%Y%m%d-%H%M%S).log"
 
@@ -68,7 +68,7 @@ bash "$EXPORT_SH" "${EXTRA[@]}" 2>&1 | tee "$LOG_FILE"
 rc=${PIPESTATUS[0]}
 set -e
 
-READY_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-lan-214}/ready"
+READY_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-001}/ready"
 TODAY="$(date +%Y%m%d)"
 READY_DAY="${READY_ROOT}/${TODAY}"
 

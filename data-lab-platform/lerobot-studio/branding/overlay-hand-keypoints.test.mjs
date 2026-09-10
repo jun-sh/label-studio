@@ -640,10 +640,10 @@ describe("overlay-hand-keypoints-lib", () => {
   });
 });
 
-describe("ego_214_hand_pose sample overlay (if present)", () => {
+describe("ego_001 sample overlay (if present)", () => {
   const samplePath = path.resolve(
     __dirname,
-    "../../../data-storage/samples/ego_214_hand_pose_hand_kp2d.json"
+    "../../../data-storage/samples/ego_001_hand_kp2d.json"
   );
 
   it("validates production overlay JSON invariants", () => {

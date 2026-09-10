@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D5: format compliance, human chain, pusht regression, stock 214 read-only checks."""
+"""D5: format compliance, human chain, pusht regression."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_LAB = ROOT.parent
-EGO214 = DATA_LAB / "stream-data" / "ego-lan-214"
 UNITREE = DATA_LAB / "stream-data" / "unitree-g1-teleop-001"
 PUSHT = DATA_LAB.parent / "data-storage" / "embodied-annotate" / "datasets" / "pusht"
 EGO_BACKEND = DATA_LAB / "embodied-annotate" / "backend"
@@ -97,18 +96,6 @@ def validate_unitree_no_hand_features(root: Path) -> None:
     ok("unitree on-demand features, no hand_pose")
 
 
-def validate_stock_214() -> None:
-    if not EGO214.is_dir():
-        print("⊘ skip stock 214 (no sample)")
-        return
-    validate_lerobot_v3_layout(EGO214)
-    validate_episodes_metadata(EGO214)
-    ann = pq.read_table(EGO214 / "meta" / "annotations.parquet")
-    assert "episode_index" in ann.column_names, "annotations need episode_index"
-    validate_data_no_mgmt_cols(EGO214)
-    ok("ego-lan-214 stock schema (read-only)")
-
-
 def _make_human_dataset(tmp_path: Path) -> Path:
     root = tmp_path / "human_ds"
     root.mkdir(parents=True)
@@ -145,7 +132,7 @@ def _make_human_dataset(tmp_path: Path) -> Path:
                 "task_index": pa.array([0.0], type=pa.float64()),
                 "dataset_from_index": pa.array([0.0], type=pa.float64()),
                 "dataset_to_index": pa.array([3.0], type=pa.float64()),
-                "station_id": pa.array(["ego-lan-214"], type=pa.string()),
+                "station_id": pa.array(["ego-001"], type=pa.string()),
                 "embodiment": pa.array(["human_demo"], type=pa.string()),
                 "task_id": pa.array(["fold_towel"], type=pa.string()),
                 "annotation_status": pa.array(["raw"], type=pa.string()),
@@ -322,7 +309,6 @@ def pusht_regression() -> None:
 
 def main() -> int:
     checks = [
-        ("stock-214", validate_stock_214),
         ("unitree-fixture", lambda: (
             validate_lerobot_v3_layout(UNITREE),
             validate_episodes_metadata(UNITREE),

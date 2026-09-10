@@ -392,8 +392,8 @@
       params.set("lang", pageLang().indexOf("zh") === 0 ? "zh" : "en");
     }
     if (datasetId) {
-      if (datasetId === "ego_214_hand_pose") {
-        params.set("url", "/lerobot/api/sample/ego_214_hand_pose/dataset/");
+      if (datasetId === "ego-001" || datasetId === "ego_001" || datasetId === "egodome") {
+        params.set("url", "/lerobot/api/sample/ego_001/dataset/");
       } else {
         params.set("url", "sample://" + datasetId);
       }

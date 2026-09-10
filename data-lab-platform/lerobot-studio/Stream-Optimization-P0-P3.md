@@ -131,7 +131,7 @@
 #### 采集站 Token 鉴权
 
 - 请求头：`X-Station-Token`
-- 当前站点令牌：`dl-upload-ego-lan-214-v1`
+- 当前站点令牌：`dl-upload-ego-001-v1`
 - 无 Token / 错误 Token 直接返回 401 拒绝
 - 仅配置站点开启鉴权，兼容其他存量站点
 
@@ -178,10 +178,10 @@ docker ps | grep data-lab-lerobot-1
 docker logs -f data-lab-lerobot-1 2>&1 | grep stream-ingest
 
 # 磁盘治理状态
-docker exec data-lab-lerobot-1 cat /srv/stream/ego-lan-214/live/disk-housekeeping.json
+docker exec data-lab-lerobot-1 cat /srv/stream/ego-001/live/disk-housekeeping.json
 
 # 流状态接口
-curl -s http://127.0.0.1:8080/lerobot/api/stream/ego-lan-214/status | jq .
+curl -s http://127.0.0.1:8080/lerobot/api/stream/ego-001/status | jq .
 ```
 
 ### 6.3 Token 轮换流程
@@ -210,7 +210,7 @@ curl -s http://127.0.0.1:8080/lerobot/api/stream/ego-lan-214/status | jq .
 
 ### 鉴权范围
 
-仅 `ego-lan-214` 配置 Token 并强制鉴权，未配置站点不开启校验。
+仅 `ego-001` 配置 Token 并强制鉴权，未配置站点不开启校验。
 
 ### 归档触发规则
 

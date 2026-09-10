@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * D4 acceptance: Unitree fake ingest + writeback skip + ego API + 214 isolation.
+ * D4 acceptance: Unitree fake ingest + writeback skip + ego API.
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -17,7 +17,6 @@ const EGO_HAND_PIPELINE =
   process.env.EGO_HAND_PIPELINE_ROOT ||
   path.resolve(__dirname, "../../../../ego-hand-pipeline");
 const EGO_BACKEND = path.resolve(__dirname, "../../embodied-annotate/backend");
-const EGO214 = path.resolve(__dirname, "../../stream-data/ego-lan-214");
 const TMP_ROOT = path.resolve(__dirname, "../../stream-data/.d4-tmp");
 
 const HAND_KEYS = [
@@ -196,17 +195,6 @@ print("ok")
   console.log("✓ /api/ego/load + save on robot dataset");
 }
 
-function testEgo214Untouched(beforeHash) {
-  if (!fs.existsSync(EGO214)) {
-    console.log("⊘ skip 214 isolation (no stream-data sample)");
-    return;
-  }
-  const infoPath = path.join(EGO214, "meta", "info.json");
-  const after = sha256File(infoPath);
-  assert(after === beforeHash, "ego-lan-214 info.json must be unchanged");
-  console.log("✓ ego-lan-214存量未触碰");
-}
-
 function testWithIngestColumns(streamRoot) {
   const ingestRoot = path.join(streamRoot, "unitree-g1-teleop-001-ingest");
   const ingestStream = path.join(streamRoot, ".ingest-parent");
@@ -238,14 +226,11 @@ print(t.num_rows)
 function main() {
   ensureTmp();
   const streamRoot = TMP_ROOT;
-  const before214 = sha256File(path.join(EGO214, "meta", "info.json"));
-
   const stationRoot = testBuildMinimalDataset(streamRoot);
   testInfoFeatures(stationRoot);
   testEpisodesExtendedInfo(stationRoot);
   testWritebackSkips(stationRoot);
   testEgoApi(stationRoot);
-  testEgo214Untouched(before214);
   testWithIngestColumns(streamRoot);
 
   console.log("\nD4 E2E OK");

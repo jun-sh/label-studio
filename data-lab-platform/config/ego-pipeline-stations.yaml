@@ -26,12 +26,12 @@ defaults:
 
 stations:
   ego-001:
-    title: EgoDome
-    dataset_slug: egodome
+    title: Ego-001
+    dataset_slug: ego_001
     upload_protocol: mcap
     aggregate_dir_name: EgoDome
-    manifest_id: egodome
-    cover_webp: egodome.webp
+    manifest_id: ego-001
+    cover_webp: ego_001.webp
 
   ego-lab-01:
     title: Ego-Lab-01-Hand-Pose

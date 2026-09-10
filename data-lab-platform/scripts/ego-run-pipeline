@@ -148,10 +148,28 @@ _convert_worker_pidfile() {
   echo "${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.pid"
 }
 
+_reclaim_convert_worker_orphans() {
+  local pf pid opid
+  pf="$(_convert_worker_pidfile)"
+  pid=""
+  if [[ -f "$pf" ]]; then
+    pid="$(tr -d '[:space:]' < "$pf" 2>/dev/null || true)"
+  fi
+  while read -r opid; do
+    [[ -z "$opid" ]] && continue
+    [[ -n "$pid" && "$opid" == "$pid" ]] && continue
+    if kill -0 "$opid" 2>/dev/null; then
+      log "stopping orphan convert worker pid ${opid}"
+      kill -TERM "$opid" 2>/dev/null || true
+    fi
+  done < <(pgrep -f "ego-convert-worker\\.sh[[:space:]]+${STATION}(\\s|$)" 2>/dev/null || true)
+}
+
 _ensure_convert_worker() {
   [[ "${EGO_USE_CONVERT_WORKER:-0}" == "1" ]] || return 0
   local pf
   pf="$(_convert_worker_pidfile)"
+  _reclaim_convert_worker_orphans
   if [[ -f "$pf" ]]; then
     local pid
     pid="$(tr -d '[:space:]' < "$pf" 2>/dev/null || true)"
@@ -162,7 +180,6 @@ _ensure_convert_worker() {
   fi
   log "启动 convert worker（WiLoR 常驻）…"
   nohup bash "${SCRIPT_DIR}/ego-convert-worker.sh" "$STATION" >> "${LOG_DIR}/ego-convert-worker-${STATION}.log" 2>&1 &
-  echo $! > "$pf"
 }
 
 _wait_convert_worker_drain() {
@@ -242,8 +259,9 @@ HAS_DATA=0
 if _py has-data "$STATION"; then HAS_DATA=1; fi
 
 mapfile -t PENDING < <(_py pending "$STATION" 2>/dev/null || true)
-SLUG="$(_py slug "$STATION" 2>/dev/null || echo "ego_214_hand_pose")"
-VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+SLUG="$(_py slug "$STATION" 2>/dev/null || echo "ego_001")"
+MANIFEST_ID="$(_py manifest-id "$STATION" 2>/dev/null || echo "ego-001")"
+VIEWER_URL="${PLATFORM_HOST}/data/${MANIFEST_ID}"
 COLLECTION_URL="${PLATFORM_HOST}/collection?station=${STATION}"
 
 if [[ "$HAS_DATA" -eq 0 && ${#PENDING[@]} -eq 0 ]]; then

@@ -19,10 +19,32 @@ RUN_LOG="${LOG_DIR}/ego-convert-worker-${STATION}.log"
 
 log() { echo "[convert-worker $(date +%H:%M:%S)] $*" | tee -a "$RUN_LOG"; }
 
+_reclaim_orphan_workers() {
+  local opid
+  while read -r opid; do
+    [[ -z "$opid" || "$opid" == "$$" ]] && continue
+    if kill -0 "$opid" 2>/dev/null; then
+      log "stopping orphan convert worker pid=${opid}"
+      kill -TERM "$opid" 2>/dev/null || true
+    fi
+  done < <(pgrep -f "ego-convert-worker\\.sh[[:space:]]+${STATION}(\\s|$)" 2>/dev/null || true)
+}
+
 cleanup() {
   rm -f "$PIDFILE"
 }
 trap cleanup EXIT INT TERM
+
+if [[ -f "$PIDFILE" ]]; then
+  oldpid="$(tr -d '[:space:]' < "$PIDFILE" 2>/dev/null || true)"
+  if [[ -n "$oldpid" && "$oldpid" != "$$" ]] && kill -0 "$oldpid" 2>/dev/null; then
+    log "convert worker already active (pid=${oldpid}); exiting"
+    exit 0
+  fi
+fi
+_reclaim_orphan_workers
+sleep 1
+_reclaim_orphan_workers
 
 echo "$$" > "$PIDFILE"
 log "started station=${STATION} pid=$$ poll=${POLL_SEC}s"

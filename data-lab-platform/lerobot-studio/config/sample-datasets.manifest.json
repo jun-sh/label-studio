@@ -39,23 +39,13 @@
       "version": "v3"
     },
     {
-      "id": "egodome",
-      "title": "Ego-214-Hand-Pose",
-      "name": "Ego-214-Hand-Pose",
-      "description": "LeRobot v3.0 · ego-001 archive with offline HaMeR MANO (observation.mano_pose)",
-      "archiveUrl": "/lerobot/bundled/egodome.zip",
-      "httpDatasetUrl": "/lerobot/api/sample/egodome/dataset/",
-      "coverImageUrl": "/lerobot/bundled/covers/egodome.webp",
-      "version": "v3"
-    },
-    {
-      "id": "egodome",
-      "title": "EgoDome",
-      "name": "EgoDome",
+      "id": "ego_001",
+      "title": "Ego-001",
+      "name": "Ego-001",
       "description": "LeRobot v3.0 · ego-001 with rectify, monocular depth, and hand pose",
-      "archiveUrl": "/lerobot/bundled/egodome.zip",
-      "httpDatasetUrl": "/lerobot/api/sample/egodome/dataset/",
-      "coverImageUrl": "/lerobot/bundled/covers/egodome.webp",
+      "archiveUrl": "/lerobot/bundled/ego_001.zip",
+      "httpDatasetUrl": "/lerobot/api/sample/ego_001/dataset/",
+      "coverImageUrl": "/lerobot/bundled/covers/ego_001.webp",
       "version": "v3"
     }
   ]

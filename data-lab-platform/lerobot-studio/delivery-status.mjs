@@ -100,7 +100,7 @@ function aggregateDeliveryStatus({ preview_ready, pose_ready, qc_approved, expor
 
 function datasetSlugForStation(stationId, override) {
   if (override) return override;
-  const map = { "ego-001": "egodome" };
+  const map = { "ego-001": "ego_001" };
   return map[stationId] || stationId.replace(/-/g, "_");
 }
 

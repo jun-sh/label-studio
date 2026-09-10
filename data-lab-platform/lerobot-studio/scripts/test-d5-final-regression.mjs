@@ -13,8 +13,6 @@ const PY = process.env.PYTHON || "python3";
 const NODE = process.execPath;
 const EGO_BACKEND = path.resolve(__dirname, "../../embodied-annotate/backend");
 const EGO_HAND = path.resolve(__dirname, "../../../../ego-hand-pipeline");
-const EGO214_INFO = path.resolve(__dirname, "../../stream-data/ego-lan-214/meta/info.json");
-
 const results = [];
 
 function sha256File(p) {
@@ -44,8 +42,6 @@ function spawnOk(cmd, args, opts = {}) {
 }
 
 function main() {
-  const before214 = sha256File(EGO214_INFO);
-
   runStep("D1", "Canonical schema smoke", () => {
     spawnOk(NODE, [path.join(__dirname, "test-d1-canonical-schema.mjs")], {
       cwd: path.dirname(__dirname),
@@ -86,13 +82,6 @@ function main() {
         PYTHONPATH: [EGO_BACKEND, path.join(EGO_HAND, "src")].join(path.delimiter),
       },
     });
-  });
-
-  runStep("ISO", "214 stock info.json unchanged", () => {
-    const after = sha256File(EGO214_INFO);
-    if (before214 && after !== before214) {
-      throw new Error("ego-lan-214 meta/info.json was modified during regression");
-    }
   });
 
   const failed = results.filter((r) => !r.pass);

@@ -1,12 +1,12 @@
-# ego-lan-214 现场采集：数据存哪、怎么打包、怎么导入 34
+# ego-001 现场采集：数据存哪、怎么打包、怎么导入 34
 
-适用设备：**10.10.10.214**（站点 `ego-lan-214`）  
+适用设备：**10.10.10.130**（站点 `ego-001`）  
 手机控制页：`http://192.168.4.1:8080/`（热点）或 `http://10.10.10.214:8080/`（实验室网）  
-平台导入页：[http://10.10.10.34:8080/collection?station=ego-lan-214](http://10.10.10.34:8080/collection?station=ego-lan-214)
+平台导入页：[http://10.10.10.34:8080/collection?station=ego-001](http://10.10.10.34:8080/collection?station=ego-001)
 
 本文说明：**按下「开始录制」后原始数据落在哪**、**离线打包从哪读、写到哪**、**U 盘与 34 导入**的完整步骤。
 
-技术细节见：[ego-edge-offline-upload-and-deployment.md](../../docs/ego-edge-offline-upload-and-deployment.md)、[ego-lan-214-segment-storage-and-upload.md](../../docs/ego-lan-214-segment-storage-and-upload.md)。
+技术细节见：[ego-edge-offline-upload-and-deployment.md](../../docs/ego-edge-offline-upload-and-deployment.md)、[ego-001-segment-storage-and-upload.md](../../docs/ego-001-segment-storage-and-upload.md)。
 
 ---
 
@@ -15,8 +15,8 @@
 | 阶段 | 路径 | 里面是什么 | 谁写入 |
 |------|------|------------|--------|
 | **A. 录制中（内存热写）** | `/dev/shm/ego-capture-active/...` | 正在写的 open 段 | 采集栈 `ecs-oak-capture-stack` |
-| **B. 原始段（本机硬盘）** | `/home/server/cache/ego-lan-214/segments/` | 已关闭的段：`manifest.json`、`rows.jsonl`、`frames/*.bin` | 采集栈（关段时从 A 搬到 B） |
-| **C. 导出成品（可拷 U 盘）** | `/home/server/export/ego-lan-214/ready/YYYYMMDD/` | `seg_xxx.tar.zst` 单段包 | 离线脚本 `export-offline.sh` |
+| **B. 原始段（本机硬盘）** | `/home/server/cache/ego-001/segments/` | 已关闭的段：`manifest.json`、`rows.jsonl`、`frames/*.bin` | 采集栈（关段时从 A 搬到 B） |
+| **C. 导出成品（可拷 U 盘）** | `/home/server/export/ego-001/ready/YYYYMMDD/` | `seg_xxx.tar.zst` 单段包 | 离线脚本 `export-offline.sh` |
 
 **8080 网页不存数据**，只通过 `systemctl` 启停采集栈。数据始终在 214 本机路径 A → B → C。
 
@@ -50,7 +50,7 @@
     → closed=true
     → 整目录原子搬到本机硬盘：
 
-  路径：/home/server/cache/ego-lan-214/segments/sessions/sess_<uuid>/segments/seg_00000N/
+  路径：/home/server/cache/ego-001/segments/sessions/sess_<uuid>/segments/seg_00000N/
   内容：同上，但已是持久化副本
 ```
 
@@ -101,7 +101,7 @@
 ### 2.3 本机原始段的完整目录结构
 
 ```text
-/home/server/cache/ego-lan-214/segments/
+/home/server/cache/ego-001/segments/
 ├── checkpoint.json                 # 当前 session 断点（正在录哪一段）
 ├── registry.json                   # 各 session 登记
 └── sessions/
@@ -164,7 +164,7 @@
 - 点「结束录制」且**收尾成功**后，应出现**一个**新目录，例如：
 
 ```text
-/home/server/cache/ego-lan-214/segments/sessions/sess_<uuid>/segments/seg_000026/
+/home/server/cache/ego-001/segments/sessions/sess_<uuid>/segments/seg_000026/
 ├── manifest.json    ← "closed": true, "frame_count": 约 300（10s×30fps）
 ├── rows.jsonl
 └── frames/*.bin
@@ -189,10 +189,10 @@
 
 ```bash
 # 1. 当前 session（与 checkpoint 一致）
-cat /home/server/cache/ego-lan-214/segments/checkpoint.json
+cat /home/server/cache/ego-001/segments/checkpoint.json
 
 # 2. 硬盘上最新段
-find /home/server/cache/ego-lan-214/segments/sessions -type d -name 'seg_*' | sort | tail -3
+find /home/server/cache/ego-001/segments/sessions -type d -name 'seg_*' | sort | tail -3
 
 # 3. 内存里未落盘的段（重点！）
 find /dev/shm/ego-capture-active -name manifest.json 2>/dev/null | while read m; do
@@ -236,7 +236,7 @@ bash /home/server/ego-web/export-offline.sh
 脚本 **只读路径 B**，且 **只处理满足条件的段**：
 
 ```text
-扫描根目录：/home/server/cache/ego-lan-214/segments/
+扫描根目录：/home/server/cache/ego-001/segments/
 遍历：sessions/*/segments/seg_*/
 筛选：manifest.json 中 closed=true 且 uploaded=false
 ```
@@ -260,13 +260,13 @@ bash /home/server/ego-web/export-offline.sh
 
 ```text
 ① 写入中间态（打包中）
-   /home/server/export/ego-lan-214/staging/seg_000012.tar.zst.part
+   /home/server/export/ego-001/staging/seg_000012.tar.zst.part
 
 ② SHA256 校验通过后，原子移动到成品目录
-   /home/server/export/ego-lan-214/ready/20250701/seg_000012.tar.zst
+   /home/server/export/ego-001/ready/20250701/seg_000012.tar.zst
 
 ③ 同目录追加审计日志
-   /home/server/export/ego-lan-214/ready/20250701/export-manifest.jsonl
+   /home/server/export/ego-001/ready/20250701/export-manifest.jsonl
 ```
 
 `YYYYMMDD` 默认当天，可用 `--date` 指定。
@@ -297,7 +297,7 @@ bash /home/server/ego-web/export-offline.sh
 │ A. /dev/shm/ego-capture-active/.../seg_*     （录制中 open 段，内存）    │
 │         │ 自动关段 或 结束录制关段                                         │
 │         ▼                                                               │
-│ B. /home/server/cache/ego-lan-214/segments/.../seg_*                     │
+│ B. /home/server/cache/ego-001/segments/.../seg_*                     │
 │         closed=true, uploaded=false  ← 离线脚本只处理这类                 │
 │         │ export-offline.sh（班次末手动）                                │
 │         ▼                                                               │
@@ -445,16 +445,16 @@ systemctl --user is-active ecs-oak-capture-stack.target
 bash /home/server/ego-web/export-offline.sh
 
 # 3. 查看成品
-ls -lh /home/server/export/ego-lan-214/ready/$(date +%Y%m%d)/
-cat /home/server/export/ego-lan-214/ready/$(date +%Y%m%d)/export-manifest.jsonl
+ls -lh /home/server/export/ego-001/ready/$(date +%Y%m%d)/
+cat /home/server/export/ego-001/ready/$(date +%Y%m%d)/export-manifest.jsonl
 ```
 
 ### 4.1 环境变量
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `EGO_SEGMENT_ROOT` | `/home/server/cache/ego-lan-214/segments` | **打包源**：原始段根目录 |
-| `EGO_EXPORT_ROOT` | `/home/server/export/ego-lan-214` | **打包目标**根目录 |
+| `EGO_SEGMENT_ROOT` | `/home/server/cache/ego-001/segments` | **打包源**：原始段根目录 |
+| `EGO_EXPORT_ROOT` | `/home/server/export/ego-001` | **打包目标**根目录 |
 | `EGO_EXPORT_DELETE_AFTER` | `1` | 成功后删 `segments/` 源段 |
 | `EGO_CAPTURE_TARGET` | `ecs-oak-capture-stack.target` | 导出前检查采集已停 |
 | `EGO_STUDIO_ROOT` | `/home/server/workspace/ego-studio` | 打包 Python 环境 |
@@ -497,18 +497,18 @@ journalctl --user -u ecs-upload-segments-loop -f   # pending=0 后 stop
 **只拷路径 C**，不要拷 `segments/` 原始目录：
 
 ```bash
-sudo mkdir -p /mnt/ego-export/ego-lan-214
+sudo mkdir -p /mnt/ego-export/ego-001
 sudo mount /dev/sdX1 /mnt/ego-export   # 以 lsblk 为准
 
-cp -v /home/server/export/ego-lan-214/ready/$(date +%Y%m%d)/*.tar.zst \
-      /mnt/ego-export/ego-lan-214/
+cp -v /home/server/export/ego-001/ready/$(date +%Y%m%d)/*.tar.zst \
+      /mnt/ego-export/ego-001/
 sync
 ```
 
 U 盘内结构：
 
 ```text
-<U盘>/ego-lan-214/
+<U盘>/ego-001/
 ├── seg_000001.tar.zst
 ├── seg_000002.tar.zst
 └── ...
@@ -516,9 +516,9 @@ U 盘内结构：
 
 ### 5.2 34 采集页单段应急补传
 
-> **批量请勿使用浏览器多文件拖传**；W2 及生产批量验收均走 214 Agent。详见 [ego-lan-214-upload-channel-policy.md](../../docs/ego-lan-214-upload-channel-policy.md)。
+> **批量请勿使用浏览器多文件拖传**；生产批量验收走 `ego-upload`。详见 [ego-001 使用手册](../docs/ego-001-使用手册.md)。
 
-1. 打开 [http://10.10.10.34:8080/collection?station=ego-lan-214](http://10.10.10.34:8080/collection?station=ego-lan-214)
+1. 打开 [http://10.10.10.34:8080/collection?station=ego-001](http://10.10.10.34:8080/collection?station=ego-001)
 2. Episodes → **「导入」** → 拖入 **单个** `.tar.zst`
 3. 异步模式下显示 **「已上传，后台处理中」**（非「可回放」）；派生完成后刷新 Episodes 回放质检
 
@@ -553,15 +553,15 @@ U 盘内结构：
 | 说明 | 路径 |
 |------|------|
 | 录制中（内存，可能未落盘） | `/dev/shm/ego-capture-active/` |
-| **原始段（打包源，须 closed=true）** | `/home/server/cache/ego-lan-214/segments/` |
-| 打包中间态 | `/home/server/export/ego-lan-214/staging/` |
-| **导出成品（拷 U 盘）** | `/home/server/export/ego-lan-214/ready/YYYYMMDD/` |
+| **原始段（打包源，须 closed=true）** | `/home/server/cache/ego-001/segments/` |
+| 打包中间态 | `/home/server/export/ego-001/staging/` |
+| **导出成品（拷 U 盘）** | `/home/server/export/ego-001/ready/YYYYMMDD/` |
 | Web 控制页 | `data-lab-platform/ego-local-web/ego_web.py` |
 | 离线导出脚本 | `data-lab-platform/ego-local-web/export_offline.py` |
 | 一键入口 | `data-lab-platform/ego-local-web/scripts/export-offline.sh` |
 | 段状态机（uploaded 等） | `data-lab-platform/ego-stream-client/segment_store.py` |
 | tar.zst 打包实现 | `data-lab-platform/ego-stream-client/segment_tar_zst.py` |
-| 34 流式数据 | `data-lab-platform/data-storage/stream/ego-lan-214/` |
+| 34 流式数据 | `data-lab-platform/data-storage/stream/ego-001/` |
 
 ---
 
@@ -574,7 +574,7 @@ U 盘内结构：
 | 为什么录了约 10 秒 segments 没新目录？ | ① 相机初始化占去数秒，实际写帧可能只有 2～3 秒；② 收尾未完成，段卡在 shm；③ 「已生成段数」不统计 shm |
 | 结束录制后数据在哪？ | 正常：B 下 `segments/.../seg_*` 且 `closed=true` |
 | 打包从哪读？ | 只从 B，且只要 `closed=true && uploaded=false` |
-| 打包后文件在哪？ | C：`export/ego-lan-214/ready/YYYYMMDD/*.tar.zst` |
+| 打包后文件在哪？ | C：`export/ego-001/ready/YYYYMMDD/*.tar.zst` |
 | 打包后原始段还在吗？ | 默认**删除**（`EGO_EXPORT_DELETE_AFTER=1`） |
 | 为什么看不到琥珀色「正在准备录制」？ | 旧版会把 `/dev/shm/` 里**上次失败遗留**的 open 段误判为已写帧，直接变绿。现版已按**本次采集启动时间**过滤；轮询间隔 0.8s |
 | 能直接把 `segments/` 拷到 34 吗？ | **不能**，须 tar.zst 经 Agent 或单段浏览器导入 |

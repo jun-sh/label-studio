@@ -16,7 +16,7 @@ import {
 } from "../lerobot-converter.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, "../../stream-data/ego-lan-214");
+const ROOT = path.resolve(__dirname, "../../stream-data/ego-001");
 const SYNC = path.join(__dirname, "sync-stream-parquet.py");
 
 function assert(cond, msg) {
@@ -30,8 +30,8 @@ function testManifestParsing() {
       "utf8",
     ),
   );
-  const meta = parseManifestToEpisodeMeta(human, "ego-lan-214");
-  assert(meta.station_id === "ego-lan-214", "human station_id");
+  const meta = parseManifestToEpisodeMeta(human, "ego-001");
+  assert(meta.station_id === "ego-001", "human station_id");
   assert(meta.embodiment === "human_demo", "human embodiment");
   assert(meta.task_id === "fold_towel_001", "human task_id");
   const ext = JSON.parse(meta.extended_info);
@@ -54,7 +54,7 @@ function testManifestParsing() {
 function testHumanFeatures() {
   const info = bootstrapDatasetSchema(
     { features: { "observation.state": { dtype: "float32", shape: [6] } } },
-    parseManifestToEpisodeMeta({ embodiment: "human_demo" }, "ego-lan-214"),
+    parseManifestToEpisodeMeta({ embodiment: "human_demo" }, "ego-001"),
   );
   assert("observation.hand_pose_left" in info.features, "hand_pose_left registered");
   assert("observation.head_pose" in info.features, "head_pose registered");

@@ -37,7 +37,7 @@ for SID in "${SESSIONS[@]}"; do
       --station ego-001 \
       --session "$SID" \
       --datalab-root "$DATALAB_ROOT" \
-      --corpus-slug egodome \
+      --corpus-slug ego_001 \
       --mode hands \
       --force
   ) >>"$LOG" 2>&1; then

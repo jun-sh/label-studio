@@ -60,45 +60,52 @@ if [ -d "${SAMPLES}" ]; then
   copy_if_newer "${SAMPLES}/SenseXperience Ego.zip" "${BUNDLED}/sensexperience_ego.zip" || true
   copy_if_newer "${SAMPLES}/SenseXperience UMI.zip" "${BUNDLED}/sensexperience_umi.zip" || true
   copy_if_newer "${SAMPLES}/DualAirbot Folding.zip" "${BUNDLED}/dualairbot_fold.zip" || true
-  copy_if_newer "${SAMPLES}/ego_214_hand_pose.zip" "${BUNDLED}/ego_214_hand_pose.zip" || true
-  if [ -d "${SAMPLES}/ego_214_hand_pose/dataset" ]; then
-    mkdir -p "${BUNDLED}/ego_214_hand_pose"
+  if [ -f "${SAMPLES}/ego_001.zip" ]; then
+    copy_if_newer "${SAMPLES}/ego_001.zip" "${BUNDLED}/ego_001.zip" || true
+  else
+    copy_if_newer "${SAMPLES}/egodome.zip" "${BUNDLED}/ego_001.zip" || true
+  fi
+  if [ -d "${SAMPLES}/ego_001/dataset" ]; then
+    mkdir -p "${BUNDLED}/ego_001"
     if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "${SAMPLES}/ego_214_hand_pose/dataset/" "${BUNDLED}/ego_214_hand_pose/" || true
+      rsync -a --delete "${SAMPLES}/ego_001/dataset/" "${BUNDLED}/ego_001/" || true
     else
-      rm -rf "${BUNDLED}/ego_214_hand_pose"
-      cp -a "${SAMPLES}/ego_214_hand_pose/dataset" "${BUNDLED}/ego_214_hand_pose" || true
+      rm -rf "${BUNDLED}/ego_001"
+      cp -a "${SAMPLES}/ego_001/dataset" "${BUNDLED}/ego_001" || true
+    fi
+  elif [ -d "${SAMPLES}/egodome/dataset" ]; then
+    mkdir -p "${BUNDLED}/ego_001"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/egodome/dataset/" "${BUNDLED}/ego_001/" || true
+    else
+      rm -rf "${BUNDLED}/ego_001"
+      cp -a "${SAMPLES}/egodome/dataset" "${BUNDLED}/ego_001" || true
     fi
   fi
-  copy_if_newer "${SAMPLES}/ego_214_hand_pose_hand_kp2d.json" "${BUNDLED}/overlays/ego_214_hand_pose_hand_kp2d.json" || true
-  copy_if_newer "${SAMPLES}/ego_214_hand_pose_depth_preview.json" "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview.json" || true
-  if [ -d "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" ]; then
-    mkdir -p "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames"
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "${SAMPLES}/ego_214_hand_pose_depth_preview_frames/" "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames/" || true
-    else
-      rm -rf "${BUNDLED}/overlays/ego_214_hand_pose_depth_preview_frames"
-      cp -a "${SAMPLES}/ego_214_hand_pose_depth_preview_frames" "${BUNDLED}/overlays/" || true
-    fi
+  if [ -f "${SAMPLES}/ego_001_hand_kp2d.json" ]; then
+    copy_if_newer "${SAMPLES}/ego_001_hand_kp2d.json" "${BUNDLED}/overlays/ego_001_hand_kp2d.json" || true
+  else
+    copy_if_newer "${SAMPLES}/egodome_hand_kp2d.json" "${BUNDLED}/overlays/ego_001_hand_kp2d.json" || true
   fi
-  copy_if_newer "${SAMPLES}/egodome.zip" "${BUNDLED}/egodome.zip" || true
-  if [ -d "${SAMPLES}/egodome/dataset" ]; then
-    mkdir -p "${BUNDLED}/egodome"
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "${SAMPLES}/egodome/dataset/" "${BUNDLED}/egodome/" || true
-    else
-      rm -rf "${BUNDLED}/egodome"
-      cp -a "${SAMPLES}/egodome/dataset" "${BUNDLED}/egodome" || true
-    fi
+  if [ -f "${SAMPLES}/ego_001_depth_preview.json" ]; then
+    copy_if_newer "${SAMPLES}/ego_001_depth_preview.json" "${BUNDLED}/overlays/ego_001_depth_preview.json" || true
+  else
+    copy_if_newer "${SAMPLES}/egodome_depth_preview.json" "${BUNDLED}/overlays/ego_001_depth_preview.json" || true
   fi
-  copy_if_newer "${SAMPLES}/egodome_hand_kp2d.json" "${BUNDLED}/overlays/egodome_hand_kp2d.json" || true
-  copy_if_newer "${SAMPLES}/egodome_depth_preview.json" "${BUNDLED}/overlays/egodome_depth_preview.json" || true
-  if [ -d "${SAMPLES}/egodome_depth_preview_frames" ]; then
-    mkdir -p "${BUNDLED}/overlays/egodome_depth_preview_frames"
+  if [ -d "${SAMPLES}/ego_001_depth_preview_frames" ]; then
+    mkdir -p "${BUNDLED}/overlays/ego_001_depth_preview_frames"
     if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "${SAMPLES}/egodome_depth_preview_frames/" "${BUNDLED}/overlays/egodome_depth_preview_frames/" || true
+      rsync -a --delete "${SAMPLES}/ego_001_depth_preview_frames/" "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
     else
-      rm -rf "${BUNDLED}/overlays/egodome_depth_preview_frames"
+      rm -rf "${BUNDLED}/overlays/ego_001_depth_preview_frames"
+      cp -a "${SAMPLES}/ego_001_depth_preview_frames" "${BUNDLED}/overlays/" || true
+    fi
+  elif [ -d "${SAMPLES}/egodome_depth_preview_frames" ]; then
+    mkdir -p "${BUNDLED}/overlays/ego_001_depth_preview_frames"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "${SAMPLES}/egodome_depth_preview_frames/" "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
+    else
+      rm -rf "${BUNDLED}/overlays/ego_001_depth_preview_frames"
       cp -a "${SAMPLES}/egodome_depth_preview_frames" "${BUNDLED}/overlays/" || true
     fi
   fi
@@ -125,8 +132,7 @@ fi
 
 # --- Cover images (static .webp, same as io-ai.tech) ---
 fetch_cover "sensexperience_ego.webp"
-fetch_cover "ego_214_hand_pose.webp" || copy_if_newer "${SAMPLES}/ego_214_hand_pose.webp" "${BUNDLED}/covers/ego_214_hand_pose.webp" || true
-fetch_cover "egodome.webp" || copy_if_newer "${SAMPLES}/egodome.webp" "${BUNDLED}/covers/egodome.webp" || copy_if_newer "${SAMPLES}/ego_214_hand_pose.webp" "${BUNDLED}/covers/egodome.webp" || true
+fetch_cover "ego_001.webp" || copy_if_newer "${SAMPLES}/ego_001.webp" "${BUNDLED}/covers/ego_001.webp" || copy_if_newer "${SAMPLES}/egodome.webp" "${BUNDLED}/covers/ego_001.webp" || true
 fetch_cover "sensexperience_umi.webp"
 fetch_cover "lerobot_dataset_dualairbot_fold.webp"
 fetch_cover "lerobot_dataset_dualpiper_pulling.webp"

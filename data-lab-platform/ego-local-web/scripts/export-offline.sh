@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click offline export on 214: pack pending segments -> export/ready/YYYYMMDD/
+# One-click offline export: pack pending segments -> export/ready/YYYYMMDD/
 # Requires ego-studio venv (pack_segment_tar_zst). Does not touch capture stack code.
 set -euo pipefail
 
@@ -25,8 +25,8 @@ if [[ ! -f "$EXPORT_PY" ]]; then
   exit 2
 fi
 
-export EGO_SEGMENT_ROOT="${EGO_SEGMENT_ROOT:-/home/server/cache/ego-lan-214/segments}"
-export EGO_EXPORT_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-lan-214}"
+export EGO_SEGMENT_ROOT="${EGO_SEGMENT_ROOT:-/home/server/cache/ego-001/segments}"
+export EGO_EXPORT_ROOT="${EGO_EXPORT_ROOT:-/home/server/export/ego-001}"
 export EGO_CAPTURE_TARGET="${EGO_CAPTURE_TARGET:-ecs-oak-capture-stack.target}"
 export EGO_EXPORT_DELETE_AFTER="${EGO_EXPORT_DELETE_AFTER:-1}"
 

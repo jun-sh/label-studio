@@ -396,6 +396,12 @@ def load_episodes_index(root: Path) -> list[dict]:
     return sorted(episodes, key=lambda ep: int(ep.get("episode_index", 0)))
 
 
+def row_episode_index(src: dict, episodes: list[dict], frame_index: int) -> int:
+    if "episode_index" in src and src.get("episode_index") is not None:
+        return int(src.get("episode_index"))
+    return episode_index_for_frame(episodes, frame_index) if episodes else 0
+
+
 def episode_index_for_frame(episodes: list[dict], frame_index: int) -> int:
     matches: list[dict] = []
     for ep in episodes:
@@ -451,6 +457,28 @@ def coerce_feature_vector(raw, key: str, info: dict) -> list:
     return raw
 
 
+def fallback_values_to_feature_array(values: list, spec: dict) -> pa.Array:
+    """Container fallback when ego_platform is not installed on the image."""
+    dtype = str(spec.get("dtype") or "float32")
+    shape = spec.get("shape") or [1]
+    size = 1
+    for dim in shape:
+        size *= int(dim)
+    if dtype.startswith("int"):
+        value_type = pa.int64()
+    elif dtype == "float64":
+        value_type = pa.float64()
+    else:
+        value_type = pa.float32()
+    if size == 1:
+        flat = [
+            (v[0] if isinstance(v, (list, tuple)) and len(v) == 1 else v)
+            for v in values
+        ]
+        return pa.array(flat, type=value_type)
+    return pa.array(values, type=pa.list_(value_type, size))
+
+
 def parquet_feature_type(key: str, info: dict) -> pa.DataType:
     features = info.get("features") or {}
     spec = features.get(key) or {}
@@ -500,11 +528,12 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
         frame = int(src.get("frame_index", seq))
         frame_index_col.append(frame)
         index_col.append(seq)
-        episode_index_col.append(
-            episode_index_for_frame(episodes, frame) if episodes else 0
-        )
+        ep_idx = row_episode_index(src, episodes, frame)
+        episode_index_col.append(ep_idx)
         task_index_col.append(
-            episode_index_for_frame(episodes, frame) if episodes else 0
+            int(src.get("task_index"))
+            if src.get("task_index") is not None
+            else ep_idx
         )
         timestamp_col.append(float(seq) / fps if fps > 0 else 0.0)
         for key in scalar_keys:
@@ -523,6 +552,8 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
         spec = features.get(key) or {}
         if values_to_feature_array is not None and isinstance(spec, dict) and spec.get("dtype") != "video":
             table_cols[key] = values_to_feature_array(values, spec)
+        elif key in feature_cols and isinstance(spec, dict) and spec.get("dtype") != "video":
+            table_cols[key] = fallback_values_to_feature_array(values, spec)
         else:
             table_cols[key] = pa.array(values, type=parquet_feature_type(key, info))
 

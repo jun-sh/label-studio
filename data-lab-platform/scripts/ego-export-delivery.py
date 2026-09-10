@@ -69,7 +69,7 @@ def _slug_for_station(datalab_root: Path, station: str) -> str:
         slug = (proc.stdout or "").strip()
         if slug:
             return slug
-    return "egodome"
+    return "ego_001"
 
 
 def _finalize_marker(datalab_root: Path, station: str, session_id: str) -> Path:

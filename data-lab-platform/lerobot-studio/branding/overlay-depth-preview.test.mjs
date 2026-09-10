@@ -15,13 +15,13 @@ describe("overlay-depth-preview-lib", () => {
   it("builds frame URLs from template", () => {
     const payload = {
       frame_url_template:
-        "/lerobot/api/sample/ego_214_hand_pose/depth-preview/{episode}/frame_{frame:06d}.png",
+        "/lerobot/api/sample/ego-001/depth-preview/{episode}/frame_{frame:06d}.png",
       episodes: { "000000": { frames: 10 } },
     };
     const url = frameUrl(payload, "000000", 42);
     assert.equal(
       url,
-      "/lerobot/api/sample/ego_214_hand_pose/depth-preview/000000/frame_000042.png",
+      "/lerobot/api/sample/ego-001/depth-preview/000000/frame_000042.png",
     );
   });
 

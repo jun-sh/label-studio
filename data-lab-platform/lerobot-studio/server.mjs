@@ -190,16 +190,30 @@ function serveFileWithRange(req, res, filePath) {
   fs.createReadStream(filePath).pipe(res);
 }
 
+/** Viewer manifest id → on-disk bundled sample directory (corpus slug may differ). */
+const SAMPLE_STORAGE_ALIASES = {
+  "ego-001": "ego_001",
+  egodome: "ego_001",
+  ego_001: "ego_001",
+};
+
+function resolveSampleStorageId(datasetId) {
+  return SAMPLE_STORAGE_ALIASES[datasetId] || datasetId;
+}
+
 function handKp2dOverlayPath(datasetId) {
-  return path.join(BUNDLED, "overlays", `${datasetId}_hand_kp2d.json`);
+  const storageId = resolveSampleStorageId(datasetId);
+  return path.join(BUNDLED, "overlays", `${storageId}_hand_kp2d.json`);
 }
 
 function depthPreviewOverlayPath(datasetId) {
-  return path.join(BUNDLED, "overlays", `${datasetId}_depth_preview.json`);
+  const storageId = resolveSampleStorageId(datasetId);
+  return path.join(BUNDLED, "overlays", `${storageId}_depth_preview.json`);
 }
 
 function depthPreviewFramesRoot(datasetId) {
-  return path.join(BUNDLED, "overlays", `${datasetId}_depth_preview_frames`);
+  const storageId = resolveSampleStorageId(datasetId);
+  return path.join(BUNDLED, "overlays", `${storageId}_depth_preview_frames`);
 }
 
 function sampleHttpDatasetUrl(datasetId) {
@@ -207,10 +221,11 @@ function sampleHttpDatasetUrl(datasetId) {
 }
 
 function sampleHttpDatasetRoots(datasetId) {
+  const storageId = resolveSampleStorageId(datasetId);
   const samplesDir = process.env.DATALAB_SAMPLES_DIR || "/datalab-samples";
   return [
-    path.join(BUNDLED, datasetId),
-    path.join(samplesDir, datasetId, "dataset"),
+    path.join(BUNDLED, storageId),
+    path.join(samplesDir, storageId, "dataset"),
   ];
 }
 
@@ -289,6 +304,14 @@ function resolveHandKp2dPayload(datasetId) {
   if (fs.existsSync(overlayPath)) {
     return JSON.parse(fs.readFileSync(overlayPath, "utf8"));
   }
+  const storageId = resolveSampleStorageId(datasetId);
+  const localPath = path.join(
+    process.env.DATALAB_SAMPLES_DIR || "/datalab-samples",
+    `${storageId}_hand_kp2d.json`,
+  );
+  if (fs.existsSync(localPath)) {
+    return JSON.parse(fs.readFileSync(localPath, "utf8"));
+  }
 
   const sample = findDataset(datasetId);
   const archiveUrl = sample?.archiveUrl || "";
@@ -310,9 +333,10 @@ function resolveDepthPreviewPayload(datasetId) {
   if (fs.existsSync(overlayPath)) {
     return JSON.parse(fs.readFileSync(overlayPath, "utf8"));
   }
+  const storageId = resolveSampleStorageId(datasetId);
   const localPath = path.join(
     process.env.DATALAB_SAMPLES_DIR || "/datalab-samples",
-    `${datasetId}_depth_preview.json`,
+    `${storageId}_depth_preview.json`,
   );
   if (fs.existsSync(localPath)) {
     return JSON.parse(fs.readFileSync(localPath, "utf8"));
@@ -323,7 +347,10 @@ function resolveDepthPreviewPayload(datasetId) {
 function resolveDepthPreviewFramePath(datasetId, episodeKey, frameName) {
   const roots = [
     depthPreviewFramesRoot(datasetId),
-    path.join(process.env.DATALAB_SAMPLES_DIR || "/datalab-samples", `${datasetId}_depth_preview_frames`),
+    path.join(
+      process.env.DATALAB_SAMPLES_DIR || "/datalab-samples",
+      `${resolveSampleStorageId(datasetId)}_depth_preview_frames`,
+    ),
   ];
   const safeEpisode = String(episodeKey || "").replace(/[^0-9]/g, "").padStart(6, "0");
   const safeFrame = path.basename(String(frameName || ""));
@@ -395,7 +422,10 @@ function injectBranding(html, search = "") {
 }
 
 function findDataset(id) {
-  const entry = datasets.find((d) => d.id === id);
+  let entry = datasets.find((d) => d.id === id);
+  if (!entry && (id === "egodome" || id === "ego-001")) {
+    entry = datasets.find((d) => d.id === "ego_001");
+  }
   if (!entry) return null;
   if (!entry.httpDatasetUrl && resolveSampleDatasetFile(id, "meta/info.json")) {
     return { ...entry, httpDatasetUrl: sampleHttpDatasetUrl(id) };

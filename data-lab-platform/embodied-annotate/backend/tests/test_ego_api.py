@@ -69,7 +69,7 @@ def _episode_row(
         "task_index": float(episode_index),
         "dataset_from_index": 0.0,
         "dataset_to_index": 100.0,
-        "station_id": "ego-lan-214",
+        "station_id": "ego-001",
         "embodiment": embodiment,
         "task_id": "fold_towel_001",
         "annotation_status": status,

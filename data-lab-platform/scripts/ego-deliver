@@ -58,8 +58,10 @@ log() { echo "[deliver] $*"; }
 die() { echo "[deliver] ERROR: $*" >&2; exit 1; }
 
 SLUG="$(python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" slug "$STATION" \
-  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "egodome")"
-VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_001")"
+MANIFEST_ID="$(python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" manifest-id "$STATION" \
+  --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego-001")"
+VIEWER_URL="${PLATFORM_HOST}/data/${MANIFEST_ID}"
 
 if [[ "$RESET_MODE" == "34" ]]; then
   log "=== 0/2 清场 (仅 34) ==="

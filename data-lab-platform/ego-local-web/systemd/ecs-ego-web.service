@@ -14,7 +14,7 @@ Environment=EGO_WEB_PORT=8080
 Environment=EGO_CAPTURE_TARGET=ecs-oak-capture-stack.target
 Environment=EGO_PREVIEW_URL=http://127.0.0.1:8765/preview/front_left/jpg
 Environment=EGO_STANDBY_IDLE_STOP_S=45
-# EGO_SEGMENT_ROOT / EGO_CAPTURE_CHECKPOINT: from ego-station.env per station (ego-001, ego-lan-214, …)
+# EGO_SEGMENT_ROOT / EGO_CAPTURE_CHECKPOINT: from ego-station.env per station (ego-001, …)
 ExecStart=/usr/bin/python3 /home/server/ego-web/ego_web.py
 Restart=on-failure
 RestartSec=3

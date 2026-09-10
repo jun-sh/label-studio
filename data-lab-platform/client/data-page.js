@@ -47,7 +47,9 @@
   }
 
   var datasetUrlOverrides = {
-    ego_214_hand_pose: "/lerobot/api/sample/ego_214_hand_pose/dataset/",
+    "ego-001": "/lerobot/api/sample/ego_001/dataset/",
+    ego_001: "/lerobot/api/sample/ego_001/dataset/",
+    egodome: "/lerobot/api/sample/ego_001/dataset/",
   };
 
   function loadDatasetUrlOverrides() {

@@ -91,10 +91,11 @@ _py() {
   python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT"
 }
 
-SLUG="$(_py slug "$STATION" 2>/dev/null || echo "egodome")"
+SLUG="$(_py slug "$STATION" 2>/dev/null || echo "ego_001")"
+MANIFEST_ID="$(_py manifest-id "$STATION" 2>/dev/null || echo "ego-001")"
 PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
 PLATFORM_HOST="${PLATFORM_HOST%/}"
-VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+VIEWER_URL="${PLATFORM_HOST}/data/${MANIFEST_ID}"
 COLLECTION_URL="${PLATFORM_HOST}/collection?station=${STATION}"
 
 DERIVED=0

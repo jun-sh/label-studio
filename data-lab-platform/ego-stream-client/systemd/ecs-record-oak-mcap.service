@@ -13,6 +13,7 @@ EnvironmentFile=-/etc/ego/ego-station.env
 ExecStart=%h/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=300
 
 [Install]
 WantedBy=ecs-oak-mcap-capture-stack.target default.target

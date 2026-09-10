@@ -325,7 +325,11 @@ def main() -> None:
         recorder.connect()
         _require_capture_codec(recorder)
         if recorder.use_hw_h264:
-            writer.register_pre_segment_rotate_hook(recorder.prepare_h264_segment_boundary)
+            def _pre_segment_rotate() -> None:
+                recorder.begin_segment_health_window()
+                recorder.prepare_h264_segment_boundary()
+
+            writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
 
         resumed_emit: int | None = None
         if not _env_flag("EGO_STRICT_EMIT_RESUME", "0"):
@@ -397,6 +401,7 @@ def main() -> None:
                     "check OAK USB bandwidth and STRICT_* ring settings."
                 )
         beep_wall_epoch = time.time()
+        recorder.begin_segment_health_window()
         play_capture_ready_beep()
         preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
         print(
@@ -459,6 +464,7 @@ def main() -> None:
                     f"sync_mode=egoverse_30hz seg_max_frames={seg_frames} session={session_id}",
                     flush=True,
                 )
+                writer.note_open_segment_health(**recorder.ingest_health())
                 _write_capture_live_stats(
                     checkpoint_path,
                     frame_count=writer.next_frame_index,

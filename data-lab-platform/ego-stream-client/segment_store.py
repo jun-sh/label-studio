@@ -161,10 +161,41 @@ def read_manifest(segment_dir: Path) -> dict[str, Any]:
 
 def _capture_meta_fields(manifest: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("sync_mode", "frame_interval_ms", "capture_fps", "imu_hz"):
+    for key in (
+        "sync_mode",
+        "frame_interval_ms",
+        "capture_fps",
+        "imu_hz",
+        "timeline",
+        "camera_message_counts",
+        "capture_health",
+    ):
         if key in manifest:
             out[key] = manifest[key]
     return out
+
+
+def _patch_segment_writer_stats(
+    segment_dir: Path,
+    *,
+    timeline: dict[str, Any] | None = None,
+    camera_message_counts: dict[str, int] | None = None,
+    capture_health: dict[str, Any] | None = None,
+) -> None:
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if timeline is not None:
+        manifest["timeline"] = timeline
+    if camera_message_counts is not None:
+        manifest["camera_message_counts"] = camera_message_counts
+    if capture_health is not None:
+        manifest["capture_health"] = capture_health
+    write_manifest_v2(segment_dir, manifest)
 
 
 def write_manifest_v2(segment_dir: Path, payload: dict[str, Any]) -> None:
@@ -198,6 +229,34 @@ def check_segment_integrity(
     if frame_count <= 0:
         issues.append("invalid_frame_count")
 
+    timeline = manifest.get("timeline")
+    if isinstance(timeline, dict) and timeline:
+        try:
+            from ego_capture_studio.capture.strict_fps_gate import (
+                log_timeline_verdict,
+                timeline_integrity_issues,
+            )
+        except ImportError:
+            from strict_fps_gate import log_timeline_verdict, timeline_integrity_issues
+
+        log_timeline_verdict(segment_dir.name, timeline)
+        issues.extend(timeline_integrity_issues(timeline))
+
+    capture_health = manifest.get("capture_health")
+    if isinstance(capture_health, dict):
+        ring_ovf = capture_health.get("ring_ovf")
+        if isinstance(ring_ovf, dict):
+            total_ovf = sum(int(v) for v in ring_ovf.values())
+            if total_ovf > 0:
+                issues.append(f"capture_ring_overflow:total={total_ovf}")
+        quad_skew = int(capture_health.get("quad_skew_events") or 0)
+        if quad_skew > 0:
+            issues.append(
+                "capture_quad_skew:"
+                f"events={quad_skew},"
+                f"max_ns={int(capture_health.get('quad_skew_max_ns') or 0)}",
+            )
+
     storage_format = str(manifest.get("storage_format") or ("mcap" if SEGMENT_MCAP else "dlb1"))
     if storage_format == "mcap":
         mcap_path = segment_dir / "segment.mcap"
@@ -206,25 +265,30 @@ def check_segment_integrity(
         elif mcap_path.stat().st_size < 64:
             issues.append("empty_segment_mcap")
         else:
-            try:
-                from ego_capture_studio.capture.mcap_segment_writer import summarize_mcap_segment
-            except ImportError:
-                from mcap_segment_writer import summarize_mcap_segment
+            cam_roles = ("front_left", "front_right", "rear_left", "rear_right")
+            cam_counts_meta = manifest.get("camera_message_counts")
+            if isinstance(cam_counts_meta, dict) and cam_counts_meta:
+                cam_counts = [int(cam_counts_meta.get(k, 0)) for k in cam_roles]
+            else:
+                try:
+                    from ego_capture_studio.capture.mcap_segment_writer import summarize_mcap_segment
+                except ImportError:
+                    from mcap_segment_writer import summarize_mcap_segment
 
-            # A segment left truncated by an abrupt stop makes the reader raise while
-            # parsing its footer. This function runs on the capture process's startup
-            # path (orphan reconciliation) and on every segment rotation, so an escaping
-            # exception kills capture and the restart lands on the same unreadable file.
-            # That loop took ego-001 down twice today. An unreadable segment is a corrupt
-            # segment; report it and let rotation continue.
-            try:
-                summary = summarize_mcap_segment(mcap_path)
-            except Exception as exc:
-                issues.append(f"mcap_unreadable:{type(exc).__name__}")
-                return False, issues
+                # A segment left truncated by an abrupt stop makes the reader raise while
+                # parsing its footer. This function runs on the capture process's startup
+                # path (orphan reconciliation) and on every segment rotation, so an escaping
+                # exception kills capture and the restart lands on the same unreadable file.
+                # That loop took ego-001 down twice today. An unreadable segment is a corrupt
+                # segment; report it and let rotation continue.
+                try:
+                    summary = summarize_mcap_segment(mcap_path)
+                except Exception as exc:
+                    issues.append(f"mcap_unreadable:{type(exc).__name__}")
+                    return False, issues
 
-            cam_topics = [f"/ego/camera/{k}" for k in ("front_left", "front_right", "rear_left", "rear_right")]
-            cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
+                cam_topics = [f"/ego/camera/{k}" for k in cam_roles]
+                cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
             if cam_counts and (min(cam_counts) <= 0 or len(set(cam_counts)) != 1):
                 issues.append(
                     f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}",
@@ -572,9 +636,7 @@ class _OpenSegmentMcapWriter:
             timestamp_ns=job.timestamp_ns,
             camera_jpegs=job.camera_jpegs,
             row=row,
-            camera_ts_offset_ns=(
-                job.camera_ts_offset_ns.get("primary") if job.camera_ts_offset_ns else None
-            ),
+            camera_ts_offset_ns=job.camera_ts_offset_ns,
         )
         if job.imu_raw_batch:
             self._writer.append_imu_raw_records(job.imu_raw_batch)
@@ -582,8 +644,11 @@ class _OpenSegmentMcapWriter:
     def append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
         self._writer.append_imu_raw_records(records)
 
-    def close(self) -> None:
+    def close(self) -> tuple[Any, dict[str, Any] | None]:
+        timeline = self._writer.timeline_summary()
+        stats = self._writer.stats()
         self._writer.close()
+        return stats, timeline
 
 
 def _new_open_segment_writer(
@@ -647,6 +712,7 @@ class SegmentCaptureWriter:
         self._pending_count = -1
         self._pending_last_scan_mono = 0.0
         self._pre_segment_rotate_hooks: list[Callable[[], None]] = []
+        self._segment_health: dict[str, dict[str, Any]] = {}
         self._closed_segment_ids: set[str] = set()
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
         self._finalize_thread: threading.Thread | None = None
@@ -848,8 +914,17 @@ class SegmentCaptureWriter:
     def _wait_backpressure(self) -> None:
         if not SEGMENT_BACKPRESSURE_PENDING:
             return
+        t0 = time.monotonic()
         while self.pending_segment_count() >= SEGMENT_BACKPRESSURE_PENDING_MAX:
             time.sleep(SEGMENT_BACKPRESSURE_SLEEP_S)
+            waited_s = time.monotonic() - t0
+            if waited_s >= SEGMENT_PERSIST_BLOCK_S:
+                print(
+                    f"capture_block reason=backpressure pending={self.pending_segment_count()} "
+                    f"waited_ms={int(waited_s * 1000)}",
+                    flush=True,
+                )
+                t0 = time.monotonic()
 
     def _manifest_dict(self, manifest: SegmentManifest) -> dict[str, Any]:
         payload = manifest.to_dict()
@@ -931,6 +1006,15 @@ class SegmentCaptureWriter:
         self._open_segment_dir = None
         self._open_frame_count = 0
         return segment_id
+
+    def note_open_segment_health(self, **fields: Any) -> None:
+        """Capture-thread health snapshot merged into the next segment manifest."""
+        with self._lock:
+            segment_id = self._open_segment_id
+        if not segment_id:
+            return
+        health = self._segment_health.setdefault(segment_id, {})
+        health.update(fields)
 
     def register_pre_segment_rotate_hook(self, hook: Callable[[], None]) -> None:
         """P1a: called on capture thread before closing a full segment (IDR flush)."""
@@ -1038,12 +1122,37 @@ class SegmentCaptureWriter:
 
         active_dir = self._active_segments_dir() / segment_id
         writer = self._open_writers.pop(segment_id, None)
+        mcap_close_ms = 0
         if writer is not None:
-            writer.close()
+            t_close = time.perf_counter()
+            close_out = writer.close()
+            mcap_close_ms = int((time.perf_counter() - t_close) * 1000)
+            writer_stats = None
+            timeline = None
+            if isinstance(close_out, tuple) and len(close_out) == 2:
+                writer_stats, timeline = close_out
+            elif close_out is not None:
+                writer_stats = close_out
+            if writer_stats is not None and hasattr(writer_stats, "frame_count"):
+                capture_health = self._segment_health.pop(segment_id, None)
+                _patch_segment_writer_stats(
+                    active_dir,
+                    timeline=timeline,
+                    camera_message_counts=dict(writer_stats.camera_message_counts),
+                    capture_health=capture_health,
+                )
         if not active_dir.is_dir():
             return
         try:
+            t_finalize = time.perf_counter()
             finalize_segment_manifest_after_persist(active_dir)
+            finalize_ms = int((time.perf_counter() - t_finalize) * 1000)
+            if mcap_close_ms > 1000 or finalize_ms > 1000:
+                print(
+                    f"segment_close_timing segment={segment_id} "
+                    f"mcap_close_ms={mcap_close_ms} finalize_ms={finalize_ms}",
+                    flush=True,
+                )
             self._enqueue_finalize(segment_id, active_dir)
         except Exception as exc:
             print(
@@ -1170,9 +1279,8 @@ class SegmentCaptureWriter:
                 self._finalize_queue.put(None, timeout=5.0)
             except queue.Full:
                 pass
-            self._finalize_queue.join()
             if self._finalize_thread is not None and self._finalize_thread.is_alive():
-                self._finalize_thread.join(timeout=120.0)
+                self._finalize_thread.join(timeout=30.0)
 
     @property
     def next_frame_index(self) -> int:

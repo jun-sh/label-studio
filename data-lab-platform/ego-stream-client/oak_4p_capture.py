@@ -174,6 +174,8 @@ STRICT_TS_JUMP_NS = int(os.environ.get("STRICT_TS_JUMP_NS", "100000000"))
 STRICT_MAX_CAM_OFFSET_NS = int(os.environ.get("STRICT_MAX_CAM_OFFSET_NS", "50000000"))
 STRICT_REANCHOR_WARMUP_TICKS = max(0, int(os.environ.get("STRICT_REANCHOR_WARMUP_TICKS", "10")))
 STRICT_RGB_YIELD_MAX_MS = float(os.environ.get("STRICT_RGB_YIELD_MAX_MS", "16.0"))
+# FSYNC quad commit: max allowed device-ts spread across the four popped frames.
+EGO_QUAD_MAX_OFFSET_NS = int(os.environ.get("EGO_QUAD_MAX_OFFSET_NS", "1000000"))
 STRICT_DEPTH_YIELD_MAX_MS = float(os.environ.get("STRICT_DEPTH_YIELD_MAX_MS", "18.0"))
 STRICT_SYNC_MISS_MAX = max(1, int(os.environ.get("STRICT_SYNC_MISS_MAX", "4")))
 STRICT_IMU_BUFFER_MAX = max(256, int(os.environ.get("STRICT_IMU_BUFFER_MAX", "2000")))
@@ -565,6 +567,9 @@ class Oak4pEgoRecorder:
         self._ingest_last_seq: dict[str, int] = {}
         self._ingest_seq_lost: dict[str, int] = {}
         self._ingest_ring_overflow: dict[str, int] = {}
+        self._quad_skew_events = 0
+        self._quad_skew_max_ns = 0
+        self._health_window_baseline: dict[str, dict[str, int]] | None = None
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -1199,12 +1204,46 @@ class Oak4pEgoRecorder:
         """Per-camera device ingest vs emitted frames, for capture health logs."""
         if not self._ingest_counts:
             return ""
-        return " ".join(
-            f"{cam}:in={self._ingest_counts[cam]}"
-            f",xlink_lost={self._ingest_seq_lost.get(cam, 0)}"
-            f",ring_ovf={self._ingest_ring_overflow.get(cam, 0)}"
-            for cam in sorted(self._ingest_counts)
-        )
+        parts = [
+            " ".join(
+                f"{cam}:in={self._ingest_counts[cam]}"
+                f",xlink_lost={self._ingest_seq_lost.get(cam, 0)}"
+                f",ring_ovf={self._ingest_ring_overflow.get(cam, 0)}"
+                for cam in sorted(self._ingest_counts)
+            )
+        ]
+        if self._quad_skew_events:
+            parts.append(
+                f"quad_skew_events={self._quad_skew_events}"
+                f" quad_skew_max_us={self._quad_skew_max_ns / 1000:.0f}"
+            )
+        return " ".join(parts)
+
+    def begin_segment_health_window(self) -> None:
+        """Reset per-segment health counters at segment boundary."""
+        self._health_window_baseline = {
+            "ring_ovf": {k: int(v) for k, v in self._ingest_ring_overflow.items()},
+            "xlink_lost": {k: int(v) for k, v in self._ingest_seq_lost.items()},
+        }
+        self._quad_skew_events = 0
+        self._quad_skew_max_ns = 0
+
+    def ingest_health(self) -> dict[str, Any]:
+        baseline = self._health_window_baseline or {}
+        ring_base = baseline.get("ring_ovf") or {}
+        xlink_base = baseline.get("xlink_lost") or {}
+        return {
+            "quad_skew_events": int(self._quad_skew_events),
+            "quad_skew_max_ns": int(self._quad_skew_max_ns),
+            "ring_ovf": {
+                cam: int(self._ingest_ring_overflow.get(cam, 0)) - int(ring_base.get(cam, 0))
+                for cam in sorted(set(ring_base) | set(self._ingest_ring_overflow))
+            },
+            "xlink_lost": {
+                cam: int(self._ingest_seq_lost.get(cam, 0)) - int(xlink_base.get(cam, 0))
+                for cam in sorted(set(xlink_base) | set(self._ingest_seq_lost))
+            },
+        }
 
     def _yield_h264_sequential_sample(
         self,
@@ -1226,6 +1265,18 @@ class Oak4pEgoRecorder:
             sample = samples_by_oak[oak]
             capture_out[lerobot_key] = sample.payload
             offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
+        if offsets:
+            max_abs_ns = max(abs(int(v)) for v in offsets.values())
+            if max_abs_ns > self._quad_skew_max_ns:
+                self._quad_skew_max_ns = int(max_abs_ns)
+            if max_abs_ns > EGO_QUAD_MAX_OFFSET_NS:
+                self._quad_skew_events += 1
+                if self._quad_skew_events <= 3 or self._quad_skew_events % 30 == 0:
+                    print(
+                        f"quad_skew max_offset_us={max_abs_ns / 1000:.0f} "
+                        f"events={self._quad_skew_events}",
+                        flush=True,
+                    )
         return capture_out, offsets, primary_ts_ns
 
     def wait_h264_sequential_ready(

@@ -164,6 +164,10 @@ class McapSegmentStats:
     imu_message_count: int
     camera_message_counts: dict[str, int]
     video_codec: str
+    grid_min_ns: int | None = None
+    grid_max_ns: int | None = None
+    imu_min_ns: int | None = None
+    imu_max_ns: int | None = None
 
 
 class McapSegmentWriter:
@@ -197,6 +201,27 @@ class McapSegmentWriter:
         self._frame_count = 0
         self._imu_message_count = 0
         self._camera_message_counts: dict[str, int] = {k: 0 for k in CAMERA_TOPICS}
+        self._grid_min_ns: int | None = None
+        self._grid_max_ns: int | None = None
+        self._imu_min_ns: int | None = None
+        self._imu_max_ns: int | None = None
+        self._camera_ts_offset_max_ns: dict[str, int] = {}
+
+    def _note_grid_ts(self, timestamp_ns: int) -> None:
+        ts = int(timestamp_ns)
+        if self._grid_min_ns is None or ts < self._grid_min_ns:
+            self._grid_min_ns = ts
+        if self._grid_max_ns is None or ts > self._grid_max_ns:
+            self._grid_max_ns = ts
+
+    def _note_imu_ts(self, timestamp_ns: int) -> None:
+        ts = int(timestamp_ns)
+        if ts <= 0:
+            return
+        if self._imu_min_ns is None or ts < self._imu_min_ns:
+            self._imu_min_ns = ts
+        if self._imu_max_ns is None or ts > self._imu_max_ns:
+            self._imu_max_ns = ts
 
     def open(self) -> None:
         self.segment_dir.mkdir(parents=True, exist_ok=True)
@@ -268,9 +293,10 @@ class McapSegmentWriter:
         timestamp_ns: int,
         camera_jpegs: Mapping[str, bytes],
         row: Mapping[str, Any],
-        camera_ts_offset_ns: int | None = None,
+        camera_ts_offset_ns: dict[str, int] | None = None,
     ) -> None:
         ts = int(timestamp_ns)
+        self._note_grid_ts(ts)
         normalized = normalize_camera_payloads(camera_jpegs)
         if self.video_codec == "h264":
             if len(normalized) != len(CAMERA_TOPICS):
@@ -291,11 +317,28 @@ class McapSegmentWriter:
 
         obs_state = row.get("observation.state")
         if obs_state is not None:
-            self._add_json(
-                "obs_state",
-                {"frame_index": frame_index, "timestamp_ns": ts, "observation.state": obs_state},
-                log_time_ns=ts,
-            )
+            obs_payload: dict[str, Any] = {
+                "frame_index": frame_index,
+                "timestamp_ns": ts,
+                "observation.state": obs_state,
+            }
+            offsets = row.get("camera_ts_offset_ns")
+            if isinstance(offsets, dict) and offsets:
+                obs_payload["camera_ts_offset_ns"] = {
+                    str(k): int(v) for k, v in offsets.items()
+                }
+            elif camera_ts_offset_ns:
+                obs_payload["camera_ts_offset_ns"] = {
+                    str(k): int(v) for k, v in camera_ts_offset_ns.items()
+                }
+            offset_src = offsets if isinstance(offsets, dict) and offsets else camera_ts_offset_ns
+            if isinstance(offset_src, dict):
+                for key, off in offset_src.items():
+                    abs_off = abs(int(off))
+                    prev = self._camera_ts_offset_max_ns.get(str(key), 0)
+                    if abs_off > prev:
+                        self._camera_ts_offset_max_ns[str(key)] = abs_off
+            self._add_json("obs_state", obs_payload, log_time_ns=ts)
         task = row.get("task", self.task)
         self._add_json("task", {"frame_index": frame_index, "timestamp_ns": ts, "task": task}, log_time_ns=ts)
         self._frame_count += 1
@@ -303,6 +346,7 @@ class McapSegmentWriter:
     def append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
         for rec in records:
             ts = int(rec.get("ts_ns") or rec.get("timestamp_ns") or 0)
+            self._note_imu_ts(ts)
             self._add_json("imu_raw", rec, log_time_ns=ts)
             self._imu_message_count += 1
 
@@ -316,22 +360,21 @@ class McapSegmentWriter:
                 from h264_segment_boundary import require_camera_parity
 
             require_camera_parity(self._camera_message_counts)
-            self._add_json(
-                "session_meta",
-                {
-                    "schema_version": MCAP_SCHEMA_VERSION,
-                    "session_id": self.session_id,
-                    "segment_id": self.segment_id,
-                    "station_id": self.station_id,
-                    "topology_id": self.topology_id,
-                    "task": self.task,
-                    "video_codec": self.video_codec,
-                    "frame_count": self._frame_count,
-                    "camera_message_counts": dict(self._camera_message_counts),
-                    "closed": True,
-                },
-                log_time_ns=0,
-            )
+            close_meta: dict[str, Any] = {
+                "schema_version": MCAP_SCHEMA_VERSION,
+                "session_id": self.session_id,
+                "segment_id": self.segment_id,
+                "station_id": self.station_id,
+                "topology_id": self.topology_id,
+                "task": self.task,
+                "video_codec": self.video_codec,
+                "frame_count": self._frame_count,
+                "camera_message_counts": dict(self._camera_message_counts),
+                "closed": True,
+            }
+            if self._camera_ts_offset_max_ns:
+                close_meta["camera_ts_offset_max_abs_ns"] = dict(self._camera_ts_offset_max_ns)
+            self._add_json("session_meta", close_meta, log_time_ns=0)
         self._writer.finish()
         self._fp.close()
         self._writer = None
@@ -344,6 +387,25 @@ class McapSegmentWriter:
             imu_message_count=self._imu_message_count,
             camera_message_counts=dict(self._camera_message_counts),
             video_codec=self.video_codec,
+            grid_min_ns=self._grid_min_ns,
+            grid_max_ns=self._grid_max_ns,
+            imu_min_ns=self._imu_min_ns,
+            imu_max_ns=self._imu_max_ns,
+        )
+
+    def timeline_summary(self) -> dict[str, Any]:
+        try:
+            from ego_capture_studio.capture.strict_fps_gate import timeline_from_writer_spans
+        except ImportError:
+            from strict_fps_gate import timeline_from_writer_spans
+
+        return timeline_from_writer_spans(
+            frame_count=self._frame_count,
+            grid_min_ns=self._grid_min_ns,
+            grid_max_ns=self._grid_max_ns,
+            imu_min_ns=self._imu_min_ns,
+            imu_max_ns=self._imu_max_ns,
+            imu_samples=self._imu_message_count,
         )
 
 

@@ -115,6 +115,82 @@ def _read_mcap_obs_timestamps(mcap_path: Path) -> list[int]:
     return _read_mcap_series(mcap_path)[0]
 
 
+def timeline_from_writer_spans(
+    *,
+    frame_count: int,
+    grid_min_ns: int | None,
+    grid_max_ns: int | None,
+    imu_min_ns: int | None,
+    imu_max_ns: int | None,
+    imu_samples: int,
+) -> dict[str, Any]:
+    """O(1) timeline coherence from writer min/max spans (no MCAP re-read)."""
+    if frame_count < 2:
+        return {"error": "too_few_frames", "grid_frames": frame_count, "source": "writer_spans"}
+    if grid_min_ns is None or grid_max_ns is None:
+        return {"error": "missing_grid_span", "grid_frames": frame_count, "source": "writer_spans"}
+    if imu_min_ns is None or imu_max_ns is None or imu_samples < 2:
+        return {
+            "error": "no_imu_reference",
+            "imu_samples": imu_samples,
+            "source": "writer_spans",
+        }
+    grid_span_s = (int(grid_max_ns) - int(grid_min_ns)) / 1e9
+    imu_span_s = (int(imu_max_ns) - int(imu_min_ns)) / 1e9
+    if grid_span_s <= 0 or imu_span_s <= 0:
+        return {
+            "error": "degenerate_span",
+            "grid_span_s": grid_span_s,
+            "imu_span_s": imu_span_s,
+            "source": "writer_spans",
+        }
+    ratio = imu_span_s / grid_span_s
+    max_dev = _timeline_max_dev()
+    return {
+        "source": "writer_spans",
+        "grid_frames": frame_count,
+        "grid_span_s": grid_span_s,
+        "imu_samples": imu_samples,
+        "imu_span_s": imu_span_s,
+        "real_fps": frame_count / imu_span_s,
+        "claimed_fps": frame_count / grid_span_s,
+        "ratio": ratio,
+        "max_dev": max_dev,
+        "ok": abs(ratio - 1.0) <= max_dev,
+    }
+
+
+def timeline_integrity_issues(timeline: dict[str, Any]) -> list[str]:
+    """Flag compressed segments even when EGO_TIMELINE_GATE is off."""
+    if not timeline:
+        return []
+    if timeline.get("error"):
+        return [f"timeline_unavailable:{timeline['error']}"]
+    if timeline.get("ok"):
+        return []
+    return [
+        "timeline_incoherent:"
+        f"ratio={timeline.get('ratio', 0):.4f},"
+        f"real_fps={timeline.get('real_fps', 0):.3f},"
+        f"claimed_fps={timeline.get('claimed_fps', 0):.3f}",
+    ]
+
+
+def log_timeline_verdict(segment_name: str, timeline: dict[str, Any]) -> None:
+    if timeline.get("error"):
+        print(f"[timeline] {segment_name}: unavailable ({timeline['error']})", flush=True)
+        return
+    verdict = "ok" if timeline.get("ok") else "COMPRESSED"
+    print(
+        f"[timeline] {segment_name}: {verdict} ratio={timeline.get('ratio', 0):.4f} "
+        f"real_fps={timeline.get('real_fps', 0):.3f} claimed_fps={timeline.get('claimed_fps', 0):.3f} "
+        f"real_span={timeline.get('imu_span_s', 0):.2f}s "
+        f"recorded_span={timeline.get('grid_span_s', 0):.2f}s "
+        f"source={timeline.get('source', 'unknown')}",
+        flush=True,
+    )
+
+
 def analyze_timeline_coherence(grid_ns: list[int], imu_ns: list[int]) -> dict[str, Any]:
     """Compare recorded time against real elapsed time.
 

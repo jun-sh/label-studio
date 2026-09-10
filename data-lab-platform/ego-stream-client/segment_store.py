@@ -95,6 +95,7 @@ SEGMENT_FINALIZE_ASYNC = os.environ.get("SEGMENT_FINALIZE_ASYNC", "1").strip().l
     "true",
     "yes",
 )
+SEGMENT_FINALIZE_JOIN_S = float(os.environ.get("SEGMENT_FINALIZE_JOIN_S", "240"))
 SESSION_ROLL_FRAMES = int(os.environ.get("EGO_SESSION_ROLL_FRAMES", "0"))
 # Hot open segment on tmpfs; fsync + move to EGO_SEGMENT_ROOT on close (Scheme A IO).
 SEGMENT_ACTIVE_ROOT = Path(
@@ -250,9 +251,6 @@ def check_segment_integrity(
             if total_ovf > 0:
                 issues.append(f"capture_ring_overflow:total={total_ovf}")
         quad_skew = int(capture_health.get("quad_skew_events") or 0)
-        total_ovf = 0
-        if isinstance(ring_ovf, dict):
-            total_ovf = sum(int(v) for v in ring_ovf.values())
         # Sequential lockstep can show multi-ms spread at pop time even when FSYNC is
         # healthy; only reject when rings overflowed in the same segment window.
         if quad_skew > 0 and total_ovf > 0:
@@ -300,12 +298,39 @@ def check_segment_integrity(
                     f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}",
                 )
             try:
-                from ego_capture_studio.capture.strict_fps_gate import check_mcap_strict_fps
+                from ego_capture_studio.capture.strict_fps_gate import (
+                    check_mcap_strict_fps,
+                    strict_fps_gate_enabled,
+                    strict_fps_gate_fast_path_enabled,
+                    timeline_gate_enabled,
+                )
             except ImportError:
-                from strict_fps_gate import check_mcap_strict_fps
+                from strict_fps_gate import (
+                    check_mcap_strict_fps,
+                    strict_fps_gate_enabled,
+                    strict_fps_gate_fast_path_enabled,
+                    timeline_gate_enabled,
+                )
 
-            fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
-            issues.extend(fps_issues)
+            writer_timeline = manifest.get("timeline")
+            skip_mcap_fps_read = (
+                isinstance(writer_timeline, dict)
+                and writer_timeline.get("source") == "writer_spans"
+                and not writer_timeline.get("error")
+                and isinstance(cam_counts_meta, dict)
+                and bool(cam_counts_meta)
+                and strict_fps_gate_enabled()
+                and strict_fps_gate_fast_path_enabled()
+                and not timeline_gate_enabled()
+            )
+            if skip_mcap_fps_read:
+                if frame_count > 0 and cam_counts and max(cam_counts) != frame_count:
+                    issues.append(
+                        f"mcap_camera_count_frame_mismatch:{max(cam_counts)}!={frame_count}",
+                    )
+            elif strict_fps_gate_enabled() or timeline_gate_enabled():
+                _fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
+                issues.extend(fps_issues)
         return len(issues) == 0, issues
 
     rows_path = segment_dir / "rows.jsonl"
@@ -691,7 +716,9 @@ class SegmentCaptureWriter:
         self.task = task
         self.quota_bytes = max(1, int(quota_bytes))
         self.checkpoint_path = checkpoint_path
-        self._lock = threading.Lock()
+        # RLock: segment rotate hooks call note_open_segment_health() while append_frame
+        # already holds this lock (pre-rotate health flush).
+        self._lock = threading.RLock()
         self._next_frame_index = 0
         self._segment_seq = 0
         self._open_segment_id: str | None = None
@@ -718,6 +745,7 @@ class SegmentCaptureWriter:
         self._pending_count = -1
         self._pending_last_scan_mono = 0.0
         self._pre_segment_rotate_hooks: list[Callable[[], None]] = []
+        self._post_segment_rotate_hooks: list[Callable[[], None]] = []
         self._segment_health: dict[str, dict[str, Any]] = {}
         self._closed_segment_ids: set[str] = set()
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
@@ -1026,6 +1054,10 @@ class SegmentCaptureWriter:
         """P1a: called on capture thread before closing a full segment (IDR flush)."""
         self._pre_segment_rotate_hooks.append(hook)
 
+    def register_post_segment_rotate_hook(self, hook: Callable[[], None]) -> None:
+        """Called on capture thread after a new segment is opened."""
+        self._post_segment_rotate_hooks.append(hook)
+
     def _invoke_pre_segment_rotate_hooks(self) -> None:
         for hook in self._pre_segment_rotate_hooks:
             try:
@@ -1033,14 +1065,34 @@ class SegmentCaptureWriter:
             except Exception as exc:
                 print(f"pre_segment_rotate_hook warning: {exc}", flush=True)
 
+    def _invoke_post_segment_rotate_hooks(self) -> None:
+        for hook in self._post_segment_rotate_hooks:
+            try:
+                hook()
+            except Exception as exc:
+                print(f"post_segment_rotate_hook warning: {exc}", flush=True)
+
+    def _wait_finalize_queue(self, timeout_s: float) -> bool:
+        if self._finalize_queue is None:
+            return True
+        t0 = time.monotonic()
+        while self._finalize_queue.unfinished_tasks > 0:
+            if time.monotonic() - t0 >= timeout_s:
+                return False
+            time.sleep(0.05)
+        return True
+
     def _rotate_segment_locked(self) -> None:
         self._invoke_pre_segment_rotate_hooks()
         closed_id = self._close_open_segment_locked()
         if closed_id:
             close_job = _SegmentCloseJob(session_id=self.session_id, segment_id=closed_id)
-            self._offer_persist(close_job, blocking=True)
+            # Close on the persist thread without blocking capture: a blocking MCAP
+            # finalize at 1800 frames stalled the 30Hz loop for 90s+ on ego-001.
+            self._offer_persist(close_job, blocking=False)
             self._touch_registry_session(last_segment_id=closed_id)
         self._open_new_segment()
+        self._invoke_post_segment_rotate_hooks()
 
     def _maybe_rotate_segment_locked(self) -> None:
         """Rotate before accepting a new frame when the current segment is full."""
@@ -1281,12 +1333,19 @@ class SegmentCaptureWriter:
                     self._enqueue_finalize(seg_id, active_dir)
             self._open_writers.clear()
         if self._finalize_queue is not None:
+            drained = self._wait_finalize_queue(SEGMENT_FINALIZE_JOIN_S)
+            if not drained:
+                print(
+                    f"segment_finalize_drain_timeout pending={self._finalize_queue.unfinished_tasks} "
+                    f"timeout_s={SEGMENT_FINALIZE_JOIN_S:.0f}",
+                    flush=True,
+                )
             try:
                 self._finalize_queue.put(None, timeout=5.0)
             except queue.Full:
                 pass
             if self._finalize_thread is not None and self._finalize_thread.is_alive():
-                self._finalize_thread.join(timeout=30.0)
+                self._finalize_thread.join(timeout=5.0)
 
     @property
     def next_frame_index(self) -> int:

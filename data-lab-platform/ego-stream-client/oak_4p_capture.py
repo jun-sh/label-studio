@@ -1272,15 +1272,16 @@ class Oak4pEgoRecorder:
             sample = samples_by_oak[oak]
             capture_out[lerobot_key] = sample.payload
             offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
-        if offsets:
-            max_abs_ns = max(abs(int(v)) for v in offsets.values())
-            if max_abs_ns > self._quad_skew_max_ns:
-                self._quad_skew_max_ns = int(max_abs_ns)
-            if max_abs_ns > EGO_QUAD_MAX_OFFSET_NS:
+        device_ts = [int(sample.ts_ns) for sample in samples_by_oak.values()]
+        if device_ts:
+            spread_ns = max(device_ts) - min(device_ts)
+            if spread_ns > self._quad_skew_max_ns:
+                self._quad_skew_max_ns = int(spread_ns)
+            if spread_ns > EGO_QUAD_MAX_OFFSET_NS:
                 self._quad_skew_events += 1
                 if self._quad_skew_events <= 3 or self._quad_skew_events % 30 == 0:
                     print(
-                        f"quad_skew max_offset_us={max_abs_ns / 1000:.0f} "
+                        f"quad_skew spread_us={spread_ns / 1000:.0f} "
                         f"events={self._quad_skew_events}",
                         flush=True,
                     )

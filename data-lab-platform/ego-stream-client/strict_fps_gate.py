@@ -45,6 +45,15 @@ def strict_fps_gate_enabled() -> bool:
     )
 
 
+def strict_fps_gate_fast_path_enabled() -> bool:
+    """Skip full MCAP re-read on segment close when writer-span timeline is present."""
+    return os.environ.get("EGO_STRICT_FPS_GATE_FAST", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def analyze_timestamp_series(
     ts_ns: list[int],
     *,

@@ -326,10 +326,14 @@ def main() -> None:
         _require_capture_codec(recorder)
         if recorder.use_hw_h264:
             def _pre_segment_rotate() -> None:
-                recorder.begin_segment_health_window()
+                writer.note_open_segment_health(**recorder.ingest_health())
                 recorder.prepare_h264_segment_boundary()
 
+            def _post_segment_rotate() -> None:
+                recorder.begin_segment_health_window()
+
             writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
+            writer.register_post_segment_rotate_hook(_post_segment_rotate)
 
         resumed_emit: int | None = None
         if not _env_flag("EGO_STRICT_EMIT_RESUME", "0"):
@@ -481,6 +485,7 @@ def main() -> None:
         remaining_imu = recorder.flush_remaining_imu_raw()
         if remaining_imu:
             writer.append_imu_raw(remaining_imu)
+        writer.note_open_segment_health(**recorder.ingest_health())
         if recorder.use_hw_h264:
             recorder.prepare_h264_segment_boundary()
         try:

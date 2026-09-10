@@ -6,10 +6,28 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+def _bootstrap_h264_import() -> None:
+    here = Path(__file__).resolve().parent
+    for base in (
+        here.parent.parent / "ego-stream-client",  # local: data-lab-platform/ego-stream-client
+        here.parent / "ego-stream-client",  # docker: /app/ego-stream-client
+    ):
+        if (base / "h264_segment_boundary.py").is_file():
+            path = str(base)
+            if path not in sys.path:
+                sys.path.insert(0, path)
+            return
+    raise ImportError("h264_segment_boundary not found (expected ego-stream-client on sys.path)")
+
+
+_bootstrap_h264_import()
+from h264_segment_boundary import contains_idr  # noqa: E402
 
 CAMERA_TOPICS: dict[str, str] = {
     "/ego/camera/front_left": "front_left",
@@ -72,6 +90,64 @@ def _decode_camera_message(payload: bytes) -> tuple[str, bytes]:
 
 def _frame_bin_name(frame_index: int) -> str:
     return f"{int(frame_index):08d}.jpg"
+
+
+def _h264_trim_to_idr_enabled() -> bool:
+    return os.environ.get("EGO_H264_TRIM_TO_IDR", "1").strip().lower() not in ("0", "false", "no")
+
+
+def _first_idr_packet_index(packets: list[tuple[int, bytes]]) -> int | None:
+    for idx, (_ts, raw) in enumerate(packets):
+        if contains_idr(raw):
+            return idx
+    return None
+
+
+def trim_h264_camera_streams(
+    camera_h264: dict[str, list[tuple[int, bytes]]],
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, list[tuple[int, bytes]]], list[dict[str, Any]], dict[str, Any]]:
+    """Drop pre-IDR packets per camera; align rows to max(first_idr) and min remaining length."""
+    sorted_items = {
+        cam: sorted(items, key=lambda item: item[0]) for cam, items in camera_h264.items()
+    }
+    first_idr: dict[str, int] = {}
+    for cam, items in sorted_items.items():
+        if not items:
+            raise RuntimeError(f"h264_trim_empty_stream:camera={cam}")
+        idx = _first_idr_packet_index(items)
+        if idx is None:
+            raise RuntimeError(f"h264_trim_no_idr:camera={cam}")
+        first_idr[cam] = idx
+
+    trimmed = {cam: sorted_items[cam][first_idr[cam] :] for cam in sorted_items}
+    align_skip = max(first_idr.values())
+    frame_count = min(len(trimmed[cam]) for cam in trimmed)
+    if frame_count <= 0:
+        raise RuntimeError("h264_trim_no_frames_after_align")
+
+    if len(rows) >= align_skip + frame_count:
+        out_rows = [dict(row) for row in rows[align_skip : align_skip + frame_count]]
+    elif len(rows) >= frame_count:
+        out_rows = [dict(row) for row in rows[-frame_count:]]
+    else:
+        raise RuntimeError(
+            f"h264_trim_rows_short:rows={len(rows)} need>={align_skip + frame_count}"
+        )
+
+    for i, row in enumerate(out_rows):
+        row["frame_index"] = i
+
+    out_streams = {cam: trimmed[cam][:frame_count] for cam in trimmed}
+    meta = {
+        "h264_trim_to_idr": True,
+        "trim_align_skip_rows": align_skip,
+        "trim_first_idr_index": first_idr,
+        "trim_frames_dropped": {cam: first_idr[cam] for cam in first_idr},
+        "frame_count_before_trim": min(len(sorted_items[c]) for c in sorted_items),
+        "frame_count_after_trim": frame_count,
+    }
+    return out_streams, out_rows, meta
 
 
 def summarize_mcap_archive(archive_path: Path) -> dict[str, Any]:
@@ -256,19 +332,23 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
         if "observation.hands" in row and _is_placeholder_hands(row.get("observation.hands")):
             row.pop("observation.hands", None)
 
+    trim_meta: dict[str, Any] | None = None
     if video_codec == "h264":
         h264_counts = [len(camera_h264[k]) for k in CAMERA_TOPICS.values()]
         if not h264_counts or not all(c > 0 for c in h264_counts):
             raise RuntimeError(f"h264 camera parity failed for {archive_path}")
-        frame_count = min(len(rows), min(h264_counts))
-        rows = rows[:frame_count]
+        if _h264_trim_to_idr_enabled():
+            camera_h264, rows, trim_meta = trim_h264_camera_streams(camera_h264, rows)
+        frame_count = len(rows)
+        if frame_count <= 0:
+            raise RuntimeError(f"h264 trim produced no rows for {archive_path}")
         streams_dir = extract_dir / "streams"
         streams_dir.mkdir(parents=True, exist_ok=True)
         for cam_key, items in camera_h264.items():
             items.sort(key=lambda item: item[0])
             stream_path = streams_dir / f"{cam_key}.h264"
             with open(stream_path, "wb") as fp:
-                for _ts, packet in items[:frame_count]:
+                for _ts, packet in items:
                     fp.write(packet)
     else:
         for cam_key, items in camera_jpegs.items():
@@ -298,6 +378,8 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
         "video_codec": video_codec,
         "manifest_schema_version": 2,
     }
+    if trim_meta:
+        manifest["h264_trim"] = trim_meta
     (extract_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (extract_dir / "rows.jsonl").write_text(
         "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n",
@@ -317,6 +399,7 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
         "frame_count": frame_count,
         "video_codec": video_codec,
         "imu_records": len(imu_records),
+        "h264_trim": trim_meta,
         "camera_frames": {
             cam_key: (
                 frame_count

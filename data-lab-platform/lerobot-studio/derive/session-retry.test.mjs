@@ -20,6 +20,9 @@ describe("derive session retry policy", () => {
   it("blocks retry for non-retryable gate codes", () => {
     assert.equal(isDeriveFailureRetryable({ code: "PARQUET_INDEX_GAP" }), false);
     assert.equal(isDeriveFailureRetryable({ code: "MUX_FRAME_MISMATCH" }), false);
+    assert.equal(isDeriveFailureRetryable({ code: "MUX_DECODE_FAILED" }), false);
+    assert.equal(isDeriveFailureRetryable({ code: "BROWSER_NOT_PLAYABLE" }), false);
+    assert.equal(isDeriveFailureRetryable({ code: "RECONCILE_EXCEEDED" }), false);
     assert.equal(isDeriveFailureRetryable({ code: "DERIVE_TRANSIENT" }), true);
   });
 

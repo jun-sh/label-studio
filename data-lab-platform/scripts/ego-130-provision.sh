@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
 
   production (默认)  ego-001 JPEG tar.zst 生产路径（ecs-record-oak-stream）
   mcap-pilot         独立 pilot unit（ecs-record-oak-mcap-pilot，:7863 上传）
-  mcap-production    同 mcap-pilot（预留生产切流 profile 名）
+  mcap-production    ego-001 MCAP H.264 生产（ecs-record-oak-mcap + station profile）
 EOF
       exit 0
       ;;
@@ -47,10 +47,15 @@ case "$PROFILE" in
   production)
     STATION_ID="${STATION_ID:-ego-001}"
     ;;
-  mcap-pilot|mcap-production)
+  mcap-pilot)
     STATION_ID="${STATION_ID:-ego-mcap-pilot}"
     ROOT="$(cd "$(dirname "$0")/.." && pwd)"
     exec bash "${ROOT}/scripts/ego-130-provision-mcap-pilot.sh" "${TARGET}"
+    ;;
+  mcap-production)
+    STATION_ID="${STATION_ID:-ego-001}"
+    ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    exec bash "${ROOT}/scripts/ego-130-provision-mcap-production.sh" "${TARGET}" "${STATION_ID}"
     ;;
   *)
     echo "未知 profile: ${PROFILE}" >&2

@@ -119,6 +119,10 @@ services:
       - DERIVE_VIDEO_EXPORT_BACKEND=auto
       - DERIVE_PARQUET_BACKEND=lerobot
       - DERIVE_DEFER_PUBLISH=${DERIVE_DEFER_PUBLISH:-1}
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}
       - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
     healthcheck:
       test:
@@ -241,6 +245,7 @@ services:
       - ./data-storage/lerobot-qc/sidecar:/data/qc-sidecar
       - ./data-storage/lerobot-qc/delivery:/data/qc-delivery
       - ./data-storage/lerobot-qc/collections.registry.json:/data/qc-collections.registry.json:ro
+      - ./data-storage/corpus:/data/corpus:ro
       - "${LEROBOT_QC_BOOKDUO_ROOT:-/media/user01/BookDuo_2}:/data/bookduo:ro"
       - "${LEROBOT_QC_HOST_MEDIA:-/media/user01}:/host-media:ro"
       - ./data-lab-platform/lerobot-qc/backend:/app/backend:ro
@@ -249,6 +254,7 @@ services:
       - LEROBOT_QC_SIDECAR=/data/qc-sidecar
       - LEROBOT_QC_DELIVERY=/data/qc-delivery
       - LEROBOT_QC_COLLECTIONS_REGISTRY=/data/qc-collections.registry.json
+      - LEROBOT_QC_DATASETS=/data/corpus
       - LEROBOT_QC_HOST_MEDIA=/host-media
       - LEROBOT_QC_HOST_MEDIA_HOST_PREFIX=/media/user01
       - PYTHONPATH=/app/backend

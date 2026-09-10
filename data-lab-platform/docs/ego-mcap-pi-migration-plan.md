@@ -128,7 +128,7 @@ Track 1 满足 PI「MCAP 容器 + 服务端转 LeRobot」与 Foxglove 可观测�
 | `/ego/observation/state` | `json` | 30 Hz | IMU6 融合状态（边端真值） |
 | `/ego/task` | `json` | 30 Hz | task 字符串 |
 
-**P0 起边端不再写入** `/ego/observation/pose`、`observation.hands`（历史段 derive 会跳过占位 pose）。真手部/姿态仅在 `ego-process convert`（HAMER）后进入 corpus。
+**P0 起边端不再写入** `/ego/observation/pose`、`observation.hands`（历史段 derive 会跳过占位 pose）。真手部/姿态仅在 `ego-process convert`（WiLoR）后进入 corpus。
 
 **LeRobot video key 映射**（写入 MCAP metadata 或 sidecar）：
 
@@ -153,7 +153,7 @@ derive 负责从 MCAP 生成：
 |------|-------------|------|--------------|
 | **Raw MCAP** | `raw/segments/{sess}/{seg}.mcap` | 仅传感器：4 路相机、IMU、`session_meta`、可选 `task` | — |
 | **Stream LeRobot** | derive → `data/`、`videos/`、`unit.json` | 预览用；parquet 可含 schema 占位列，**无真实手部** | `false` |
-| **Egodome corpus** | `ego-process convert` → `pipeline/`、`corpus/` | HAMER 重建后的真值手部/姿态，用于训练 | `true`（`finalize.done`） |
+| **Egodome corpus** | `ego-process convert` → `pipeline/`、`corpus/` | WiLoR 重建后的真值手部/姿态，用于训练 | `true`（`finalize.done`） |
 
 **溯源字段**（`unit.json`、`meta/info.json` → `episode_provenance[]`）：
 

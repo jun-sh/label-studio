@@ -108,10 +108,11 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
   markSessionReady(root, sessionId, {
     total: unitResult.frames,
     parquetRows: unitResult.frames,
-    mp4Ok: true,
+    mp4Ok: Boolean(gate.checks?.some((c) => c.checkId === "G7" && c.ok) ?? gate.ok),
     gate,
     layout: "unit",
     episodeIndex: pub.episodeIndex,
+    browser_playable: Boolean(unitResult.unitJson?.gate?.browser_playable),
   });
   deriveLog(stationId, "derive_unit_ready", {
     sessionId,

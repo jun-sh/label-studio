@@ -1,0 +1,43 @@
+[
+  {
+    "id": "ego-001",
+    "name": "EGO 采集站 · ego-001",
+    "name_en": "EGO MCAP production station (VPU H.264)",
+    "scope": "lan",
+    "host": "10.10.10.130",
+    "online": false,
+    "stream": true,
+    "datasetUrl": "stream://ego-001",
+    "streamUrl": "/lerobot/api/collection/stations/ego-001/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-001/upload",
+    "viewerUrl": "/collection?station=ego-001",
+    "collectionUi": {
+      "remotePreview": true,
+      "previewPolicy": "idle_only",
+      "previewSnapshotMs": 500
+    }
+  },
+  {
+    "id": "ego-lan-02",
+    "name": "EGO 采集站 · 实验室 B",
+    "name_en": "EGO station · Lab B",
+    "scope": "lan",
+    "host": "10.10.10.102",
+    "online": false,
+    "streamUrl": "/lerobot/api/collection/stations/ego-lan-02/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-lan-02/upload",
+    "viewerUrl": "/collection?station=ego-lan-02"
+  },
+  {
+    "id": "ego-wan-01",
+    "name": "EGO 采集站 · 公网节点",
+    "name_en": "EGO station · Public node",
+    "scope": "wan",
+    "host": "ego.example.com",
+    "online": true,
+    "datasetUrl": "sample://sensexperience_ego",
+    "streamUrl": "/lerobot/api/collection/stations/ego-wan-01/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-wan-01/upload",
+    "viewerUrl": "/collection?station=ego-wan-01"
+  }
+]

@@ -7,6 +7,8 @@
 # 安装: ego-130-provision.sh 会复制到 ~/.local/bin/ego-upload
 set -euo pipefail
 
+export PATH="${HOME}/.local/bin:${PATH}"
+
 STATION=""
 EXTRA=()
 NOTIFY_FLAG=""
@@ -68,6 +70,8 @@ _apply_station_upload_profile() {
       export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
       export STATION_UPLOAD_TOKEN=dl-upload-ego-001-v1
       export UPLOAD_PROTOCOL=mcap
+      export SEGMENT_MCAP=1
+      export SEGMENT_FRAME_BIN=0
       export DATALAB_UPLOAD_TIMEOUT_S="${DATALAB_UPLOAD_TIMEOUT_S:-900}"
       export EGO_UPLOAD_MAX_FRAMES="${EGO_UPLOAD_MAX_FRAMES:-2000}"
       export EGO_UPLOAD_MAX_FRAMES_MODE="${EGO_UPLOAD_MAX_FRAMES_MODE:-warn}"
@@ -110,6 +114,88 @@ export PYTHONPATH="${EGO_CAPTURE_SRC:-${HOME}/workspace/ego-studio/src}${PYTHONP
 LOG_DIR="${EGO_UPLOAD_LOG_DIR:-${HOME}/cache/${STATION}/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/ego-upload-$(date +%Y%m%d-%H%M%S).log"
+
+# segment_store validates SEGMENT_MCAP / SEGMENT_FRAME_BIN at import time.
+# Infer from pending on-disk segments so JPEG (tarzst) and MCAP uploads both work.
+_sync_segment_store_env() {
+  local mode
+  mode="$(
+    SEG_ROOT="$SEG_ROOT" "$PY" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["SEG_ROOT"])
+sessions = root / "sessions"
+if not sessions.is_dir():
+    print("unknown")
+    raise SystemExit(0)
+
+def pending_segment_dirs():
+    for sess in sorted(sessions.iterdir()):
+        if not sess.is_dir() or not sess.name.startswith("sess_"):
+            continue
+        seg_roots = [sess / "segments"]
+        legacy = root / "sessions" / "segments"
+        if legacy.is_dir():
+            seg_roots.append(legacy)
+        for seg_root in seg_roots:
+            if not seg_root.is_dir():
+                continue
+            for seg in sorted(seg_root.iterdir()):
+                if not seg.is_dir() or not seg.name.startswith("seg_"):
+                    continue
+                mf = seg / "manifest.json"
+                if not mf.is_file():
+                    continue
+                try:
+                    data = json.loads(mf.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                status = str(data.get("status") or "").upper()
+                if status not in {"CLOSED", "UPLOADING", "UPLOAD_FAILED"}:
+                    continue
+                if status == "UPLOADED":
+                    continue
+                yield seg, data
+
+for seg, data in pending_segment_dirs():
+    if (seg / "segment.mcap").is_file():
+        print("mcap")
+        raise SystemExit(0)
+    storage = str(data.get("storage_format") or "").lower()
+    if storage == "dlb1" or (seg / "frames").is_dir():
+        print("tarzst")
+        raise SystemExit(0)
+
+print("unknown")
+PY
+  )"
+  case "$mode" in
+    mcap)
+      export UPLOAD_PROTOCOL=mcap
+      export SEGMENT_MCAP=1
+      unset SEGMENT_FRAME_BIN
+      ;;
+    tarzst)
+      export UPLOAD_PROTOCOL=tarzst
+      export SEGMENT_FRAME_BIN=1
+      unset SEGMENT_MCAP
+      ;;
+    *)
+      if [[ "${UPLOAD_PROTOCOL:-tarzst}" == "mcap" ]]; then
+        export SEGMENT_MCAP=1
+        export SEGMENT_FRAME_BIN=0
+      else
+        export UPLOAD_PROTOCOL="${UPLOAD_PROTOCOL:-tarzst}"
+        export SEGMENT_FRAME_BIN="${SEGMENT_FRAME_BIN:-1}"
+        unset SEGMENT_MCAP
+      fi
+      ;;
+  esac
+}
+
+_sync_segment_store_env
 
 _has_session_id_flag() {
   local a
@@ -239,6 +325,7 @@ _upload_one_session() {
 
 echo "[ego-upload] station=${STATION} segment-root=${SEG_ROOT}" | tee -a "$LOG_FILE"
 echo "[ego-upload] upload-url=${UPLOAD_URL}" | tee -a "$LOG_FILE"
+echo "[ego-upload] upload-protocol=${UPLOAD_PROTOCOL:-tarzst}" | tee -a "$LOG_FILE"
 
 TOTAL_UPLOADED=0
 SESSIONS_OK=0

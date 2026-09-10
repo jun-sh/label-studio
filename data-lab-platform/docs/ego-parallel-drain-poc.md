@@ -13,8 +13,35 @@ IMU drain thread   ──→ imu buffer ─┘
 preview drain thread (optional, when EGO_STRICT_SYNC_PREVIEW_DRAIN=0)
 ```
 
-`EGO_CAPTURE_SYNC_MODE=device_tick` (default in POC drop-in): commit when rings are
-ready — no wall-clock grid wait. Revert with `EGO_CAPTURE_SYNC_MODE=strict_grid`.
+`EGO_CAPTURE_SYNC_MODE=fsync_quad` (default in POC drop-in): primary `CAM_A` tick +
+timestamp-aligned quad pick within `EGO_FSYNC_QUAD_ALIGN_MAX_NS` (1ms). Waits up to
+`EGO_FSYNC_QUAD_WAIT_MS` per tick; on miss drops primary head (no misaligned commit).
+Set `OAK_H264_SEQUENTIAL=0`. Revert with `EGO_CAPTURE_SYNC_MODE=device_tick` or
+`strict_grid`.
+
+Deep ingest + async writer (default in POC drop-in):
+
+- `EGO_POC_RING_LEN=512` — parallel + main rings (overflow counted)
+- `EGO_CAPTURE_WRITER_ASYNC=1` — commit enqueues frames; writer thread calls `append_frame`
+- `EGO_CAPTURE_FRAME_QUEUE_MAX=256`
+
+```bash
+journalctl --user -u ecs-record-oak-mcap-parallel-drain -f | \
+  grep -E 'fsync_quad_|ingest_overflow_|async_frame_writer_|capture_fps='
+```
+
+### FSYNC-quad gates (130)
+
+- `capture_fps` / `wall_commit_hz`: **29.8–30.2**
+- `avg_max_cam_offset_us`: **< 1000**
+- `quad_miss_pct`: **< 2%**
+- `per_cam_ingest_hz`: all cams **≥ 29.8**
+- `dropped=0`, 4-way MCAP frame parity, derive remux OK
+
+```bash
+journalctl --user -u ecs-record-oak-mcap-parallel-drain -f | \
+  grep -E 'fsync_quad_|capture_fps=|straggler_'
+```
 
 ## Switch to POC (130)
 

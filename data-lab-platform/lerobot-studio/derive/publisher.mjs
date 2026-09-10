@@ -7,7 +7,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { ensureDir, readJson, writeJsonAtomic } from "./io.mjs";
+import { ensureDir, readJson, readJsonl, writeJsonAtomic, writeJsonlAtomic } from "./io.mjs";
+import { syncMainParquet } from "./parquet-writer.mjs";
 import { appendJournalEvent, rebuildManifestFromDisk, writeMuxValidatedFromManifest } from "./manifest.mjs";
 import { episodeChunkPaths, unitDir } from "./unit-paths.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
@@ -36,6 +37,33 @@ function unitArtifactPath(unitRoot, rel) {
   return path.join(unitRoot, rel);
 }
 
+function publishTableArtifacts(unitRoot, root, stationId, episodeIndex, paths) {
+  const jsonlSrc = unitArtifactPath(unitRoot, "data.jsonl");
+  const jsonlDest = path.join(root, paths.jsonlRel);
+  const dataDest = path.join(root, paths.dataRel);
+  const rows = readJsonl(jsonlSrc).map((row) => ({
+    ...row,
+    episode_index: episodeIndex,
+  }));
+  writeJsonlAtomic(jsonlDest, rows);
+  const scratch = path.join(root, ".publish_scratch", String(episodeIndex));
+  const layoutJsonl = path.join(scratch, "data", "chunk-000", "file-000.jsonl");
+  writeJsonlAtomic(layoutJsonl, rows);
+  const infoSrc = path.join(root, "meta", "info.json");
+  if (fs.existsSync(infoSrc)) {
+    ensureDir(path.join(scratch, "meta"));
+    fs.copyFileSync(infoSrc, path.join(scratch, "meta", "info.json"));
+  }
+  syncMainParquet(scratch, stationId);
+  const parquetSrc = path.join(scratch, "data", "chunk-000", "file-000.parquet");
+  hardlinkOrCopy(parquetSrc, dataDest);
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 export function publishUnitEpisode(root, stationId, sessionId, episodeIndex, episodeMeta = null) {
   const unitRoot = unitDir(root, sessionId);
   const unitJson = readJson(path.join(unitRoot, "unit.json"), null);
@@ -43,14 +71,7 @@ export function publishUnitEpisode(root, stationId, sessionId, episodeIndex, epi
     throw new Error(`unit.json missing for ${sessionId}`);
   }
   const paths = episodeChunkPaths(episodeIndex);
-  const dataSrc = unitArtifactPath(unitRoot, "data.parquet");
-  const jsonlSrc = unitArtifactPath(unitRoot, "data.jsonl");
-  const dataDest = path.join(root, paths.dataRel);
-  const jsonlDest = path.join(root, paths.jsonlRel);
-  hardlinkOrCopy(dataSrc, dataDest);
-  if (fs.existsSync(jsonlSrc)) {
-    hardlinkOrCopy(jsonlSrc, jsonlDest);
-  }
+  publishTableArtifacts(unitRoot, root, stationId, episodeIndex, paths);
   for (const videoKey of videoKeysForStation(stationId)) {
     const rel = `videos/${videoKey}.mp4`;
     const src = unitArtifactPath(unitRoot, rel);
@@ -94,7 +115,7 @@ export function updateInfoFromManifest(root, manifest) {
   info.asset_layers = {
     raw_mcap: "sensors_only",
     stream_lerobot: "preview_no_real_pose",
-    corpus: "convert_hamer_pose",
+    corpus: "convert_hand_pose",
   };
   writeJsonAtomic(infoPath, info);
   return info;

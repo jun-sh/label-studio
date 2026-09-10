@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -32,6 +33,10 @@ STANDBY_PREVIEW_UNIT = os.environ.get(
     "ecs-preview-standby.service",
 )
 STANDBY_IDLE_STOP_S = float(os.environ.get("EGO_STANDBY_IDLE_STOP_S", "45"))
+PIPELINE_WARM_MODE = os.environ.get("EGO_PIPELINE_WARM_MODE", "standby").strip().lower()
+PIPELINE_WARM_S = float(os.environ.get("EGO_PIPELINE_WARM_S", "300"))
+PIPELINE_WARM_ON_BATTERY_S = float(os.environ.get("EGO_PIPELINE_WARM_ON_BATTERY_S", "120"))
+STRICT_EFF_HZ_LO = float(os.environ.get("EGO_STRICT_EFF_HZ_LO", "29.8"))
 STATION_HEARTBEAT_UNIT = os.environ.get(
     "EGO_STATION_HEARTBEAT_UNIT",
     "ecs-station-heartbeat.service",
@@ -61,6 +66,16 @@ PREVIEW_URL = os.environ.get(
     "EGO_PREVIEW_URL",
     "http://127.0.0.1:8765/preview/front_left/jpg",
 )
+PREVIEW_HTTP_BASE = os.environ.get("EGO_PREVIEW_HTTP_BASE", "http://127.0.0.1:8765").rstrip(
+    "/"
+)
+PREVIEW_CAMERA_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("front_left", "前左", "Front Left"),
+    ("front_right", "前右", "Front Right"),
+    ("rear_left", "后左", "Rear Left"),
+    ("rear_right", "后右", "Rear Right"),
+)
+PREVIEW_CAM_IDS = frozenset(cam for cam, _, _ in PREVIEW_CAMERA_SPECS)
 STORAGE_WARN_GB = float(os.environ.get("EGO_STORAGE_WARN_GB", "2"))
 START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "90"))
 STOP_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_STOP_TIMEOUT_S", "120"))
@@ -76,7 +91,7 @@ _busy_action: str | None = None
 _last_action_mono = 0.0
 _last_completed_action: str | None = None
 _last_error = ""
-_journal_cache: tuple[float, float | None, float | None] | None = None
+_journal_cache: tuple[float, float | None, dict[str, Any]] | None = None
 _standby_preview_touch_mono = 0.0
 _last_preview_jpeg: bytes | None = None
 
@@ -119,23 +134,101 @@ def _capture_run_since_epoch() -> float | None:
     return _unit_active_since_epoch(CAPTURE_RECORD_UNIT)
 
 
+def _capture_exit_hint() -> str:
+    """Best-effort reason when the record unit exits without an explicit UI stop."""
+    proc = subprocess.run(
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            CAPTURE_RECORD_UNIT,
+            "-n",
+            "40",
+            "--no-pager",
+            "-o",
+            "cat",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return "采集进程已退出，请查看 journalctl"
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    for line in reversed(lines):
+        if line.startswith("Done."):
+            return f"采集已到时长上限自动结束（{line}）"
+        if "episode_limit_s=" in line:
+            return f"采集已到 episode 上限（{line}）"
+        if "capture_shutdown signal=" in line:
+            return "采集收到停止信号后退出"
+        if "capture_fatal:" in line or "FATAL:" in line or "Traceback" in line:
+            return f"采集异常退出：{line[:160]}"
+    return f"采集进程意外退出，请查看 journalctl {CAPTURE_RECORD_UNIT}"
+
+
 def _reconcile_orphan_capture_stack() -> None:
     """Record unit exited but stack.target still active → UI ghost 'recording'."""
-    global _journal_cache
+    global _journal_cache, _last_error
     rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
     if rec in ("active", "activating", "deactivating"):
         return
     if _capture_unit_state(CAPTURE_TARGET) != "active":
         return
+    hint = _capture_exit_hint()
+    _last_error = hint
+    print(f"capture_orphan_reconcile unit={CAPTURE_RECORD_UNIT} hint={hint}", flush=True)
     _systemctl("stop", CAPTURE_TARGET, timeout=15)
     _journal_cache = None
 
 
-def _journal_beep_epoch(since_epoch: float | None) -> float | None:
-    """Wall epoch of capture_ready_beep=played for the current capture run."""
+def _ac_power_online() -> bool:
+    """Best-effort AC online detection (True when unknown or on AC)."""
+    supply_root = Path("/sys/class/power_supply")
+    if not supply_root.is_dir():
+        return True
+    for child in sorted(supply_root.iterdir()):
+        try:
+            typ = (child / "type").read_text(encoding="utf-8").strip().upper()
+        except OSError:
+            continue
+        if typ not in ("MAINS", "USB"):
+            continue
+        try:
+            online = (child / "online").read_text(encoding="utf-8").strip()
+        except OSError:
+            return True
+        if online == "1":
+            return True
+    return False
+
+
+def _standby_idle_timeout_s() -> float:
+    if PIPELINE_WARM_MODE != "standby":
+        return STANDBY_IDLE_STOP_S
+    if _ac_power_online():
+        return max(STANDBY_IDLE_STOP_S, PIPELINE_WARM_S)
+    return max(STANDBY_IDLE_STOP_S, PIPELINE_WARM_ON_BATTERY_S)
+
+
+def _read_capture_live_stats() -> dict[str, Any]:
+    path = CHECKPOINT_PATH.parent / "capture_live_stats.json"
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _journal_capture_info(since_epoch: float | None) -> dict[str, Any]:
+    """Parse beep / captured / capture_fps from the current capture journal run."""
     global _journal_cache
+    empty: dict[str, Any] = {"beep_epoch": None, "captured": 0, "capture_fps": 0.0}
     if since_epoch is None:
-        return None
+        return empty
     now = time.monotonic()
     if (
         _journal_cache is not None
@@ -163,19 +256,73 @@ def _journal_beep_epoch(since_epoch: float | None) -> float | None:
         check=False,
     )
     beep_epoch: float | None = None
+    captured = 0
+    capture_fps = 0.0
+    captured_re = re.compile(r"captured=(\d+)")
+    fps_re = re.compile(r"capture_fps=([\d.]+)")
     if proc.returncode == 0:
         for line in proc.stdout.splitlines():
-            if "capture_ready_beep=played" not in line:
-                continue
-            token = line.split(" ", 1)[0]
-            try:
-                ts = float(token)
-            except ValueError:
-                continue
-            if beep_epoch is None or ts > beep_epoch:
-                beep_epoch = ts
-    _journal_cache = (now, since_epoch, beep_epoch)
-    return beep_epoch
+            if "capture_ready_beep=played" in line:
+                token = line.split(" ", 1)[0]
+                try:
+                    ts = float(token)
+                except ValueError:
+                    continue
+                if beep_epoch is None or ts > beep_epoch:
+                    beep_epoch = ts
+            cap_match = captured_re.search(line)
+            if cap_match:
+                captured = max(captured, int(cap_match.group(1)))
+            fps_match = fps_re.search(line)
+            if fps_match:
+                capture_fps = float(fps_match.group(1))
+    info = {
+        "beep_epoch": beep_epoch,
+        "captured": captured,
+        "capture_fps": capture_fps,
+    }
+    _journal_cache = (now, since_epoch, info)
+    return info
+
+
+def _journal_capture_start_failure(since_epoch: float | None) -> str | None:
+    """Return a user-facing message when the current capture run failed during startup."""
+    if since_epoch is None:
+        return None
+    since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
+    proc = subprocess.run(
+        [
+            "journalctl",
+            "--user",
+            "-u",
+            CAPTURE_RECORD_UNIT,
+            f"--since={since_local}",
+            "-n",
+            "80",
+            "--no-pager",
+            "-o",
+            "short",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    text = proc.stdout
+    if "H264 sequential pipeline not ready" in text:
+        return "H264 流水线未就绪，请稍后重试"
+    if "h264_sequential_ready ready=False" in text:
+        return "相机未就绪，请检查 OAK 设备连接"
+    if "Main process exited, code=exited, status=1" in text:
+        return "相机启动失败，请查看日志或稍后重试"
+    return None
+
+
+def _journal_beep_epoch(since_epoch: float | None) -> float | None:
+    """Wall epoch of capture_ready_beep=played for the current capture run."""
+    return _journal_capture_info(since_epoch).get("beep_epoch")
 
 
 def _capture_frames_writing() -> bool:
@@ -353,7 +500,7 @@ def _maybe_stop_idle_standby_preview() -> None:
         return
     if _standby_preview_touch_mono <= 0:
         return
-    if time.monotonic() - _standby_preview_touch_mono < STANDBY_IDLE_STOP_S:
+    if time.monotonic() - _standby_preview_touch_mono < _standby_idle_timeout_s():
         return
     if _capture_unit_state(STANDBY_PREVIEW_UNIT) == "active":
         _systemctl("stop", STANDBY_PREVIEW_UNIT, timeout=10)
@@ -619,7 +766,8 @@ def _build_status() -> dict[str, Any]:
     active = _capture_active()
     rec_state = _capture_unit_state(CAPTURE_RECORD_UNIT)
     since = _capture_run_since_epoch() if active else None
-    beep_epoch = _journal_beep_epoch(since) if active else None
+    journal_info = _journal_capture_info(since) if active else {}
+    beep_epoch = journal_info.get("beep_epoch")
     frames_writing = active and rec_state not in ("deactivating",) and beep_epoch is not None
 
     if not active:
@@ -627,8 +775,19 @@ def _build_status() -> dict[str, Any]:
         _maybe_stop_idle_standby_preview()
 
     duration = 0
+    effective_duration = 0
+    capture_fps = 0.0
+    fps_warn = False
     if frames_writing and beep_epoch is not None:
         duration = max(0, int(time.time() - beep_epoch))
+        live_stats = _read_capture_live_stats()
+        captured = int(journal_info.get("captured") or live_stats.get("frame_count") or 0)
+        effective_duration = int(captured / 30)
+        capture_fps = float(
+            journal_info.get("capture_fps") or live_stats.get("capture_fps") or 0.0
+        )
+        if capture_fps > 0 and capture_fps < STRICT_EFF_HZ_LO:
+            fps_warn = True
 
     free_bytes = _storage_free_bytes(SEGMENT_ROOT)
     storage_warn = (
@@ -652,7 +811,10 @@ def _build_status() -> dict[str, Any]:
             msg = "正在保存数据，请勿断电…"
     elif active and frames_writing:
         state = "recording"
-        msg = err if err else ""
+        if fps_warn:
+            msg = f"帧率偏低 {capture_fps:.1f} Hz（目标 30 Hz）"
+        else:
+            msg = err if err else ""
     elif active:
         state = "warming"
         msg = err or "正在准备录制，相机初始化中…"
@@ -668,6 +830,9 @@ def _build_status() -> dict[str, Any]:
     return {
         "state": state,
         "duration": duration,
+        "effective_duration": effective_duration,
+        "capture_fps": round(capture_fps, 2) if capture_fps > 0 else None,
+        "fps_warn": fps_warn,
         "storage_free": _format_free_gb(SEGMENT_ROOT),
         "storage_warn": storage_warn,
         "segment_count": _count_segments(SEGMENT_ROOT),
@@ -728,9 +893,22 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
                 return _fail_start_capture(session_id, f"无法启动采集：{detail}")
             deadline = time.monotonic() + START_TIMEOUT_S
+            start_mono = time.monotonic()
             while time.monotonic() < deadline:
-                if _capture_active():
-                    return True, ""
+                since = _capture_run_since_epoch()
+                if _capture_active() and since is not None:
+                    info = _journal_capture_info(since)
+                    if info.get("beep_epoch"):
+                        return True, ""
+                    fail = _journal_capture_start_failure(since)
+                    if fail:
+                        return _fail_start_capture(session_id, fail)
+                elif time.monotonic() - start_mono > 15.0 and not _capture_active():
+                    fail = _journal_capture_start_failure(since)
+                    return _fail_start_capture(
+                        session_id,
+                        fail or "相机启动失败，请检查 OAK 设备是否连接",
+                    )
                 time.sleep(0.5)
             _systemctl("stop", CAPTURE_TARGET, timeout=30)
             return _fail_start_capture(
@@ -799,7 +977,16 @@ def _run_capture_abandon() -> tuple[bool, str]:
 
 
 def _grab_preview_bytes() -> bytes | None:
-    req = urllib.request.Request(PREVIEW_URL, method="GET")
+    return _grab_preview_camera_bytes("front_left")
+
+
+def _grab_preview_camera_bytes(cam_id: str) -> bytes | None:
+    if cam_id not in PREVIEW_CAM_IDS:
+        return None
+    req = urllib.request.Request(
+        f"{PREVIEW_HTTP_BASE}/preview/{cam_id}/jpg",
+        method="GET",
+    )
     try:
         with urllib.request.urlopen(req, timeout=2) as resp:
             data = resp.read()
@@ -810,19 +997,55 @@ def _grab_preview_bytes() -> bytes | None:
     return None
 
 
-def _fetch_preview() -> tuple[bytes | None, str]:
-    global _last_preview_jpeg
+def _preview_stream_live() -> bool:
     with _lock:
         busy_start = _busy and _busy_action == "start"
-    if not (_capture_active() or _capture_stopping() or busy_start):
+    if _capture_active() or _capture_stopping() or busy_start:
+        return True
+    if _capture_unit_state(STANDBY_PREVIEW_UNIT) == "active":
+        return True
+    return _preview_port_in_use(8765)
+
+
+def _build_preview_cameras_payload() -> dict[str, Any]:
+    live = _preview_stream_live()
+    cameras: list[dict[str, Any]] = []
+    for cam_id, label_zh, label_en in PREVIEW_CAMERA_SPECS:
+        cameras.append(
+            {
+                "id": cam_id,
+                "label": label_zh,
+                "label_en": label_en,
+                "url": f"/api/preview/{cam_id}.jpg",
+                "backend_url": f"{PREVIEW_HTTP_BASE}/preview/{cam_id}/jpg",
+                "available": live,
+            }
+        )
+    return {
+        "online": live,
+        "layout": "switch",
+        "poll_ms": PREVIEW_POLL_MS,
+        "cameras": cameras,
+    }
+
+
+def _fetch_preview_camera(cam_id: str) -> bytes | None:
+    if cam_id not in PREVIEW_CAM_IDS:
+        return None
+    if not _preview_stream_live():
+        return None
+    return _grab_preview_camera_bytes(cam_id)
+
+
+def _fetch_preview() -> tuple[bytes | None, str]:
+    global _last_preview_jpeg
+    if not _preview_stream_live():
         return None, "image/jpeg"
     data = _grab_preview_bytes()
     if data:
         _last_preview_jpeg = data
         return data, "image/jpeg"
-    with _lock:
-        busy_start = _busy and _busy_action == "start"
-    if _last_preview_jpeg and (_capture_active() or _capture_stopping() or busy_start):
+    if _last_preview_jpeg and _preview_stream_live():
         return _last_preview_jpeg, "image/jpeg"
     return None, "image/jpeg"
 
@@ -1120,7 +1343,10 @@ INDEX_HTML = """<!DOCTYPE html>
     previewTimer.hidden = !showTimer;
     previewRec.hidden = !showRec;
     if (showTimer) {
-      previewTimer.textContent = formatDuration(data.duration || 0);
+      var timerSec = (data.effective_duration != null && data.frames_writing)
+        ? data.effective_duration
+        : (data.duration || 0);
+      previewTimer.textContent = formatDuration(timerSec);
     }
   }
 
@@ -1346,6 +1572,7 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
+            _wake_standby_preview_if_idle()
             body = _index_html_body()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1362,16 +1589,38 @@ class EgoWebHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/status":
+            _wake_standby_preview_if_idle()
             _json_response(self, HTTPStatus.OK, _build_status())
             return
 
+        if path == "/api/preview/cameras":
+            _wake_standby_preview_if_idle()
+            _json_response(self, HTTPStatus.OK, _build_preview_cameras_payload())
+            return
+
         if path == "/api/preview/main.jpg":
+            _touch_standby_preview_activity()
             data, ctype = _fetch_preview()
             if not data:
                 self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "preview unavailable")
                 return
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if path.startswith("/api/preview/") and path.endswith(".jpg"):
+            _touch_standby_preview_activity()
+            cam_id = path[len("/api/preview/") : -len(".jpg")]
+            data = _fetch_preview_camera(cam_id)
+            if not data:
+                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "preview unavailable")
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/jpeg")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-cache, no-store")
             self.end_headers()

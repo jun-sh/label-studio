@@ -4,8 +4,8 @@
 defaults:
   datalab_root: ../data-lab
   stream_relpath: data-storage/stream
-  hamer_backend: geopavlakos
-  hamer_device: cuda:0
+  wilor_backend: repo
+  wilor_device: cuda:0
   cameras: front_left,front_right
   video_keys:
     - observation.images.camera_front_left
@@ -28,6 +28,7 @@ stations:
   ego-001:
     title: EgoDome
     dataset_slug: egodome
+    upload_protocol: mcap
     aggregate_dir_name: EgoDome
     manifest_id: egodome
     cover_webp: egodome.webp

@@ -1,0 +1,29 @@
+# v0.1.3 multi-worker overlay: scale derive-worker replicas (use with v0.1.3.yml + async.yml).
+#
+# Usage (repo root):
+#   DERIVE_WORKER_COUNT=3 docker-compose \
+#     -f docker-compose.yml \
+#     -f data-lab-platform/docker-compose.platform.yml \
+#     -f data-lab-platform/docker-compose.storage.override.yml \
+#     -f data-lab-platform/docker-compose.v0.1.3.yml \
+#     -f data-lab-platform/docker-compose.v0.1.3-async.yml \
+#     -f data-lab-platform/docker-compose.v0.1.3-multi-worker.yml \
+#     up -d --scale derive-worker=3 stream-ingest derive-worker lerobot
+#
+# Or: bash data-lab-platform/scripts/ego-derive-scale.sh 3
+
+services:
+  stream-ingest:
+    environment:
+      - DERIVE_WORKER_COUNT=${DERIVE_WORKER_COUNT:-3}
+
+  derive-worker:
+    entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+    environment:
+      - DERIVE_WORKER_COUNT=${DERIVE_WORKER_COUNT:-3}
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_MAX_SEGMENTS_PER_SESSION=${DERIVE_MAX_SEGMENTS_PER_SESSION:-130}
+      - DERIVE_MAX_SEGMENTS_ACTION=${DERIVE_MAX_SEGMENTS_ACTION:-defer}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}

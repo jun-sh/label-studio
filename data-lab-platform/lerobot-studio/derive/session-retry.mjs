@@ -23,9 +23,15 @@ export const DERIVE_NON_RETRYABLE_CODES = new Set([
   "PARQUET_INDEX_GAP",
   "SEGMENT_LIMIT_EXCEEDED",
   "MUX_FRAME_MISMATCH",
+  "MUX_DECODE_FAILED",
+  "BROWSER_NOT_PLAYABLE",
+  "RECONCILE_EXCEEDED",
   "INGEST_FAILED",
   "G1",
+  "G2",
+  "G2b",
   "G3",
+  "G7",
 ]);
 
 export function maxDeriveRetryAttempts() {

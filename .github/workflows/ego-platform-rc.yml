@@ -6,12 +6,16 @@ on:
       - "data-lab-platform/lerobot-studio/**"
       - "data-lab-platform/scripts/rc-*.sh"
       - "data-lab-platform/scripts/ci-ego-platform.sh"
+      - "data-lab-platform/scripts/ego-export-smoke.sh"
+      - "data-lab-platform/scripts/ego-pipeline-sessions.py"
       - "data-lab-platform/docker-compose*.yml"
   pull_request:
     paths:
       - "data-lab-platform/lerobot-studio/**"
       - "data-lab-platform/scripts/rc-*.sh"
       - "data-lab-platform/scripts/ci-ego-platform.sh"
+      - "data-lab-platform/scripts/ego-export-smoke.sh"
+      - "data-lab-platform/scripts/ego-pipeline-sessions.py"
   workflow_dispatch:
 
 jobs:
@@ -20,6 +24,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Export manifest smoke (R1)
+        run: bash data-lab-platform/scripts/ego-export-smoke.sh
 
       - name: Skip — requires self-hosted 34 stack
         run: |

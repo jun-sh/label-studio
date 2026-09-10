@@ -90,7 +90,8 @@ def _fake_h264(tag: bytes) -> bytes:
     return b"\x00\x00\x00\x01" + tag + b"\x00\x00\x00\x01"
 
 
-def test_mcap_writer_h264_compressed_video(tmp_path: Path) -> None:
+def test_mcap_writer_h264_compressed_video(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EGO_H264_REQUIRE_SEGMENT_IDR", "0")
     writer = McapSegmentWriter(
         tmp_path,
         session_id="sess_h264",

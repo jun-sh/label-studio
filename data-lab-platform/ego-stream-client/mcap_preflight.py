@@ -80,6 +80,8 @@ def validate_mcap_archive(archive_path: Path) -> dict:
     session_id = None
     segment_id = None
     cam_counts = [topics.get(t, 0) for t in REQUIRED_CAMERA_TOPICS]
+    if cam_counts and min(cam_counts) > 0 and len(set(cam_counts)) != 1:
+        issues.append(f"camera_frame_mismatch:min={min(cam_counts)},max={max(cam_counts)}")
     if session_meta:
         session_id = session_meta.get("session_id")
         segment_id = session_meta.get("segment_id")

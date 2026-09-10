@@ -4,11 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import { readJsonl } from "./io.mjs";
 import { appendJournalEvent, rebuildManifestFromDisk, readJournal } from "./manifest.mjs";
 import { episodeChunkPaths } from "./unit-paths.mjs";
-import { buildUnitFrameMap } from "./unit.mjs";
+import { appendH264AnnexBStream, buildUnitFrameMap } from "./unit.mjs";
 import { chunkSortedIndices } from "./encode-pool.mjs";
-import { hardlinkOrCopy } from "./publisher.mjs";
+import { hardlinkOrCopy, publishUnitEpisode } from "./publisher.mjs";
 import { deriveLayout } from "./station-context.mjs";
 
 function tmpRoot() {
@@ -57,6 +58,20 @@ describe("P2 manifest", () => {
   });
 });
 
+describe("P2 unit h264 multi-segment", () => {
+  it("appendH264AnnexBStream concatenates segment streams", () => {
+    const root = tmpRoot();
+    const dest = path.join(root, "front_left.h264");
+    const seg1 = path.join(root, "seg1.h264");
+    const seg2 = path.join(root, "seg2.h264");
+    fs.writeFileSync(seg1, "segment1");
+    fs.writeFileSync(seg2, "segment2");
+    assert.equal(appendH264AnnexBStream(dest, seg1), true);
+    assert.equal(appendH264AnnexBStream(dest, seg2), true);
+    assert.equal(fs.readFileSync(dest, "utf8"), "segment1segment2");
+  });
+});
+
 describe("P2 unit frame map", () => {
   it("builds local 0..N-1 indices for one session", () => {
     const map = buildUnitFrameMap("sess_x", [
@@ -87,6 +102,37 @@ describe("P2 publisher", () => {
     fs.writeFileSync(src, "hello-unit");
     hardlinkOrCopy(src, dest);
     assert.equal(fs.readFileSync(dest, "utf8"), "hello-unit");
+  });
+
+  it("publishUnitEpisode rewrites episode_index in published table", () => {
+    const root = tmpRoot();
+    const stationId = "ego-001";
+    const sessionId = "sess_publish_ep_idx_test00000001";
+    const unitRoot = path.join(root, "derived", sessionId);
+    fs.mkdirSync(path.join(root, "meta"), { recursive: true });
+    fs.writeFileSync(path.join(root, "meta", "info.json"), `${JSON.stringify({ features: {} }, null, 2)}\n`);
+    fs.mkdirSync(path.join(unitRoot, "videos"), { recursive: true });
+    const rows = [
+      { frame_index: 0, episode_index: 0, task_index: 0 },
+      { frame_index: 1, episode_index: 0, task_index: 0 },
+    ];
+    fs.writeFileSync(path.join(unitRoot, "data.jsonl"), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+    fs.writeFileSync(
+      path.join(unitRoot, "unit.json"),
+      `${JSON.stringify({ session_id: sessionId, frames: 2 }, null, 2)}\n`,
+    );
+    for (const key of [
+      "observation.images.camera_front_left",
+      "observation.images.camera_front_right",
+      "observation.images.camera_rear_left",
+      "observation.images.camera_rear_right",
+    ]) {
+      fs.writeFileSync(path.join(unitRoot, "videos", `${key}.mp4`), "not-a-real-mp4");
+    }
+    publishUnitEpisode(root, stationId, sessionId, 3);
+    const published = readJsonl(path.join(root, "data/chunk-000/file-003.jsonl"));
+    assert.equal(published.length, 2);
+    assert.ok(published.every((r) => r.episode_index === 3));
   });
 });
 

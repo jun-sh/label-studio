@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -161,6 +162,48 @@ def oak_finalize_marker(datalab_root: Path, station: str, session_id: str) -> Pa
 
 def corpus_root_for(datalab_root: Path, slug: str) -> Path:
     return datalab_root / "data-storage" / "corpus" / slug
+
+
+def order_manifest_path(datalab_root: Path, station: str) -> Path:
+    return datalab_root / "data-storage" / "ego-delivery" / station / "orders" / "active-order.json"
+
+
+def exportable_sessions(datalab_root: Path, station: str) -> list[str]:
+    """Sessions with pose_ready finalize.done (commercial export whitelist)."""
+    pipe_root = datalab_root / "data-storage" / "pipeline" / station
+    if not pipe_root.is_dir():
+        return []
+    ready: list[str] = []
+    for sess_dir in sorted(pipe_root.glob("sess_*")):
+        if not sess_dir.is_dir():
+            continue
+        if oak_finalize_marker(datalab_root, station, sess_dir.name).is_file():
+            ready.append(sess_dir.name)
+    return ready
+
+
+def build_order_manifest(
+    datalab_root: Path,
+    station: str,
+    *,
+    order_id: str | None = None,
+    customer_id: str | None = None,
+) -> dict[str, object]:
+    session_ids = exportable_sessions(datalab_root, station)
+    if not session_ids:
+        raise ValueError(f"no exportable sessions (missing finalize.done) for {station}")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    oid = (order_id or "").strip() or f"ORD-{station}-{stamp}"
+    return {
+        "order_id": oid,
+        "customer_id": (customer_id or "").strip() or "internal",
+        "session_ids": session_ids,
+    }
+
+
+def write_order_manifest(path: Path, manifest: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def samples_zip_for(datalab_root: Path, slug: str) -> Path:
@@ -354,6 +397,8 @@ def derive_pending_sessions(stream_root: Path) -> list[str]:
             continue
         if (sess_dir / "session.FAILED").is_file():
             continue
+        if _session_quarantined(sess_dir):
+            continue
         marker = sess_dir / "session.DONE_UPLOAD"
         try:
             data = json.loads(marker.read_text(encoding="utf-8"))
@@ -365,6 +410,204 @@ def derive_pending_sessions(stream_root: Path) -> list[str]:
         pending.append((at, sid))
 
     return [sid for _, sid in sorted(pending)]
+
+
+DEFAULT_REQUEUE_FAILED_CODES = frozenset(
+    {
+        "RECONCILE_EXCEEDED",
+        "PARQUET_INDEX_GAP",
+        "h264_trim_no_idr",
+        "MUX_FRAME_MISMATCH",
+        "MUX_DECODE_FAILED",
+        "BROWSER_NOT_PLAYABLE",
+    }
+)
+
+QUARANTINE_MARKER = "session.QUARANTINED"
+REQUEUE_STATE_FILE = "session.requeue.json"
+# Capture-stall raw (no IDR in the H.264 elementary stream) can never derive; retrying
+# it forever blocks ego-process, so quarantine after this many attempts.
+MAX_REQUEUE_ATTEMPTS = 1
+# Failures whose raw data is unusable no matter how often derive re-runs.
+UNRECOVERABLE_FAILED_PATTERNS = ("h264_trim_no_idr",)
+
+
+def _session_quarantined(sess_dir: Path) -> bool:
+    return (sess_dir / QUARANTINE_MARKER).is_file()
+
+
+def _requeue_attempts(sess_dir: Path) -> int:
+    data = _read_json(sess_dir / REQUEUE_STATE_FILE, {})
+    if not isinstance(data, dict):
+        return 0
+    try:
+        return int(data.get("attempts") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _record_requeue_attempt(sess_dir: Path, attempts: int, reason: str) -> None:
+    payload = {
+        "attempts": attempts,
+        "lastReason": reason,
+        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        (sess_dir / REQUEUE_STATE_FILE).write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def quarantine_session(sess_dir: Path, reason: str, *, code: str = "") -> None:
+    payload = {
+        "sessionId": sess_dir.name,
+        "marker": QUARANTINE_MARKER,
+        "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "reason": {
+            "code": code or "UNRECOVERABLE_RAW",
+            "message": reason,
+            "category": "derive",
+        },
+    }
+    try:
+        (sess_dir / QUARANTINE_MARKER).write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def quarantine_failed_sessions(
+    stream_root: Path,
+    *,
+    session_ids: list[str] | None = None,
+    apply: bool = False,
+) -> list[str]:
+    """Mark unrecoverable FAILED sessions so requeue/wait-derive skip them."""
+    sessions_dir = stream_root / "state" / "sessions"
+    if not sessions_dir.is_dir():
+        return []
+
+    wanted = {sid.strip() for sid in (session_ids or []) if sid.strip()}
+    marked: list[str] = []
+    for sess_dir in sorted(sessions_dir.glob("sess_*")):
+        if not sess_dir.is_dir():
+            continue
+        sid = sess_dir.name
+        if wanted and sid not in wanted:
+            continue
+        failed_path = sess_dir / "session.FAILED"
+        if not failed_path.is_file():
+            continue
+        if (sess_dir / "session.READY").is_file():
+            continue
+        if _session_quarantined(sess_dir):
+            continue
+        if (
+            not wanted
+            and _requeue_attempts(sess_dir) < MAX_REQUEUE_ATTEMPTS
+            and not _failed_session_unrecoverable(failed_path)
+        ):
+            continue
+        marked.append(sid)
+        if apply:
+            quarantine_session(
+                sess_dir,
+                _failed_session_reason_message(failed_path) or "unrecoverable raw",
+                code=_failed_session_reason_code(failed_path),
+            )
+    return marked
+
+
+def _failed_session_reason_code(failed_path: Path) -> str:
+    data = _read_json(failed_path, {})
+    if not isinstance(data, dict):
+        return ""
+    reason = data.get("reason")
+    if isinstance(reason, dict):
+        return str(reason.get("code") or "").strip()
+    return str(data.get("code") or "").strip()
+
+
+def _failed_session_reason_message(failed_path: Path) -> str:
+    data = _read_json(failed_path, {})
+    if not isinstance(data, dict):
+        return ""
+    reason = data.get("reason")
+    if isinstance(reason, dict):
+        return str(reason.get("message") or "").strip()
+    return str(data.get("message") or "").strip()
+
+
+def _failed_session_unrecoverable(failed_path: Path) -> bool:
+    blob = f"{_failed_session_code_or_message(failed_path)}"
+    return any(pat in blob for pat in UNRECOVERABLE_FAILED_PATTERNS)
+
+
+def _failed_session_code_or_message(failed_path: Path) -> str:
+    return f"{_failed_session_reason_code(failed_path)} {_failed_session_reason_message(failed_path)}"
+
+
+def _failed_session_requeue_match(failed_path: Path, allowed: set[str]) -> bool:
+    code = _failed_session_reason_code(failed_path)
+    if code in allowed:
+        return True
+    message = _failed_session_reason_message(failed_path)
+    if "h264_trim_no_idr" in message and (
+        "h264_trim_no_idr" in allowed or code == "GATE_INTERNAL_ERROR"
+    ):
+        return True
+    return False
+
+
+def requeue_failed_sessions(
+    stream_root: Path,
+    *,
+    codes: set[str] | None = None,
+    apply: bool = False,
+) -> list[str]:
+    """Clear session.FAILED so derive can retry (post-fix re-derive for mux failures)."""
+    sessions_dir = stream_root / "state" / "sessions"
+    if not sessions_dir.is_dir():
+        return []
+
+    allowed = set(codes) if codes else set(DEFAULT_REQUEUE_FAILED_CODES)
+    requeued: list[str] = []
+    for sess_dir in sorted(sessions_dir.glob("sess_*")):
+        if not sess_dir.is_dir():
+            continue
+        sid = sess_dir.name
+        failed_path = sess_dir / "session.FAILED"
+        if not failed_path.is_file():
+            continue
+        if (sess_dir / "session.READY").is_file():
+            continue
+        if not (sess_dir / "session.DONE_UPLOAD").is_file():
+            continue
+        if _session_quarantined(sess_dir):
+            continue
+        if not _failed_session_requeue_match(failed_path, allowed):
+            continue
+        attempts = _requeue_attempts(sess_dir)
+        reason = _failed_session_reason_message(failed_path)
+        if attempts >= MAX_REQUEUE_ATTEMPTS or _failed_session_unrecoverable(failed_path):
+            if apply:
+                quarantine_session(
+                    sess_dir,
+                    reason or "requeue attempts exhausted",
+                    code=_failed_session_reason_code(failed_path),
+                )
+            continue
+        requeued.append(sid)
+        if apply:
+            _record_requeue_attempt(sess_dir, attempts + 1, reason)
+            try:
+                failed_path.unlink()
+            except OSError:
+                pass
+    return requeued
 
 
 def station_slug(pipe_root: Path, station: str) -> str:
@@ -399,6 +642,8 @@ def main() -> int:
             "pending",
             "awaiting",
             "derive-pending",
+            "requeue-failed",
+            "quarantine-failed",
             "all-parquet-ready",
             "has-data",
             "slug",
@@ -407,6 +652,8 @@ def main() -> int:
             "reconcile-markers",
             "source-format",
             "ready-sessions",
+            "exportable-sessions",
+            "build-order-manifest",
         ],
     )
     parser.add_argument("station")
@@ -420,10 +667,24 @@ def main() -> int:
         help=f"pipeline backend (default: env EGO_PIPELINE_BACKEND or {DEFAULT_PIPELINE_BACKEND})",
     )
     parser.add_argument(
+        "--code",
+        action="append",
+        default=[],
+        help="for requeue-failed: limit to derive failure code (repeatable)",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
-        help="for reconcile-markers: remove stale markers (default: dry-run for doctor)",
+        help="for reconcile-markers: remove stale markers (default: dry-run for doctor); for requeue-failed: clear session.FAILED",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="for build-order-manifest: write JSON path (default active-order.json)",
+    )
+    parser.add_argument("--order-id", default="", help="for build-order-manifest")
+    parser.add_argument("--customer-id", default="", help="for build-order-manifest")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -468,6 +729,25 @@ def main() -> int:
         for sid in ready:
             print(sid)
         return 0
+    if args.command == "exportable-sessions":
+        for sid in exportable_sessions(datalab, args.station):
+            print(sid)
+        return 0
+    if args.command == "build-order-manifest":
+        try:
+            manifest = build_order_manifest(
+                datalab,
+                args.station,
+                order_id=args.order_id or None,
+                customer_id=args.customer_id or None,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        out = args.output or order_manifest_path(datalab, args.station)
+        write_order_manifest(out, manifest)
+        print(json.dumps({"path": str(out), **manifest}, ensure_ascii=False))
+        return 0
     if args.command == "source-format":
         if not str(args.session_id or "").strip():
             print("missing session_id (usage: source-format <station> <session_id>)", file=sys.stderr)
@@ -480,6 +760,20 @@ def main() -> int:
         return 0
     if args.command == "derive-pending":
         for sid in derive_pending_sessions(stream):
+            print(sid)
+        return 0
+    if args.command == "requeue-failed":
+        codes = set(args.code) if args.code else None
+        requeued = requeue_failed_sessions(stream, codes=codes, apply=bool(args.apply))
+        for sid in requeued:
+            print(sid)
+        return 0
+    if args.command == "quarantine-failed":
+        explicit = [s for s in [str(args.session_id or "").strip()] if s]
+        marked = quarantine_failed_sessions(
+            stream, session_ids=explicit or None, apply=bool(args.apply)
+        )
+        for sid in marked:
             print(sid)
         return 0
     if args.command == "awaiting":

@@ -10,6 +10,8 @@
     "datasetUrl": "stream://ego-001",
     "streamUrl": "/lerobot/api/collection/stations/ego-001/stream",
     "uploadUrl": "/lerobot/api/collection/stations/ego-001/upload",
+    "deliveryStatusUrl": "/lerobot/api/collection/stations/ego-001/delivery-status",
+    "uploadProtocol": "mcap",
     "viewerUrl": "/collection?station=ego-001",
     "collectionUi": {
       "remotePreview": true,

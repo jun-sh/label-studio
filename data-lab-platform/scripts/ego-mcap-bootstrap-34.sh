@@ -18,7 +18,7 @@ if [[ ! -f "${STREAM_ROOT}/meta/info.json" ]]; then
   "asset_layers": {
     "raw_mcap": "sensors_only",
     "stream_lerobot": "preview_no_real_pose",
-    "corpus": "convert_hamer_pose"
+    "corpus": "convert_hand_pose"
   }
 }
 EOF

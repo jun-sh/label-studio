@@ -33,7 +33,9 @@ export function resolveFrameIndex(row, manifest, globalStart = 0) {
   const raw = Number(row.frame_index ?? row.frameIndex ?? -1);
   if (!Number.isInteger(raw) || raw < 0) return -1;
   const segStart = segmentStartFrame(manifest);
-  if (segStart != null && raw >= segStart) return raw;
+  // Session-global rows only when manifest declares a non-zero segment origin.
+  // MCAP H264 trim resets per-segment rows to 0..N-1 with start_frame_index=0 — use globalStart.
+  if (segStart != null && segStart > 0 && raw >= segStart) return raw;
   return globalStart + raw;
 }
 

@@ -60,6 +60,8 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=ego-station-runtime.sh
 source "${SCRIPT_DIR}/ego-station-runtime.sh"
+# shellcheck source=ego-pipeline-performance.env.sh
+source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 [[ -n "$STATION" ]] || {
@@ -111,6 +113,14 @@ _is_async_derive_mode() {
 }
 
 if [[ "$SKIP_DERIVE" -eq 0 ]]; then
+  mapfile -t REQUEUED < <(_py requeue-failed "$STATION" --apply 2>/dev/null || true)
+  if [[ ${#REQUEUED[@]} -gt 0 ]]; then
+    log "requeue mux-failed sessions (${#REQUEUED[@]}): ${REQUEUED[*]}"
+  fi
+  mapfile -t QUARANTINED < <(_py quarantine-failed "$STATION" --apply 2>/dev/null || true)
+  if [[ ${#QUARANTINED[@]} -gt 0 ]]; then
+    log "quarantine unrecoverable sessions (${#QUARANTINED[@]}): ${QUARANTINED[*]}"
+  fi
   mapfile -t DERIVE_PENDING < <(_py derive-pending "$STATION" 2>/dev/null || true)
   if [[ ${#DERIVE_PENDING[@]} -gt 0 ]]; then
     if _is_async_derive_mode; then
@@ -178,6 +188,35 @@ if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
   if [[ -f "$SAMPLES_ZIP" ]]; then
     log "Viewer 发布门禁…"
     EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+  fi
+fi
+
+EXPORT_PY="${SCRIPT_DIR}/ego-export-delivery.py"
+if [[ -x "$EXPORT_PY" || -f "$EXPORT_PY" ]]; then
+  ORDER_MANIFEST="${DATALAB_ROOT}/data-storage/ego-delivery/${STATION}/orders/active-order.json"
+  log "构建交付 order manifest（finalize.done sessions）…"
+  set +e
+  _py build-order-manifest "$STATION" --output "$ORDER_MANIFEST" 2>&1 | tee -a "$RUN_LOG"
+  manifest_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$manifest_rc" -ne 0 ]]; then
+    die "无法构建 order manifest（需 convert 完成 finalize.done）。日志: ${RUN_LOG}"
+  fi
+  log "EGO 商业化交付门禁 (ego_export_contract@1.0)…"
+  set +e
+  python3 "$EXPORT_PY" "$STATION" --datalab-root "$DATALAB_ROOT" --order-manifest "$ORDER_MANIFEST" --gate-only 2>&1 | tee -a "$RUN_LOG"
+  gate_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$gate_rc" -ne 0 ]]; then
+    die "交付门禁未通过 (pose_ready/QC/SLO-B)。日志: ${RUN_LOG}"
+  fi
+  log "EGO 商业化交付导出…"
+  set +e
+  python3 "$EXPORT_PY" "$STATION" --datalab-root "$DATALAB_ROOT" --order-manifest "$ORDER_MANIFEST" 2>&1 | tee -a "$RUN_LOG"
+  export_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$export_rc" -ne 0 ]]; then
+    die "交付导出失败。日志: ${RUN_LOG}"
   fi
 fi
 

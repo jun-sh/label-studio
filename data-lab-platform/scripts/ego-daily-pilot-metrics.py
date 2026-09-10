@@ -93,6 +93,9 @@ def collect_session_metrics(stream_root_dir: Path, session_id: str) -> dict:
     g1 = not failed
     g2 = mcap_ok if mcap_checked else True
     g3 = ready if done_upload else None
+    unit_gate = unit.get("gate") if isinstance(unit, dict) else {}
+    unit_gate = unit_gate if isinstance(unit_gate, dict) else {}
+    g7 = bool(unit_gate.get("browser_playable")) if ready else None
 
     return {
         "session_id": session_id,
@@ -100,6 +103,7 @@ def collect_session_metrics(stream_root_dir: Path, session_id: str) -> dict:
         "G1_no_failed": g1,
         "G2_mcap_valid": g2,
         "G3_ready_after_upload": g3,
+        "G7_browser_playable": g7,
         "derive_total_s": o1_s if ready else None,
         "mux_mode": derive.get("mux_mode"),
         "reconcile_warning": derive.get("reconcile_warning"),

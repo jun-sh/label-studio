@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   ensureStreamScaffoldAvailable,
   getStreamStatus,
+  getEpisodeUploadDateMap,
   getStationCaptureState,
   isRemotePreviewAllowed,
   isStationLiveCached,
@@ -367,13 +368,15 @@ function injectBranding(html, search = "") {
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=71"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=7"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-groups.css?v=8"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
     '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=71"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=27"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
-    '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>';
+    '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>' +
+    '<script defer src="/lerobot/branding/overlay-episode-groups.js?v=5"></script>';
   if (collectionEmbed) {
     inject +=
       `<script>window.__DATALAB_COLLECTION_UI__=${JSON.stringify(COLLECTION_UI)};</script>` +
@@ -628,6 +631,14 @@ const server = http.createServer((req, res) => {
   if (streamStatusMatch && req.method === "GET") {
     const stationId = decodeURIComponent(streamStatusMatch[1]);
     return sendJson(res, 200, getStreamStatus(stationId));
+  }
+
+  const streamEpisodeDatesMatch = p.match(
+    new RegExp(`^${BASE}/api/stream/([^/]+)/episode-dates\\.json$`),
+  );
+  if (streamEpisodeDatesMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(streamEpisodeDatesMatch[1]);
+    return sendJson(res, 200, getEpisodeUploadDateMap(stationId));
   }
 
   const streamFileMatch = p.match(new RegExp(`^${BASE}/api/stream/([^/]+)/(.*)$`));

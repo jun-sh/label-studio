@@ -32,7 +32,9 @@ for arg in "$@"; do
 
 环境变量（oak 子模块覆盖，一般无需设置）:
   EGO_HANDS_FORCE=1
-  EGO_HAMER_BACKEND=geopavlakos
+  EGO_WILOR_BACKEND=repo
+  WILOR_ROOT=<ego-hand-pipeline>/third_party/wilor
+  WILOR_IMPL=repo
 EOF
       exit 0
       ;;
@@ -57,20 +59,26 @@ done
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-pipeline-performance.env.sh
+source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
 PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
+WILOR_ROOT="${WILOR_ROOT:-$PIPE_ROOT/third_party/wilor}"
+export WILOR_ROOT WILOR_IMPL="${WILOR_IMPL:-repo}"
+export EGO_WILOR_BACKEND="${EGO_WILOR_BACKEND:-repo}"
+export EGO_WILOR_DEVICE="${EGO_WILOR_DEVICE:-cuda:0}"
 PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-oak}"
 OAK_MODE="${EGO_OAK_MODE:-hands}"
 export EGO_OAK_TRACK_MODE="${EGO_OAK_TRACK_MODE:-vio}"
 export EGO_OAK_LANGUAGE_MODE="${EGO_OAK_LANGUAGE_MODE:-auto}"
 export EGO_OAK_DEPTH_BACKEND="${EGO_OAK_DEPTH_BACKEND:-depth_anything_v2}"
 export EGO_DEPTH_ANYTHING_MODEL="${EGO_DEPTH_ANYTHING_MODEL:-depth-anything/Depth-Anything-V2-Small-hf}"
-EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-geopavlakos}"
+EGO_WILOR_BACKEND="${EGO_WILOR_BACKEND:-repo}"
 PLATFORM_PYTHON="python3"
 _venv_py="$PIPE_ROOT/.venv/bin/python3"
 if [[ -x "$_venv_py" ]]; then
-  if [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_HAMER_BACKEND" == "geopavlakos" ]]; then
+  if [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_WILOR_BACKEND" == "repo" ]]; then
     PLATFORM_PYTHON="$_venv_py"
   elif [[ "$PIPELINE_BACKEND" == "oak" && "$EGO_OAK_DEPTH_BACKEND" == "depth_anything_v2" ]] \
     && "$_venv_py" -c "import transformers" 2>/dev/null; then
@@ -98,6 +106,83 @@ die() { echo "❌ $*" | tee -a "$RUN_LOG" >&2; exit 1; }
 
 _py() {
   PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT" --pipe-root "$PIPE_ROOT" --backend "$PIPELINE_BACKEND"
+}
+
+_run_oak_convert_session() {
+  local SID="$1"
+  local _convert_force=()
+  if [[ "${EGO_HANDS_FORCE:-}" == "1" ]]; then
+    _convert_force=(--force)
+  fi
+  log ">>> 后处理 ${STATION} / ${SID} (IMU: sensor_raw/imu)"
+  set +e
+  (
+    cd "$PLATFORM_ROOT" && \
+    PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+    "$PLATFORM_PYTHON" -m ego_platform.cli.convert \
+      --station "$STATION" \
+      --session "$SID" \
+      --datalab-root "$DATALAB_ROOT" \
+      --corpus-slug "$SLUG" \
+      --mode "$OAK_MODE" \
+      "${_convert_force[@]}"
+  ) 2>&1 | tee -a "$RUN_LOG"
+  local rc=${PIPESTATUS[0]}
+  set -e
+  return "$rc"
+}
+
+_count_convert_markers() {
+  local SID="$1"
+  local DONE_MARKER="${DATALAB_ROOT}/data-storage/pipeline/${STATION}/${SID}/.status/finalize.done"
+  if [[ -f "$DONE_MARKER" ]]; then
+    PROCESSED=$((PROCESSED + 1))
+    log "session ${SID} 完成"
+  else
+    FAILED=$((FAILED + 1))
+    log "session ${SID} 未完成 (缺少 ${DONE_MARKER})"
+  fi
+}
+
+_convert_worker_pidfile() {
+  echo "${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.pid"
+}
+
+_ensure_convert_worker() {
+  [[ "${EGO_USE_CONVERT_WORKER:-0}" == "1" ]] || return 0
+  local pf
+  pf="$(_convert_worker_pidfile)"
+  if [[ -f "$pf" ]]; then
+    local pid
+    pid="$(tr -d '[:space:]' < "$pf" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      log "convert worker already running (pid ${pid})"
+      return 0
+    fi
+  fi
+  log "启动 convert worker（WiLoR 常驻）…"
+  nohup bash "${SCRIPT_DIR}/ego-convert-worker.sh" "$STATION" >> "${LOG_DIR}/ego-convert-worker-${STATION}.log" 2>&1 &
+  echo $! > "$pf"
+}
+
+_wait_convert_worker_drain() {
+  local timeout_sec="${EGO_CONVERT_WORKER_WAIT_SEC:-7200}"
+  local deadline=$((SECONDS + timeout_sec))
+  local started=$SECONDS
+  mapfile -t _drain_initial < <(_py awaiting "$STATION" 2>/dev/null || true)
+  local total=${#_drain_initial[@]}
+  [[ "$total" -gt 0 ]] || return 0
+  while (( SECONDS < deadline )); do
+    mapfile -t AWAITING < <(_py awaiting "$STATION" 2>/dev/null || true)
+    if [[ ${#AWAITING[@]} -eq 0 ]]; then
+      log "convert worker 完成 ${total}/${total}（$((SECONDS - started))s）"
+      return 0
+    fi
+    local done=$((total - ${#AWAITING[@]}))
+    log "convert 进度 finalize ${done}/${total} 已等待 $((SECONDS - started))s 待处理: ${AWAITING[*]}"
+    sleep 5
+  done
+  die "convert worker 等待超时（${timeout_sec}s）"
 }
 
 _wait_session_parquet_ready() {
@@ -146,14 +231,11 @@ if [[ ${#RECONCILED[@]} -gt 0 ]]; then
   log "已清理陈旧 pipeline marker: ${RECONCILED[*]}"
 fi
 
-if [[ ! -d "$PIPE_ROOT" && "$PIPELINE_BACKEND" == "legacy" ]]; then
-  die "找不到后处理目录 ego-hand-pipeline: $PIPE_ROOT"
+if [[ "$PIPELINE_BACKEND" == "legacy" ]]; then
+  die "PIPELINE_BACKEND=legacy 已废弃，请使用默认 oak 后端（WiLoR convert）"
 fi
 if [[ "$PIPELINE_BACKEND" == "oak" && ! -d "$PLATFORM_ROOT" ]]; then
   die "找不到 ego-platform: $PLATFORM_ROOT"
-fi
-if [[ "$PIPELINE_BACKEND" == "legacy" && ! -x "$POSTPROCESS_SH" ]]; then
-  die "找不到后处理脚本: $POSTPROCESS_SH"
 fi
 
 HAS_DATA=0
@@ -190,42 +272,91 @@ fi
 PROCESSED=0
 FAILED=0
 if [[ ${#PENDING[@]} -gt 0 ]]; then
-  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE})"
-  for SID in "${PENDING[@]}"; do
-    log ">>> 后处理 ${STATION} / ${SID} (IMU: sensor_raw/imu)"
+  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE}, batch=${EGO_CONVERT_BATCH:-1}, parallel=${EGO_CONVERT_PARALLEL:-1}, worker=${EGO_USE_CONVERT_WORKER:-0})"
+  if [[ "${EGO_USE_CONVERT_WORKER:-0}" == "1" ]]; then
+    _ensure_convert_worker
+    log "等待 convert worker 消化 ${#PENDING[@]} 个 session…"
+    _wait_convert_worker_drain
+    for SID in "${PENDING[@]}"; do
+      _count_convert_markers "$SID"
+    done
+  elif [[ "$PIPELINE_BACKEND" == "oak" && "${EGO_CONVERT_BATCH:-1}" != "0" && ${#PENDING[@]} -gt 1 ]]; then
+    log "batch convert（WiLoR 模型常驻，单进程多 session）…"
+    _convert_force=()
+    if [[ "${EGO_HANDS_FORCE:-}" == "1" ]]; then
+      _convert_force=(--force)
+    fi
     set +e
-    if [[ "$PIPELINE_BACKEND" == "oak" ]]; then
-      (
-        cd "$PLATFORM_ROOT" && \
-        PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
-        "$PLATFORM_PYTHON" -m ego_platform.cli.convert \
-          --station "$STATION" \
-          --session "$SID" \
-          --datalab-root "$DATALAB_ROOT" \
-          --corpus-slug "$SLUG" \
-          --mode "$OAK_MODE"
-      ) 2>&1 | tee -a "$RUN_LOG"
-      rc=${PIPESTATUS[0]}
-      DONE_MARKER="${DATALAB_ROOT}/data-storage/pipeline/${STATION}/${SID}/.status/finalize.done"
-    else
+    (
+      cd "$PLATFORM_ROOT" && \
+      PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+      "$PLATFORM_PYTHON" -m ego_platform.cli.convert_batch \
+        --station "$STATION" \
+        --sessions "${PENDING[@]}" \
+        --datalab-root "$DATALAB_ROOT" \
+        --corpus-slug "$SLUG" \
+        --mode "$OAK_MODE" \
+        "${_convert_force[@]}"
+    ) 2>&1 | tee -a "$RUN_LOG"
+    batch_rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$batch_rc" -ne 0 ]]; then
+      log "batch convert 退出码 ${batch_rc}，按 session 检查 finalize marker"
+    fi
+    for SID in "${PENDING[@]}"; do
+      _count_convert_markers "$SID"
+    done
+  elif [[ "$PIPELINE_BACKEND" == "oak" && "${EGO_CONVERT_PARALLEL:-1}" -gt 1 ]]; then
+    log "parallel convert（workers=${EGO_CONVERT_PARALLEL}，每 worker 独立加载 WiLoR）…"
+    _pids=()
+    for SID in "${PENDING[@]}"; do
+      while (( $(jobs -r 2>/dev/null | wc -l) >= EGO_CONVERT_PARALLEL )); do
+        wait -n 2>/dev/null || wait || true
+      done
+      _run_oak_convert_session "$SID" &
+      _pids+=($!)
+    done
+    for pid in "${_pids[@]}"; do
+      wait "$pid" || true
+    done
+    for SID in "${PENDING[@]}"; do
+      _count_convert_markers "$SID"
+    done
+  elif [[ "$PIPELINE_BACKEND" != "oak" ]]; then
+    for SID in "${PENDING[@]}"; do
+      log ">>> legacy 后处理 ${STATION} / ${SID}"
+      set +e
       (cd "$PIPE_ROOT" && bash "$POSTPROCESS_SH" "$STATION" "$SID") 2>&1 | tee -a "$RUN_LOG"
       rc=${PIPESTATUS[0]}
+      set -e
       DONE_MARKER="${PIPE_ROOT}/outputs/${STATION}/${SID}/.status/publish.done"
-    fi
-    set -e
-    if [[ "$rc" -ne 0 ]]; then
-      log "session ${SID} 失败 (exit ${rc})"
-      FAILED=$((FAILED + 1))
-      continue
-    fi
-    if [[ -f "$DONE_MARKER" ]]; then
-      PROCESSED=$((PROCESSED + 1))
-      log "session ${SID} 完成"
-    else
-      FAILED=$((FAILED + 1))
-      log "session ${SID} 未完成 (缺少 ${DONE_MARKER})"
-    fi
-  done
+      if [[ "$rc" -ne 0 ]]; then
+        log "session ${SID} 失败 (exit ${rc})"
+        FAILED=$((FAILED + 1))
+        continue
+      fi
+      if [[ -f "$DONE_MARKER" ]]; then
+        PROCESSED=$((PROCESSED + 1))
+        log "session ${SID} 完成"
+      else
+        FAILED=$((FAILED + 1))
+        log "session ${SID} 未完成 (缺少 ${DONE_MARKER})"
+      fi
+    done
+  else
+    for SID in "${PENDING[@]}"; do
+      set +e
+      _run_oak_convert_session "$SID"
+      rc=$?
+      set -e
+      if [[ "$rc" -ne 0 ]]; then
+        log "session ${SID} 失败 (exit ${rc})"
+        FAILED=$((FAILED + 1))
+        continue
+      fi
+      _count_convert_markers "$SID"
+    done
+  fi
 else
   log "所有 session 已发布，跳过后处理"
 fi

@@ -1,16 +1,17 @@
 [Unit]
-Description=EGO collection WiFi hotspot (EGO-214-COLLECT)
+Description=EGO collection WiFi hotspot
 Documentation=file:///home/server/ego-web/README.md
-After=NetworkManager.service network-online.target
-Wants=network-online.target
+After=ecs-ego-wifi-radio.service NetworkManager.service network-online.target
+Wants=NetworkManager.service
+Before=ecs-ego-web.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/bin/nmcli connection up EGO-214-COLLECT
-ExecStop=/usr/bin/nmcli connection down EGO-214-COLLECT
-# Retry if NM is not ready immediately after boot.
-ExecStartPre=/bin/sleep 3
+EnvironmentFile=-/etc/default/ego-hotspot
+ExecStartPre=/home/server/ego-web/ego-hotspot-boot-wait.sh
+ExecStart=/home/server/ego-web/ego-hotspot-up.sh
+ExecStop=/home/server/ego-web/ego-hotspot-down.sh
 
 [Install]
 WantedBy=multi-user.target

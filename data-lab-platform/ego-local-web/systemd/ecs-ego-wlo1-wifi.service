@@ -1,0 +1,15 @@
+[Unit]
+Description=Connect AX201 (wlo1) to lab WiFi for upstream internet
+Documentation=file:///home/server/ego-web/README.md
+After=ecs-ego-wifi-radio.service NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/default/ego-hotspot
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/server/ego-web/ego-wlo1-wifi-up.sh
+
+[Install]
+WantedBy=multi-user.target

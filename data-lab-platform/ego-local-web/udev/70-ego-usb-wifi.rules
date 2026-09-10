@@ -1,0 +1,2 @@
+# Stable name for EGO USB AP dongle (Realtek RTL8188GU).
+SUBSYSTEM=="net", ACTION=="add", ATTR{address}=="50:2b:73:e8:46:0c", NAME="wlp_usb_ap"

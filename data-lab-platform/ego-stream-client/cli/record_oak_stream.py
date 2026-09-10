@@ -90,8 +90,30 @@ def _persist_strict_emit_ts_ns(checkpoint_path: Path, ts_ns: int) -> None:
     tmp.replace(path)
 
 
-def _env_flag(name: str, default: str = "0") -> bool:
-    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+def _capture_stats_path(checkpoint_path: Path) -> Path:
+    return checkpoint_path.parent / "capture_live_stats.json"
+
+
+def _write_capture_live_stats(
+    checkpoint_path: Path,
+    *,
+    frame_count: int,
+    beep_epoch: float | None,
+    capture_fps: float,
+) -> None:
+    path = _capture_stats_path(checkpoint_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    effective_duration_s = int(frame_count / 30)
+    payload = {
+        "frame_count": int(frame_count),
+        "effective_duration_s": effective_duration_s,
+        "capture_fps": round(float(capture_fps), 3),
+        "beep_epoch": beep_epoch,
+        "updated_at": time.time(),
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def _capture_codec_mode(recorder: Oak4pEgoRecorder) -> str:
@@ -248,7 +270,12 @@ def main() -> None:
         type=str,
         default=os.environ.get("EGO_SEGMENT_ROOT", f"/home/server/cache/{station}/segments"),
     )
-    p.add_argument("--episode-seconds", type=float, default=600.0)
+    p.add_argument(
+        "--episode-seconds",
+        type=float,
+        default=0.0,
+        help="Episode cap in seconds; 0 uses EGO_STRICT_EPISODE_SECONDS (default 86400 / 24h)",
+    )
     p.add_argument("--fps", type=int, default=OAK_CAPTURE_FPS)
     p.add_argument("--imu-hz", type=int, default=OAK_CAPTURE_IMU_HZ)
     p.add_argument("--no-heartbeat", action="store_true")
@@ -292,11 +319,11 @@ def main() -> None:
     )
     preview_feed_stop: threading.Event | None = None
     frame_count = 0
+    beep_wall_epoch: float | None = None
     t0 = time.monotonic()
     try:
         recorder.connect()
         _require_capture_codec(recorder)
-        preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
         if recorder.use_hw_h264:
             writer.register_pre_segment_rotate_hook(recorder.prepare_h264_segment_boundary)
 
@@ -356,7 +383,22 @@ def main() -> None:
         if probe.frame_count() == 0:
             raise SystemExit("No frames captured during probe; check OAK device and USB.")
         print(f"probe_duration_s={probe_s:.3f}", flush=True)
+        if recorder.use_hw_h264 and _env_flag("OAK_H264_SEQUENTIAL", "0"):
+            ready, streak = recorder.wait_h264_sequential_ready()
+            print(
+                f"h264_sequential_ready ready={ready} streak={streak} "
+                f"max_s={os.environ.get('EGO_H264_READY_MAX_S', '2.0')} "
+                f"target={os.environ.get('EGO_H264_READY_STREAK', '30')}",
+                flush=True,
+            )
+            if not ready:
+                raise SystemExit(
+                    "H264 sequential pipeline not ready before beep; "
+                    "check OAK USB bandwidth and STRICT_* ring settings."
+                )
+        beep_wall_epoch = time.time()
         play_capture_ready_beep()
+        preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
         print(
             f"capture-only session={session_id} segment_root={args.segment_root} "
             f"fps_target={args.fps} device_fps={device_fps} imu_hz={args.imu_hz} "
@@ -417,6 +459,12 @@ def main() -> None:
                     f"sync_mode=egoverse_30hz seg_max_frames={seg_frames} session={session_id}",
                     flush=True,
                 )
+                _write_capture_live_stats(
+                    checkpoint_path,
+                    frame_count=writer.next_frame_index,
+                    beep_epoch=beep_wall_epoch,
+                    capture_fps=capture_fps,
+                )
     finally:
         if preview_feed_stop is not None:
             preview_feed_stop.set()
@@ -442,4 +490,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(f"capture_fatal: {exc}", flush=True)
+        raise

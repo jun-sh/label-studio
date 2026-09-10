@@ -28,6 +28,7 @@ import {
   resumeDeriveQueuesForAllStations,
   ensureIdleDeriveWatcher,
 } from "./derive-async.mjs";
+import { getEpisodeDeliveryStatus } from "./delivery-status.mjs";
 
 const PORT = Number(process.env.INGEST_PORT || process.env.PORT || 7862);
 const BASE = "/lerobot";
@@ -51,9 +52,23 @@ function sendJson(res, status, obj) {
 }
 
 function handleIngestError(res, err) {
-  const status = err.statusCode === 401 ? 401 : err.statusCode === 404 ? 404 : 400;
+  const status =
+    err.statusCode === 401
+      ? 401
+      : err.statusCode === 404
+        ? 404
+        : err.statusCode === 409
+          ? 409
+          : 400;
   sendJson(res, status, {
-    error: status === 401 ? "unauthorized" : status === 404 ? "not_found" : "bad_request",
+    error:
+      status === 401
+        ? "unauthorized"
+        : status === 404
+          ? "not_found"
+          : status === 409
+            ? "conflict"
+            : "bad_request",
     reason: err.reason || null,
     message: String(err.message || err),
   });
@@ -101,6 +116,20 @@ const server = http.createServer((req, res) => {
     const stationId = decodeURIComponent(deriveStatusMatch[1]);
     const sessionFilter = url.searchParams.get("session") || undefined;
     return sendJson(res, 200, getDeriveStatusSummary(stationId, { sessionId: sessionFilter }));
+  }
+
+  const deliveryStatusMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/delivery-status$`),
+  );
+  if (deliveryStatusMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(deliveryStatusMatch[1]);
+    const sessionFilter = url.searchParams.get("session") || undefined;
+    const datasetSlug = url.searchParams.get("dataset_slug") || undefined;
+    return sendJson(
+      res,
+      200,
+      getEpisodeDeliveryStatus(stationId, { sessionId: sessionFilter, datasetSlug }),
+    );
   }
 
   const segmentsListMatch = p.match(

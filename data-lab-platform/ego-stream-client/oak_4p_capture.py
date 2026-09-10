@@ -32,6 +32,10 @@ from ego_capture_studio.capture.ego_spec import (
     OAK_DEFAULT_FRAME_HEIGHT,
     OAK_DEFAULT_FRAME_WIDTH,
 )
+try:
+    from ego_capture_studio.capture.topology import active_topology
+except ImportError:
+    from topology import active_topology  # type: ignore[no-redef]
 
 # AR0234 module: sensor fixed 1200P; ISP scale 2/3 -> 1280x800 (manufacturer FPS recipe).
 OAK_SENSOR_RES_KEY = "1200"
@@ -78,6 +82,46 @@ def oak_hw_preview_h264_enabled() -> bool:
     return _env_bool("OAK_HW_PREVIEW_H264", "1")
 
 
+def resolve_oak_camera_socket(name: str) -> str:
+    """Map topology role (front_left) or socket id (CAM_A) to device socket id."""
+    token = name.strip()
+    if not token:
+        return token
+    doc = active_topology()
+    socket_to_role = doc.get("socket_to_role") or {}
+    if token in socket_to_role:
+        return token
+    role_to_socket = {role: sock for sock, role in socket_to_role.items()}
+    return role_to_socket.get(token, token)
+
+
+def oak_hw_preview_h264_cameras() -> frozenset[str] | None:
+    """Cameras with H.264-path MJPEG sidecar. None = all color cams; empty = none."""
+    if not oak_hw_preview_h264_enabled():
+        return frozenset()
+    raw = os.environ.get(
+        "OAK_HW_PREVIEW_H264_CAMS", PRIMARY_OAK_SOCKET
+    ).strip()
+    if raw.lower() in ("0", "none", "off", ""):
+        return frozenset()
+    if raw.lower() in ("all", "*"):
+        return None
+    return frozenset(
+        resolve_oak_camera_socket(part)
+        for part in raw.split(",")
+        if part.strip()
+    )
+
+
+def oak_camera_has_h264_preview(cam_name: str, *, is_color: bool) -> bool:
+    if not is_color or not oak_hw_preview_h264_enabled():
+        return False
+    allowed = oak_hw_preview_h264_cameras()
+    if allowed is None:
+        return True
+    return cam_name in allowed
+
+
 # Backward-compatible alias for tests and imports.
 OAK_HW_PREVIEW_H264 = oak_hw_preview_h264_enabled()
 # Phase-2 POC: H.264 bitstream per cam (local segment only; ingest still expects JPEG upload).
@@ -93,6 +137,10 @@ OAK_H264_SEQUENTIAL = os.environ.get("OAK_H264_SEQUENTIAL", "0").strip().lower()
     "true",
     "yes",
 )
+# When 0, strict-sync hot loop skips preview USB drain (preview_feeder thread only).
+EGO_STRICT_SYNC_PREVIEW_DRAIN = os.environ.get(
+    "EGO_STRICT_SYNC_PREVIEW_DRAIN", "1"
+).strip().lower() in ("1", "true", "yes")
 # Phase-2: depth socket capture rate divisor vs RGB (1=every frame, 2=half, etc.)
 OAK_DEPTH_FRAME_DIVISOR = max(1, int(os.environ.get("OAK_DEPTH_FRAME_DIVISOR", "1")))
 EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
@@ -129,6 +177,14 @@ STRICT_RGB_YIELD_MAX_MS = float(os.environ.get("STRICT_RGB_YIELD_MAX_MS", "16.0"
 STRICT_DEPTH_YIELD_MAX_MS = float(os.environ.get("STRICT_DEPTH_YIELD_MAX_MS", "18.0"))
 STRICT_SYNC_MISS_MAX = max(1, int(os.environ.get("STRICT_SYNC_MISS_MAX", "4")))
 STRICT_IMU_BUFFER_MAX = max(256, int(os.environ.get("STRICT_IMU_BUFFER_MAX", "2000")))
+EGO_STRICT_MISS_ADVANCE_GRID = os.environ.get("EGO_STRICT_MISS_ADVANCE_GRID", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+EGO_H264_READY_MAX_S = float(os.environ.get("EGO_H264_READY_MAX_S", "2.0"))
+EGO_H264_READY_MIN_RING = max(1, int(os.environ.get("EGO_H264_READY_MIN_RING", "1")))
+EGO_H264_READY_STREAK = max(1, int(os.environ.get("EGO_H264_READY_STREAK", "30")))
 _STRICT_PRIMARY_KEY_SUBSTRS = ("front_left", "head_left")
 _STRICT_RGB_KEY_SUBSTRS = ("front_right", "rear_right", "head_right", "camera_02")
 _STRICT_DEPTH_KEY_SUBSTRS = ("depth_left", "rear_left", "depth_head")
@@ -306,9 +362,15 @@ def _packet_frame_size(pkt: Any, *, hw_jpeg: bool) -> tuple[int, int] | None:
 def _scaled_size(width: int, height: int, max_edge: int) -> tuple[int, int]:
     longest = max(width, height)
     if longest <= max_edge:
-        return width, height
-    scale = max_edge / float(longest)
-    return max(2, int(width * scale)), max(2, int(height * scale))
+        w, h = width, height
+    else:
+        scale = max_edge / float(longest)
+        w = max(2, int(width * scale))
+        h = max(2, int(height * scale))
+    # OAK MJPEG encoder requires width multiple of 32 and height multiple of 2.
+    w = max(32, (w // 32) * 32)
+    h = max(2, (h // 2) * 2)
+    return w, h
 
 
 def _read_camera_intrinsics(calib: Any, socket: Any, width: int, height: int) -> dict[str, Any]:
@@ -616,24 +678,37 @@ class Oak4pEgoRecorder:
         self._preview_queues = {}
         preview_streams = (not self._hw_jpeg and OAK_USE_IMAGEMANIP) or (
             self._hw_jpeg and OAK_HW_PREVIEW
-        ) or (self._hw_h264 and oak_hw_preview_h264_enabled())
+        ) or (
+            self._hw_h264
+            and oak_hw_preview_h264_enabled()
+            and oak_hw_preview_h264_cameras() != frozenset()
+        )
         if preview_streams:
             for name, props in self._cam_list.items():
-                if props.get("color"):
-                    stream = f"{name}_preview"
-                    self._preview_queues[name] = device.getOutputQueue(
-                        name=stream, maxSize=4, blocking=False
-                    )
+                if not props.get("color"):
+                    continue
+                if self._hw_h264 and not oak_camera_has_h264_preview(name, is_color=True):
+                    continue
+                stream = f"{name}_preview"
+                self._preview_queues[name] = device.getOutputQueue(
+                    name=stream, maxSize=4, blocking=False
+                )
         self._imu_queue = (
             device.getOutputQueue("imu", maxSize=50, blocking=False) if imu_on else None
         )
         self._verify_camera_output_resolution()
         pv_w, pv_h = self._preview_wh
+        h264_pv = (
+            ",".join(sorted(self._preview_queues.keys()))
+            if self._hw_h264 and self._preview_queues
+            else ("off" if self._hw_h264 else "n/a")
+        )
         print(
             f"oak_pipeline=sensor_1200p isp_scale={OAK_ISP_SCALE_NUM}/{OAK_ISP_SCALE_DEN} "
             f"hw_jpeg={int(self._hw_jpeg)} hw_h264={int(self._hw_h264)} imagemanip={int(OAK_USE_IMAGEMANIP)} "
             f"gpio_fsync={int(OAK_GPIO_FSYNC)} device_fps={self.device_fps} "
-            f"capture={cap_w}x{cap_h} preview={pv_w}x{pv_h} mjpeg_q={OAK_MJPEG_QUALITY}",
+            f"capture={cap_w}x{cap_h} preview={pv_w}x{pv_h} h264_preview={h264_pv} "
+            f"mjpeg_q={OAK_MJPEG_QUALITY}",
             flush=True,
         )
         if self._hw_h264:
@@ -775,6 +850,10 @@ class Oak4pEgoRecorder:
                 cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
                 if self._hw_h264:
+                    if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(
+                        cam_name, is_color=True
+                    ):
+                        cam.setPreviewSize(pv_w, pv_h)
                     manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
                     cam.isp.link(manip_cap.inputImage)
                     enc_cap = self._create_h264_encoder(pipeline)
@@ -786,8 +865,9 @@ class Oak4pEgoRecorder:
                         enc_ctrl_in.setStreamName(ctrl_stream)
                         enc_ctrl_in.out.link(enc_cap.inputControl)
                         self._h264_ctrl_stream_names.append(ctrl_stream)
-                    if pv_w > 0 and pv_h > 0 and oak_hw_preview_h264_enabled():
-                        cam.setPreviewSize(pv_w, pv_h)
+                    if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(
+                        cam_name, is_color=True
+                    ):
                         manip_pv = self._create_h264_input_manip(pipeline, pv_w, pv_h)
                         enc_pv = self._create_mjpeg_encoder(pipeline)
                         cam.preview.link(manip_pv.inputImage)
@@ -951,6 +1031,58 @@ class Oak4pEgoRecorder:
             capture_out[lerobot_key] = sample.payload
             offsets[lerobot_key] = int(sample.ts_ns) - primary_ts_ns
         return capture_out, offsets, primary_ts_ns
+
+    def wait_h264_sequential_ready(
+        self,
+        *,
+        max_s: float | None = None,
+        min_ring_depth: int | None = None,
+        streak_target: int | None = None,
+    ) -> tuple[bool, int]:
+        """Wait for consecutive H264 sequential yields before capture-ready beep."""
+        if not (self._hw_h264 and OAK_H264_SEQUENTIAL):
+            return True, 0
+        if self._device is None:
+            raise RuntimeError("Call connect() first")
+
+        deadline = time.monotonic() + float(
+            EGO_H264_READY_MAX_S if max_s is None else max_s
+        )
+        min_ring = int(EGO_H264_READY_MIN_RING if min_ring_depth is None else min_ring_depth)
+        streak_need = int(EGO_H264_READY_STREAK if streak_target is None else streak_target)
+        cam_rings: dict[str, deque[_CamRingSample]] = {
+            oak: deque(maxlen=self._strict_ring_len(oak)) for oak in self._cam_list
+        }
+        consecutive = 0
+        max_lens: dict[str, int] = {oak: 0 for oak in self._cam_list}
+        while time.monotonic() < deadline:
+            self._drain_cam_queues_to_rings(cam_rings)
+            for oak in self._cam_list:
+                max_lens[oak] = max(max_lens[oak], len(cam_rings[oak]))
+            if min_ring > 1 and not all(
+                len(cam_rings[oak]) >= min_ring for oak in self._cam_list
+            ):
+                time.sleep(0.001)
+                continue
+            if not all(cam_rings[oak] for oak in self._cam_list):
+                time.sleep(0.001)
+                continue
+            if self._yield_h264_sequential_sample(cam_rings) is None:
+                consecutive = 0
+                time.sleep(0.001)
+                continue
+            consecutive += 1
+            if consecutive >= streak_need:
+                print(
+                    f"h264_sequential_ready ring_max={max_lens} streak={consecutive}",
+                    flush=True,
+                )
+                return True, consecutive
+        print(
+            f"h264_sequential_ready timeout ring_max={max_lens} streak={consecutive}",
+            flush=True,
+        )
+        return False, consecutive
 
     def flush_remaining_imu_raw(self) -> list[dict[str, Any]]:
         buf = self._strict_imu_buf
@@ -1283,7 +1415,7 @@ class Oak4pEgoRecorder:
         def _strict_sync_miss() -> None:
             nonlocal sync_miss_streak, global_idx
             sync_miss_streak += 1
-            if sync_miss_streak >= STRICT_SYNC_MISS_MAX:
+            if EGO_STRICT_MISS_ADVANCE_GRID and sync_miss_streak >= STRICT_SYNC_MISS_MAX:
                 global_idx += 1
                 sync_miss_streak = 0
             time.sleep(0.0005)
@@ -1298,9 +1430,10 @@ class Oak4pEgoRecorder:
             self._imu_flush_accel_idx = len(buf.accel_ts_ns)
             self._drain_cam_queues_to_rings(cam_rings)
 
-            preview_drain = self._drain_preview_queues()
-            if preview_drain:
-                last_preview_oak.update(preview_drain)
+            if EGO_STRICT_SYNC_PREVIEW_DRAIN:
+                preview_drain = self._drain_preview_queues()
+                if preview_drain:
+                    last_preview_oak.update(preview_drain)
 
             if not all(cam_rings[oak] for oak in self._cam_list):
                 time.sleep(0.0005)

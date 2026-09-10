@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -38,13 +39,21 @@ def _max_match_pairs(
     accels: list[tuple[int, list[float]]],
     gyros: list[tuple[int, list[float]]],
 ) -> list[tuple[int, int, int]]:
-    """Greedy 1:1 pairing by smallest |Δt| within PAIR_TOLERANCE_NS."""
+    """Greedy 1:1 pairing by smallest |Δt| within PAIR_TOLERANCE_NS.
+
+    Both inputs must be sorted by timestamp; a sliding window keeps edge
+    enumeration linear in the number of in-tolerance candidates, which matters
+    for long segments where a full accel x gyro scan would never finish.
+    """
     edges: list[tuple[int, int, int]] = []
+    window_start = 0
     for i, (a_ts, _) in enumerate(accels):
-        for j, (g_ts, _) in enumerate(gyros):
-            dist = abs(g_ts - a_ts)
-            if dist <= PAIR_TOLERANCE_NS:
-                edges.append((dist, i, j))
+        while window_start < len(gyros) and gyros[window_start][0] < a_ts - PAIR_TOLERANCE_NS:
+            window_start += 1
+        j = window_start
+        while j < len(gyros) and gyros[j][0] <= a_ts + PAIR_TOLERANCE_NS:
+            edges.append((abs(gyros[j][0] - a_ts), i, j))
+            j += 1
     edges.sort()
     used_accel: set[int] = set()
     used_gyro: set[int] = set()
@@ -58,15 +67,10 @@ def _max_match_pairs(
     return pairs
 
 
-def _has_partner_within_tol(
-    ts_ns: int,
-    sensor: str,
-    accels: list[tuple[int, list[float]]],
-    gyros: list[tuple[int, list[float]]],
-) -> bool:
-    if sensor == "accel":
-        return any(abs(g_ts - ts_ns) <= PAIR_TOLERANCE_NS for g_ts, _ in gyros)
-    return any(abs(a_ts - ts_ns) <= PAIR_TOLERANCE_NS for a_ts, _ in accels)
+def _has_partner_within_tol(ts_ns: int, partner_ts: list[int]) -> bool:
+    """Binary search over the sorted partner timestamps."""
+    idx = bisect.bisect_left(partner_ts, ts_ns - PAIR_TOLERANCE_NS)
+    return idx < len(partner_ts) and partner_ts[idx] <= ts_ns + PAIR_TOLERANCE_NS
 
 
 def pair_imu_records(lines: list[dict[str, Any]]) -> list[tuple[int, dict[str, list[float] | None]]]:
@@ -90,6 +94,8 @@ def pair_imu_records(lines: list[dict[str, Any]]) -> list[tuple[int, dict[str, l
 
     accels.sort(key=lambda item: item[0])
     gyros.sort(key=lambda item: item[0])
+    accel_ts = [ts for ts, _ in accels]
+    gyro_ts = [ts for ts, _ in gyros]
     buckets: dict[int, dict[str, list[float] | None]] = {}
 
     pairs = _max_match_pairs(accels, gyros)
@@ -104,14 +110,14 @@ def pair_imu_records(lines: list[dict[str, Any]]) -> list[tuple[int, dict[str, l
     for i, (a_ts, a_vec) in enumerate(accels):
         if i in matched_accel:
             continue
-        if _has_partner_within_tol(a_ts, "accel", accels, gyros):
+        if _has_partner_within_tol(a_ts, gyro_ts):
             continue
         buckets[a_ts] = {"accel": a_vec, "gyro": None}
 
     for j, (g_ts, g_vec) in enumerate(gyros):
         if j in matched_gyro:
             continue
-        if _has_partner_within_tol(g_ts, "gyro", accels, gyros):
+        if _has_partner_within_tol(g_ts, accel_ts):
             continue
         if g_ts in buckets and buckets[g_ts]["gyro"] is None:
             buckets[g_ts]["gyro"] = g_vec

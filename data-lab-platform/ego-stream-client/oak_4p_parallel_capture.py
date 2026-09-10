@@ -4,7 +4,8 @@ Four per-camera drain threads + IMU drain thread feed thread-safe rings; the mai
 thread commits frames via strict grid (default) or device-tick mode (POC).
 
 Enable via ecs-record-oak-mcap-parallel-drain.service (feat/ego-parallel-drain-poc).
-Set EGO_CAPTURE_SYNC_MODE=device_tick for primary-driven commit (no wall-clock grid wait).
+Set EGO_CAPTURE_SYNC_MODE=device_tick for sequential device commit, or fsync_quad for
+primary CAM_A tick + timestamp-aligned 4-way pick (POC).
 """
 
 from __future__ import annotations
@@ -48,22 +49,54 @@ _PARALLEL_SPIN_ROUNDS = max(1, int(os.environ.get("EGO_PARALLEL_SPIN_ROUNDS", "6
 class _ThreadSafeCamRing:
     """Per-camera ring filled by a dedicated drain thread."""
 
-    def __init__(self, maxlen: int) -> None:
+    def __init__(
+        self,
+        maxlen: int,
+        *,
+        cam_name: str,
+        overflow: Any | None = None,
+    ) -> None:
         self._maxlen = int(maxlen)
+        self._cam_name = str(cam_name)
+        self._overflow = overflow
         self._deque: deque[_CamRingSample] = deque(maxlen=self._maxlen)
         self._lock = threading.Lock()
         self._appends = 0
 
     def append(self, sample: _CamRingSample) -> None:
+        from ego_capture_studio.capture.ingest_buffer import append_bounded
+
         with self._lock:
-            self._deque.append(sample)
+            append_bounded(
+                self._deque,
+                sample,
+                cam_name=self._cam_name,
+                overflow=self._overflow,
+                on_main=False,
+            )
             self._appends += 1
 
-    def drain_to(self, target: deque[_CamRingSample], limit: int = _PARALLEL_DRAIN_BATCH) -> int:
+    def drain_to(
+        self,
+        target: deque[_CamRingSample],
+        limit: int = _PARALLEL_DRAIN_BATCH,
+        *,
+        cam_name: str | None = None,
+    ) -> int:
+        from ego_capture_studio.capture.ingest_buffer import append_bounded
+
         moved = 0
+        oak = cam_name or self._cam_name
         with self._lock:
             while self._deque and moved < limit:
-                target.append(self._deque.popleft())
+                sample = self._deque.popleft()
+                append_bounded(
+                    target,
+                    sample,
+                    cam_name=oak,
+                    overflow=self._overflow,
+                    on_main=True,
+                )
                 moved += 1
         return moved
 
@@ -143,6 +176,17 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         self._parallel_preview_last: dict[str, bytes | np.ndarray] = {}
         self._parallel_preview_hw = False
         self._straggler_diag: Any = None
+        self._fsync_quad_diag: Any = None
+        from ego_capture_studio.capture.device_ingest_diag import DeviceIngestDiagnostics, device_ingest_diag_enabled
+        from ego_capture_studio.capture.ingest_buffer import RingOverflowStats
+
+        self._ingest_overflow = RingOverflowStats()
+        self._device_ingest_diag = DeviceIngestDiagnostics() if device_ingest_diag_enabled() else None
+
+    def _poc_ring_len(self, oak_socket: str) -> int:
+        from ego_capture_studio.capture.ingest_buffer import poc_ring_len_for_oak
+
+        return poc_ring_len_for_oak(oak_socket)
 
     def connect(self) -> None:
         super().connect()
@@ -157,13 +201,27 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
     def stop(self) -> None:
         if self._straggler_diag is not None:
             self._straggler_diag.report(prefix="straggler_final")
+        if self._fsync_quad_diag is not None:
+            self._fsync_quad_diag.report(
+                prefix="fsync_quad_final",
+                parallel_rings=self._parallel_rings,
+            )
+        if getattr(self, "_ingest_overflow", None) is not None:
+            self._ingest_overflow.report()
+        if getattr(self, "_device_ingest_diag", None) is not None:
+            self._device_ingest_diag.report()
         self._stop_parallel_drains()
         super().stop()
 
     def _start_parallel_drains(self) -> None:
         self._drain_stop.clear()
         self._parallel_rings = {
-            oak: _ThreadSafeCamRing(self._strict_ring_len(oak)) for oak in self._cam_list
+            oak: _ThreadSafeCamRing(
+                self._poc_ring_len(oak),
+                cam_name=oak,
+                overflow=self._ingest_overflow,
+            )
+            for oak in self._cam_list
         }
         for cam_name, queue in self._cam_queues.items():
             ring = self._parallel_rings[cam_name]
@@ -216,6 +274,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
                     break
                 while pkt is not None:
                     ts = _device_ts_ns(pkt.getTimestampDevice())
+                    if getattr(self, "_device_ingest_diag", None) is not None:
+                        self._device_ingest_diag.note_packet(cam_name, ts)
                     if hw_jpeg or hw_h264:
                         payload = _jpeg_from_packet(pkt)
                     else:
@@ -273,7 +333,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         for cam_name in self._cam_list:
             ring = self._parallel_rings.get(cam_name)
             if ring is not None:
-                ring.drain_to(cam_rings[cam_name])
+                ring.drain_to(cam_rings[cam_name], cam_name=cam_name)
 
     def _drain_imu(self, buf: Any) -> None:
         self._parallel_imu.merge_into(buf)
@@ -310,6 +370,15 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         grid_epoch_ns: int = 0,
         shutdown_check: Callable[[], bool] | None = None,
     ):
+        if EGO_CAPTURE_SYNC_MODE == "fsync_quad":
+            yield from self.iter_fsync_quad_frames(
+                duration_s,
+                interval_ms=interval_ms,
+                imu_interpolate=imu_interpolate,
+                grid_epoch_ns=grid_epoch_ns,
+                shutdown_check=shutdown_check,
+            )
+            return
         if EGO_CAPTURE_SYNC_MODE == "device_tick":
             yield from self.iter_device_tick_frames(
                 duration_s,
@@ -360,7 +429,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         buf = EpisodeBuffers()
         self._strict_imu_buf = buf
         cam_rings: dict[str, deque[_CamRingSample]] = {
-            oak: deque(maxlen=self._strict_ring_len(oak)) for oak in self._cam_list
+            oak: deque(maxlen=self._poc_ring_len(oak)) for oak in self._cam_list
         }
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         t_end = time.monotonic() + float(duration_s)
@@ -368,6 +437,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         imu_flush_tick = 0
 
         from ego_capture_studio.capture.capture_frame_profile import FrameProfiler
+        from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
 
         prof = FrameProfiler.get()
 
@@ -375,6 +445,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
         print(
             f"device_tick_sync interval_ms={ms} burst_max={_DEVICE_TICK_BURST_MAX} "
+            f"poc_ring_len={EGO_POC_RING_LEN} "
             f"h264_sequential={int(self._hw_h264 and OAK_H264_SEQUENTIAL)} "
             f"imu_incremental={int(EGO_IMU_INCREMENTAL)} straggler_log={int(straggler_log_enabled())}",
             flush=True,
@@ -482,6 +553,207 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
                     self._straggler_diag.note_wait_empty(cam_rings, list(self._cam_list))
                 t_idle = time.perf_counter()
                 time.sleep(_DEVICE_TICK_IDLE_SLEEP_S)
+                idle_s = time.perf_counter() - t_idle
+                if prof is not None:
+                    prof.add("idle_sleep", idle_s)
+                    spin_s = max(0.0, time.perf_counter() - t_iter - drain_s - idle_s)
+                    if spin_s > 0.0:
+                        prof.add("spin_wait", spin_s)
+
+    def iter_fsync_quad_frames(
+        self,
+        duration_s: float,
+        *,
+        interval_ms: int | None = None,
+        imu_interpolate: bool | None = None,
+        grid_epoch_ns: int = 0,
+        shutdown_check: Callable[[], bool] | None = None,
+    ):
+        """Primary CAM_A tick + FSYNC timestamp quad pick within align_max_ns (POC).
+
+        Waits up to EGO_FSYNC_QUAD_WAIT_MS wall per tick for all four rings to contain
+        samples within the alignment window of the current primary head. On timeout,
+        drops the primary head (quad miss) without committing misaligned frames.
+        """
+        if self._device is None:
+            raise RuntimeError("Call connect() first")
+
+        from ego_capture_studio.capture.buffers import EpisodeBuffers
+        from ego_capture_studio.capture.camera_map import OAK_SOCKET_TO_LEROBOT_VIDEO, PRIMARY_OAK_SOCKET
+        from ego_capture_studio.capture.capture_frame_profile import FrameProfiler
+        from ego_capture_studio.capture.fsync_quad_commit import (
+            EGO_FSYNC_QUAD_ALIGN_MAX_NS,
+            EGO_FSYNC_QUAD_WAIT_MS,
+            drop_primary_head,
+            fsync_quad_missing_socket,
+            fsync_quad_take_frame,
+        )
+        from ego_capture_studio.capture.fsync_quad_diag import FsyncQuadDiagnostics, fsync_quad_diag_enabled
+        from ego_capture_studio.capture.imu_align_incremental import imu6_for_frame
+        from ego_capture_studio.capture.straggler_diag import StragglerDiagnostics, straggler_log_enabled
+
+        ms = int(interval_ms if interval_ms is not None else EGO_FRAME_INTERVAL_MS)
+        interval_ns = int(ms) * 1_000_000
+        use_imu_interp = EGO_IMU_INTERPOLATE if imu_interpolate is None else bool(imu_interpolate)
+        align_max_ns = EGO_FSYNC_QUAD_ALIGN_MAX_NS
+        quad_wait_s = EGO_FSYNC_QUAD_WAIT_MS / 1000.0
+
+        self._imu_flush_gyro_idx = 0
+        self._imu_flush_accel_idx = 0
+        self._pending_imu_raw = []
+
+        buf = EpisodeBuffers()
+        self._strict_imu_buf = buf
+        cam_rings: dict[str, deque[_CamRingSample]] = {
+            oak: deque(maxlen=self._poc_ring_len(oak)) for oak in self._cam_list
+        }
+        last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
+        t_end = time.monotonic() + float(duration_s)
+        last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
+        imu_flush_tick = 0
+
+        from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
+
+        prof = FrameProfiler.get()
+        self._straggler_diag = StragglerDiagnostics() if straggler_log_enabled() else None
+        self._fsync_quad_diag = FsyncQuadDiagnostics() if fsync_quad_diag_enabled() else None
+        if self._fsync_quad_diag is not None:
+            self._fsync_quad_diag.snapshot_ingest(self._parallel_rings)
+
+        print(
+            f"fsync_quad_sync interval_ms={ms} burst_max={_DEVICE_TICK_BURST_MAX} "
+            f"poc_ring_len={EGO_POC_RING_LEN} "
+            f"align_max_ns={align_max_ns} quad_wait_ms={EGO_FSYNC_QUAD_WAIT_MS} "
+            f"h264_sequential={int(self._hw_h264 and OAK_H264_SEQUENTIAL)} "
+            f"imu_incremental={int(EGO_IMU_INCREMENTAL)} "
+            f"straggler_log={int(straggler_log_enabled())} "
+            f"fsync_quad_diag={int(fsync_quad_diag_enabled())}",
+            flush=True,
+        )
+
+        def _finalize_commit(
+            capture_out: dict,
+            offsets: dict,
+            primary_ts_ns: int,
+            pre_depths: dict[str, int],
+        ) -> tuple[int, dict, dict, Any, dict]:
+            nonlocal last_emit_ts_ns, imu_flush_tick
+            if last_emit_ts_ns is None:
+                if int(grid_epoch_ns) > 0:
+                    t_emit_ns = int(grid_epoch_ns)
+                else:
+                    t_emit_ns = self._align_epoch_to_device(int(primary_ts_ns), interval_ns)
+                self._strict_grid_epoch_ns = int(t_emit_ns)
+            else:
+                t_emit_ns = int(last_emit_ts_ns) + interval_ns
+
+            imu_flush_tick += 1
+            if imu_flush_tick % 3 == 0:
+                self._flush_imu_raw_from_buf(buf)
+            t_imu = time.perf_counter()
+            imu6 = imu6_for_frame(
+                buf,
+                t_emit_ns,
+                interpolate=use_imu_interp,
+                incremental=EGO_IMU_INCREMENTAL,
+            )
+            if prof is not None:
+                prof.add("imu_query", time.perf_counter() - t_imu)
+            if self._straggler_diag is not None:
+                self._straggler_diag.note_pre_commit_depths(pre_depths, offsets)
+            if self._fsync_quad_diag is not None:
+                self._fsync_quad_diag.note_quad_commit(offsets)
+            preview_out = {
+                OAK_SOCKET_TO_LEROBOT_VIDEO[oak]: last_preview_oak[oak]
+                for oak in self._cam_list
+                if oak in last_preview_oak
+            }
+            last_emit_ts_ns = int(t_emit_ns)
+            self._strict_last_emit_ts_ns = last_emit_ts_ns
+            return int(t_emit_ns), capture_out, preview_out, imu6, offsets
+
+        def _try_commit_tick() -> tuple[int, dict, dict, Any, dict] | None:
+            t_commit = time.perf_counter()
+            pre_depths = {oak: len(cam_rings[oak]) for oak in self._cam_list}
+            quad = fsync_quad_take_frame(
+                cam_rings,
+                list(self._cam_list),
+                primary_socket=PRIMARY_OAK_SOCKET,
+                align_max_ns=align_max_ns,
+                ring_sample_fn=self._strict_ring_sample,
+                socket_to_key=OAK_SOCKET_TO_LEROBOT_VIDEO,
+            )
+            if quad is None:
+                return None
+            capture_out, offsets, primary_ts_ns = quad
+            row = _finalize_commit(capture_out, offsets, primary_ts_ns, pre_depths)
+            if prof is not None:
+                prof.add("commit_pop_imu", time.perf_counter() - t_commit)
+            return row
+
+        while time.monotonic() < t_end:
+            if shutdown_check and shutdown_check():
+                return
+            t_iter = time.perf_counter()
+            t_drain = time.perf_counter()
+            self._drain_imu(buf)
+            self._trim_imu_buffer(buf)
+            self._imu_flush_gyro_idx = len(buf.gyro_ts_ns)
+            self._imu_flush_accel_idx = len(buf.accel_ts_ns)
+            self._drain_cam_queues_to_rings(cam_rings)
+
+            if not EGO_STRICT_SYNC_PREVIEW_DRAIN:
+                preview = self._drain_preview_queues()
+                if preview:
+                    last_preview_oak.update(preview)
+            drain_s = time.perf_counter() - t_drain
+
+            burst = 0
+            while burst < _DEVICE_TICK_BURST_MAX:
+                primary_ring = cam_rings.get(PRIMARY_OAK_SOCKET)
+                if not primary_ring:
+                    break
+
+                committed = False
+                deadline = time.monotonic() + quad_wait_s if quad_wait_s > 0.0 else time.monotonic()
+                while True:
+                    row = _try_commit_tick()
+                    if row is not None:
+                        burst += 1
+                        committed = True
+                        yield row
+                        if shutdown_check and shutdown_check():
+                            return
+                        if time.monotonic() >= t_end:
+                            return
+                        break
+                    if quad_wait_s <= 0.0 or time.monotonic() >= deadline:
+                        break
+                    self._drain_cam_queues_to_rings(cam_rings)
+
+                if committed:
+                    continue
+
+                miss_cam = fsync_quad_missing_socket(
+                    cam_rings,
+                    list(self._cam_list),
+                    primary_socket=PRIMARY_OAK_SOCKET,
+                    align_max_ns=align_max_ns,
+                    ring_sample_fn=self._strict_ring_sample,
+                )
+                if self._fsync_quad_diag is not None:
+                    self._fsync_quad_diag.note_quad_miss(miss_cam)
+                drop_primary_head(cam_rings, primary_socket=PRIMARY_OAK_SOCKET)
+                break
+
+            if prof is not None and burst > 0:
+                prof.add("drain_xfer", drain_s, frames=burst)
+            if burst == 0:
+                if self._straggler_diag is not None:
+                    self._straggler_diag.note_wait_empty(cam_rings, list(self._cam_list))
+                t_idle = time.perf_counter()
+                if _DEVICE_TICK_IDLE_SLEEP_S > 0.0:
+                    time.sleep(_DEVICE_TICK_IDLE_SLEEP_S)
                 idle_s = time.perf_counter() - t_idle
                 if prof is not None:
                     prof.add("idle_sleep", idle_s)

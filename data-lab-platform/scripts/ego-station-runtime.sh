@@ -13,6 +13,13 @@ ego_station_runtime_env() {
       : # unknown station — keep caller overrides
       ;;
   esac
+  if [[ "$station" == "ego-001" ]]; then
+    local _perf="${BASH_SOURCE[0]%/*}/ego-pipeline-performance.env.sh"
+    if [[ -f "$_perf" ]]; then
+      # shellcheck source=ego-pipeline-performance.env.sh
+      source "$_perf"
+    fi
+  fi
 }
 
 ego_process_watch_stations() {

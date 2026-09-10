@@ -1,0 +1,9 @@
+[Unit]
+Description=EGO hotspot health watchdog
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/ego-hotspot
+ExecStart=/home/server/ego-web/ego-hotspot-watchdog.sh

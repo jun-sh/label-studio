@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TextIO
+from typing import Any, Callable, Literal, TextIO
 
 import numpy as np
 
@@ -205,6 +205,26 @@ def check_segment_integrity(
             issues.append("missing_segment_mcap")
         elif mcap_path.stat().st_size < 64:
             issues.append("empty_segment_mcap")
+        else:
+            try:
+                from ego_capture_studio.capture.mcap_segment_writer import summarize_mcap_segment
+            except ImportError:
+                from mcap_segment_writer import summarize_mcap_segment
+
+            summary = summarize_mcap_segment(mcap_path)
+            cam_topics = [f"/ego/camera/{k}" for k in ("front_left", "front_right", "rear_left", "rear_right")]
+            cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
+            if cam_counts and (min(cam_counts) <= 0 or len(set(cam_counts)) != 1):
+                issues.append(
+                    f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}",
+                )
+            try:
+                from ego_capture_studio.capture.strict_fps_gate import check_mcap_strict_fps
+            except ImportError:
+                from strict_fps_gate import check_mcap_strict_fps
+
+            fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
+            issues.extend(fps_issues)
         return len(issues) == 0, issues
 
     rows_path = segment_dir / "rows.jsonl"
@@ -610,6 +630,7 @@ class SegmentCaptureWriter:
             self._persist_threads.append(t)
         self._pending_count = -1
         self._pending_last_scan_mono = 0.0
+        self._pre_segment_rotate_hooks: list[Callable[[], None]] = []
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
         self._finalize_thread: threading.Thread | None = None
         if SEGMENT_FINALIZE_ASYNC:
@@ -894,7 +915,19 @@ class SegmentCaptureWriter:
         self._open_frame_count = 0
         return segment_id
 
+    def register_pre_segment_rotate_hook(self, hook: Callable[[], None]) -> None:
+        """P1a: called on capture thread before closing a full segment (IDR flush)."""
+        self._pre_segment_rotate_hooks.append(hook)
+
+    def _invoke_pre_segment_rotate_hooks(self) -> None:
+        for hook in self._pre_segment_rotate_hooks:
+            try:
+                hook()
+            except Exception as exc:
+                print(f"pre_segment_rotate_hook warning: {exc}", flush=True)
+
     def _rotate_segment_locked(self) -> None:
+        self._invoke_pre_segment_rotate_hooks()
         closed_id = self._close_open_segment_locked()
         if closed_id:
             close_job = _SegmentCloseJob(session_id=self.session_id, segment_id=closed_id)

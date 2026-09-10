@@ -20,4 +20,10 @@ describe("frame-index", () => {
     assert.equal(resolveFrameIndex({ frame_index: 0 }, manifest, 0), 0);
     assert.equal(resolveFrameIndex({ frame_index: 242 }, manifest, 0), 242);
   });
+
+  it("remaps second-segment local rows when start_frame_index is zero", () => {
+    const manifest = { start_frame_index: 0, manifest_schema_version: 2 };
+    assert.equal(resolveFrameIndex({ frame_index: 0 }, manifest, 709), 709);
+    assert.equal(resolveFrameIndex({ frame_index: 10 }, manifest, 709), 719);
+  });
 });

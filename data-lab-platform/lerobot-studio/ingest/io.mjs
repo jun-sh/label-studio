@@ -68,3 +68,21 @@ export function purgeConflictingTarArchive(root, sessionId, segmentId) {
     return false;
   }
 }
+
+/** Remove stale mcap archives for the same segment when tar.zst ingest wins. */
+export function purgeConflictingMcapArchive(root, sessionId, segmentId) {
+  const rawDir = path.join(root, "raw", "segments", sessionId);
+  if (!fs.existsSync(rawDir)) return false;
+  let removed = false;
+  for (const name of [`${segmentId}.mcap`, `${segmentId}.mcap.zst`]) {
+    const p = path.join(rawDir, name);
+    if (!fs.existsSync(p)) continue;
+    try {
+      fs.rmSync(p, { force: true });
+      removed = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return removed;
+}

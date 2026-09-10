@@ -191,6 +191,15 @@ def auto_task_name(station_id: str, session_id: str, created_at=None) -> str:
     return f"{station_short_name(station_id)} · {session_id_short(session_id)} · {mm}-{dd}"
 
 
+def session_started_at(root: Path, session_id: str) -> str | None:
+    if not session_id:
+        return None
+    registry = read_json(root / "live" / "session-registry.json", {})
+    sessions = registry.get("sessions") or {}
+    started = sessions.get(session_id, {}).get("startedAt")
+    return str(started) if started else None
+
+
 def episode_title_for_session(
     root: Path, session_id: str, manifest: dict | None = None
 ) -> str:
@@ -199,10 +208,10 @@ def episode_title_for_session(
     for ep in index.get("episodes") or []:
         if ep.get("session_id") == session_id:
             title = str(ep.get("title") or "").strip()
-            if title:
+            if title and not title.startswith("sess_"):
                 return title
-    created_at = None
-    if manifest:
+    created_at = session_started_at(root, session_id)
+    if not created_at and manifest:
         created_at = (
             manifest.get("startedAt")
             or manifest.get("created_at")
@@ -441,7 +450,22 @@ def open_lerobot_dataset(root: Path):
 def write_tasks_parquet_if_missing(root: Path, info: dict) -> None:
     tasks_pq = root / "meta" / "tasks.parquet"
     if tasks_pq.is_file():
+        legacy = root / "meta" / "tasks.jsonl"
+        if legacy.is_file():
+            legacy.unlink()
         return
+    migrate_script = Path(__file__).resolve().parents[2] / "scripts" / "migrate-tasks-jsonl-to-parquet.py"
+    if migrate_script.is_file():
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(migrate_script), str(root), "--remove-jsonl"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if tasks_pq.is_file():
+            return
     import pyarrow as pa
     import pyarrow.parquet as pq
 

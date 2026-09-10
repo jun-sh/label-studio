@@ -53,6 +53,7 @@ COPY derive/ /app/derive/
 COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
 COPY vendor/ /app/vendor/
 COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
+COPY scripts/write-tasks-parquet.py /app/scripts/write-tasks-parquet.py
 COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
 COPY session-markers.mjs derive-lock.mjs ego-derive-run.mjs ego-derive-watch.mjs /app/
 COPY scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +15,31 @@ import pyarrow.parquet as pq
 
 import re
 from datetime import datetime, timezone
+
+
+def _bootstrap_ego_platform() -> None:
+    here = Path(__file__).resolve()
+    candidates = [Path("/ego-platform/src")]
+    for parent in here.parents:
+        candidates.append(parent / "ego-platform" / "src")
+    for candidate in candidates:
+        if (candidate / "ego_platform").is_dir():
+            sys.path.insert(0, str(candidate))
+            return
+
+
+_bootstrap_ego_platform()
+try:
+    from ego_platform.lerobot.data_schema import feature_arrow_type, values_to_feature_array
+    from ego_platform.lerobot.io import (
+        write_episodes_parquet as ego_write_episodes_parquet,
+        write_tasks_parquet as ego_write_tasks_parquet,
+    )
+except ImportError:
+    feature_arrow_type = None
+    values_to_feature_array = None
+    ego_write_episodes_parquet = None
+    ego_write_tasks_parquet = None
 
 PIPELINE_VERSION = "1.0.0"
 VIEWER_SCAFFOLD_FRAMES = 1
@@ -105,6 +132,33 @@ def format_session_date(created_at: str | None) -> str:
     return dt.strftime("%m-%d")
 
 
+def read_session_registry(root: Path) -> dict:
+    return read_json(root / "live" / "session-registry.json", {"sessions": {}})
+
+
+def session_started_at(root: Path, session_id: str) -> str | None:
+    if not session_id:
+        return None
+    sessions = read_session_registry(root).get("sessions") or {}
+    started = sessions.get(session_id, {}).get("startedAt")
+    return str(started) if started else None
+
+
+def is_auto_generated_task_label(task: str | None) -> bool:
+    trimmed = str(task or "").strip()
+    if not trimmed:
+        return False
+    import re
+
+    return bool(
+        re.match(
+            r"^[A-Z0-9-]+\s·\s[a-f0-9]{8}\s·\s\d{2}-\d{2}(?:\s·\s\d+f|\s*\(\d+f\))?$",
+            trimmed,
+            re.IGNORECASE,
+        )
+    )
+
+
 def auto_task_name(*, station_id: str, session_id: str, created_at: str | None) -> str:
     return (
         f"{station_short_name(station_id)} · "
@@ -145,10 +199,32 @@ def format_episode_display_task(base_task: str, length: int) -> str:
     return base
 
 
-def format_episode_list_task(ep: dict, full_task: str) -> str:
+def format_episode_list_task(
+    ep: dict,
+    full_task: str,
+    *,
+    root: Path | None = None,
+    station_id: str = "",
+) -> str:
     """LeRobot sidebar line 3: prefer per-episode title from episodes-index."""
+    session_id = str(ep.get("session_id") or "").strip()
     title = str(ep.get("title") or "").strip()
-    if title:
+    if not session_id and title.startswith("sess_"):
+        session_id = title
+    if session_id.startswith("sess_") and root is not None and station_id:
+        base = resolve_task_name(
+            explicit=None,
+            station_id=station_id,
+            session_id=session_id,
+            created_at=session_started_at(root, session_id),
+        )
+        length = int(ep.get("length") or 0)
+        from_idx = int(ep.get("dataset_from_index") or 0)
+        to_idx = int(ep.get("dataset_to_index") or from_idx + length)
+        if length <= 0:
+            length = max(0, to_idx - from_idx)
+        return format_episode_display_task(base, length)
+    if title and not title.startswith("sess_"):
         return title
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
@@ -192,34 +268,44 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def write_tasks_jsonl(root: Path, episodes: list[dict], full_task: str, *, skip_tasks_parquet: bool = False) -> None:
+def write_station_tasks(
+    root: Path, episodes: list[dict], full_task: str, *, skip_tasks_parquet: bool = False
+) -> None:
+    if skip_tasks_parquet:
+        return
     meta = root / "meta"
     meta.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
+    station_id = root.name
+    task_rows: list[dict] = []
     if episodes:
         for ep in episodes:
-            idx = int(ep.get("episode_index", len(lines)))
-            label = format_episode_list_task(ep, full_task)
-            lines.append(
-                json.dumps({"task_index": idx, "task": label}, ensure_ascii=False)
-            )
+            idx = int(ep.get("episode_index", len(task_rows)))
+            label = format_episode_list_task(ep, full_task, root=root, station_id=station_id)
+            task_rows.append({"task_index": idx, "task": label})
     else:
-        lines.append(
-            json.dumps(
-                {
-                    "task_index": 0,
-                    "task": format_episode_display_task(full_task, 0),
-                },
-                ensure_ascii=False,
-            )
+        task_rows.append(
+            {
+                "task_index": 0,
+                "task": format_episode_display_task(full_task, 0),
+            }
         )
-    (meta / "tasks.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    if not skip_tasks_parquet:
-        write_tasks_parquet(root, episodes, full_task)
+    if ego_write_tasks_parquet is not None:
+        ego_write_tasks_parquet(root, task_rows)
+        return
+    _write_tasks_parquet_rows(root, task_rows)
+
+
+def _write_tasks_parquet_rows(root: Path, rows: list[dict]) -> None:
+    table = pa.Table.from_pylist(rows)
+    _atomic_parquet_write(table, root / "meta" / "tasks.parquet")
+    legacy = root / "meta" / "tasks.jsonl"
+    if legacy.is_file():
+        legacy.unlink()
 
 
 def write_tasks_parquet(root: Path, episodes: list[dict], full_task: str) -> None:
-    """LeRobot 0.4.4 loads tasks from meta/tasks.parquet (not jsonl)."""
+    """LeRobot v3 canonical meta/tasks.parquet."""
+    station_id = root.name
     rows: list[dict] = []
     if episodes:
         for ep in episodes:
@@ -227,7 +313,7 @@ def write_tasks_parquet(root: Path, episodes: list[dict], full_task: str) -> Non
             rows.append(
                 {
                     "task_index": idx,
-                    "task": format_episode_list_task(ep, full_task),
+                    "task": format_episode_list_task(ep, full_task, root=root, station_id=station_id),
                 }
             )
     else:
@@ -237,8 +323,7 @@ def write_tasks_parquet(root: Path, episodes: list[dict], full_task: str) -> Non
                 "task": format_episode_display_task(full_task, 0),
             }
         )
-    table = pa.Table.from_pylist(rows)
-    _atomic_parquet_write(table, root / "meta" / "tasks.parquet")
+    _write_tasks_parquet_rows(root, rows)
 
 
 def _atomic_parquet_write(table: pa.Table, out: Path) -> None:
@@ -366,17 +451,25 @@ def coerce_feature_vector(raw, key: str, info: dict) -> list:
     return raw
 
 
-def parquet_list_type(key: str, info: dict) -> pa.DataType:
+def parquet_feature_type(key: str, info: dict) -> pa.DataType:
     features = info.get("features") or {}
     spec = features.get(key) or {}
+    if feature_arrow_type is not None:
+        return feature_arrow_type(spec)
     dtype = str(spec.get("dtype") or "float32")
+    shape = spec.get("shape") or [1]
+    size = 1
+    for dim in shape:
+        size *= int(dim)
     if dtype.startswith("int"):
         value_type = pa.int64()
     elif dtype == "float64":
         value_type = pa.float64()
     else:
         value_type = pa.float32()
-    return pa.list_(value_type)
+    if size == 1:
+        return value_type
+    return pa.list_(value_type, size)
 
 
 def data_parquet_row_count(path: Path) -> int:
@@ -417,15 +510,21 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
         for key in scalar_keys:
             feature_cols[key].append(coerce_feature_vector(src.get(key), key, info))
 
-    table_cols: dict[str, pa.Array] = {
-        "frame_index": pa.array(frame_index_col, type=pa.int64()),
-        "episode_index": pa.array(episode_index_col, type=pa.int64()),
-        "index": pa.array(index_col, type=pa.int64()),
-        "task_index": pa.array(task_index_col, type=pa.int64()),
-        "timestamp": pa.array(timestamp_col, type=pa.float64()),
-    }
-    for key in scalar_keys:
-        table_cols[key] = pa.array(feature_cols[key], type=parquet_list_type(key, info))
+    features = info.get("features") or {}
+    table_cols: dict[str, pa.Array] = {}
+    for key, values in {
+        "frame_index": frame_index_col,
+        "episode_index": episode_index_col,
+        "index": index_col,
+        "task_index": task_index_col,
+        "timestamp": timestamp_col,
+        **feature_cols,
+    }.items():
+        spec = features.get(key) or {}
+        if values_to_feature_array is not None and isinstance(spec, dict) and spec.get("dtype") != "video":
+            table_cols[key] = values_to_feature_array(values, spec)
+        else:
+            table_cols[key] = pa.array(values, type=parquet_feature_type(key, info))
 
     out = root / "data" / "chunk-000" / "file-000.parquet"
     _atomic_parquet_write(pa.table(table_cols), out)
@@ -515,6 +614,9 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
 
     info = read_json(root / "meta" / "info.json", {})
     rows = [_episode_row(ep, fps, task, meta_defaults, info) for ep in episodes]
+    if ego_write_episodes_parquet is not None:
+        ego_write_episodes_parquet(root, rows)
+        return
     columns: dict[str, pa.Array] = {}
     for key in rows[0]:
         if key == "tasks":
@@ -597,21 +699,16 @@ def write_viewer_scaffold(root: Path) -> int:
     if not info_path.is_file():
         return 1
     info = read_json(info_path, {})
-    live = read_json(root / "live" / "session.json", {})
     station_id = root.name
-    task = resolve_task_name(
-        explicit=str(live.get("task") or "").strip() or None,
-        station_id=station_id,
-        session_id=str(live.get("sessionId") or ""),
-        created_at=live.get("startedAt"),
-    )
+    live = read_json(root / "live" / "session.json", {})
+    task = resolve_live_task(root, live)
     total_frames = max(VIEWER_SCAFFOLD_FRAMES, int(info.get("total_frames") or 0))
     info["total_frames"] = total_frames
     info["total_episodes"] = 1
     info["splits"] = {"train": "0:1"}
     info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     fps = float(info.get("fps") or 30)
-    write_tasks_jsonl(root, [], task)
+    write_station_tasks(root, [], task)
     ensure_annotations_skeleton(root)
     write_empty_episodes_parquet(root, fps, task)
     write_data_parquet(root, [], fps, [])
@@ -671,6 +768,7 @@ def episodes_from_unit_manifest(manifest: dict) -> list[dict]:
         out.append(
             {
                 "episode_index": ep_index,
+                "session_id": str(ep.get("session_id") or ""),
                 "length": length,
                 # Per-episode L2 files use local row indices 0..length-1 (not global concat).
                 "dataset_from_index": 0,
@@ -683,6 +781,127 @@ def episodes_from_unit_manifest(manifest: dict) -> list[dict]:
             }
         )
     return out
+
+
+def resolve_live_task(root: Path, live: dict) -> str:
+    station_id = root.name
+    session_id = str(live.get("sessionId") or "")
+    live_task = str(live.get("task") or "").strip() or None
+    explicit = live_task if live_task and not is_auto_generated_task_label(live_task) else None
+    created_at = session_started_at(root, session_id) or live.get("startedAt")
+    return resolve_task_name(
+        explicit=explicit,
+        station_id=station_id,
+        session_id=session_id,
+        created_at=created_at,
+    )
+
+
+def repair_corpus_task_dates(
+    stream_root: Path, corpus_root: Path, *, viewer_sync: bool = True
+) -> int:
+    """Rewrite corpus task labels from stream session-registry startedAt."""
+    station_id = stream_root.name
+    sessions = read_session_registry(stream_root).get("sessions") or {}
+    info_path = corpus_root / "meta" / "info.json"
+    info = read_json(info_path, {})
+    if not info:
+        print(f"missing corpus info: {info_path}", file=sys.stderr)
+        return 1
+
+    history = (info.get("ego_platform") or {}).get("publish_history") or []
+    if not history:
+        print("no ego_platform.publish_history to repair", file=sys.stderr)
+        return 1
+
+    changed = 0
+    for entry in history:
+        session_id = str(entry.get("session_id") or "").strip()
+        if not session_id:
+            continue
+        started_at = session_started_at(stream_root, session_id)
+        base = auto_task_name(
+            station_id=station_id,
+            session_id=session_id,
+            created_at=started_at,
+        )
+        frames = int(entry.get("frames") or 0)
+        new_task = f"{base} ({frames}f)" if frames > 0 else base
+        if entry.get("task") != new_task:
+            entry["task"] = new_task
+            changed += 1
+
+    task_rows: list[dict] = []
+    for entry in sorted(history, key=lambda row: int(row.get("episode_index", 0))):
+        idx = int(entry.get("episode_index", len(task_rows)))
+        task_rows.append({"task_index": idx, "task": str(entry.get("task") or "")})
+    if ego_write_tasks_parquet is not None:
+        ego_write_tasks_parquet(corpus_root, task_rows)
+    else:
+        _write_tasks_parquet_rows(corpus_root, task_rows)
+    info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+
+    live_path = stream_root / "live" / "session.json"
+    live = read_json(live_path, {})
+    session_id = str(live.get("sessionId") or "").strip()
+    if session_id:
+        started_at = session_started_at(stream_root, session_id)
+        if started_at:
+            live["startedAt"] = started_at
+        live["task"] = resolve_live_task(stream_root, live)
+        live_path.write_text(json.dumps(live, indent=2) + "\n", encoding="utf-8")
+
+    print(f"repaired {changed} corpus task label(s)")
+    sync_repaired_meta_to_viewer_samples(corpus_root, viewer_sync=viewer_sync)
+    return 0
+
+
+def sync_repaired_meta_to_viewer_samples(corpus_root: Path, *, viewer_sync: bool = True) -> None:
+    """Copy repaired meta into samples/ and refresh lerobot bundled volume."""
+    slug = corpus_root.name
+    samples_root = corpus_root.parent.parent / "samples" / slug / "dataset"
+    if not samples_root.parent.is_dir():
+        print(f"viewer samples dir missing: {samples_root.parent}", file=sys.stderr)
+        return
+
+    samples_meta = samples_root / "meta"
+    samples_meta.mkdir(parents=True, exist_ok=True)
+    for name in ("tasks.parquet", "info.json"):
+        src = corpus_root / "meta" / name
+        if not src.is_file():
+            continue
+        dest = samples_meta / name
+        if name.endswith(".parquet"):
+            shutil.copy2(src, dest)
+        else:
+            dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"synced {name} -> {dest}")
+
+    if not viewer_sync:
+        print("viewer bundled sync skipped (--no-viewer-sync)")
+        return
+
+    container = os.environ.get("LEROBOT_CONTAINER", "data-lab-lerobot-1")
+    try:
+        listed = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if container not in (listed.stdout or ""):
+            print(f"viewer sync skipped: container {container} not running", file=sys.stderr)
+            return
+        proc = subprocess.run(
+            ["docker", "exec", container, "sh", "/app/ingest-bundled-datasets.sh"],
+            check=False,
+        )
+        if proc.returncode == 0:
+            print("viewer bundled sync complete")
+        else:
+            print(f"viewer bundled sync failed (exit {proc.returncode})", file=sys.stderr)
+    except FileNotFoundError:
+        print("viewer sync skipped: docker not available", file=sys.stderr)
 
 
 def sync_unit_manifest_info(root: Path, manifest: dict) -> int:
@@ -705,10 +924,25 @@ def main() -> int:
     argv = [a for a in sys.argv[1:] if a]
     viewer_scaffold = "--viewer-scaffold" in argv
     meta_only = "--meta-only" in argv
-    positional = [a for a in argv if a not in ("--meta-only", "--viewer-scaffold")]
+    repair_corpus = "--repair-corpus-task-dates" in argv
+    no_viewer_sync = "--no-viewer-sync" in argv
+    flags = {"--meta-only", "--viewer-scaffold", "--repair-corpus-task-dates", "--no-viewer-sync"}
+    positional = [a for a in argv if a not in flags]
+    if repair_corpus:
+        if len(positional) != 2:
+            print(
+                "usage: sync-stream-parquet.py --repair-corpus-task-dates <stream_root> <corpus_root>",
+                file=sys.stderr,
+            )
+            return 1
+        return repair_corpus_task_dates(
+            Path(positional[0]),
+            Path(positional[1]),
+            viewer_sync=not no_viewer_sync,
+        )
     if len(positional) < 1:
         print(
-            "usage: sync-stream-parquet.py [--meta-only|--viewer-scaffold] <station_root>",
+            "usage: sync-stream-parquet.py [--meta-only|--viewer-scaffold|--repair-corpus-task-dates] <station_root> [corpus_root]",
             file=sys.stderr,
         )
         return 1
@@ -719,12 +953,7 @@ def main() -> int:
     live = read_json(root / "live" / "session.json", {})
     fps = float(info.get("fps") or 30)
     station_id = root.name
-    task = resolve_task_name(
-        explicit=str(live.get("task") or "").strip() or None,
-        station_id=station_id,
-        session_id=str(live.get("sessionId") or ""),
-        created_at=live.get("startedAt"),
-    )
+    task = resolve_live_task(root, live)
     total_frames = int(info.get("total_frames") or 0)
     unit_manifest = unit_manifest_published(root)
     if unit_manifest:
@@ -744,7 +973,7 @@ def main() -> int:
     episodes_key = len(episodes)
 
     lerobot_owned = lerobot_owns_data(root) or unit_manifest is not None
-    write_tasks_jsonl(root, episodes, task, skip_tasks_parquet=lerobot_owned)
+    write_station_tasks(root, episodes, task, skip_tasks_parquet=lerobot_owned)
     ensure_annotations_skeleton(root)
     if not lerobot_owned and not meta_only:
         write_episodes_parquet(root, episodes, fps, task)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from export_builders import TRAINING_META_BLOCKLIST
 
-_META_FILES = ("info.json", "stats.json", "tasks.parquet", "tasks.jsonl")
+_META_FILES = ("info.json", "stats.json", "tasks.parquet")
 
 
 def stage_training_meta(src_meta: Path, dst_meta: Path) -> None:

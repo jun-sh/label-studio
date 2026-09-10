@@ -258,32 +258,22 @@ def _load_episodes(root: Path) -> pd.DataFrame:
 def _load_tasks_map(root: Path) -> dict[int, str]:
     tasks_map: dict[int, str] = {}
     tasks_parquet = root / "meta" / "tasks.parquet"
-    tasks_jsonl = root / "meta" / "tasks.jsonl"
+    if not tasks_parquet.is_file():
+        return tasks_map
 
-    if tasks_parquet.is_file():
-        df = pd.read_parquet(tasks_parquet)
-        if "task" in df.columns and "task_index" in df.columns:
-            for _, row in df.iterrows():
-                tasks_map[int(row["task_index"])] = str(row["task"])
-        elif "task_index" in df.columns:
-            for idx_name, row in df.iterrows():
-                tasks_map[int(row["task_index"])] = str(idx_name)
-        elif "task" in df.columns:
-            for i, row in df.iterrows():
-                tasks_map[int(i)] = str(row["task"])
-        else:
-            for i, idx_name in enumerate(df.index):
-                tasks_map[i] = str(idx_name)
-    elif tasks_jsonl.is_file():
-        for line in tasks_jsonl.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            entry = json.loads(line)
-            idx = int(entry.get("task_index", len(tasks_map)))
-            task_text = entry.get("task", "")
-            if task_text:
-                tasks_map[idx] = str(task_text)
+    df = pd.read_parquet(tasks_parquet)
+    if "task" in df.columns and "task_index" in df.columns:
+        for _, row in df.iterrows():
+            tasks_map[int(row["task_index"])] = str(row["task"])
+    elif "task_index" in df.columns:
+        for idx_name, row in df.iterrows():
+            tasks_map[int(row["task_index"])] = str(idx_name)
+    elif "task" in df.columns:
+        for i, row in df.iterrows():
+            tasks_map[int(i)] = str(row["task"])
+    else:
+        for i, idx_name in enumerate(df.index):
+            tasks_map[i] = str(idx_name)
     return tasks_map
 
 

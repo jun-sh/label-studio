@@ -27,7 +27,6 @@ TRAINING_META_ALLOWLIST = (
     "info.json",
     "stats.json",
     "tasks.parquet",
-    "tasks.jsonl",
     "episodes",
     "subtasks.parquet",
     "cycles.parquet",

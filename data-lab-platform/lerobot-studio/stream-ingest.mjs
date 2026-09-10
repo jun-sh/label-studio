@@ -152,6 +152,7 @@ const SEGMENT_INGEST_BATCH_SIZE = Number(process.env.STREAM_SEGMENT_INGEST_BATCH
 /** Heartbeat interval on edge is ~15s; TTL must survive slow ingest (segment upload). */
 const HEARTBEAT_TTL_MS = Number(process.env.STREAM_HEARTBEAT_TTL_MS || 120_000);
 const SYNC_SCRIPT = path.join(__dirname, "scripts", "sync-stream-parquet.py");
+const WRITE_TASKS_PARQUET_SCRIPT = path.join(__dirname, "scripts", "write-tasks-parquet.py");
 const APPEND_PARQUET_SCRIPT = path.join(__dirname, "scripts", "append-segment-parquet.py");
 
 function resolveAppendParquetScript() {
@@ -1193,7 +1194,7 @@ function isPublishedPath(rel) {
   if (norm.includes("/.locks/") || norm.endsWith(".lock")) return false;
   if (norm.includes(".muxing.tmp") || norm.endsWith(".part")) return false;
   if (/\/[^/]+\.tmp$/.test(norm)) return false;
-  if (norm.endsWith(".jsonl") && norm !== "meta/tasks.jsonl") return false;
+  if (norm.endsWith(".jsonl")) return false;
   if (norm === "meta/info.viewer.json" || norm.includes("chunks.json")) return false;
   if (norm.includes("session-registry.json") || norm.includes("disk-housekeeping.json")) return false;
   if (norm.startsWith("archive/")) return false;
@@ -2188,7 +2189,7 @@ export function refreshSessionEpisodeFromInfo(stationId, sessionId) {
     ep.episode_index = i;
   });
   saveEpisodesIndex(root, index);
-  writeTasksJsonl(root);
+  writeTasksParquet(root);
   syncInfoEpisodeCount(root);
   return entry;
 }
@@ -2513,21 +2514,57 @@ function enqueueSegmentIngestAwait(stationId, job) {
   });
 }
 
-function writeTasksJsonl(root, task) {
+function writeTasksParquet(root, task) {
   ensureDir(path.join(root, "meta"));
   const explicit = task !== undefined && task !== null ? String(task).trim() : "";
   const fullTask = explicit || getStationTask(root, stationIdFromRoot(root));
   const index = loadEpisodesIndex(root);
-  const lines =
+  const taskRows =
     index.episodes.length > 0
-      ? index.episodes.map((ep) =>
-          JSON.stringify({
-            task_index: Number(ep.episode_index) || 0,
-            task: formatEpisodeListTask(ep, fullTask),
-          }),
-        )
-      : [JSON.stringify({ task_index: 0, task: formatEpisodeDisplayTask(fullTask, 0) })];
-  fs.writeFileSync(path.join(root, "meta", "tasks.jsonl"), `${lines.join("\n")}\n`);
+      ? index.episodes.map((ep) => ({
+          task_index: Number(ep.episode_index) || 0,
+          task: formatEpisodeListTask(ep, fullTask),
+        }))
+      : [{ task_index: 0, task: formatEpisodeDisplayTask(fullTask, 0) }];
+  const py = resolveParquetPython();
+  if (!py || !fs.existsSync(WRITE_TASKS_PARQUET_SCRIPT)) {
+    throw new Error("write-tasks-parquet.py unavailable (python or script missing)");
+  }
+  const pending = path.join(root, "live", ".tasks-meta-pending.json");
+  ensureDir(path.dirname(pending));
+  writeJsonAtomic(pending, taskRows);
+  const res = spawnSync(py, [WRITE_TASKS_PARQUET_SCRIPT, root, "--rows", pending], {
+    ...parquetSpawnOptions(),
+    encoding: "utf8",
+  });
+  if (res.status !== 0) {
+    throw new Error(String(res.stderr || res.stdout || "write-tasks-parquet failed").slice(0, 500));
+  }
+  const legacyJsonl = path.join(root, "meta", "tasks.jsonl");
+  if (fs.existsSync(legacyJsonl)) fs.unlinkSync(legacyJsonl);
+}
+
+function loadTasksParquetRows(root) {
+  const tasksPath = path.join(root, "meta", "tasks.parquet");
+  if (!fs.existsSync(tasksPath)) return [];
+  const py = resolveParquetPython();
+  if (!py) return [];
+  const res = spawnSync(
+    py,
+    [
+      "-c",
+      "import sys,json,pyarrow.parquet as pq; t=pq.read_table(sys.argv[1]); print(json.dumps([{c:t[c][i].as_py() for c in t.column_names} for i in range(t.num_rows)]))",
+      tasksPath,
+    ],
+    { ...parquetSpawnOptions(), encoding: "utf8" },
+  );
+  if (res.status !== 0) return [];
+  try {
+    const rows = JSON.parse(String(res.stdout || "[]").trim() || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
 }
 
 function isRecentActivity(iso) {
@@ -4408,7 +4445,7 @@ export async function handleStreamUpload(stationId, body) {
         body.episodeMeta || parseManifestToEpisodeMeta(null, stationId),
       );
       writeJson(path.join(root, "meta", "info.json"), defaultInfo(stationId, shapes, episodeMeta));
-      writeTasksJsonl(root, task);
+      writeTasksParquet(root, task);
       initChunksManifest(root, { resetViewer: true });
       writeViewerInfoSnapshot(root, 0);
       setChunkArtifactStatus(root, "meta/info.json", "finished", 0);
@@ -4666,7 +4703,7 @@ export function ensureStreamViewerScaffold(stationId) {
   info.total_episodes = 1;
   info.splits = { train: "0:1" };
   writeJsonAtomic(infoPath, info);
-  writeTasksJsonl(root);
+  writeTasksParquet(root);
   saveEpisodesIndex(root, { version: 1, episodes: [] });
   initChunksManifest(root, { resetViewer: true });
 
@@ -4828,8 +4865,8 @@ function segmentReceivedAt(root, sessionId) {
 /** Episode upload/session date map for sidebar grouping (episode_index -> MM-DD). */
 export function getEpisodeUploadDateMap(stationId) {
   const root = stationRoot(stationId);
-  const tasksPath = path.join(root, "meta", "tasks.jsonl");
-  if (!fs.existsSync(tasksPath)) return { episodes: [] };
+  const taskRows = loadTasksParquetRows(root);
+  if (!taskRows.length) return { episodes: [] };
 
   const registry = readJson(path.join(root, "live", "session-registry.json"), {});
   const uploadActivity = readJson(path.join(root, "live", "upload_activity.json"), {});
@@ -4841,15 +4878,7 @@ export function getEpisodeUploadDateMap(stationId) {
   }
 
   const episodes = [];
-  for (const line of fs.readFileSync(tasksPath, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let row;
-    try {
-      row = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
+  for (const row of taskRows) {
     const episodeIndex = Number(row.task_index);
     if (!Number.isFinite(episodeIndex)) continue;
     const sessionId = sessionIdFromTaskText(row.task);

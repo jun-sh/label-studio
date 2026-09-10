@@ -441,8 +441,6 @@ class DataManager:
     def _load_tasks_map(self, root: Path) -> dict[int, str]:
         tasks_map: dict[int, str] = {}
         tasks_parquet = root / "meta" / "tasks.parquet"
-        tasks_jsonl = root / "meta" / "tasks.jsonl"
-
         if tasks_parquet.exists():
             df = pd.read_parquet(tasks_parquet)
             if "task" in df.columns and "task_index" in df.columns:
@@ -457,16 +455,6 @@ class DataManager:
             else:
                 for i, idx_name in enumerate(df.index):
                     tasks_map[i] = str(idx_name)
-        elif tasks_jsonl.exists():
-            for line in tasks_jsonl.read_text().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                entry = json.loads(line)
-                idx = int(entry.get("task_index", len(tasks_map)))
-                task_text = entry.get("task", "")
-                if task_text:
-                    tasks_map[idx] = str(task_text)
 
         return tasks_map
 

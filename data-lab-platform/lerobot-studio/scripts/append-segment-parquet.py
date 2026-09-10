@@ -450,7 +450,22 @@ def open_lerobot_dataset(root: Path):
 def write_tasks_parquet_if_missing(root: Path, info: dict) -> None:
     tasks_pq = root / "meta" / "tasks.parquet"
     if tasks_pq.is_file():
+        legacy = root / "meta" / "tasks.jsonl"
+        if legacy.is_file():
+            legacy.unlink()
         return
+    migrate_script = Path(__file__).resolve().parents[2] / "scripts" / "migrate-tasks-jsonl-to-parquet.py"
+    if migrate_script.is_file():
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(migrate_script), str(root), "--remove-jsonl"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if tasks_pq.is_file():
+            return
     import pyarrow as pa
     import pyarrow.parquet as pq
 

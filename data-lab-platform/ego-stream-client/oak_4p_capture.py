@@ -176,7 +176,12 @@ STRICT_REANCHOR_WARMUP_TICKS = max(0, int(os.environ.get("STRICT_REANCHOR_WARMUP
 STRICT_RGB_YIELD_MAX_MS = float(os.environ.get("STRICT_RGB_YIELD_MAX_MS", "16.0"))
 # Log when popped quad device-ts spread exceeds FSYNC budget (default 16ms RGB gate).
 EGO_QUAD_MAX_OFFSET_NS = int(
-    float(os.environ.get("EGO_QUAD_MAX_OFFSET_NS", str(int(STRICT_RGB_YIELD_MAX_MS * 1_000_000)))
+    float(
+        os.environ.get(
+            "EGO_QUAD_MAX_OFFSET_NS",
+            str(int(STRICT_RGB_YIELD_MAX_MS * 1_000_000)),
+        )
+    )
 )
 STRICT_DEPTH_YIELD_MAX_MS = float(os.environ.get("STRICT_DEPTH_YIELD_MAX_MS", "18.0"))
 STRICT_SYNC_MISS_MAX = max(1, int(os.environ.get("STRICT_SYNC_MISS_MAX", "4")))

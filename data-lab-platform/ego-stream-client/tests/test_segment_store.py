@@ -302,3 +302,16 @@ def test_corrupt_cannot_mark_uploaded(tmp_path: Path) -> None:
     _write_valid_segment(seg, status="CORRUPT")
     with pytest.raises(ValueError, match="CORRUPT"):
         mark_segment_uploaded(seg)
+
+
+def test_finalize_without_manifest_reconciles_orphan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EGO_STATION_ID", "ego-001")
+    seg = tmp_path / "seg_orphan_no_manifest"
+    seg.mkdir(parents=True)
+    (seg / "rows.jsonl").write_text("{}\n", encoding="utf-8")
+
+    status = finalize_segment_manifest_after_persist(seg)
+    assert status == "CORRUPT"
+    manifest = read_manifest(seg)
+    assert manifest["status"] == "CORRUPT"
+    assert "orphan_active" in manifest["integrity"]["issues"]

@@ -310,9 +310,14 @@ def scan_orphan_active_segments(active_root: Path, session_id: str) -> list[Path
 
 def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
     """Run integrity checks after rows/frames are flushed, then set CLOSED or CORRUPT."""
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return reconcile_orphan_active_segment(segment_dir)
     ok, issues = check_segment_integrity(segment_dir)
     status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
-    manifest = read_manifest(segment_dir)
+    if not manifest_path.is_file():
+        return reconcile_orphan_active_segment(segment_dir)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload = {
         **{k: manifest[k] for k in manifest if k not in ("closed", "uploaded", "uploadedAt")},
         "status": status,
@@ -642,6 +647,7 @@ class SegmentCaptureWriter:
         self._pending_count = -1
         self._pending_last_scan_mono = 0.0
         self._pre_segment_rotate_hooks: list[Callable[[], None]] = []
+        self._closed_segment_ids: set[str] = set()
         self._finalize_queue: queue.Queue[_FinalizeJob | None] | None = None
         self._finalize_thread: threading.Thread | None = None
         if SEGMENT_FINALIZE_ASYNC:
@@ -1010,6 +1016,71 @@ class SegmentCaptureWriter:
             )
         self._offer_persist(job, blocking=True)
 
+    def _handle_segment_close(self, work: _SegmentCloseJob) -> None:
+        """Close one segment on the persist thread; idempotent and race-safe."""
+        segment_id = work.segment_id
+        self._closed_segment_ids.add(segment_id)
+
+        archive_dir = self._segments_dir() / segment_id
+        if archive_dir.is_dir():
+            try:
+                existing = read_manifest(archive_dir)
+            except (OSError, json.JSONDecodeError, FileNotFoundError):
+                existing = None
+            if existing is not None and manifest_status(existing) in (
+                "CLOSED",
+                "CORRUPT",
+                "UPLOADED",
+                GC_ELIGIBLE_STATUS,
+            ):
+                self._open_writers.pop(segment_id, None)
+                return
+
+        active_dir = self._active_segments_dir() / segment_id
+        writer = self._open_writers.pop(segment_id, None)
+        if writer is not None:
+            writer.close()
+        if not active_dir.is_dir():
+            return
+        try:
+            finalize_segment_manifest_after_persist(active_dir)
+            self._enqueue_finalize(segment_id, active_dir)
+        except Exception as exc:
+            print(
+                f"segment_close_finalize_fail segment={segment_id} err={exc}",
+                flush=True,
+            )
+            try:
+                reconcile_orphan_active_segment(active_dir)
+            except Exception as reconcile_exc:
+                print(
+                    f"segment_close_reconcile_fail segment={segment_id} err={reconcile_exc}",
+                    flush=True,
+                )
+            self._enqueue_finalize(segment_id, active_dir)
+
+    def _persist_frame_work(self, work: _PersistJob | _ImuRawPersistJob) -> None:
+        if work.segment_id in self._closed_segment_ids:
+            return
+        seg_id = work.segment_id
+        if seg_id not in self._open_writers:
+            active_dir = self._active_segments_dir() / seg_id
+            if not active_dir.is_dir():
+                active_dir = self._segments_dir() / seg_id
+            task = self.task
+            if isinstance(work, _PersistJob):
+                task = work.task
+            self._open_writers[seg_id] = _new_open_segment_writer(
+                active_dir,
+                session_id=self.session_id,
+                segment_id=seg_id,
+                task=task,
+            )
+        if isinstance(work, _ImuRawPersistJob):
+            self._open_writers[seg_id].append_imu_raw_records(work.records)
+        else:
+            self._open_writers[seg_id].write_frame(work)
+
     def _offer_persist(self, item: PersistWorkItem, *, blocking: bool) -> None:
         """Non-blocking for frames (drop oldest); segment close may block on flush."""
         if blocking:
@@ -1054,35 +1125,14 @@ class SegmentCaptureWriter:
                         pass
                     break
                 batch.append(nxt)
-            for work in batch:
+            frame_work = [w for w in batch if isinstance(w, (_PersistJob, _ImuRawPersistJob))]
+            close_work = [w for w in batch if isinstance(w, _SegmentCloseJob)]
+            for work in frame_work + close_work:
                 with self._writer_lock:
                     if isinstance(work, _SegmentCloseJob):
-                        writer = self._open_writers.pop(work.segment_id, None)
-                        active_dir = self._active_segments_dir() / work.segment_id
-                        if writer is not None:
-                            writer.close()
-                        if active_dir.is_dir():
-                            finalize_segment_manifest_after_persist(active_dir)
-                            self._enqueue_finalize(work.segment_id, active_dir)
+                        self._handle_segment_close(work)
                     else:
-                        seg_id = work.segment_id
-                        if seg_id not in self._open_writers:
-                            active_dir = self._active_segments_dir() / seg_id
-                            if not active_dir.is_dir():
-                                active_dir = self._segments_dir() / seg_id
-                            task = self.task
-                            if isinstance(work, _PersistJob):
-                                task = work.task
-                            self._open_writers[seg_id] = _new_open_segment_writer(
-                                active_dir,
-                                session_id=self.session_id,
-                                segment_id=seg_id,
-                                task=task,
-                            )
-                        if isinstance(work, _ImuRawPersistJob):
-                            self._open_writers[seg_id].append_imu_raw_records(work.records)
-                        else:
-                            self._open_writers[seg_id].write_frame(work)
+                        self._persist_frame_work(work)
                 self._persist_queue.task_done()
 
     def flush(self) -> None:

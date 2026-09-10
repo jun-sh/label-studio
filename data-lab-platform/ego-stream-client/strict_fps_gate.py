@@ -184,24 +184,28 @@ def check_mcap_strict_fps(
         # An unreadable segment is a corrupt segment, not a reason to stop recording.
         return False, [f"mcap_unreadable:{type(exc).__name__}"]
 
-    timeline = analyze_timeline_coherence(grid_ns, imu_ns)
-    if timeline.get("error"):
-        print(f"[timeline] {mcap_path.name}: unavailable ({timeline['error']})", flush=True)
-    else:
-        verdict = "ok" if timeline["ok"] else "COMPRESSED"
-        print(
-            f"[timeline] {mcap_path.name}: {verdict} ratio={timeline['ratio']:.4f} "
-            f"real_fps={timeline['real_fps']:.3f} claimed_fps={timeline['claimed_fps']:.3f} "
-            f"real_span={timeline['imu_span_s']:.2f}s recorded_span={timeline['grid_span_s']:.2f}s",
-            flush=True,
-        )
-        if timeline_gate_enabled() and not timeline["ok"]:
-            issues.append(
-                "timeline_incoherent:"
-                f"ratio={timeline['ratio']:.4f},"
-                f"real_fps={timeline['real_fps']:.3f},"
-                f"claimed_fps={timeline['claimed_fps']:.3f}",
+    # Timeline coherence reads every IMU sample and takes ~4s on a closed segment.
+    # It belongs on the upload/QC path, not on the capture rotation hot path, unless
+    # EGO_TIMELINE_GATE is explicitly enabled to reject compressed segments.
+    if timeline_gate_enabled():
+        timeline = analyze_timeline_coherence(grid_ns, imu_ns)
+        if timeline.get("error"):
+            print(f"[timeline] {mcap_path.name}: unavailable ({timeline['error']})", flush=True)
+        else:
+            verdict = "ok" if timeline["ok"] else "COMPRESSED"
+            print(
+                f"[timeline] {mcap_path.name}: {verdict} ratio={timeline['ratio']:.4f} "
+                f"real_fps={timeline['real_fps']:.3f} claimed_fps={timeline['claimed_fps']:.3f} "
+                f"real_span={timeline['imu_span_s']:.2f}s recorded_span={timeline['grid_span_s']:.2f}s",
+                flush=True,
             )
+            if not timeline["ok"]:
+                issues.append(
+                    "timeline_incoherent:"
+                    f"ratio={timeline['ratio']:.4f},"
+                    f"real_fps={timeline['real_fps']:.3f},"
+                    f"claimed_fps={timeline['claimed_fps']:.3f}",
+                )
 
     if not strict_fps_gate_enabled():
         return len(issues) == 0, issues

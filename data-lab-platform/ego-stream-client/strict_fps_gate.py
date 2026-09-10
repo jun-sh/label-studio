@@ -37,6 +37,26 @@ def _timeline_max_dev() -> float:
     return float(os.environ.get("EGO_TIMELINE_MAX_DEV", "0.03"))
 
 
+def _timeline_min_frames() -> int:
+    return max(1, int(os.environ.get("EGO_TIMELINE_MIN_FRAMES", "300")))
+
+
+def _timeline_min_span_s() -> float:
+    return float(os.environ.get("EGO_TIMELINE_MIN_SPAN_S", "10.0"))
+
+
+def timeline_grace_applies(timeline: dict[str, Any], *, frame_count: int) -> bool:
+    """Short tail segments (e.g. stop mid-segment) have noisy ratio — do not reject."""
+    if frame_count < _timeline_min_frames():
+        return True
+    min_span = _timeline_min_span_s()
+    if float(timeline.get("imu_span_s") or 0) < min_span:
+        return True
+    if float(timeline.get("grid_span_s") or 0) < min_span:
+        return True
+    return False
+
+
 def strict_fps_gate_enabled() -> bool:
     return os.environ.get("EGO_STRICT_FPS_GATE", "0").strip().lower() in (
         "1",
@@ -169,9 +189,15 @@ def timeline_from_writer_spans(
     }
 
 
-def timeline_integrity_issues(timeline: dict[str, Any]) -> list[str]:
+def timeline_integrity_issues(
+    timeline: dict[str, Any],
+    *,
+    frame_count: int | None = None,
+) -> list[str]:
     """Flag compressed segments even when EGO_TIMELINE_GATE is off."""
     if not timeline:
+        return []
+    if frame_count is not None and timeline_grace_applies(timeline, frame_count=frame_count):
         return []
     if timeline.get("error"):
         return [f"timeline_unavailable:{timeline['error']}"]
@@ -185,9 +211,22 @@ def timeline_integrity_issues(timeline: dict[str, Any]) -> list[str]:
     ]
 
 
-def log_timeline_verdict(segment_name: str, timeline: dict[str, Any]) -> None:
+def log_timeline_verdict(
+    segment_name: str,
+    timeline: dict[str, Any],
+    *,
+    frame_count: int | None = None,
+) -> None:
     if timeline.get("error"):
         print(f"[timeline] {segment_name}: unavailable ({timeline['error']})", flush=True)
+        return
+    if frame_count is not None and timeline_grace_applies(timeline, frame_count=frame_count):
+        print(
+            f"[timeline] {segment_name}: grace frames={frame_count} "
+            f"ratio={timeline.get('ratio', 0):.4f} "
+            f"real_span={timeline.get('imu_span_s', 0):.2f}s",
+            flush=True,
+        )
         return
     verdict = "ok" if timeline.get("ok") else "COMPRESSED"
     print(

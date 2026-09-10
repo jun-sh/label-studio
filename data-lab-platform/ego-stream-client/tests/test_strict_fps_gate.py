@@ -6,6 +6,7 @@ from strict_fps_gate import (
     analyze_timestamp_series,
     strict_timestamp_series_ok,
     timeline_from_writer_spans,
+    timeline_grace_applies,
     timeline_integrity_issues,
 )
 
@@ -54,6 +55,46 @@ def test_timeline_from_writer_spans_flags_compression() -> None:
     )
     assert timeline["ok"] is False
     issues = timeline_integrity_issues(timeline)
+    assert issues
+    assert issues[0].startswith("timeline_incoherent:")
+
+
+def test_timeline_grace_skips_short_stop_tail() -> None:
+    """Stop-truncated tails (e.g. 72 frames) have noisy ratio — do not reject."""
+    frames = 72
+    grid_min = 1_000_000_000
+    grid_max = grid_min + int(frames * 33_333_333)
+    imu_min = grid_min
+    imu_max = imu_min + int(frames * 38_000_000)
+    timeline = timeline_from_writer_spans(
+        frame_count=frames,
+        grid_min_ns=grid_min,
+        grid_max_ns=grid_max,
+        imu_min_ns=imu_min,
+        imu_max_ns=imu_max,
+        imu_samples=frames * 6,
+    )
+    assert timeline["ok"] is False
+    assert timeline_grace_applies(timeline, frame_count=frames)
+    assert not timeline_integrity_issues(timeline, frame_count=frames)
+
+
+def test_timeline_grace_does_not_mask_full_segment_compression() -> None:
+    frames = 1800
+    grid_min = 1_000_000_000
+    grid_max = grid_min + int(frames * 33_333_333)
+    imu_min = grid_min
+    imu_max = imu_min + int(frames * 38_000_000)
+    timeline = timeline_from_writer_spans(
+        frame_count=frames,
+        grid_min_ns=grid_min,
+        grid_max_ns=grid_max,
+        imu_min_ns=imu_min,
+        imu_max_ns=imu_max,
+        imu_samples=frames * 6,
+    )
+    assert not timeline_grace_applies(timeline, frame_count=frames)
+    issues = timeline_integrity_issues(timeline, frame_count=frames)
     assert issues
     assert issues[0].startswith("timeline_incoherent:")
 

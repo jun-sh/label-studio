@@ -240,8 +240,8 @@ def check_segment_integrity(
         except ImportError:
             from strict_fps_gate import log_timeline_verdict, timeline_integrity_issues
 
-        log_timeline_verdict(segment_dir.name, timeline)
-        issues.extend(timeline_integrity_issues(timeline))
+        log_timeline_verdict(segment_dir.name, timeline, frame_count=frame_count)
+        issues.extend(timeline_integrity_issues(timeline, frame_count=frame_count))
 
     capture_health = manifest.get("capture_health")
     if isinstance(capture_health, dict):

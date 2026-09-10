@@ -250,11 +250,17 @@ def check_segment_integrity(
             if total_ovf > 0:
                 issues.append(f"capture_ring_overflow:total={total_ovf}")
         quad_skew = int(capture_health.get("quad_skew_events") or 0)
-        if quad_skew > 0:
+        total_ovf = 0
+        if isinstance(ring_ovf, dict):
+            total_ovf = sum(int(v) for v in ring_ovf.values())
+        # Sequential lockstep can show multi-ms spread at pop time even when FSYNC is
+        # healthy; only reject when rings overflowed in the same segment window.
+        if quad_skew > 0 and total_ovf > 0:
             issues.append(
                 "capture_quad_skew:"
                 f"events={quad_skew},"
-                f"max_ns={int(capture_health.get('quad_skew_max_ns') or 0)}",
+                f"max_ns={int(capture_health.get('quad_skew_max_ns') or 0)},"
+                f"ring_ovf={total_ovf}",
             )
 
     storage_format = str(manifest.get("storage_format") or ("mcap" if SEGMENT_MCAP else "dlb1"))

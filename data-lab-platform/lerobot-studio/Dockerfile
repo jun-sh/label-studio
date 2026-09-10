@@ -49,29 +49,29 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
      fi \
   && python3 -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; from lerobot.datasets.video_utils import encode_video_frames"
 
-COPY ingest/ /app/ingest/
-COPY derive/ /app/derive/
-COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs delivery-status.mjs qc-dataset-key.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
-COPY vendor/ /app/vendor/
-COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
-COPY scripts/write-tasks-parquet.py /app/scripts/write-tasks-parquet.py
-COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
-COPY scripts/test_sync_stream_parquet_tasks.py /app/scripts/test_sync_stream_parquet_tasks.py
-COPY session-markers.mjs derive-lock.mjs ego-derive-run.mjs ego-derive-watch.mjs /app/
-COPY scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py
-COPY scripts/validate-mcap-archive.py /app/scripts/validate-mcap-archive.py
-COPY scripts/export-videos-from-parquet.py /app/scripts/export-videos-from-parquet.py
-COPY scripts/sync-vendor-annotations.py /app/scripts/sync-vendor-annotations.py
-COPY scripts/ego-derive-worker-entry.sh /app/scripts/ego-derive-worker-entry.sh
-COPY patches/apply-branding.sh /app/patches/apply-branding.sh
-COPY patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
-COPY patches/patch-playback-mode.sh /app/patches/patch-playback-mode.sh
-COPY branding/ /app/branding/
-COPY config/datasets.json /app/config/datasets.json
-COPY config/sample-datasets.manifest.json /app/config/sample-datasets.manifest.json
-COPY config/collection-stations.json /app/config/collection-stations.json
-COPY config/collection-station-tokens.json /app/config/collection-station-tokens.json
-COPY config/station-topology.json /app/config/station-topology.json
+COPY lerobot-studio/ingest/ /app/ingest/
+COPY lerobot-studio/derive/ /app/derive/
+COPY lerobot-studio/download-assets.sh lerobot-studio/docker-entrypoint.sh lerobot-studio/prepare-bundled-dataset.sh lerobot-studio/ingest-bundled-datasets.sh lerobot-studio/server.mjs lerobot-studio/stream-ingest.mjs lerobot-studio/mux-exec.mjs lerobot-studio/lerobot-converter.mjs lerobot-studio/task-naming.mjs lerobot-studio/ingest-server.mjs lerobot-studio/delivery-status.mjs lerobot-studio/qc-dataset-key.mjs lerobot-studio/frame_bin_codec.mjs lerobot-studio/import-handlers.mjs lerobot-studio/derive-async.mjs lerobot-studio/derive-pipeline.mjs /app/
+COPY lerobot-studio/vendor/ /app/vendor/
+COPY lerobot-studio/scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
+COPY lerobot-studio/scripts/write-tasks-parquet.py /app/scripts/write-tasks-parquet.py
+COPY lerobot-studio/scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
+COPY lerobot-studio/scripts/test_sync_stream_parquet_tasks.py /app/scripts/test_sync_stream_parquet_tasks.py
+COPY lerobot-studio/session-markers.mjs lerobot-studio/derive-lock.mjs lerobot-studio/ego-derive-run.mjs lerobot-studio/ego-derive-watch.mjs /app/
+COPY lerobot-studio/scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py
+COPY lerobot-studio/scripts/validate-mcap-archive.py /app/scripts/validate-mcap-archive.py
+COPY lerobot-studio/scripts/export-videos-from-parquet.py /app/scripts/export-videos-from-parquet.py
+COPY lerobot-studio/scripts/sync-vendor-annotations.py /app/scripts/sync-vendor-annotations.py
+COPY lerobot-studio/scripts/ego-derive-worker-entry.sh /app/scripts/ego-derive-worker-entry.sh
+COPY lerobot-studio/patches/apply-branding.sh /app/patches/apply-branding.sh
+COPY lerobot-studio/patches/patch-dockview-scalar-chart.sh /app/patches/patch-dockview-scalar-chart.sh
+COPY lerobot-studio/patches/patch-playback-mode.sh /app/patches/patch-playback-mode.sh
+COPY lerobot-studio/branding/ /app/branding/
+COPY lerobot-studio/config/datasets.json /app/config/datasets.json
+COPY lerobot-studio/config/sample-datasets.manifest.json /app/config/sample-datasets.manifest.json
+COPY lerobot-studio/config/collection-stations.json /app/config/collection-stations.json
+COPY lerobot-studio/config/collection-station-tokens.json /app/config/collection-station-tokens.json
+COPY lerobot-studio/config/station-topology.json /app/config/station-topology.json
 
 RUN chmod +x /app/download-assets.sh /app/docker-entrypoint.sh /app/prepare-bundled-dataset.sh \
   /app/ingest-bundled-datasets.sh /app/patches/apply-branding.sh /app/patches/patch-dockview-scalar-chart.sh \

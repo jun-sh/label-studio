@@ -30,11 +30,14 @@ def _bootstrap_ego_platform() -> None:
 
 _bootstrap_ego_platform()
 try:
+    from ego_platform.lerobot.data_schema import feature_arrow_type, values_to_feature_array
     from ego_platform.lerobot.io import (
         write_episodes_parquet as ego_write_episodes_parquet,
         write_tasks_parquet as ego_write_tasks_parquet,
     )
 except ImportError:
+    feature_arrow_type = None
+    values_to_feature_array = None
     ego_write_episodes_parquet = None
     ego_write_tasks_parquet = None
 
@@ -448,17 +451,25 @@ def coerce_feature_vector(raw, key: str, info: dict) -> list:
     return raw
 
 
-def parquet_list_type(key: str, info: dict) -> pa.DataType:
+def parquet_feature_type(key: str, info: dict) -> pa.DataType:
     features = info.get("features") or {}
     spec = features.get(key) or {}
+    if feature_arrow_type is not None:
+        return feature_arrow_type(spec)
     dtype = str(spec.get("dtype") or "float32")
+    shape = spec.get("shape") or [1]
+    size = 1
+    for dim in shape:
+        size *= int(dim)
     if dtype.startswith("int"):
         value_type = pa.int64()
     elif dtype == "float64":
         value_type = pa.float64()
     else:
         value_type = pa.float32()
-    return pa.list_(value_type)
+    if size == 1:
+        return value_type
+    return pa.list_(value_type, size)
 
 
 def data_parquet_row_count(path: Path) -> int:
@@ -499,15 +510,21 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
         for key in scalar_keys:
             feature_cols[key].append(coerce_feature_vector(src.get(key), key, info))
 
-    table_cols: dict[str, pa.Array] = {
-        "frame_index": pa.array(frame_index_col, type=pa.int64()),
-        "episode_index": pa.array(episode_index_col, type=pa.int64()),
-        "index": pa.array(index_col, type=pa.int64()),
-        "task_index": pa.array(task_index_col, type=pa.int64()),
-        "timestamp": pa.array(timestamp_col, type=pa.float64()),
-    }
-    for key in scalar_keys:
-        table_cols[key] = pa.array(feature_cols[key], type=parquet_list_type(key, info))
+    features = info.get("features") or {}
+    table_cols: dict[str, pa.Array] = {}
+    for key, values in {
+        "frame_index": frame_index_col,
+        "episode_index": episode_index_col,
+        "index": index_col,
+        "task_index": task_index_col,
+        "timestamp": timestamp_col,
+        **feature_cols,
+    }.items():
+        spec = features.get(key) or {}
+        if values_to_feature_array is not None and isinstance(spec, dict) and spec.get("dtype") != "video":
+            table_cols[key] = values_to_feature_array(values, spec)
+        else:
+            table_cols[key] = pa.array(values, type=parquet_feature_type(key, info))
 
     out = root / "data" / "chunk-000" / "file-000.parquet"
     _atomic_parquet_write(pa.table(table_cols), out)

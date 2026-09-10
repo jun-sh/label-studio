@@ -34,7 +34,7 @@ LOOP_SELFCORRECT = _extract("_FSYNC_LOOP_SELFCORRECT")
 @pytest.mark.parametrize("loop", [LOOP_LEGACY, LOOP_SELFCORRECT], ids=["legacy", "selfcorrect"])
 @pytest.mark.parametrize("fps", [24.0, 30.0, 60.0])
 def test_generated_script_is_valid_python(loop: str, fps: float) -> None:
-    ast.parse((HEAD + loop) % fps)
+    ast.parse((HEAD + loop) % (fps, 0.97))
 
 
 @pytest.mark.parametrize("loop", [LOOP_LEGACY, LOOP_SELFCORRECT], ids=["legacy", "selfcorrect"])
@@ -44,9 +44,80 @@ def test_loop_bodies_carry_no_format_placeholder(loop: str) -> None:
     assert "%" not in loop
 
 
-def test_head_has_exactly_one_placeholder() -> None:
-    assert HEAD.count("%") == 1
-    assert "%f" in HEAD
+def test_head_placeholders_match_the_substitution_tuple() -> None:
+    # fps and min_gap seconds, in that order.
+    assert HEAD.count("%f") == 2
+    assert HEAD.count("%") == 2
+    assert "fps = %f" in HEAD
+    assert "min_gap = %f" in HEAD
+
+
+def _simulate_gaps(*, clamp: bool, late_every: int, late_s: float, n: int) -> list[float]:
+    """Replay the selfcorrect loop's timing arithmetic, returning rising-edge gaps.
+
+    Models a LEON stall by making every `late_every`-th pulse wake `late_s` late,
+    which is what IMU traffic on the shared processor does in practice.
+    """
+    period = 1.0 / 30.303
+    # Derived floor: the sensor minimum at +3 headroom, plus a 1ms guard.
+    min_gap = 1.0 / (30.303 + 3) + 0.001
+    now = 0.0
+    next_t = 0.0
+    last_rise = None
+    gaps: list[float] = []
+    for i in range(n):
+        rise = now
+        if last_rise is not None:
+            gaps.append(rise - last_rise)
+        last_rise = rise
+        next_t += period
+        delay = next_t - now
+        if clamp:
+            floor_delay = last_rise + min_gap - now
+            delay = max(delay, floor_delay)
+        now += max(delay, 0.0)
+        if delay <= 0:
+            next_t = now
+        if late_every and (i + 1) % late_every == 0:
+            now += late_s
+    return gaps
+
+
+def test_unclamped_catch_up_emits_triggers_the_sensor_will_refuse() -> None:
+    # sensor_fps = pulse + 3 headroom, so the sensor ignores any trigger closer
+    # than its own minimum frame time.
+    sensor_min_frame_s = 1.0 / (30.303 + 3)
+    gaps = _simulate_gaps(clamp=False, late_every=10, late_s=0.005, n=200)
+    refused = [g for g in gaps if g < sensor_min_frame_s]
+    assert refused, "expected the deadline loop to compensate with early pulses"
+
+
+def test_clamped_catch_up_never_undercuts_the_sensor_minimum() -> None:
+    sensor_min_frame_s = 1.0 / (30.303 + 3)
+    gaps = _simulate_gaps(clamp=True, late_every=10, late_s=0.005, n=200)
+    assert min(gaps) >= sensor_min_frame_s
+    # The floor must still leave room to recover, not pin the loop to min_gap.
+    assert max(gaps) > 1.0 / 30.303
+
+
+def test_min_gap_is_derived_from_the_sensor_not_the_period() -> None:
+    """A floor set as a fraction of the period collapses the pulse rate.
+
+    Measured on device: a 0.97*period floor clamped 300/300 pulses and dropped
+    the rate to 27.3Hz, because LEON sleep overshoot then had nowhere to go.
+    """
+    src = SOURCE
+    assert "def fsync_min_gap_s(pulse_hz: float, device_fps: int) -> float:" in src
+    assert "return 1.0 / sensor_fps + OAK_FSYNC_MIN_GAP_GUARD_MS / 1000.0" in src
+    # Off switch must yield no floor at all, so the legacy path is untouched.
+    assert "if not (OAK_FSYNC_FIX and OAK_GPIO_FSYNC):" in src
+
+
+def test_selfcorrect_loop_rate_limits_catch_up() -> None:
+    assert "min_gap" in LOOP_SELFCORRECT
+    assert "floor_delay = last_rise + min_gap - now" in LOOP_SELFCORRECT
+    # min_gap_ms is the only on-device evidence of a refused trigger.
+    assert "min_gap_ms=" in LOOP_SELFCORRECT
 
 
 def test_legacy_loop_preserves_the_original_timing() -> None:
@@ -141,8 +212,8 @@ def test_pulse_rate_is_derived_from_the_grid_interval() -> None:
     assert "def fsync_pulse_hz(device_fps: int) -> float:" in src
     assert "return 1000.0 / float(EGO_FRAME_INTERVAL_MS)" in src
     # The script and the sensor must both take the derived rate, not device_fps.
-    assert "script.setScript(FSYNC_GPIO_SCRIPT % self._pulse_hz)" in src
-    assert "sensor_fps = self._pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS" in src
+    assert "script.setScript(FSYNC_GPIO_SCRIPT % (self._pulse_hz, min_gap_s))" in src
+    assert "return pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS" in src
 
 
 def test_derived_pulse_closes_the_structural_gap() -> None:

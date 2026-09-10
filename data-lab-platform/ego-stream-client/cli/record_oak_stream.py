@@ -465,6 +465,10 @@ def main() -> None:
                     beep_epoch=beep_wall_epoch,
                     capture_fps=capture_fps,
                 )
+            if frame_count % 300 == 0:
+                ingest = recorder.ingest_stats_line()
+                if ingest:
+                    print(f"cam_ingest emitted={frame_count} {ingest}", flush=True)
     finally:
         if preview_feed_stop is not None:
             preview_feed_stop.set()

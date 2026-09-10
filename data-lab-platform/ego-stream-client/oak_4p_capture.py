@@ -223,6 +223,14 @@ OAK_AE_MAX_EXPOSURE_US = max(0, int(os.environ.get("OAK_AE_MAX_EXPOSURE_US", "20
 # 30.000Hz leaves the recorded timeline 1.01% short of real time no matter how few
 # frames are dropped. Taking both from one source keeps them from disagreeing.
 OAK_FSYNC_PULSE_HZ = max(0.0, float(os.environ.get("OAK_FSYNC_PULSE_HZ", "0") or 0))
+# Guard above the sensor's minimum frame time. The pulse floor has to clear that
+# minimum (or the sensor refuses the trigger) but stay well below the period, or
+# the loop loses the room it needs to absorb LEON sleep overshoot.
+OAK_FSYNC_MIN_GAP_GUARD_MS = max(
+    0.0, float(os.environ.get("OAK_FSYNC_MIN_GAP_GUARD_MS", "1.0"))
+)
+OAK_IMU_BATCH_THRESHOLD = max(1, int(os.environ.get("OAK_IMU_BATCH_THRESHOLD", "1")))
+OAK_IMU_MAX_BATCH_REPORTS = max(1, int(os.environ.get("OAK_IMU_MAX_BATCH_REPORTS", "10")))
 
 _FSYNC_GPIO_HEAD = """# coding=utf-8
 import time
@@ -254,6 +262,7 @@ GPIO.write(GPIO_FSIN_MODE_SELECT, 1)
 
 period = 1 / fps
 active = 0.001
+min_gap = %f
 
 node.warn(f'FSYNC GPIO script, rev={boardRev}, fps={fps}')
 """
@@ -273,8 +282,14 @@ while True:
 # Sleeps until an absolute deadline instead, so that latency is absorbed within a
 # period rather than accumulating into the pulse rate. Re-anchors when a period is
 # already overrun, so a one-off stall cannot make the loop chase a backlog of
-# deadlines. Reports the measured rate every 10s; that log is the only direct
-# evidence of the real pulse rate, since the host can only observe frame arrivals.
+# deadlines.
+#
+# Catching up is rate-limited by min_gap: a sensor in FSYNC slave mode ignores any
+# trigger that arrives sooner than its own minimum frame time, and an ignored
+# trigger costs a whole frame. Without the floor, every late pulse is followed by a
+# compensating early one that the sensor then rejects. min_gap_ms in the periodic
+# report is the shortest gap actually emitted, which is the only direct evidence of
+# whether the loop is still producing triggers the sensor can refuse.
 _FSYNC_LOOP_SELFCORRECT = """
 try:
     clock = time.monotonic
@@ -282,16 +297,30 @@ except AttributeError:
     clock = time.time
 
 next_t = clock()
+last_rise = None
 count = 0
 overrun = 0
+clamped = 0
+min_seen = 999.0
 window_t = clock()
 
 while True:
+    rise = clock()
     GPIO.write(GPIO_FSIN_2LANE, 1)
     time.sleep(active)
     GPIO.write(GPIO_FSIN_2LANE, 0)
+    if last_rise is not None:
+        gap = rise - last_rise
+        if gap < min_seen:
+            min_seen = gap
+    last_rise = rise
     next_t = next_t + period
-    delay = next_t - clock()
+    now = clock()
+    delay = next_t - now
+    floor_delay = last_rise + min_gap - now
+    if floor_delay > delay:
+        delay = floor_delay
+        clamped = clamped + 1
     if delay > 0:
         time.sleep(delay)
     else:
@@ -300,9 +329,11 @@ while True:
     count = count + 1
     if count >= 300:
         now = clock()
-        node.warn(f'FSYNC pulse rate={count / (now - window_t):.3f}Hz overrun={overrun}')
+        node.warn(f'FSYNC pulse rate={count / (now - window_t):.3f}Hz overrun={overrun} clamped={clamped} min_gap_ms={min_seen * 1000:.2f}')
         count = 0
         overrun = 0
+        clamped = 0
+        min_seen = 999.0
         window_t = now
 """
 
@@ -325,6 +356,28 @@ def fsync_pulse_hz(device_fps: int) -> float:
     if EGO_FRAME_INTERVAL_MS > 0:
         return 1000.0 / float(EGO_FRAME_INTERVAL_MS)
     return float(device_fps)
+
+
+def fsync_sensor_fps(pulse_hz: float, device_fps: int) -> float:
+    """Sensor rate; headroom shortens its minimum frame time below the pulse period."""
+    if OAK_FSYNC_FIX and OAK_GPIO_FSYNC:
+        return pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS
+    return float(device_fps)
+
+
+def fsync_min_gap_s(pulse_hz: float, device_fps: int) -> float:
+    """Shortest pulse gap the sensor still accepts, plus a guard.
+
+    The catch-up room the pulse loop has left is period minus this value, so the
+    sensor headroom is what buys the loop room to absorb LEON sleep overshoot.
+    Returns 0 when the fix is off, keeping OAK_FSYNC_FIX=0 a true revert.
+    """
+    if not (OAK_FSYNC_FIX and OAK_GPIO_FSYNC):
+        return 0.0
+    sensor_fps = fsync_sensor_fps(pulse_hz, device_fps)
+    if sensor_fps <= 0:
+        return 0.0
+    return 1.0 / sensor_fps + OAK_FSYNC_MIN_GAP_GUARD_MS / 1000.0
 
 MONO_RES_OPTS: dict[str, Any] = {}
 COLOR_RES_OPTS: dict[str, Any] = {}
@@ -508,6 +561,10 @@ class Oak4pEgoRecorder:
         self._strict_imu_buf: Any = None
         self._h264_enc_ctrl_queues: dict[str, Any] = {}
         self._h264_ctrl_stream_names: list[str] = []
+        self._ingest_counts: dict[str, int] = {}
+        self._ingest_last_seq: dict[str, int] = {}
+        self._ingest_seq_lost: dict[str, int] = {}
+        self._ingest_ring_overflow: dict[str, int] = {}
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -911,8 +968,11 @@ class Oak4pEgoRecorder:
                 [dai.IMUSensor.ACCELEROMETER_RAW, dai.IMUSensor.GYROSCOPE_RAW],
                 self.imu_hz,
             )
-            imu.setBatchReportThreshold(1)
-            imu.setMaxBatchReports(10)
+            # Every report wakes LEON_CSS, which also runs the FSYNC pulse
+            # script; batching trades host latency for pulse stability without
+            # discarding samples or their individual timestamps.
+            imu.setBatchReportThreshold(OAK_IMU_BATCH_THRESHOLD)
+            imu.setMaxBatchReports(max(OAK_IMU_MAX_BATCH_REPORTS, OAK_IMU_BATCH_THRESHOLD))
             imu_out = pipeline.create(dai.node.XLinkOut)
             imu_out.setStreamName("imu")
             imu.out.link(imu_out.input)
@@ -990,10 +1050,7 @@ class Oak4pEgoRecorder:
             cam.setBoardSocket(CAM_SOCKET_OPTS[cam_name])
             # Headroom applies to the sensor only. Feeding it to the FSYNC script would
             # raise the pulse rate, which is the opposite of what it is for.
-            sensor_fps = float(self.device_fps)
-            if OAK_FSYNC_FIX and OAK_GPIO_FSYNC:
-                sensor_fps = self._pulse_hz + OAK_FSYNC_SENSOR_HEADROOM_FPS
-            cam.setFps(sensor_fps)
+            cam.setFps(fsync_sensor_fps(self._pulse_hz, self.device_fps))
 
             if OAK_GPIO_FSYNC:
                 if self._use_gpio_fsync:
@@ -1013,12 +1070,15 @@ class Oak4pEgoRecorder:
         if OAK_GPIO_FSYNC and (self._use_gpio_fsync or revision >= 6):
             script = pipeline.create(dai.node.Script)
             script.setProcessor(dai.ProcessorType.LEON_CSS)
-            script.setScript(FSYNC_GPIO_SCRIPT % self._pulse_hz)
+            min_gap_s = fsync_min_gap_s(self._pulse_hz, self.device_fps)
+            script.setScript(FSYNC_GPIO_SCRIPT % (self._pulse_hz, min_gap_s))
             # OAK_GPIO_FSYNC is necessarily true here, so headroom applies iff the fix is on.
+            sensor_fps = fsync_sensor_fps(self._pulse_hz, self.device_fps)
             print(
                 f"[oak] fsync loop={'selfcorrect' if OAK_FSYNC_FIX else 'legacy'} "
                 f"pulse_hz={self._pulse_hz:.4f} grid_ms={EGO_FRAME_INTERVAL_MS} "
-                f"sensor_fps={self._pulse_hz + (OAK_FSYNC_SENSOR_HEADROOM_FPS if OAK_FSYNC_FIX else 0):.4f} "
+                f"sensor_fps={sensor_fps:.4f} min_gap_ms={min_gap_s * 1000:.2f} "
+                f"catchup_room_ms={(1000.0 / self._pulse_hz - min_gap_s * 1000):.2f} "
                 f"ae_max_us={OAK_AE_MAX_EXPOSURE_US if OAK_FSYNC_FIX else 0}",
                 flush=True,
             )
@@ -1107,8 +1167,44 @@ class Oak4pEgoRecorder:
                 else:
                     payload = _frame_from_packet(pkt)
                 if payload is not None:
+                    self._note_ingest(cam_name, pkt, cam_rings[cam_name])
                     cam_rings[cam_name].append(_CamRingSample(ts, payload))
                 pkt = queue.tryGet()
+
+    def _note_ingest(self, cam_name: str, pkt: Any, ring: deque[_CamRingSample]) -> None:
+        """Account device packets against the two silent loss paths.
+
+        A sequence-number gap means XLink discarded packets (queues are
+        non-blocking); a full ring means the deque is about to evict its oldest
+        sample, which permanently desynchronizes the lockstep quad consumer.
+        """
+        self._ingest_counts[cam_name] = self._ingest_counts.get(cam_name, 0) + 1
+        try:
+            seq = int(pkt.getSequenceNum())
+        except Exception:
+            seq = -1
+        if seq >= 0:
+            prev = self._ingest_last_seq.get(cam_name)
+            if prev is not None and seq > prev + 1:
+                self._ingest_seq_lost[cam_name] = (
+                    self._ingest_seq_lost.get(cam_name, 0) + seq - prev - 1
+                )
+            self._ingest_last_seq[cam_name] = seq
+        if ring.maxlen is not None and len(ring) >= ring.maxlen:
+            self._ingest_ring_overflow[cam_name] = (
+                self._ingest_ring_overflow.get(cam_name, 0) + 1
+            )
+
+    def ingest_stats_line(self) -> str:
+        """Per-camera device ingest vs emitted frames, for capture health logs."""
+        if not self._ingest_counts:
+            return ""
+        return " ".join(
+            f"{cam}:in={self._ingest_counts[cam]}"
+            f",xlink_lost={self._ingest_seq_lost.get(cam, 0)}"
+            f",ring_ovf={self._ingest_ring_overflow.get(cam, 0)}"
+            for cam in sorted(self._ingest_counts)
+        )
 
     def _yield_h264_sequential_sample(
         self,

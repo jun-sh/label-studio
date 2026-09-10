@@ -71,10 +71,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--datalab-root",
         type=Path,
-        default=Path(__file__).resolve().parents[1],
+        default=None,
         help="data-lab-platform root (for ego-platform PYTHONPATH bootstrap)",
     )
     args = parser.parse_args(argv)
+    if args.datalab_root is None:
+        here = Path(__file__).resolve()
+        args.datalab_root = next(
+            (parent for parent in here.parents if parent.name == "data-lab-platform"),
+            here.parent if here.parent.name == "scripts" else Path("/app"),
+        )
     _bootstrap_ego_platform(args.datalab_root)
 
     failed = 0

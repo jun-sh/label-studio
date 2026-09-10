@@ -18,11 +18,11 @@ from datetime import datetime, timezone
 
 
 def _bootstrap_ego_platform() -> None:
-    for candidate in (
-        Path(__file__).resolve().parents[4] / "ego-platform" / "src",
-        Path(__file__).resolve().parents[3] / "ego-platform" / "src",
-        Path("/ego-platform/src"),
-    ):
+    here = Path(__file__).resolve()
+    candidates = [Path("/ego-platform/src")]
+    for parent in here.parents:
+        candidates.append(parent / "ego-platform" / "src")
+    for candidate in candidates:
         if (candidate / "ego_platform").is_dir():
             sys.path.insert(0, str(candidate))
             return

@@ -14,11 +14,10 @@ import pyarrow.parquet as pq
 
 def _ensure_ego_platform_path() -> None:
     here = Path(__file__).resolve()
-    for candidate in (
-        here.parents[4] / "ego-platform" / "src",
-        here.parents[3] / "ego-platform" / "src",
-        Path("/ego-platform/src"),
-    ):
+    candidates = [Path("/ego-platform/src")]
+    for parent in here.parents:
+        candidates.append(parent / "ego-platform" / "src")
+    for candidate in candidates:
         if (candidate / "ego_platform").is_dir():
             sys.path.insert(0, str(candidate))
             return

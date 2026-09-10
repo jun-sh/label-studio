@@ -137,12 +137,12 @@ def _journal_beep_epoch(since_epoch: float | None) -> float | None:
     if since_epoch is None:
         return None
     now = time.monotonic()
-    if (
-        _journal_cache is not None
-        and _journal_cache[1] == since_epoch
-        and now - _journal_cache[0] < JOURNAL_CACHE_TTL_S
-    ):
-        return _journal_cache[2]
+    if _journal_cache is not None and _journal_cache[1] == since_epoch:
+        cached_beep = _journal_cache[2]
+        if cached_beep is not None:
+            return cached_beep
+        if now - _journal_cache[0] < JOURNAL_CACHE_TTL_S:
+            return None
     since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
     proc = subprocess.run(
         [
@@ -151,8 +151,9 @@ def _journal_beep_epoch(since_epoch: float | None) -> float | None:
             "-u",
             CAPTURE_RECORD_UNIT,
             f"--since={since_local}",
+            "--grep=capture_ready_beep=played",
             "-n",
-            "200",
+            "5",
             "--no-pager",
             "-o",
             "short-unix",

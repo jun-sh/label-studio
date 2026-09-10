@@ -544,7 +544,7 @@ export function isValidWrist(flat) {
   return flat && flat.length >= 2 && isValidJoint(flat[0], flat[1]);
 }
 
-/** Require a spread skeleton, not stub HaMeR (wrist + collapsed zeros). */
+/** Require a spread skeleton, not stub placeholder (wrist + collapsed zeros). */
 export function isValidSkeleton(flat, minDistinctJoints = 5, payload = null) {
   const minJoints = isMediapipePreview(payload) ? 3 : minDistinctJoints;
   if (!isValidWrist(flat)) return false;

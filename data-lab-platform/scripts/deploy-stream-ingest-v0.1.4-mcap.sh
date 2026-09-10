@@ -7,7 +7,9 @@ TAG="${LEROBOT_IMAGE_TAG:-v0.1.4-mcap-rc}"
 IMAGE="data-lab-lerobot-studio:${TAG}"
 
 echo "[deploy-mcap] build image ${IMAGE}"
-docker build -t "${IMAGE}" "${ROOT}/data-lab-platform/lerobot-studio"
+docker build -t "${IMAGE}" \
+  -f "${ROOT}/data-lab-platform/lerobot-studio/Dockerfile" \
+  "${ROOT}/data-lab-platform"
 
 cd "${ROOT}"
 COMPOSE="${COMPOSE:-docker-compose}"

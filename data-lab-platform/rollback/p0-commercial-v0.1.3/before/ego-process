@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# ego-process — 34 平台一句话：derive 批量 + convert + 轻量 Viewer 同步
+#
+# 用法: ego-process <station> [选项]
+# 示例: ego-process ego-001
+set -euo pipefail
+
+STATION=""
+SKIP_DERIVE=0
+SKIP_SYNC=0
+SKIP_GATE=0
+FORCE_MANUAL_DERIVE=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --skip-derive) SKIP_DERIVE=1 ;;
+    --skip-sync) SKIP_SYNC=1 ;;
+    --skip-gate) SKIP_GATE=1 ;;
+    --force-manual-derive) FORCE_MANUAL_DERIVE=1 ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-process <station> [选项]
+
+  <station>              采集站 ID，如 ego-001（只处理该站，非全站混跑）
+  --skip-derive          跳过 derive（已全部 READY 时）
+  --force-manual-derive  强制手动 ego-derive run（忽略 async worker）
+  --skip-sync            跳过 Viewer ingest（调试用）
+  --skip-gate            跳过发布门禁
+
+步骤:
+  1. derive   manual 模式：批量 ego-derive run
+              async 模式：等待 derive-worker 派生至 READY
+  2. convert  增量后处理（ego-run-pipeline，不含 full deploy）
+  3. sync     docker exec … ingest-bundled-datasets.sh
+  4. gate     ego-viewer-publish-gate（可选）
+
+日常 SOP（目标态）:
+  130:  ego-upload ego-001
+  34:   ego-process ego-001
+
+P-Ops-2 async 模式: bash data-lab-platform/scripts/ego-derive-mode.sh async
+EOF
+      exit 0
+      ;;
+    -*)
+      echo "❌ 未知参数: $arg" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$STATION" ]]; then
+        STATION="$arg"
+      else
+        echo "❌ 多余参数: $arg" >&2
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-station-runtime.sh
+source "${SCRIPT_DIR}/ego-station-runtime.sh"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+[[ -n "$STATION" ]] || {
+  echo "❌ 请指定采集站，例如: ego-process ego-001" >&2
+  exit 2
+}
+
+ego_station_runtime_env "$STATION"
+SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
+DERIVE_SH="${SCRIPT_DIR}/ego-derive"
+WAIT_DERIVE_SH="${SCRIPT_DIR}/ego-wait-derive-sessions.sh"
+PIPELINE_SH="${SCRIPT_DIR}/ego-run-pipeline"
+GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
+VIEWER_SYNC_SH="${SCRIPT_DIR}/ego-viewer-sync.sh"
+LEROBOT_CONTAINER="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
+INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
+
+LOG_DIR="${DATALAB_ROOT}/data-storage/logs"
+mkdir -p "$LOG_DIR"
+RUN_LOG="${LOG_DIR}/ego-process-${STATION}-$(date +%Y%m%d-%H%M%S).log"
+
+log() { echo "[process] $*" | tee -a "$RUN_LOG"; }
+die() { echo "❌ $*" | tee -a "$RUN_LOG" >&2; exit 1; }
+
+_py() {
+  python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT"
+}
+
+SLUG="$(_py slug "$STATION" 2>/dev/null || echo "egodome")"
+PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
+PLATFORM_HOST="${PLATFORM_HOST%/}"
+VIEWER_URL="${PLATFORM_HOST}/data/${SLUG}"
+COLLECTION_URL="${PLATFORM_HOST}/collection?station=${STATION}"
+
+DERIVED=0
+DERIVE_FAILED=0
+
+_is_async_derive_mode() {
+  if [[ "$FORCE_MANUAL_DERIVE" -eq 1 ]]; then
+    return 1
+  fi
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DERIVE_WORKER_CONTAINER}$"; then
+    return 1
+  fi
+  local da
+  da="$(docker exec "${INGEST_CONTAINER}" printenv DERIVE_ASYNC 2>/dev/null || echo 0)"
+  [[ "$da" == "1" || "$da" == "true" || "$da" == "yes" ]]
+}
+
+if [[ "$SKIP_DERIVE" -eq 0 ]]; then
+  mapfile -t DERIVE_PENDING < <(_py derive-pending "$STATION" 2>/dev/null || true)
+  if [[ ${#DERIVE_PENDING[@]} -gt 0 ]]; then
+    if _is_async_derive_mode; then
+      log "async 模式：等待 derive-worker 派生 ${#DERIVE_PENDING[@]} 个 session: ${DERIVE_PENDING[*]}"
+      STATION_ID="$STATION" bash "$WAIT_DERIVE_SH" 2>&1 | tee -a "$RUN_LOG"
+      DERIVED=${#DERIVE_PENDING[@]}
+    else
+      log "manual 模式：待 derive session (${#DERIVE_PENDING[@]}): ${DERIVE_PENDING[*]}"
+      for SID in "${DERIVE_PENDING[@]}"; do
+        log ">>> derive ${STATION} / ${SID} (layout=unit)"
+        set +e
+        DERIVE_LAYOUT=unit STATION_ID="$STATION" bash "$DERIVE_SH" run \
+          --station "$STATION" --session "$SID" 2>&1 | tee -a "$RUN_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [[ "$rc" -eq 0 ]]; then
+          DERIVED=$((DERIVED + 1))
+          log "derive 完成: ${SID}"
+        else
+          DERIVE_FAILED=$((DERIVE_FAILED + 1))
+          log "derive 失败: ${SID} (exit ${rc})"
+        fi
+      done
+    fi
+  else
+    log "无待 derive session（均已 READY 或无新上传）"
+  fi
+else
+  log "跳过 derive（--skip-derive）"
+fi
+
+if [[ "$DERIVE_FAILED" -gt 0 ]]; then
+  die "有 ${DERIVE_FAILED} 个 session derive 失败，修复后重跑 ego-process ${STATION}。日志: ${RUN_LOG}"
+fi
+
+log "后处理 convert（增量，跳过 full deploy）…"
+set +e
+EGO_AUTO_VIEWER_SYNC=1 bash "$PIPELINE_SH" "$STATION" --skip-deploy --skip-gate 2>&1 | tee -a "$RUN_LOG"
+pipe_rc=${PIPESTATUS[0]}
+set -e
+if [[ "$pipe_rc" -ne 0 ]]; then
+  die "后处理失败 (exit ${pipe_rc})。日志: ${RUN_LOG}"
+fi
+
+PIPELINE_DID_SYNC=0
+if grep -q '自动 Viewer sync 完成' "$RUN_LOG" 2>/dev/null; then
+  PIPELINE_DID_SYNC=1
+fi
+
+if [[ "$SKIP_SYNC" -eq 0 && "$PIPELINE_DID_SYNC" -eq 0 ]]; then
+  if [[ -x "$VIEWER_SYNC_SH" ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${LEROBOT_CONTAINER}$"; then
+    log "轻量同步 Viewer（ingest-bundled-datasets）…"
+    bash "$VIEWER_SYNC_SH" 2>&1 | tee -a "$RUN_LOG"
+  elif [[ "$SKIP_SYNC" -eq 0 ]]; then
+    log "⚠️  容器 ${LEROBOT_CONTAINER} 未运行，跳过 Viewer sync"
+  fi
+elif [[ "$PIPELINE_DID_SYNC" -eq 1 ]]; then
+  log "Viewer sync 已由 pipeline 自动完成（P-Ops-3）"
+else
+  log "跳过 Viewer sync（--skip-sync）"
+fi
+
+if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
+  SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
+  if [[ -f "$SAMPLES_ZIP" ]]; then
+    log "Viewer 发布门禁…"
+    EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+  fi
+fi
+
+echo ""
+echo "════════════════════════════════════════"
+echo "✅ ego-process 完成"
+echo "   站点:       ${STATION}"
+echo "   derive:     ${DERIVED} 个 session"
+echo "   采集质检:   ${COLLECTION_URL}"
+echo "   数据集:     ${VIEWER_URL}"
+echo "   日志:       ${RUN_LOG}"
+echo "════════════════════════════════════════"

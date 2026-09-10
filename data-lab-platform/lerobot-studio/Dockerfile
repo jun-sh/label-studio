@@ -1,14 +1,15 @@
 # Embodied dataset visualizer (static UI + bundled sample + API).
 # Bookworm base: Alpine lacks wheels for torch/datasets required by official LeRobot derive.
+# Build context: data-lab-platform/ (see deploy-stream-ingest-v0.1.4-mcap.sh).
 
 FROM node:20-bookworm-slim
 
 WORKDIR /app
-COPY requirements-derive.txt /app/requirements-derive.txt
-COPY requirements-parquet-lerobot.txt /app/requirements-parquet-lerobot.txt
-COPY package.json /app/package.json
+COPY lerobot-studio/requirements-derive.txt /app/requirements-derive.txt
+COPY lerobot-studio/requirements-parquet-lerobot.txt /app/requirements-parquet-lerobot.txt
+COPY lerobot-studio/package.json /app/package.json
 # Optional offline wheel cache — run scripts/download-derive-python-wheels.sh once on host.
-COPY vendor/python-wheels/ /wheels/
+COPY lerobot-studio/vendor/python-wheels/ /wheels/
 
 # Use CN mirrors — deb.debian.org is too slow on this host (~20min+ for apt alone).
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
@@ -50,11 +51,12 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
 
 COPY ingest/ /app/ingest/
 COPY derive/ /app/derive/
-COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
+COPY download-assets.sh docker-entrypoint.sh prepare-bundled-dataset.sh ingest-bundled-datasets.sh server.mjs stream-ingest.mjs mux-exec.mjs lerobot-converter.mjs task-naming.mjs ingest-server.mjs delivery-status.mjs qc-dataset-key.mjs frame_bin_codec.mjs import-handlers.mjs derive-async.mjs derive-pipeline.mjs /app/
 COPY vendor/ /app/vendor/
 COPY scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
 COPY scripts/write-tasks-parquet.py /app/scripts/write-tasks-parquet.py
 COPY scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
+COPY scripts/test_sync_stream_parquet_tasks.py /app/scripts/test_sync_stream_parquet_tasks.py
 COPY session-markers.mjs derive-lock.mjs ego-derive-run.mjs ego-derive-watch.mjs /app/
 COPY scripts/extract-tar-zst.py /app/scripts/extract-tar-zst.py
 COPY scripts/validate-mcap-archive.py /app/scripts/validate-mcap-archive.py

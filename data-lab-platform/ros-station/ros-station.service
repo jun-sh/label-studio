@@ -1,0 +1,28 @@
+[Unit]
+Description=ROS station stack (roscore, multi_cam, rosbridge, sribridge)
+After=network-online.target graphical.target gdm.service
+Wants=network-online.target graphical.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=server
+Group=server
+SupplementaryGroups=video
+Environment=HOME=/home/server
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/server/.Xauthority
+Environment=ROS_STATION_WS=/home/sri/catkin_ws/devel/setup.bash
+WorkingDirectory=/home/server
+ExecStart=/opt/ros-station/ros-station-start.sh
+Restart=always
+RestartSec=15
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ros-station
+
+[Install]
+WantedBy=graphical.target

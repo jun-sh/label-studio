@@ -19,23 +19,34 @@ _py() {
   python3 "$SESSIONS_PY" "$@" --datalab-root "$DATALAB_ROOT"
 }
 
-_check_failed_sessions() {
+_failed_pending_sessions() {
   local stream="${DATALAB_ROOT}/data-storage/stream/${STATION}/state/sessions"
-  local failed=()
+  local marker sid
   for marker in "${stream}"/sess_*/session.FAILED; do
     [[ -f "$marker" ]] || continue
-    local sid
     sid="$(basename "$(dirname "$marker")")"
-    local pending=0
-    if ! [[ -f "${stream}/${sid}/session.READY" ]]; then
-      pending=1
+    if [[ -f "${stream}/${sid}/session.READY" ]]; then
+      continue
     fi
-    if [[ "$pending" -eq 1 ]]; then
-      failed+=("$sid")
+    if [[ -f "${stream}/${sid}/session.QUARANTINED" ]]; then
+      continue
     fi
+    echo "$sid"
   done
+}
+
+_check_failed_sessions() {
+  local failed=()
+  mapfile -t failed < <(_failed_pending_sessions)
+  if [[ ${#failed[@]} -eq 0 ]]; then
+    return 0
+  fi
+  log "session.FAILED: ${failed[*]} — 尝试 requeue/quarantine"
+  _py requeue-failed "$STATION" --apply >/dev/null 2>&1 || true
+  _py quarantine-failed "$STATION" --apply >/dev/null 2>&1 || true
+  mapfile -t failed < <(_failed_pending_sessions)
   if [[ ${#failed[@]} -gt 0 ]]; then
-    die "session.FAILED (未 READY): ${failed[*]} — 查 ego-derive status / derive-worker 日志"
+    die "session.FAILED (未 READY/未隔离): ${failed[*]} — 查 ego-derive status / derive-worker 日志"
   fi
 }
 

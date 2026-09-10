@@ -11,12 +11,18 @@ log() { echo "[mcap-rc] $*"; }
 log "=== mcap derive unit tests ==="
 node --test \
   "${STUDIO}/derive/mcap-reader.test.mjs" \
+  "${STUDIO}/derive/mp4-playback-gate.test.mjs" \
+  "${STUDIO}/derive/unit.test.mjs" \
   "${STUDIO}/derive/unit-mcap.test.mjs" \
   "${STUDIO}/derive/session-retry.test.mjs" \
   "${STUDIO}/ingest/session-coordinator.test.mjs"
 
 log "=== mcap python preflight tests ==="
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest "${SCRIPT_DIR}/../ego-stream-client/tests/test_mcap_preflight.py" -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest \
+  "${SCRIPT_DIR}/../ego-stream-client/tests/test_mcap_preflight.py" \
+  "${SCRIPT_DIR}/../ego-stream-client/tests/test_h264_segment_boundary.py" \
+  "${STUDIO}/derive/test_mcap_materialize_h264_trim.py" \
+  -q
 
 log "=== ego-001 station registry ==="
 for f in \
@@ -28,7 +34,10 @@ for f in \
 done
 
 log "=== watcher runtime ==="
-bash -c "source ${SCRIPT_DIR}/ego-station-runtime.sh; ego_station_runtime_env ego-001; test \"\${STREAM_INGEST_CONTAINER}\" = data-lab-stream-ingest-1"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/ego-station-runtime.sh"
+ego_station_runtime_env ego-001
+test "${STREAM_INGEST_CONTAINER}" = data-lab-stream-ingest-1
 
 log "=== meta bootstrap ==="
 bash "${SCRIPT_DIR}/ego-mcap-bootstrap-34.sh" >/dev/null

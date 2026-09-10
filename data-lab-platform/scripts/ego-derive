@@ -77,6 +77,18 @@ case "${CMD}" in
   rebuild-view|fsck)
     container_node /app/ego-derive-run.mjs "${CMD}" --station "${STATION}" "$@"
     ;;
+  retry-failed)
+    mapfile -t REQUEUE < <(python3 "${PLATFORM}/scripts/ego-pipeline-sessions.py" requeue-failed "${STATION}" --apply --datalab-root "${ROOT}" 2>/dev/null || true)
+    if [[ ${#REQUEUE[@]} -eq 0 ]]; then
+      echo "[ego-derive] no mux-failed sessions to requeue on ${STATION}" >&2
+      exit 0
+    fi
+    echo "[ego-derive] requeued ${#REQUEUE[@]} session(s): ${REQUEUE[*]}" >&2
+    for SID in "${REQUEUE[@]}"; do
+      echo "[ego-derive] >>> derive ${STATION} / ${SID}" >&2
+      container_node /app/ego-derive-run.mjs run --station "${STATION}" --session "${SID}" "$@"
+    done
+    ;;
   -h|--help|help|"")
     usage
     ;;

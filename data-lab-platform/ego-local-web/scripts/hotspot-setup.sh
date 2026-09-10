@@ -39,7 +39,21 @@ echo "Installed sudoers: $SUDOERS_FILE"
 install -d -m 0755 /home/server/ego-web
 install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" /home/server/ego-web/ego-hotspot-up.sh
 install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-down.sh" /home/server/ego-web/ego-hotspot-down.sh
+install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-boot-wait.sh" /home/server/ego-web/ego-hotspot-boot-wait.sh
+install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-watchdog.sh" /home/server/ego-web/ego-hotspot-watchdog.sh
 chown server:server /home/server/ego-web/ego-hotspot-*.sh 2>/dev/null || true
+
+DEFAULT_ENV="/etc/default/ego-hotspot"
+cat > /tmp/ego-hotspot.default <<EOF
+EGO_WIFI_IFACE=${IFACE}
+EGO_HOTSPOT_CONN=${CONN_NAME}
+EGO_HOTSPOT_GATEWAY=${GATEWAY%/*}
+EGO_HOTSPOT_BOOT_DELAY_SEC=${EGO_HOTSPOT_BOOT_DELAY_SEC:-720}
+EGO_HOTSPOT_RELOAD_COOLDOWN_SEC=${EGO_HOTSPOT_RELOAD_COOLDOWN_SEC:-300}
+EOF
+install -m 0644 /tmp/ego-hotspot.default "$DEFAULT_ENV"
+rm -f /tmp/ego-hotspot.default
+echo "Installed ${DEFAULT_ENV}"
 
 nmcli connection delete "$CONN_NAME" 2>/dev/null || true
 
@@ -62,8 +76,11 @@ if [[ "$DISABLE_LAB_WIFI_AUTO" == "1" ]]; then
 fi
 
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-hotspot.service" /etc/systemd/system/ecs-ego-hotspot.service
+install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-hotspot-watchdog.service" /etc/systemd/system/ecs-ego-hotspot-watchdog.service
+install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-hotspot-watchdog.timer" /etc/systemd/system/ecs-ego-hotspot-watchdog.timer
 systemctl daemon-reload
 systemctl enable --now ecs-ego-hotspot.service
+systemctl enable --now ecs-ego-hotspot-watchdog.timer
 
 # User services (ecs-ego-web) start at boot without login.
 loginctl enable-linger server 2>/dev/null || true
@@ -75,6 +92,7 @@ echo "  Password: $PSK"
 echo "  Gateway:  ${GATEWAY%/*}"
 echo "  Web UI:   http://192.168.4.1:8080"
 echo ""
-echo "Systemd: ecs-ego-hotspot.service (enabled)"
+echo "Systemd: ecs-ego-hotspot.service (enabled, boot delay ${EGO_HOTSPOT_BOOT_DELAY_SEC:-720}s)"
+echo "Watchdog: ecs-ego-hotspot-watchdog.timer (every 30s after 12min boot delay)"
 echo "Manual:  /home/server/ego-web/ego-hotspot-up.sh | down.sh"
 echo "============================================"

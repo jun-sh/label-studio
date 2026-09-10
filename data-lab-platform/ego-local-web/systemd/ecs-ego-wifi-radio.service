@@ -1,0 +1,12 @@
+[Unit]
+Description=Enable WiFi radios (rfkill unblock)
+Before=NetworkManager.service ecs-ego-hotspot.service ecs-ego-wlo1-wifi.service
+After=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/server/ego-web/ego-wifi-radio-on.sh
+
+[Install]
+WantedBy=multi-user.target

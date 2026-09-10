@@ -38,10 +38,15 @@ fi
 install -m 0644 "$SCRIPT_DIR/README.md" "$DEST/README.md"
 install -m 0644 "$SCRIPT_DIR/field-export-and-import.md" "$DEST/field-export-and-import.md"
 if [[ -f /home/server/ego-web/ego-hotspot-up.sh ]]; then
-  :
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" "$DEST/ego-hotspot-up.sh"
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-down.sh" "$DEST/ego-hotspot-down.sh"
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-boot-wait.sh" "$DEST/ego-hotspot-boot-wait.sh"
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-watchdog.sh" "$DEST/ego-hotspot-watchdog.sh"
 elif [[ -f "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" ]]; then
   install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" "$DEST/ego-hotspot-up.sh"
   install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-down.sh" "$DEST/ego-hotspot-down.sh"
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-boot-wait.sh" "$DEST/ego-hotspot-boot-wait.sh"
+  install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-watchdog.sh" "$DEST/ego-hotspot-watchdog.sh"
 fi
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-web.service" "$SYSTEMD_USER_DIR/ecs-ego-web.service"
 

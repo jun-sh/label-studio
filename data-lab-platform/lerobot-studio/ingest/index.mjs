@@ -22,4 +22,11 @@ export { handleTarZstIngestUpload, ingestTarZstArchive } from "./receive-tar.mjs
 
 export { handleMcapIngestUpload, ingestMcapArchive } from "./receive-mcap.mjs";
 
+export {
+  assertSourceFormatCompatible,
+  collectSessionSourceFormats,
+  resolveSessionSourceFormat,
+  SOURCE_FORMAT,
+} from "./protocol-guard.mjs";
+
 export { rawSegmentArchivePath, rawMcapArchivePath } from "./io.mjs";

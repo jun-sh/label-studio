@@ -133,6 +133,9 @@ cp /tmp/ecs-record-oak-mcap.service "\$HOME/.config/systemd/user/"
 cp /tmp/z-mcap-production.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-production.conf"
 cp /tmp/z-mcap-capture-stack.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/capture-stack.conf"
 cp /tmp/z-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf"
+# Legacy pilot drop-ins override z-mcap-production (zz-* wins alphabetically → 80s cap).
+rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-episode-seconds.conf"
+rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/zz-episode-seconds.conf"
 cp /tmp/ecs-oak-mcap-capture-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-oak-standby-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/z-ego-web-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf"
@@ -197,5 +200,8 @@ REMOTE
 )"
 
 echo "Done."
+echo "==> Hotspot watchdog (AX201 AP recovery)"
+bash "${ROOT}/scripts/ego-130-provision-hotspot-watchdog.sh" "${TARGET}" || \
+  echo "WARN: hotspot watchdog provision failed (run manually: ego-130-provision-hotspot-watchdog.sh ${TARGET})"
 echo "Verify: bash data-lab-platform/scripts/ego-station-doctor.sh ${STATION_ID} ${TARGET}"
 echo "Record: phone UI or systemctl --user start ecs-oak-mcap-capture-stack.target"

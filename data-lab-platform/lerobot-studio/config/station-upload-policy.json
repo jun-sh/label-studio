@@ -1,0 +1,6 @@
+{
+  "ego-001": {
+    "upload_protocol": "mcap",
+    "note": "P0 commercial: unified MCAP ingest. Rollback tar.zst: EGO_ALLOW_TARZST_UPLOAD=1"
+  }
+}

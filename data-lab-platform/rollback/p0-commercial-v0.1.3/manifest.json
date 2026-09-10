@@ -1,0 +1,60 @@
+{
+  "baseline": {
+    "name": "ego-001 v0.1.3 async + MCAP P0-P3",
+    "git_commit": "d163bcf7d7a7d40d0acac72548d99d5a23050b9e",
+    "created_at": "2026-09-04T00:00:00Z",
+    "package": "p0-commercial-v0.1.3"
+  },
+  "modified_files": [
+  {
+    "path": "data-lab-platform/lerobot-studio/ingest/receive-tar.mjs",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/receive-tar.mjs",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/receive-tar.mjs data-lab-platform/lerobot-studio/ingest/receive-tar.mjs"
+  },
+  {
+    "path": "data-lab-platform/lerobot-studio/ingest/receive-mcap.mjs",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/receive-mcap.mjs",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/receive-mcap.mjs data-lab-platform/lerobot-studio/ingest/receive-mcap.mjs"
+  },
+  {
+    "path": "data-lab-platform/lerobot-studio/ingest/io.mjs",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/io.mjs",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/io.mjs data-lab-platform/lerobot-studio/ingest/io.mjs"
+  },
+  {
+    "path": "data-lab-platform/lerobot-studio/ingest-server.mjs",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/ingest-server.mjs",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/ingest-server.mjs data-lab-platform/lerobot-studio/ingest-server.mjs"
+  },
+  {
+    "path": "data-lab-platform/lerobot-studio/ingest/index.mjs",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/index.mjs",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/index.mjs data-lab-platform/lerobot-studio/ingest/index.mjs"
+  },
+  {
+    "path": "data-lab-platform/scripts/ego-process",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/ego-process",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/ego-process data-lab-platform/scripts/ego-process"
+  },
+  {
+    "path": "data-lab-platform/config/ego-pipeline-stations.yaml",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/ego-pipeline-stations.yaml",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/ego-pipeline-stations.yaml data-lab-platform/config/ego-pipeline-stations.yaml"
+  },
+  {
+    "path": "data-lab-platform/lerobot-studio/config/collection-stations.json",
+    "snapshot": "data-lab-platform/rollback/p0-commercial-v0.1.3/before/collection-stations.json",
+    "revert": "cp data-lab-platform/rollback/p0-commercial-v0.1.3/before/collection-stations.json data-lab-platform/lerobot-studio/config/collection-stations.json"
+  }
+  ],
+  "added_files": [
+    "data-lab-platform/lerobot-studio/ingest/protocol-guard.mjs",
+    "data-lab-platform/lerobot-studio/ingest/protocol-guard.test.mjs",
+    "data-lab-platform/lerobot-studio/config/station-upload-policy.json",
+    "data-lab-platform/lerobot-studio/delivery-status.mjs",
+    "data-lab-platform/scripts/ego-export-delivery.py",
+    "data-lab-platform/docs/ego-export-contract.md",
+    "data-lab-platform/docs/ego-p0-commercial-rollback-baseline.md",
+    "data-lab-platform/embodied-annotate/docs/schemas/ego_human_demo_v1.annotation_schema.json"
+  ]
+}

@@ -13,7 +13,7 @@ export function pipelineRootFromStreamRoot(streamStationRoot) {
   return path.resolve(streamStationRoot, "../../pipeline");
 }
 
-/** True when ego-process convert finalized (HAMER / corpus path). */
+/** True when ego-process convert finalized (WiLoR / corpus path). */
 export function isPoseReady(streamStationRoot, stationId, sessionId) {
   const marker = path.join(
     pipelineRootFromStreamRoot(streamStationRoot),

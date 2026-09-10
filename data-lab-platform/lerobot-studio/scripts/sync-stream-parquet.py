@@ -536,14 +536,23 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
 
-def _episode_row(ep: dict, fps: float, full_task: str, meta_defaults: dict, info: dict) -> dict:
+def _episode_row(
+    ep: dict,
+    fps: float,
+    full_task: str,
+    meta_defaults: dict,
+    info: dict,
+    *,
+    root: Path,
+    station_id: str,
+) -> dict:
     length = int(ep.get("length") or 0)
     from_idx = int(ep.get("dataset_from_index") or 0)
     to_idx = int(ep.get("dataset_to_index") or from_idx + length)
     if length <= 0:
         length = max(0, to_idx - from_idx)
     duration = length / fps if fps > 0 else 0.0
-    task = format_episode_list_task(ep, full_task)
+    task = format_episode_list_task(ep, full_task, root=root, station_id=station_id)
     ep_index = int(ep.get("episode_index", 0))
     per_file = bool(ep.get("per_episode_file"))
     file_index = int(ep.get("data/file_index", ep.get("file_index", ep_index if per_file else 0)))
@@ -613,7 +622,11 @@ def write_episodes_parquet(root: Path, episodes: list[dict], fps: float, task: s
         ]
 
     info = read_json(root / "meta" / "info.json", {})
-    rows = [_episode_row(ep, fps, task, meta_defaults, info) for ep in episodes]
+    station_id = root.name
+    rows = [
+        _episode_row(ep, fps, task, meta_defaults, info, root=root, station_id=station_id)
+        for ep in episodes
+    ]
     if ego_write_episodes_parquet is not None:
         ego_write_episodes_parquet(root, rows)
         return
@@ -646,6 +659,8 @@ def write_empty_episodes_parquet(root: Path, fps: float, task: str) -> None:
         task,
         meta_defaults,
         info,
+        root=root,
+        station_id=root.name,
     )
     columns: dict[str, pa.Array] = {}
     for key in template:

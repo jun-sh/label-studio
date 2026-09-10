@@ -11,9 +11,15 @@ import { ingestLog, stationRoot } from "./station-context.mjs";
 import {
   atomicMoveFile,
   ensureDir,
+  purgeConflictingMcapArchive,
   rawSegmentArchivePath,
   sha256File,
 } from "./io.mjs";
+import {
+  assertSourceFormatCompatible,
+  lockSessionSourceFormat,
+  SOURCE_FORMAT,
+} from "./protocol-guard.mjs";
 import {
   markSegmentIngestFailed,
   readSegmentState,
@@ -101,6 +107,11 @@ export async function ingestTarZstArchive(stationId, options = {}) {
     segmentId: hintSegmentId,
   });
   const { sessionId, segmentId } = identity;
+  const purgedMcap = purgeConflictingMcapArchive(root, sessionId, segmentId);
+  if (purgedMcap) {
+    ingestLog(stationId, "ingest_tar_purge_mcap", { sessionId, segmentId });
+  }
+  assertSourceFormatCompatible(stationId, root, sessionId, SOURCE_FORMAT.TARZST);
   const rawDest = rawSegmentArchivePath(root, sessionId, segmentId);
 
   const existing = readSegmentState(root, sessionId, segmentId);
@@ -124,12 +135,15 @@ export async function ingestTarZstArchive(stationId, options = {}) {
     }
   }
 
+  lockSessionSourceFormat(root, sessionId, SOURCE_FORMAT.TARZST);
+
   const bytes = fs.statSync(rawDest).size;
   transitionSegmentState(root, sessionId, segmentId, SEGMENT_INGEST_STATUS.RECEIVED, {
     sha256: actualSha,
     bytes,
     raw_archive: path.relative(root, rawDest),
     source,
+    sourceFormat: SOURCE_FORMAT.TARZST,
     received_at: new Date().toISOString(),
   });
 
@@ -137,6 +151,7 @@ export async function ingestTarZstArchive(stationId, options = {}) {
     sha256: actualSha,
     bytes,
     raw_archive: path.relative(root, rawDest),
+    sourceFormat: SOURCE_FORMAT.TARZST,
   });
 
   const extractDir = path.join(
@@ -161,6 +176,7 @@ export async function ingestTarZstArchive(stationId, options = {}) {
       sha256: actualSha,
       bytes,
       raw_archive: path.relative(root, rawDest),
+      sourceFormat: SOURCE_FORMAT.TARZST,
       frame_count: staged.frameCount,
       integrity: { ok: true, checks: ["manifest", "rows.jsonl", "imu_raw.jsonl", "frames"] },
       error: null,
@@ -187,6 +203,7 @@ export async function ingestTarZstArchive(stationId, options = {}) {
       duplicate: false,
       sha256: actualSha,
       bytes,
+      sourceFormat: SOURCE_FORMAT.TARZST,
       deriveAsync: false,
       message: done.marked ? "ingested; session DONE_UPLOAD" : "ingested; awaiting session segments",
       framesCommitted: staged.framesWritten,

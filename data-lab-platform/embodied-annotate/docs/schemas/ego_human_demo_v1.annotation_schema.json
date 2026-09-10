@@ -1,0 +1,87 @@
+{
+  "schema_id": "ego_human_demo_v1",
+  "schema_version": 1,
+  "embodiment": "human_demo",
+  "description": "Minimal EGO human demonstration annotation (L0 + L2 phases)",
+  "subtask_labels": [
+    {
+      "id": "idle",
+      "order": 0,
+      "color": "#9CA3AF",
+      "label_zh": "空闲",
+      "label_en": "Idle"
+    },
+    {
+      "id": "reach",
+      "order": 1,
+      "color": "#34D399",
+      "label_zh": "接近",
+      "label_en": "Reach"
+    },
+    {
+      "id": "pre_grasp",
+      "order": 2,
+      "color": "#6EE7B7",
+      "label_zh": "预抓取",
+      "label_en": "Pre-grasp"
+    },
+    {
+      "id": "contact",
+      "order": 3,
+      "color": "#FB923C",
+      "label_zh": "接触",
+      "label_en": "Contact"
+    },
+    {
+      "id": "lift",
+      "order": 4,
+      "color": "#60A5FA",
+      "label_zh": "抬起",
+      "label_en": "Lift"
+    },
+    {
+      "id": "transport",
+      "order": 5,
+      "color": "#3B82F6",
+      "label_zh": "搬运",
+      "label_en": "Transport"
+    },
+    {
+      "id": "place",
+      "order": 6,
+      "color": "#A78BFA",
+      "label_zh": "放置",
+      "label_en": "Place"
+    },
+    {
+      "id": "release",
+      "order": 7,
+      "color": "#F472B6",
+      "label_zh": "释放",
+      "label_en": "Release"
+    }
+  ],
+  "episode_fields": [
+    {
+      "id": "outcome",
+      "type": "enum",
+      "values": ["success", "fail", "partial"],
+      "layer": "L0"
+    },
+    {
+      "id": "annotation_status",
+      "type": "enum",
+      "values": ["none", "partial", "complete"],
+      "layer": "L0"
+    },
+    {
+      "id": "task_note",
+      "type": "string",
+      "layer": "L0"
+    }
+  ],
+  "validation": {
+    "require_contiguous_l2": true,
+    "allow_gaps": false
+  }
+}

@@ -1,6 +1,6 @@
 # P1 — 商业 SLA：小 session derive 端到端 P95 < 30s（Phase 0 收紧，2026-09-01）
 
-**目标：** 典型小 session（≤7 段、≤1500 帧）上传完成 → `session.READY` **P95 < 30s、P99 < 60s**；超大 session **不堵队列**。convert（HAMER/depth）走异步后台，不计入主 SLA（SLO-A）。
+**目标：** 典型小 session（≤7 段、≤1500 帧）上传完成 → `session.READY` **P95 < 30s、P99 < 60s**；超大 session **不堵队列**。convert（WiLoR/depth）走异步后台，不计入主 SLA（SLO-A）。
 
 ---
 

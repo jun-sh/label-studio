@@ -53,7 +53,7 @@ describe("unit derive mcap", () => {
     assert.ok(fs.existsSync(path.join(out.unitDir, "unit.json")));
     assert.ok(fs.existsSync(path.join(out.unitDir, "data.parquet")));
     assert.ok(fs.existsSync(path.join(out.unitDir, "imu.parquet")));
-    const gate = runUnitReadyGate(out.unitDir, stationId, 3);
+    const gate = runUnitReadyGate(out.unitDir, stationId, out.frames ?? 3, { muxMode: "encode" });
     assert.equal(gate.ok, true, JSON.stringify(gate));
   });
 });

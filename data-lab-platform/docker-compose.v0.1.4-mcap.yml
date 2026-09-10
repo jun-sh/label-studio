@@ -7,6 +7,13 @@ services:
   derive-worker:
     image: data-lab-lerobot-studio:v0.1.4-mcap-rc
     entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+    environment:
+      # P1 derive SLA (ego-derive-p1-commercial-sla.md)
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}
+      - DERIVE_MCAP_SINGLE_FAST=${DERIVE_MCAP_SINGLE_FAST:-1}
 
   lerobot:
     image: data-lab-lerobot-studio:v0.1.4-mcap-rc

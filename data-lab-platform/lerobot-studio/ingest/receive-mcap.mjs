@@ -23,6 +23,11 @@ import {
 } from "./segment-state.mjs";
 import { maybeMarkSessionDoneUpload, touchUploadActivity } from "./session-coordinator.mjs";
 import { validateMcapArchive, validationErrorFromMcapResult } from "./mcap-validator.mjs";
+import {
+  assertSourceFormatCompatible,
+  lockSessionSourceFormat,
+  SOURCE_FORMAT,
+} from "./protocol-guard.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,6 +90,11 @@ export async function ingestMcapArchive(stationId, options = {}) {
     sessionId: hintSessionId,
     segmentId: hintSegmentId,
   });
+  const purgedTar = purgeConflictingTarArchive(root, sessionId, segmentId);
+  if (purgedTar) {
+    ingestLog(stationId, "ingest_mcap_purge_tar", { sessionId, segmentId });
+  }
+  assertSourceFormatCompatible(stationId, root, sessionId, SOURCE_FORMAT.MCAP);
   const rawDest = rawMcapArchivePath(root, sessionId, segmentId);
 
   const existing = readSegmentState(root, sessionId, segmentId);
@@ -108,10 +118,7 @@ export async function ingestMcapArchive(stationId, options = {}) {
     }
   }
 
-  const purgedTar = purgeConflictingTarArchive(root, sessionId, segmentId);
-  if (purgedTar) {
-    ingestLog(stationId, "ingest_mcap_purge_tar", { sessionId, segmentId });
-  }
+  lockSessionSourceFormat(root, sessionId, SOURCE_FORMAT.MCAP);
 
   const bytes = fs.statSync(rawDest).size;
   const frameCount = Number(validation.frame_count || 0);

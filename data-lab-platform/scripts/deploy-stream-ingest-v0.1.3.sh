@@ -13,7 +13,7 @@ STATION="${RC_STATION:-ego-001}"
 TOKEN="${STATION_UPLOAD_TOKEN:-dl-upload-ego-001-v1}"
 
 echo "=== build ${IMAGE} ==="
-docker build -t "${IMAGE}" "${ROOT}/data-lab-platform/lerobot-studio"
+(cd "${ROOT}/data-lab-platform" && docker build -t "${IMAGE}" -f lerobot-studio/Dockerfile .)
 
 echo "=== force-recreate stream-ingest derive-worker lerobot ==="
 cd "${ROOT}"

@@ -22,6 +22,7 @@ import {
   transitionSegmentState,
 } from "./segment-state.mjs";
 import { maybeMarkSessionDoneUpload, touchUploadActivity } from "./session-coordinator.mjs";
+import { writeServerSessionSeal } from "./session-seal.mjs";
 import { validateMcapArchive, validationErrorFromMcapResult } from "./mcap-validator.mjs";
 import {
   assertSourceFormatCompatible,
@@ -66,6 +67,7 @@ export async function ingestMcapArchive(stationId, options = {}) {
     segmentId: hintSegmentId,
     expectedSha,
     expectedSegmentTotal = 0,
+    sessionSeal = null,
     source = "edge",
   } = options;
 
@@ -152,6 +154,9 @@ export async function ingestMcapArchive(stationId, options = {}) {
   });
 
   touchUploadActivity(root, { sessionId, expectedSegmentTotal });
+  if (sessionSeal?.complete) {
+    writeServerSessionSeal(root, sessionId, sessionSeal, { source });
+  }
   const done = maybeMarkSessionDoneUpload(root, sessionId, {
     segmentId,
     source,

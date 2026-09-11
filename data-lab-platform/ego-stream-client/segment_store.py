@@ -199,6 +199,79 @@ def _patch_segment_writer_stats(
     write_manifest_v2(segment_dir, manifest)
 
 
+SESSION_SEAL_FILENAME = "session_seal.json"
+
+
+def session_seal_path(root: Path, session_id: str) -> Path:
+    return root / "sessions" / session_id / SESSION_SEAL_FILENAME
+
+
+def _segment_seal_entry(segment_dir: Path) -> dict[str, Any] | None:
+    manifest_path = segment_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    seg_index = manifest.get("segment_index")
+    if seg_index is None:
+        seg_index = manifest.get("segment_id") or segment_dir.name
+    return {
+        "segment_dir": segment_dir.name,
+        "segment_index": seg_index,
+        "frame_count": int(manifest.get("frame_count") or 0),
+        "status": manifest_status(manifest),
+        "sha256": manifest.get("sha256") or manifest.get("content_sha256"),
+    }
+
+
+def build_session_seal(root: Path, session_id: str, *, complete: bool) -> dict[str, Any]:
+    seg_root = root / "sessions" / session_id / "segments"
+    segments: list[dict[str, Any]] = []
+    if seg_root.is_dir():
+        for child in sorted(seg_root.iterdir()):
+            if not child.is_dir():
+                continue
+            entry = _segment_seal_entry(child)
+            if entry is not None:
+                segments.append(entry)
+    return {
+        "schema_version": 1,
+        "session_id": session_id,
+        "complete": bool(complete),
+        "segment_count": len(segments),
+        "segments": segments,
+        "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def write_session_seal(root: Path, session_id: str, *, complete: bool) -> Path:
+    seal = build_session_seal(root, session_id, complete=complete)
+    path = session_seal_path(root, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(seal, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def read_session_seal(root: Path, session_id: str) -> dict[str, Any] | None:
+    path = session_seal_path(root, session_id)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def sealed_segment_total(root: Path, session_id: str) -> int | None:
+    """Final segment count after capture end; None if session not sealed complete."""
+    seal = read_session_seal(root, session_id)
+    if not seal or not seal.get("complete"):
+        return None
+    return int(seal.get("segment_count") or 0)
+
+
 def write_manifest_v2(segment_dir: Path, payload: dict[str, Any]) -> None:
     """Write manifest schema v2 (status enum only; no closed/uploaded bools)."""
     body = dict(payload)
@@ -1355,6 +1428,10 @@ class SegmentCaptureWriter:
                 pass
             if self._finalize_thread is not None and self._finalize_thread.is_alive():
                 self._finalize_thread.join(timeout=5.0)
+        try:
+            write_session_seal(self.root, self.session_id, complete=True)
+        except OSError as exc:
+            print(f"session_seal_write_failed session={self.session_id} err={exc}", flush=True)
 
     @property
     def next_frame_index(self) -> int:

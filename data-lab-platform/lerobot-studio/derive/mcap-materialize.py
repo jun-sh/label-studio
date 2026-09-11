@@ -117,12 +117,14 @@ def _idr_parameter_prefix(idr_access_unit: bytes) -> bytes:
 
 
 def _ensure_decodable_packet(idr_access_unit: bytes, payload: bytes) -> bytes:
-    if contains_idr(payload):
-        return payload
-    prefix = _idr_parameter_prefix(idr_access_unit)
-    if not prefix:
-        return payload
-    return prefix + payload
+    """Return payload unchanged.
+
+    Prepending SPS/PPS/IDR to dependent P-frames does not restore the reference
+    chain and can duplicate images / reset decoder state. Segments that start on
+    a non-IDR packet must retain leading reference frames, be decoded fully then
+    time-cropped, or be re-encoded — not synthetically prefixed.
+    """
+    return payload
 
 
 def trim_h264_camera_streams(
@@ -153,12 +155,14 @@ def trim_h264_camera_streams(
         raise RuntimeError("h264_trim_no_frames_after_align")
 
     out_streams: dict[str, list[tuple[int, bytes]]] = {}
+    decode_warmup_packets: dict[str, int] = {}
     for cam, items in sorted_items.items():
+        # Keep reference packets between this camera's first IDR and the global
+        # align index so dependent P-frames at align_skip remain decodable.
+        warmup = items[first_idr[cam] : align_skip]
         content = items[align_skip : align_skip + frame_count]
-        idr_au = items[first_idr[cam]][1]
-        out_streams[cam] = [
-            (ts, _ensure_decodable_packet(idr_au, raw)) for ts, raw in content
-        ]
+        decode_warmup_packets[cam] = len(warmup)
+        out_streams[cam] = [(ts, raw) for ts, raw in warmup + content]
 
     if len(rows) >= align_skip + frame_count:
         out_rows = [dict(row) for row in rows[align_skip : align_skip + frame_count]]
@@ -178,6 +182,7 @@ def trim_h264_camera_streams(
         "trim_content_packet_index": align_skip,
         "trim_first_idr_index": first_idr,
         "trim_frames_dropped": {cam: align_skip for cam in first_idr},
+        "decode_warmup_packets": decode_warmup_packets,
         "frame_count_before_trim": min(len(sorted_items[c]) for c in sorted_items),
         "frame_count_after_trim": frame_count,
     }

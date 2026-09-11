@@ -1,0 +1,73 @@
+{
+  "ok": true,
+  "archive": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-001/raw/segments/sess_2e8da6fee94a465e9a7fd79f8a6ab59e/seg_000001.mcap.zst",
+  "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+  "segment_id": "seg_000001",
+  "frame_count": 176,
+  "h264_trim": {
+    "h264_trim_to_idr": true,
+    "trim_align_skip_rows": 26,
+    "trim_content_packet_index": 26,
+    "trim_first_idr_index": {
+      "front_left": 26,
+      "front_right": 24,
+      "rear_left": 25,
+      "rear_right": 26
+    },
+    "trim_frames_dropped": {
+      "front_left": 26,
+      "front_right": 26,
+      "rear_left": 26,
+      "rear_right": 26
+    },
+    "decode_warmup_packets": {
+      "front_left": 0,
+      "front_right": 2,
+      "rear_left": 1,
+      "rear_right": 0
+    },
+    "frame_count_before_trim": 202,
+    "frame_count_after_trim": 176
+  },
+  "camera_checks": [
+    {
+      "camera": "front_left",
+      "decoded_total": 176,
+      "decode_warmup": 0,
+      "content_frames": 176,
+      "expected_rows": 176,
+      "ok": true
+    },
+    {
+      "camera": "front_right",
+      "decoded_total": 178,
+      "decode_warmup": 2,
+      "content_frames": 176,
+      "expected_rows": 176,
+      "ok": true
+    },
+    {
+      "camera": "rear_left",
+      "decoded_total": 177,
+      "decode_warmup": 1,
+      "content_frames": 176,
+      "expected_rows": 176,
+      "ok": true
+    },
+    {
+      "camera": "rear_right",
+      "decoded_total": 176,
+      "decode_warmup": 0,
+      "content_frames": 176,
+      "expected_rows": 176,
+      "ok": true
+    }
+  ],
+  "timestamp_mapping": {
+    "align_skip": 26,
+    "mismatches": [],
+    "mismatch_count": 0,
+    "ok": true
+  },
+  "work_dir": "/tmp/ego-h264-e2e-report"
+}

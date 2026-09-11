@@ -13,7 +13,8 @@ import {
   SESSION_MARKERS,
 } from "../session-markers.mjs";
 import { ensureDir, readJson, writeJsonAtomic } from "./io.mjs";
-import { isSessionIngestComplete, listSessionSegmentStates, SEGMENT_INGEST_STATUS } from "./segment-state.mjs";
+import { listSessionSegmentStates, SEGMENT_INGEST_STATUS } from "./segment-state.mjs";
+import { reconcileSealWithSegmentStates } from "./session-seal.mjs";
 
 function uploadActivityPath(root) {
   return path.join(root, "live", "upload_activity.json");
@@ -43,18 +44,24 @@ export function readExpectedSegmentTotal(root, sessionId) {
 }
 
 export function evaluateSessionUploadGate(root, sessionId) {
-  const expected = readExpectedSegmentTotal(root, sessionId);
+  const headerExpected = readExpectedSegmentTotal(root, sessionId);
   const states = listSessionSegmentStates(root, sessionId);
   const derivePending = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.DERIVE_PENDING);
   const failed = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.INGEST_FAILED);
-  const complete = isSessionIngestComplete(root, sessionId, { expectedTotal: expected });
+  const sealReconcile = reconcileSealWithSegmentStates(root, sessionId);
+  const expected = sealReconcile.ok
+    ? sealReconcile.expected
+    : Number(sealReconcile.seal?.segment_count || headerExpected || 0);
   return {
     sessionId,
     expectedTotal: expected,
+    headerExpectedTotal: headerExpected,
     segmentCount: states.length,
     derivePendingCount: derivePending.length,
     failedCount: failed.length,
-    complete,
+    sealComplete: Boolean(sealReconcile.seal?.complete),
+    sealReconcile,
+    complete: sealReconcile.ok,
   };
 }
 

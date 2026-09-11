@@ -17,6 +17,11 @@ import {
   maybeMarkSessionDoneUpload,
   touchUploadActivity,
 } from "./session-coordinator.mjs";
+import {
+  makeTestSessionSeal,
+  reconcileSealWithSegmentStates,
+  writeServerSessionSeal,
+} from "./session-seal.mjs";
 import { atomicMoveFile, rawSegmentArchivePath } from "./io.mjs";
 import { validateTarZstArchive } from "./tar-validator.mjs";
 import { ingestTarZstArchive } from "./receive-tar.mjs";
@@ -100,6 +105,12 @@ describe("ingest session-coordinator", () => {
     const root = tmpRoot();
     const sessionId = "sess_gate";
     touchUploadActivity(root, { sessionId, expectedSegmentTotal: 2 });
+    writeServerSessionSeal(
+      root,
+      sessionId,
+      makeTestSessionSeal(sessionId, ["seg_000001", "seg_000002"]),
+      { source: "test" },
+    );
     transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
     let gate = evaluateSessionUploadGate(root, sessionId);
     assert.equal(gate.complete, false);
@@ -113,6 +124,18 @@ describe("ingest session-coordinator", () => {
     done = maybeMarkSessionDoneUpload(root, sessionId);
     assert.equal(done.marked, true);
     assert.equal(hasSessionMarker(root, sessionId, "session.DONE_UPLOAD"), true);
+  });
+
+  it("does not mark DONE_UPLOAD without complete server seal", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_no_seal";
+    touchUploadActivity(root, { sessionId, expectedSegmentTotal: 1 });
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    const gate = evaluateSessionUploadGate(root, sessionId);
+    assert.equal(gate.complete, false);
+    assert.equal(gate.sealReconcile.reason, "no_complete_seal");
+    const done = maybeMarkSessionDoneUpload(root, sessionId);
+    assert.equal(done.marked, false);
   });
 
   it("does not mark DONE_UPLOAD for partial multi-segment upload without declared total", () => {
@@ -190,6 +213,7 @@ describe("ingest receive-tar integration", () => {
         sessionId,
         segmentId,
         expectedSegmentTotal: 1,
+        sessionSeal: makeTestSessionSeal(sessionId, [segmentId]),
         source: "test",
       });
       assert.equal(out.status, SEGMENT_INGEST_STATUS.DERIVE_PENDING);
@@ -204,5 +228,63 @@ describe("ingest receive-tar integration", () => {
       if (prev === undefined) delete process.env.STREAM_DATA_ROOT;
       else process.env.STREAM_DATA_ROOT = prev;
     }
+  });
+});
+
+describe("ingest session-seal", () => {
+  it("seal first then segments completes DONE_UPLOAD", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_seal_first";
+    writeServerSessionSeal(
+      root,
+      sessionId,
+      makeTestSessionSeal(sessionId, ["seg_000001", "seg_000002"]),
+      { source: "test" },
+    );
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    assert.equal(evaluateSessionUploadGate(root, sessionId).complete, false);
+    transitionSegmentState(root, sessionId, "seg_000002", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    const gate = evaluateSessionUploadGate(root, sessionId);
+    assert.equal(gate.complete, true);
+    const done = maybeMarkSessionDoneUpload(root, sessionId);
+    assert.equal(done.marked, true);
+  });
+
+  it("segments without seal stay incomplete", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_segments_no_seal";
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    assert.equal(reconcileSealWithSegmentStates(root, sessionId).ok, false);
+    assert.equal(maybeMarkSessionDoneUpload(root, sessionId).marked, false);
+  });
+
+  it("rejects sha256 conflict in seal", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_sha_conflict";
+    const seal = makeTestSessionSeal(sessionId, ["seg_000001"], {
+      sha256BySegment: { seg_000001: "aaa" },
+    });
+    writeServerSessionSeal(root, sessionId, seal, { source: "test" });
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING, {
+      sha256: "bbb",
+    });
+    const rec = reconcileSealWithSegmentStates(root, sessionId);
+    assert.equal(rec.ok, false);
+    assert.ok(rec.issues.some((i) => i.code === "sha256_mismatch"));
+  });
+
+  it("duplicate segment ack does not bypass missing seal entries", () => {
+    const root = tmpRoot();
+    const sessionId = "sess_missing_seg";
+    writeServerSessionSeal(
+      root,
+      sessionId,
+      makeTestSessionSeal(sessionId, ["seg_000001", "seg_000002"]),
+      { source: "test" },
+    );
+    transitionSegmentState(root, sessionId, "seg_000001", SEGMENT_INGEST_STATUS.DERIVE_PENDING);
+    const rec = reconcileSealWithSegmentStates(root, sessionId);
+    assert.equal(rec.ok, false);
+    assert.ok(rec.issues.some((i) => i.code === "missing_segment"));
   });
 });

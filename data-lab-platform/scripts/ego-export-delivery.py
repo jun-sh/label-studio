@@ -317,14 +317,59 @@ def _resolve_video_path(corpus_root: Path, info: dict[str, Any], row: pd.Series,
     return alt if alt.is_file() else None
 
 
-def _copy_file_record(src: Path, dest: Path, dest_root: Path) -> dict[str, Any]:
+def _normalize_subset_dataframe(df: pd.DataFrame, fps: float) -> tuple[pd.DataFrame, list[int]]:
+    n = len(df)
+    source_global = (
+        [int(x) for x in df["index"].tolist()]
+        if "index" in df.columns
+        else list(range(n))
+    )
+    out = df.copy()
+    out["frame_index"] = list(range(n))
+    out["index"] = list(range(n))
+    out["episode_index"] = 0
+    out["task_index"] = 0
+    out["timestamp"] = [float(i) / fps if fps > 0 else 0.0 for i in range(n)]
+    return out, source_global
+
+
+def _write_subset_info_json(
+    dest: Path,
+    info: dict[str, Any],
+    *,
+    n_frames: int,
+    source_episode_index: int,
+    source_global_index: list[int],
+) -> None:
+    out = dict(info)
+    out["total_episodes"] = 1
+    out["total_frames"] = int(n_frames)
+    out["total_tasks"] = 1
+    out["splits"] = {"train": "0:1"}
+    out["ego_export"] = {
+        "tier": "candidate",
+        "subset": True,
+        "source_episode_index": int(source_episode_index),
+        "source_global_index_range": [
+            min(source_global_index) if source_global_index else 0,
+            max(source_global_index) if source_global_index else 0,
+        ],
+    }
+    dest.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _copy_file_record(
+    src: Path,
+    dest: Path,
+    dest_root: Path,
+    *,
+    immutable: bool = True,
+) -> dict[str, Any]:
+    """Copy delivery artifacts; never hard-link mutable corpus sources."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
-    try:
-        os.link(src, dest)
-    except OSError:
-        shutil.copy2(src, dest)
+    shutil.copy2(src, dest)
     rel = dest.relative_to(dest_root).as_posix()
     return {"path": rel, "sha256": _sha256_file(dest), "bytes": dest.stat().st_size}
 
@@ -367,6 +412,28 @@ def _write_episodes_meta(dest_meta: Path, episode_index: int, ann: dict[str, Any
     pd.DataFrame([row]).to_parquet(dest_meta / "episodes_meta.parquet", engine="pyarrow", compression="snappy")
 
 
+def _run_loader_gate(datalab_root: Path, dest_root: Path) -> None:
+    gate_py = Path(__file__).resolve().parent / "ego-lerobot-loader-gate.py"
+    if not gate_py.is_file():
+        raise RuntimeError(f"missing loader gate script: {gate_py}")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(gate_py),
+            str(dest_root),
+            "--datalab-root",
+            str(datalab_root),
+            "--sample",
+            "head_mid_tail",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "loader gate failed").strip()
+        raise RuntimeError(f"loader gate failed for {dest_root}: {detail}")
+
+
 def export_episode_slice(
     *,
     corpus_root: Path,
@@ -380,16 +447,14 @@ def export_episode_slice(
     if row.empty:
         raise FileNotFoundError(f"Episode {episode_index} not found in corpus")
     episode_row = row.iloc[0]
+    dest_episode_index = 0
 
     file_records: list[dict[str, Any]] = []
 
     dest_meta = dest_root / "meta"
     dest_meta.mkdir(parents=True, exist_ok=True)
-    for name in ("info.json",):
-        src = corpus_root / "meta" / name
-        if src.is_file():
-            dest = dest_meta / name
-            file_records.append(_copy_file_record(src, dest, dest_root))
+    fps = float(info.get("fps") or 30.0)
+    subset_source_global: list[int] = []
 
     tasks_src = corpus_root / "meta" / "tasks.parquet"
     if tasks_src.is_file():
@@ -408,9 +473,12 @@ def export_episode_slice(
         dest_episodes.mkdir(parents=True, exist_ok=True)
         for src in sorted(episodes_dir.rglob("*.parquet")):
             df = pd.read_parquet(src)
-            filtered = df[df["episode_index"] == episode_index]
+            filtered = df[df["episode_index"] == episode_index].copy()
             if filtered.empty:
                 continue
+            filtered["episode_index"] = 0
+            if "task_index" in filtered.columns:
+                filtered["task_index"] = 0
             rel = src.relative_to(corpus_root / "meta" / "episodes")
             dest = dest_episodes / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -428,13 +496,27 @@ def export_episode_slice(
             filtered = df[df["episode_index"] == episode_index]
             if filtered.empty:
                 continue
+            normalized, source_global = _normalize_subset_dataframe(filtered, fps)
+            subset_source_global = source_global
             rel = src.relative_to(corpus_root)
             dest = dest_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            filtered.to_parquet(dest, engine="pyarrow", compression="snappy", index=False)
+            normalized.to_parquet(dest, engine="pyarrow", compression="snappy", index=False)
             file_records.append(
                 {"path": rel.as_posix(), "sha256": _sha256_file(dest), "bytes": dest.stat().st_size}
             )
+
+    info_dest = dest_meta / "info.json"
+    _write_subset_info_json(
+        info_dest,
+        info,
+        n_frames=len(subset_source_global),
+        source_episode_index=int(episode_index),
+        source_global_index=subset_source_global,
+    )
+    file_records.append(
+        {"path": "meta/info.json", "sha256": _sha256_file(info_dest), "bytes": info_dest.stat().st_size}
+    )
 
     imu_root = corpus_root / "sensor_raw" / "imu"
     if imu_root.is_dir():
@@ -445,7 +527,9 @@ def export_episode_slice(
                 if filtered.empty:
                     continue
             else:
-                filtered = df
+                raise ValueError(
+                    f"IMU parquet {src} missing episode_index; refuse full-station copy into subset export"
+                )
             rel = src.relative_to(corpus_root)
             dest = dest_root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -462,7 +546,7 @@ def export_episode_slice(
         dest = dest_root / rel
         file_records.append(_copy_file_record(src_video, dest, dest_root))
 
-    _write_episodes_meta(dest_meta, episode_index, ann)
+    _write_episodes_meta(dest_meta, dest_episode_index, ann)
     episodes_meta = dest_meta / "episodes_meta.parquet"
     file_records.append(
         {
@@ -473,7 +557,7 @@ def export_episode_slice(
     )
 
     subtasks = ann.get("subtasks") if ann and isinstance(ann.get("subtasks"), list) else []
-    _write_subtasks_parquet(dest_meta, episode_index, subtasks)
+    _write_subtasks_parquet(dest_meta, dest_episode_index, subtasks)
     subtasks_path = dest_meta / "subtasks.parquet"
     if subtasks_path.is_file():
         file_records.append(
@@ -651,6 +735,11 @@ def run_export(
             episode_index=int(episode_index),
             ann=ann,
         )
+        try:
+            _run_loader_gate(datalab_root, dest)
+        except RuntimeError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
         gates = {
             "preview_ready": True,
             "pose_ready": True,

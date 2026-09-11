@@ -10,6 +10,7 @@ import pytest
 
 from segment_store import (
     MANIFEST_SCHEMA_VERSION,
+    build_session_seal,
     check_segment_integrity,
     clear_segment_uploaded,
     finalize_segment_manifest_after_persist,
@@ -20,9 +21,12 @@ from segment_store import (
     mark_segment_uploaded,
     purge_uploaded_segments,
     read_manifest,
+    read_session_seal,
     reconcile_orphan_active_segment,
     scan_orphan_active_segments,
+    sealed_segment_total,
     write_manifest_v2,
+    write_session_seal,
     can_gc_segment,
 )
 
@@ -315,3 +319,18 @@ def test_finalize_without_manifest_reconciles_orphan(tmp_path: Path, monkeypatch
     manifest = read_manifest(seg)
     assert manifest["status"] == "CORRUPT"
     assert "orphan_active" in manifest["integrity"]["issues"]
+
+
+def test_session_seal_complete_and_total(tmp_path: Path) -> None:
+    session_id = "sess_seal_test"
+    seg_root = tmp_path / "sessions" / session_id / "segments" / "seg_000"
+    _write_valid_segment(seg_root, status="CLOSED")
+    seal = build_session_seal(tmp_path, session_id, complete=True)
+    assert seal["segment_count"] == 1
+    assert seal["complete"] is True
+    write_session_seal(tmp_path, session_id, complete=True)
+    loaded = read_session_seal(tmp_path, session_id)
+    assert loaded is not None
+    assert loaded["segment_count"] == 1
+    assert sealed_segment_total(tmp_path, session_id) == 1
+    assert sealed_segment_total(tmp_path, "sess_missing") is None

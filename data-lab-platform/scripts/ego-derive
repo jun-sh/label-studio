@@ -41,6 +41,7 @@ container_node() {
     -e STREAM_DATA_ROOT=/srv/stream \
     -e STATION_ID="${STATION}" \
     -e EGO_STATION_ID="${STATION}" \
+    -e PYTHONPATH="${EGO_PLATFORM_PYTHONPATH:-/ego-platform/src}" \
     -e DERIVE_EXTRACT_BACKEND="${DERIVE_EXTRACT_BACKEND:-python}" \
     -e EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}" \
     -e DERIVE_MUX_MODE="${DERIVE_MUX_MODE:-full}" \

@@ -8,6 +8,10 @@
 : "${LEROBOT_IMAGE_TAG:=${EGO_PRODUCTION_TAG}}"
 : "${LEROBOT_IMAGE:=data-lab-lerobot-studio:${EGO_PRODUCTION_TAG}}"
 
+# Production ops defaults (fast + stable SOP). Override only for experiments.
+: "${EGO_DERIVE_MODE_DEFAULT:=manual}"
+: "${EGO_DERIVE_COMMERCIAL_GATE:=0}"
+
 # Base compose files (without async overlay).
 ego_compose_production_files() {
   printf '%s\n' \

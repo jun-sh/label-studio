@@ -12,6 +12,7 @@ import {
 } from "./segment-state.mjs";
 import { rawMcapArchivePath, rawSegmentArchivePath } from "./io.mjs";
 import { ingestMcapArchive } from "./receive-mcap.mjs";
+import { makeTestSessionSeal } from "./session-seal.mjs";
 import { validateMcapArchive } from "./mcap-validator.mjs";
 import { hasSessionMarker } from "../session-markers.mjs";
 
@@ -60,6 +61,7 @@ describe("mcap ingest", () => {
         sessionId,
         segmentId,
         expectedSegmentTotal: 1,
+        sessionSeal: makeTestSessionSeal(sessionId, [segmentId]),
         source: "test",
       });
       assert.equal(out.status, SEGMENT_INGEST_STATUS.DERIVE_PENDING);

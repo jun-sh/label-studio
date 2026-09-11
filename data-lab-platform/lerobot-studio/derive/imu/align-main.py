@@ -108,15 +108,26 @@ def align_rows(
     warnings: list[dict] = []
     for row in rows:
         out = dict(row)
+        dev_ts = row.get("primary_device_timestamp_ns")
         ts_ns = row.get("timestamp_ns")
-        if ts_ns is None:
+        align_verified = False
+        if dev_ts is not None:
+            target_sec = float(dev_ts) / 1e9
+            align_source = "primary_device_timestamp_ns"
+            align_verified = False  # field present in capture path; clock-domain proof required
+        elif ts_ns is not None:
+            target_sec = float(ts_ns) / 1e9
+            align_source = "timestamp_ns"
+            align_verified = False
+        else:
             aligned.append(out)
             continue
-        target_sec = float(ts_ns) / 1e9
         accel, gyro, matched_ts, delta_ms = nearest_imu(timestamps, accels, gyros, target_sec)
         out["observation.imu_accel"] = accel
         out["observation.imu_gyro"] = gyro
         out["observation.imu_timestamp"] = [matched_ts] if matched_ts is not None else None
+        out["observation.imu_align_source"] = align_source
+        out["observation.imu_align_verified"] = align_verified
         aligned.append(out)
         if delta_ms > warn_threshold_ms:
             warnings.append(

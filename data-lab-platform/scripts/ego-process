@@ -10,6 +10,7 @@ SKIP_DERIVE=0
 SKIP_SYNC=0
 SKIP_GATE=0
 FORCE_MANUAL_DERIVE=0
+RUN_DELIVERY_EXPORT=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -17,6 +18,7 @@ for arg in "$@"; do
     --skip-sync) SKIP_SYNC=1 ;;
     --skip-gate) SKIP_GATE=1 ;;
     --force-manual-derive) FORCE_MANUAL_DERIVE=1 ;;
+    --export) RUN_DELIVERY_EXPORT=1 ;;
     -h|--help)
       cat <<'EOF'
 用法: ego-process <station> [选项]
@@ -26,6 +28,7 @@ for arg in "$@"; do
   --force-manual-derive  强制手动 ego-derive run（忽略 async worker）
   --skip-sync            跳过 Viewer ingest（调试用）
   --skip-gate            跳过发布门禁
+  --export               运行商业化 order 导出（默认跳过；QC/标注完成后使用）
 
 步骤:
   1. derive   manual 模式：批量 ego-derive run
@@ -34,11 +37,17 @@ for arg in "$@"; do
   3. sync     docker exec … ingest-bundled-datasets.sh
   4. gate     ego-viewer-publish-gate（可选）
 
-日常 SOP（目标态）:
+日常 SOP（生产默认：manual + legacy gate）:
   130:  ego-upload ego-001
+  34:   bash data-lab-platform/scripts/ego-derive-mode.sh manual   # 首次或 recreate 后
   34:   ego-process ego-001
+  34:   bash data-lab-platform/scripts/ego-stress-fast.sh          # 34 端冒烟（~30s）
 
-P-Ops-2 async 模式: bash data-lab-platform/scripts/ego-derive-mode.sh async
+商业化交付（QC + 标注完成后）:
+  EGO_DERIVE_COMMERCIAL_GATE=1 ego-process ego-001 --export
+
+实验/扩容（非日常）:
+  bash data-lab-platform/scripts/ego-derive-mode.sh async
 EOF
       exit 0
       ;;
@@ -192,8 +201,12 @@ if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
   fi
 fi
 
+_should_run_delivery_export() {
+  [[ "${EGO_RUN_DELIVERY_EXPORT:-$RUN_DELIVERY_EXPORT}" == "1" ]]
+}
+
 EXPORT_PY="${SCRIPT_DIR}/ego-export-delivery.py"
-if [[ -x "$EXPORT_PY" || -f "$EXPORT_PY" ]]; then
+if _should_run_delivery_export && [[ -x "$EXPORT_PY" || -f "$EXPORT_PY" ]]; then
   ORDER_MANIFEST="${DATALAB_ROOT}/data-storage/ego-delivery/${STATION}/orders/active-order.json"
   log "构建交付 order manifest（finalize.done sessions）…"
   set +e

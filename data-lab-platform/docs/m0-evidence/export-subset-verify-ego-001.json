@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "source": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-m1-20260911",
+  "corpus_copy": "/tmp/ego-export-subset-verify5/corpus_copy",
+  "export_root": "/tmp/ego-export-subset-verify5/export_subset",
+  "episode_index": 2,
+  "export_manifest_entries": 9,
+  "hash_self_consistent": true,
+  "hash_issues": [],
+  "immutable_vs_source_mutation": true,
+  "loader_gate_ok": true,
+  "loader_gate_stderr": "WARNING:lerobot.datasets.utils:Unknown fields in DatasetInfo: ['ego_capture', 'ego_export', 'ego_platform', 'embodiment', 'sensor_raw']. These will be ignored.\nWARNING:lerobot.datasets.utils:Unknown fields in DatasetInfo: ['ego_capture', 'ego_export', 'ego_platform', 'embodiment', 'sensor_raw']. These will be ignored.\n",
+  "index_semantics_ok": true,
+  "subset_info": {
+    "tier": "candidate",
+    "subset": true,
+    "source_episode_index": 2,
+    "source_global_index_range": [
+      971,
+      1146
+    ]
+  },
+  "frozen_manifest": "/tmp/ego-export-subset-verify5/export_subset/frozen_manifest.json",
+  "frozen_file_count": 10
+}

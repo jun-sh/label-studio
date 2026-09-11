@@ -21,7 +21,7 @@ import { buildMainTableRows } from "./parquet-writer.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 import { frameBinName, readSegmentManifest, resolveFrameIndex, stagingFrameName } from "../ingest/frame-index.mjs";
 import { unpackFrameBin } from "../frame_bin_codec.mjs";
-import { probeMp4FrameCount, remuxH264AnnexBToMp4 } from "../mux-exec.mjs";
+import { probeMp4FrameCount, remuxH264AnnexBToMp4, trimMp4LeadingFrames } from "../mux-exec.mjs";
 import {
   checkG2bMp4Decode,
   checkG2bMp4DecodeFast,
@@ -453,6 +453,7 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   const materializedSegments = [];
   let imuReplace = true;
   let mcapVideoCodec = "jpeg";
+  let h264TrimMeta = null;
   const h264StreamsDir = path.join(tmpRoot, "_h264_streams");
 
   for (const seg of segments) {
@@ -467,6 +468,9 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
         }
         if (mat.video_codec === "h264") {
           mcapVideoCodec = "h264";
+          if (mat.h264_trim) {
+            h264TrimMeta = mat.h264_trim;
+          }
           ensureDir(h264StreamsDir);
           for (const camKey of Object.keys(CAMERA_KEY_TO_VIDEO)) {
             const src = path.join(extractDir, "streams", `${camKey}.h264`);
@@ -523,6 +527,16 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
         const camKey = Object.entries(CAMERA_KEY_TO_VIDEO).find(([, vk]) => vk === videoKey)?.[0];
         const h264Path = path.join(h264StreamsDir, `${camKey}.h264`);
         const enc = await remuxH264AnnexBToMp4(h264Path, dest, { fps: DEFAULT_FPS });
+        const skip = Number(h264TrimMeta?.decode_warmup_packets?.[camKey] || 0);
+        if (enc.ok && skip > 0) {
+          const trim = await trimMp4LeadingFrames(dest, dest, {
+            skipFrames: skip,
+            fps: DEFAULT_FPS,
+          });
+          if (!trim.ok) {
+            return { videoKey, mode: "remux", ok: false, error: trim.error || "warmup_trim_failed" };
+          }
+        }
         return { videoKey, mode: "remux", ...enc, elapsedMs: Date.now() - started };
       }),
     );
@@ -548,8 +562,20 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
         });
         // eslint-disable-next-line no-await-in-loop
         const enc = await remuxH264AnnexBToMp4(h264Path, dest, { fps: DEFAULT_FPS });
+        let muxOk = enc.ok;
+        const skip = Number(h264TrimMeta?.decode_warmup_packets?.[camKey] || 0);
+        if (muxOk && skip > 0) {
+          const trim = await trimMp4LeadingFrames(dest, dest, {
+            skipFrames: skip,
+            fps: DEFAULT_FPS,
+          });
+          muxOk = trim.ok;
+          if (!muxOk) {
+            throw new Error(`unit warmup trim failed ${videoKey}: ${trim.error || "warmup_trim_failed"}`);
+          }
+        }
         muxResults.push({ videoKey, mode: "remux", ...enc, elapsedMs: Date.now() - started });
-        if (!enc.ok) {
+        if (!muxOk) {
           throw new Error(`unit remux failed ${videoKey}: ${enc.error || enc.stderr || "remux_failed"}`);
         }
         continue;

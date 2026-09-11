@@ -1,0 +1,391 @@
+{
+  "ok": true,
+  "derive_output_ok": true,
+  "ep2": {
+    "ok": true,
+    "derive_output_ok": true,
+    "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+    "episode_index": 2,
+    "materialize": {
+      "frame_count": 176,
+      "align_skip": 26,
+      "warmup": {
+        "front_left": 0,
+        "front_right": 2,
+        "rear_left": 1,
+        "rear_right": 0
+      }
+    },
+    "derive": {
+      "ok": true,
+      "frames": 176,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/tmp/ego-h264-derive-verify3/ep2/ego-001/derived/sess_2e8da6fee94a465e9a7fd79f8a6ab59e"
+    },
+    "mp4_checks": [
+      {
+        "camera": "front_left",
+        "mp4_frames": 176,
+        "decoded_frames": 176,
+        "expected": 176,
+        "warmup_packets": 0,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "front_right",
+        "mp4_frames": 176,
+        "decoded_frames": 176,
+        "expected": 176,
+        "warmup_packets": 2,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "rear_left",
+        "mp4_frames": 176,
+        "decoded_frames": 176,
+        "expected": 176,
+        "warmup_packets": 1,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "rear_right",
+        "mp4_frames": 176,
+        "decoded_frames": 176,
+        "expected": 176,
+        "warmup_packets": 0,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      }
+    ],
+    "image_mapping_checks": [
+      {
+        "camera": "front_left",
+        "frame_index": 0,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 26
+      },
+      {
+        "camera": "front_left",
+        "frame_index": 87,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 113
+      },
+      {
+        "camera": "front_left",
+        "frame_index": 175,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 201
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 0,
+        "mae_rgb": 1.559,
+        "ok": true,
+        "mcap_source_index": 26
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 87,
+        "mae_rgb": 1.862,
+        "ok": true,
+        "mcap_source_index": 113
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 175,
+        "mae_rgb": 1.961,
+        "ok": true,
+        "mcap_source_index": 201
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 0,
+        "mae_rgb": 1.596,
+        "ok": true,
+        "mcap_source_index": 26
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 87,
+        "mae_rgb": 1.967,
+        "ok": true,
+        "mcap_source_index": 113
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 175,
+        "mae_rgb": 1.954,
+        "ok": true,
+        "mcap_source_index": 201
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 0,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 26
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 87,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 113
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 175,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 201
+      }
+    ],
+    "loader_gate_ok": true,
+    "unit_dir": "/tmp/ego-h264-derive-verify3/ep2/ego-001/derived/sess_2e8da6fee94a465e9a7fd79f8a6ab59e"
+  },
+  "ep3_targeted": {
+    "ok": true,
+    "derive_output_ok": true,
+    "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+    "episode_index": 3,
+    "materialize": {
+      "frame_count": 353,
+      "align_skip": 27,
+      "warmup": {
+        "front_left": 0,
+        "front_right": 2,
+        "rear_left": 1,
+        "rear_right": 0
+      }
+    },
+    "derive": {
+      "ok": true,
+      "frames": 353,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/tmp/ego-h264-derive-verify3/ep3/ego-001/derived/sess_48bcaf8d17c14fa08041d530b08ce734"
+    },
+    "mp4_checks": [
+      {
+        "camera": "front_left",
+        "mp4_frames": 353,
+        "decoded_frames": 353,
+        "expected": 353,
+        "warmup_packets": 0,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "front_right",
+        "mp4_frames": 353,
+        "decoded_frames": 353,
+        "expected": 353,
+        "warmup_packets": 2,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "rear_left",
+        "mp4_frames": 353,
+        "decoded_frames": 353,
+        "expected": 353,
+        "warmup_packets": 1,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      },
+      {
+        "camera": "rear_right",
+        "mp4_frames": 353,
+        "decoded_frames": 353,
+        "expected": 353,
+        "warmup_packets": 0,
+        "pts_first_sec": [
+          0.0,
+          0.033333,
+          0.066667
+        ],
+        "count_ok": true
+      }
+    ],
+    "image_mapping_checks": [
+      {
+        "camera": "front_left",
+        "frame_index": 0,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 27
+      },
+      {
+        "camera": "front_left",
+        "frame_index": 50,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 77
+      },
+      {
+        "camera": "front_left",
+        "frame_index": 100,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 127
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 0,
+        "mae_rgb": 1.466,
+        "ok": true,
+        "mcap_source_index": 27
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 50,
+        "mae_rgb": 1.743,
+        "ok": true,
+        "mcap_source_index": 77
+      },
+      {
+        "camera": "front_right",
+        "frame_index": 100,
+        "mae_rgb": 1.967,
+        "ok": true,
+        "mcap_source_index": 127
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 0,
+        "mae_rgb": 1.357,
+        "ok": true,
+        "mcap_source_index": 27
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 50,
+        "mae_rgb": 1.59,
+        "ok": true,
+        "mcap_source_index": 77
+      },
+      {
+        "camera": "rear_left",
+        "frame_index": 100,
+        "mae_rgb": 2.097,
+        "ok": true,
+        "mcap_source_index": 127
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 0,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 27
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 50,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 77
+      },
+      {
+        "camera": "rear_right",
+        "frame_index": 100,
+        "mae_rgb": 0.0,
+        "ok": true,
+        "mcap_source_index": 127
+      }
+    ],
+    "loader_gate_ok": true,
+    "unit_dir": "/tmp/ego-h264-derive-verify3/ep3/ego-001/derived/sess_48bcaf8d17c14fa08041d530b08ce734"
+  },
+  "note": "Verifies production deriveUnit remux+warmup-trim MP4 vs MCAP content frames; loader head/mid/tail on isolated dataset"
+}

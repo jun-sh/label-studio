@@ -430,12 +430,28 @@ def episode_index_for_frame(episodes: list[dict], frame_index: int) -> int:
     return int(matches[0].get("episode_index", 0))
 
 
-def scalar_feature_keys(info: dict) -> list[str]:
+def ensure_optional_meta_features(info: dict, rows: list[dict]) -> dict:
+    info = ensure_system_features(info)
+    features = info.get("features") or {}
+    for key in OPTIONAL_META_INT_KEYS:
+        if any(row.get(key) is not None for row in rows):
+            features.setdefault(key, OPTIONAL_META_SPECS[key])
+    info["features"] = features
+    return info
+
+
+def scalar_feature_keys(info: dict, rows: list[dict] | None = None) -> list[str]:
     features = info.get("features") or {}
     keys = [k for k, spec in features.items() if spec.get("dtype") != "video"]
-    if keys:
-        return keys
-    return ["observation.state", "observation.pose", "observation.hands", "action"]
+    if not keys:
+        keys = ["observation.state", "observation.pose", "observation.hands", "action"]
+    if rows:
+        info = ensure_optional_meta_features(info, rows)
+        features = info.get("features") or {}
+        for key in OPTIONAL_META_INT_KEYS:
+            if key in features and key not in keys:
+                keys.append(key)
+    return keys
 
 
 def default_feature_vector(key: str, info: dict) -> list:
@@ -527,6 +543,12 @@ SYSTEM_FEATURE_SPECS = {
     "task_index": {"dtype": "int64", "shape": [1], "names": None},
 }
 
+# Preserved when present in live jsonl (MCAP materialize → unit table path).
+OPTIONAL_META_INT_KEYS = ("primary_device_timestamp_ns", "timestamp_ns")
+OPTIONAL_META_SPECS = {
+    key: {"dtype": "int64", "shape": [1], "names": None} for key in OPTIONAL_META_INT_KEYS
+}
+
 
 def ensure_system_features(info: dict) -> dict:
     features = info.get("features") if isinstance(info.get("features"), dict) else {}
@@ -601,7 +623,8 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     if not rows:
         return
     info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
-    scalar_keys = scalar_feature_keys(info)
+    info = ensure_optional_meta_features(info, rows)
+    scalar_keys = scalar_feature_keys(info, rows)
     rows_sorted = sorted(rows, key=lambda r: int(r.get("frame_index", 0)))
     frame_min = int(rows_sorted[0].get("frame_index", 0))
 
@@ -612,20 +635,27 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     timestamp_col: list[float] = []
     feature_cols: dict[str, list[list]] = {key: [] for key in scalar_keys}
 
+    ep_local_seq: dict[int, int] = {}
     for seq, src in enumerate(rows_sorted):
         frame = int(src.get("frame_index", seq))
-        frame_index_col.append(frame)
-        index_col.append(seq)
         ep_idx = row_episode_index(src, episodes, frame)
+        local_i = ep_local_seq.get(ep_idx, 0)
+        ep_local_seq[ep_idx] = local_i + 1
+        frame_index_col.append(local_i)
+        index_col.append(seq)
         episode_index_col.append(ep_idx)
         task_index_col.append(
             int(src.get("task_index"))
             if src.get("task_index") is not None
             else ep_idx
         )
-        timestamp_col.append(float(seq) / fps if fps > 0 else 0.0)
+        timestamp_col.append(float(local_i) / fps if fps > 0 else 0.0)
         for key in scalar_keys:
-            feature_cols[key].append(coerce_feature_vector(src.get(key), key, info))
+            if key in OPTIONAL_META_INT_KEYS:
+                raw = src.get(key)
+                feature_cols[key].append(int(raw) if raw is not None else None)
+            else:
+                feature_cols[key].append(coerce_feature_vector(src.get(key), key, info))
 
     features = info.get("features") or {}
     table_cols: dict[str, pa.Array] = {}
@@ -703,7 +733,8 @@ def _episode_row(
         v_file = int(ep.get(f"videos/{key}/file_index", file_index))
         row[f"videos/{key}/chunk_index"] = v_chunk
         row[f"videos/{key}/file_index"] = v_file
-        if per_file and not global_frames:
+        # Per-episode video shards are episode-local (0 .. duration); dataset_from_index stays global.
+        if per_file:
             row[f"videos/{key}/from_timestamp"] = 0.0
             row[f"videos/{key}/to_timestamp"] = duration
         else:
@@ -926,7 +957,17 @@ def episodes_from_unit_manifest(manifest: dict) -> list[dict]:
 def remap_unit_table_to_global(
     table: pa.Table, *, episode_index: int, from_index: int, fps: float
 ) -> pa.Table:
-    """Align per-unit derived rows with LeRobot global frame / episode indices."""
+    """Align per-unit derived rows with LeRobot v3 index semantics.
+
+    Official reader/writer contract (locked LeRobot 0.6.1):
+      - frame_index: episode-local row index (0 .. length-1)
+      - index: dataset-global row index
+      - timestamp: episode-local time in seconds (frame_index / fps)
+      - videos/.../from_timestamp: offset inside the video shard file
+
+    Global offsets belong in ``index`` and episode metadata, not in
+    ``frame_index`` or ``timestamp``.
+    """
     cols: dict[str, pa.Array] = {}
     n = table.num_rows
     for name in table.column_names:
@@ -937,13 +978,16 @@ def remap_unit_table_to_global(
     ]
     if len(set(local_frames)) <= 1 and n > 1:
         local_frames = list(range(n))
-    cols["frame_index"] = pa.array([from_index + i for i in local_frames], type=pa.int64())
+    # Normalize to contiguous episode-local indices regardless of source numbering.
+    if local_frames and (min(local_frames) != 0 or max(local_frames) != n - 1):
+        local_frames = list(range(n))
+    cols["frame_index"] = pa.array(local_frames, type=pa.int64())
     cols["episode_index"] = pa.array([episode_index] * n, type=pa.int64())
     cols["index"] = pa.array([from_index + i for i in range(n)], type=pa.int64())
     cols["task_index"] = pa.array([episode_index] * n, type=pa.int64())
     if "timestamp" in table.column_names:
         cols["timestamp"] = pa.array(
-            [float(from_index + i) / fps if fps > 0 else 0.0 for i in range(n)],
+            [float(i) / fps if fps > 0 else 0.0 for i in local_frames],
             type=pa.float32(),
         )
     return pa.table(cols)
@@ -1096,9 +1140,17 @@ def validate_unit_manifest_data_shards(root: Path) -> list[str]:
             errors.append(f"{pq_path.name} rows={table.num_rows} expected length={length}")
         if "frame_index" in table.column_names and table.num_rows > 0:
             frames = [int(x or 0) for x in table["frame_index"].to_pylist()]
-            if min(frames) != from_idx or max(frames) != from_idx + table.num_rows - 1:
+            # LeRobot v3: frame_index is episode-local (0 .. length-1); global offset lives in index.
+            if min(frames) != 0 or max(frames) != table.num_rows - 1:
                 errors.append(
                     f"{pq_path.name} frame_index range [{min(frames)},{max(frames)}] "
+                    f"expected [0,{table.num_rows - 1}] (episode-local)"
+                )
+        if "index" in table.column_names and table.num_rows > 0:
+            indices = [int(x or 0) for x in table["index"].to_pylist()]
+            if min(indices) != from_idx or max(indices) != from_idx + table.num_rows - 1:
+                errors.append(
+                    f"{pq_path.name} index range [{min(indices)},{max(indices)}] "
                     f"expected [{from_idx},{from_idx + table.num_rows - 1}]"
                 )
     return errors

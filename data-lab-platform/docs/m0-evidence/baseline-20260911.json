@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-09-11T06:45:00+00:00",
+  "repos": {
+    "data-lab": {
+      "commit": "b5588b61935345d6ea3231c472596743778d557e",
+      "dirty_untracked": [".cursor/settings.json", "None/", "data-storage/cache/", "data-storage/ego-delivery/"]
+    },
+    "ego-platform": {
+      "commit": "e80dea5ffe6921ee53b4c6ce4f9f10153c23dc0d",
+      "dirty_modified": [
+        "pyproject.toml", "src/ego_platform/lerobot/io.py", "src/ego_platform/lerobot/slice.py",
+        "src/ego_platform/oak/hands/processor.py", "tests/test_lerobot_io.py"
+      ]
+    },
+    "lerobot_official": {
+      "commit": "e40b58a8dfa9e7b86918c374791599d070518d11",
+      "version": "0.6.1",
+      "venv_torch": "2.11.0+cu128"
+    }
+  },
+  "corpus_ego_001": {
+    "path": "data-storage/corpus/ego_001",
+    "total_episodes": 4,
+    "total_frames": 1500,
+    "info_sha256_prefix": "fcf3cbfeccf4c4ef",
+    "data_parquet_sha256_prefix": "a880552805457136",
+    "known_defect": "episode 2/3 timestamp global (32s+/38s+) while frame_index local; episodes from_timestamp=0"
+  },
+  "delivery_ord_ego_001": {
+    "order_id": "ORD-ego-001-20260911",
+    "episode_count_in_acceptance": 2,
+    "info_json_hardlink_inode_with_corpus": 201923808,
+    "manifest_hash_mismatch": "confirmed — export_manifest sha256 no longer matches on-disk files"
+  },
+  "samples_zip": {
+    "ego_001_zip_sha256_prefix": "bf6f60e1ca97dcf2",
+    "ego_001_root_zip_sha256_prefix": "4973a089a8619079"
+  },
+  "candidate": {
+    "path": "data-storage/ego-delivery/candidates/ego-001-m1-20260911",
+    "tier": "candidate",
+    "fix_applied": "timestamp = frame_index/fps (1500 rows)",
+    "loader_smoke": "docs/m0-evidence/loader-regression-candidate-smoke.json — OK head/mid/tail PyAV+TorchCodec"
+  }
+}

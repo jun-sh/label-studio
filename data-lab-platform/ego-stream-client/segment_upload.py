@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -32,6 +33,8 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploading,
     purge_uploaded_segments,
     read_manifest,
+    read_session_seal,
+    sealed_segment_total,
     segment_file_key,
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
@@ -84,6 +87,7 @@ class SegmentUploader:
         self.protocol = (protocol or UPLOAD_PROTOCOL).strip().lower()
         self.station_token = station_token or os.environ.get("STATION_UPLOAD_TOKEN") or None
         self.session_segment_total: int | None = None
+        self.session_seal_b64: str | None = None
         self._http_session = requests.Session() if requests is not None else None
         if self._http_session and self.station_token:
             self._http_session.headers[STATION_TOKEN_HEADER] = self.station_token
@@ -95,6 +99,8 @@ class SegmentUploader:
         total = int(self.session_segment_total or 0)
         if total > 0:
             out.setdefault("X-Session-Segment-Total", str(total))
+        if self.session_seal_b64:
+            out.setdefault("X-Session-Seal", self.session_seal_b64)
         return out
 
     def _parse_response(self, raw: str) -> dict[str, Any]:
@@ -302,6 +308,37 @@ class SegmentUploader:
             return self._parse_response(resp.text)
         req = urllib.request.Request(derive_url, method="POST", headers=headers)
         with urllib.request.urlopen(req, timeout=30.0) as resp:
+            return self._parse_response(resp.read().decode("utf-8"))
+
+    def upload_session_seal(self, *, session_id: str, seal_b64: str, segment_total: int | None) -> dict[str, Any]:
+        """POST session seal after capture stop (even when no segments remain pending)."""
+        self.session_seal_b64 = seal_b64
+        if segment_total is not None and segment_total > 0:
+            self.session_segment_total = segment_total
+        headers = self._headers(
+            {
+                "Content-Type": "application/json",
+                "X-Upload-Kind": "session-seal",
+                "X-Session-Id": session_id,
+                "X-Upload-Protocol": self.protocol,
+            }
+        )
+        if self._http_session is not None:
+            resp = self._http_session.post(
+                self.upload_url,
+                data=b"{}",
+                headers=headers,
+                timeout=self.timeout_s,
+            )
+            resp.raise_for_status()
+            return self._parse_response(resp.text)
+        req = urllib.request.Request(
+            self.upload_url,
+            data=b"{}",
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
             return self._parse_response(resp.read().decode("utf-8"))
 
     def _upload_segment_multipart(self, segment_dir: Path) -> dict[str, Any]:
@@ -891,6 +928,26 @@ def upload_ready_archives(
     return uploaded
 
 
+def upload_session_seal_finalize(
+    *,
+    root: Path,
+    session_id: str,
+    uploader: SegmentUploader,
+) -> bool:
+    """Upload complete session seal to ingest (idempotent finalize)."""
+    seal = read_session_seal(root, session_id)
+    if not seal or not seal.get("complete"):
+        return False
+    seal_b64 = base64.b64encode(json.dumps(seal, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    segment_total = sealed_segment_total(root, session_id)
+    uploader.upload_session_seal(
+        session_id=session_id,
+        seal_b64=seal_b64,
+        segment_total=segment_total,
+    )
+    return True
+
+
 def upload_pending_segments(
     *,
     root: Path,
@@ -910,7 +967,13 @@ def upload_pending_segments(
         pending = pending[:limit]
     pending = _dedupe_pending_segment_dirs(pending)
 
-    uploader.session_segment_total = len(pending)
+    sealed_total = sealed_segment_total(root, session_id)
+    uploader.session_segment_total = sealed_total
+    seal = read_session_seal(root, session_id)
+    if seal and seal.get("complete"):
+        uploader.session_seal_b64 = base64.b64encode(
+            json.dumps(seal, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii")
 
     uploaded = 0
     if UPLOAD_CONCURRENCY <= 1 or len(pending) <= 1:
@@ -941,4 +1004,9 @@ def upload_pending_segments(
     if DELETE_AFTER_UPLOAD:
         flush_pending_segment_deletes()
         purge_uploaded_segments(root, session_id, strict=True)
+    try:
+        upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
+    except Exception as exc:
+        _log("session_seal_upload_failed", session_id=session_id, error=str(exc))
+        raise
     return uploaded

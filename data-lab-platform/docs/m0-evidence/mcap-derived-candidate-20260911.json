@@ -1,0 +1,619 @@
+{
+  "generated_at": "2026-09-11T09:15:46+00:00",
+  "candidate_id": "ego-001-mcap-derived-20260911",
+  "candidate_path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-mcap-derived-20260911",
+  "evidence_tier": "candidate_gate",
+  "loader_gate": {
+    "ok": true,
+    "sample_mode": "head_mid_tail",
+    "tier": "candidate_gate",
+    "not_claimed": "per_frame_full_loader_audit",
+    "report": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/m0-evidence/loader-regression-mcap-derived-smoke-20260911.json",
+    "failure_count": 0,
+    "sample_count_per_backend": 12,
+    "backends": [
+      "pyav",
+      "torchcodec"
+    ]
+  },
+  "video_verification": {
+    "episodes": [
+      {
+        "episode_index": 0,
+        "session_id": "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "expected_frames": 672,
+        "a1_frame_count_pts": {
+          "scope": "A1_ffprobe_frame_count_pts",
+          "not_claimed": "full_decode_content_audit",
+          "ok": true,
+          "cameras": [
+            {
+              "camera": "front_left",
+              "path": "videos/observation.images.camera_front_left/chunk-000/file-000.mp4",
+              "ffprobe_frames": 672,
+              "full_decode_frames": null,
+              "expected": 672,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "front_right",
+              "path": "videos/observation.images.camera_front_right/chunk-000/file-000.mp4",
+              "ffprobe_frames": 672,
+              "full_decode_frames": null,
+              "expected": 672,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_left",
+              "path": "videos/observation.images.camera_rear_left/chunk-000/file-000.mp4",
+              "ffprobe_frames": 672,
+              "full_decode_frames": null,
+              "expected": 672,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_right",
+              "path": "videos/observation.images.camera_rear_right/chunk-000/file-000.mp4",
+              "ffprobe_frames": 672,
+              "full_decode_frames": null,
+              "expected": 672,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            }
+          ]
+        },
+        "a2_head_mid_tail": null,
+        "ok": true
+      },
+      {
+        "episode_index": 1,
+        "session_id": "sess_de088591b4a94457b49c1a5278292f7d",
+        "expected_frames": 299,
+        "a1_frame_count_pts": {
+          "scope": "A1_ffprobe_frame_count_pts",
+          "not_claimed": "full_decode_content_audit",
+          "ok": true,
+          "cameras": [
+            {
+              "camera": "front_left",
+              "path": "videos/observation.images.camera_front_left/chunk-000/file-001.mp4",
+              "ffprobe_frames": 299,
+              "full_decode_frames": null,
+              "expected": 299,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "front_right",
+              "path": "videos/observation.images.camera_front_right/chunk-000/file-001.mp4",
+              "ffprobe_frames": 299,
+              "full_decode_frames": null,
+              "expected": 299,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_left",
+              "path": "videos/observation.images.camera_rear_left/chunk-000/file-001.mp4",
+              "ffprobe_frames": 299,
+              "full_decode_frames": null,
+              "expected": 299,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_right",
+              "path": "videos/observation.images.camera_rear_right/chunk-000/file-001.mp4",
+              "ffprobe_frames": 299,
+              "full_decode_frames": null,
+              "expected": 299,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            }
+          ]
+        },
+        "a2_head_mid_tail": null,
+        "ok": true
+      },
+      {
+        "episode_index": 2,
+        "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "expected_frames": 176,
+        "a1_frame_count_pts": {
+          "scope": "A1_ffprobe_frame_count_pts",
+          "not_claimed": "full_decode_content_audit",
+          "ok": true,
+          "cameras": [
+            {
+              "camera": "front_left",
+              "path": "videos/observation.images.camera_front_left/chunk-000/file-002.mp4",
+              "ffprobe_frames": 176,
+              "full_decode_frames": null,
+              "expected": 176,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "front_right",
+              "path": "videos/observation.images.camera_front_right/chunk-000/file-002.mp4",
+              "ffprobe_frames": 176,
+              "full_decode_frames": null,
+              "expected": 176,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_left",
+              "path": "videos/observation.images.camera_rear_left/chunk-000/file-002.mp4",
+              "ffprobe_frames": 176,
+              "full_decode_frames": null,
+              "expected": 176,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_right",
+              "path": "videos/observation.images.camera_rear_right/chunk-000/file-002.mp4",
+              "ffprobe_frames": 176,
+              "full_decode_frames": null,
+              "expected": 176,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            }
+          ]
+        },
+        "a2_head_mid_tail": {
+          "scope": "A2_head_mid_tail_image_vs_mcap_materialize",
+          "not_claimed": "full_frame_content_audit",
+          "sample_indices": [
+            0,
+            87,
+            175
+          ],
+          "ok": true,
+          "checks": [
+            {
+              "camera": "front_left",
+              "frame_index": 0,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 26
+            },
+            {
+              "camera": "front_left",
+              "frame_index": 87,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 113
+            },
+            {
+              "camera": "front_left",
+              "frame_index": 175,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 201
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 0,
+              "mae_rgb": 1.559,
+              "ok": true,
+              "mcap_source_index": 26
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 87,
+              "mae_rgb": 1.862,
+              "ok": true,
+              "mcap_source_index": 113
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 175,
+              "mae_rgb": 1.961,
+              "ok": true,
+              "mcap_source_index": 201
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 0,
+              "mae_rgb": 1.596,
+              "ok": true,
+              "mcap_source_index": 26
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 87,
+              "mae_rgb": 1.967,
+              "ok": true,
+              "mcap_source_index": 113
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 175,
+              "mae_rgb": 1.954,
+              "ok": true,
+              "mcap_source_index": 201
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 0,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 26
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 87,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 113
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 175,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 201
+            }
+          ]
+        },
+        "ok": true
+      },
+      {
+        "episode_index": 3,
+        "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "expected_frames": 353,
+        "a1_frame_count_pts": {
+          "scope": "A1_ffprobe_frame_count_pts",
+          "not_claimed": "full_decode_content_audit",
+          "ok": true,
+          "cameras": [
+            {
+              "camera": "front_left",
+              "path": "videos/observation.images.camera_front_left/chunk-000/file-003.mp4",
+              "ffprobe_frames": 353,
+              "full_decode_frames": null,
+              "expected": 353,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "front_right",
+              "path": "videos/observation.images.camera_front_right/chunk-000/file-003.mp4",
+              "ffprobe_frames": 353,
+              "full_decode_frames": null,
+              "expected": 353,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_left",
+              "path": "videos/observation.images.camera_rear_left/chunk-000/file-003.mp4",
+              "ffprobe_frames": 353,
+              "full_decode_frames": null,
+              "expected": 353,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            },
+            {
+              "camera": "rear_right",
+              "path": "videos/observation.images.camera_rear_right/chunk-000/file-003.mp4",
+              "ffprobe_frames": 353,
+              "full_decode_frames": null,
+              "expected": 353,
+              "pts_first_sec": [
+                0.0,
+                0.033333,
+                0.066667
+              ],
+              "count_ok": true
+            }
+          ]
+        },
+        "a2_head_mid_tail": {
+          "scope": "A2_head_mid_tail_image_vs_mcap_materialize",
+          "not_claimed": "full_frame_content_audit",
+          "sample_indices": [
+            0,
+            50,
+            100
+          ],
+          "ok": true,
+          "checks": [
+            {
+              "camera": "front_left",
+              "frame_index": 0,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 27
+            },
+            {
+              "camera": "front_left",
+              "frame_index": 50,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 77
+            },
+            {
+              "camera": "front_left",
+              "frame_index": 100,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 127
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 0,
+              "mae_rgb": 1.466,
+              "ok": true,
+              "mcap_source_index": 27
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 50,
+              "mae_rgb": 1.743,
+              "ok": true,
+              "mcap_source_index": 77
+            },
+            {
+              "camera": "front_right",
+              "frame_index": 100,
+              "mae_rgb": 1.967,
+              "ok": true,
+              "mcap_source_index": 127
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 0,
+              "mae_rgb": 1.357,
+              "ok": true,
+              "mcap_source_index": 27
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 50,
+              "mae_rgb": 1.59,
+              "ok": true,
+              "mcap_source_index": 77
+            },
+            {
+              "camera": "rear_left",
+              "frame_index": 100,
+              "mae_rgb": 2.097,
+              "ok": true,
+              "mcap_source_index": 127
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 0,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 27
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 50,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 77
+            },
+            {
+              "camera": "rear_right",
+              "frame_index": 100,
+              "mae_rgb": 0.0,
+              "ok": true,
+              "mcap_source_index": 127
+            }
+          ]
+        },
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "field_preservation": {
+    "scope": "MCAP_to_delivery_parquet_field_preservation",
+    "imu_align_verified": false,
+    "ok": true,
+    "episodes": [
+      {
+        "episode_index": 0,
+        "session_id": "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "primary_device_timestamp_ns": {
+          "column": false,
+          "present": 0,
+          "total": 672
+        },
+        "expected": 0,
+        "ok": true
+      },
+      {
+        "episode_index": 1,
+        "session_id": "sess_de088591b4a94457b49c1a5278292f7d",
+        "primary_device_timestamp_ns": {
+          "column": false,
+          "present": 0,
+          "total": 299
+        },
+        "expected": 0,
+        "ok": true
+      },
+      {
+        "episode_index": 2,
+        "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "primary_device_timestamp_ns": {
+          "column": true,
+          "present": 176,
+          "total": 176,
+          "ratio": 1.0
+        },
+        "expected": "all",
+        "ok": true
+      },
+      {
+        "episode_index": 3,
+        "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "primary_device_timestamp_ns": {
+          "column": true,
+          "present": 353,
+          "total": 353,
+          "ratio": 1.0
+        },
+        "expected": "all",
+        "ok": true
+      }
+    ]
+  },
+  "imu": {
+    "status": "unverified",
+    "imu_align_verified": false,
+    "reason": "field preservation checked; IMU-to-camera alignment not proven",
+    "field_preservation": {
+      "scope": "MCAP_to_delivery_parquet_field_preservation",
+      "imu_align_verified": false,
+      "ok": true,
+      "episodes": [
+        {
+          "episode_index": 0,
+          "session_id": "sess_8aa298f87ba64b07b14afc7dbabab19a",
+          "primary_device_timestamp_ns": {
+            "column": false,
+            "present": 0,
+            "total": 672
+          },
+          "expected": 0,
+          "ok": true
+        },
+        {
+          "episode_index": 1,
+          "session_id": "sess_de088591b4a94457b49c1a5278292f7d",
+          "primary_device_timestamp_ns": {
+            "column": false,
+            "present": 0,
+            "total": 299
+          },
+          "expected": 0,
+          "ok": true
+        },
+        {
+          "episode_index": 2,
+          "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+          "primary_device_timestamp_ns": {
+            "column": true,
+            "present": 176,
+            "total": 176,
+            "ratio": 1.0
+          },
+          "expected": "all",
+          "ok": true
+        },
+        {
+          "episode_index": 3,
+          "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+          "primary_device_timestamp_ns": {
+            "column": true,
+            "present": 353,
+            "total": 353,
+            "ratio": 1.0
+          },
+          "expected": "all",
+          "ok": true
+        }
+      ]
+    },
+    "align_gate": {
+      "ok": true,
+      "status": "unverified",
+      "reason": "primary_device_timestamp_ns present in MCAP and materialize; host-device offset measurable but IMU-to-camera alignment not proven to commercial tolerance",
+      "waived": true
+    }
+  },
+  "phases": {
+    "video": {
+      "status": "recalculated",
+      "verification": "passed"
+    },
+    "table": {
+      "status": "recalculated",
+      "verification": "passed"
+    },
+    "imu": {
+      "status": "recalculated",
+      "verification": "unverified"
+    },
+    "hands": {
+      "status": "skipped"
+    },
+    "depth": {
+      "status": "skipped"
+    },
+    "pose": {
+      "status": "skipped"
+    }
+  },
+  "ok": true
+}

@@ -3,13 +3,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MODE_FILE="${ROOT}/data-lab-platform/.ego-derive-mode"
-INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
-WORKER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=ego-production-defaults.sh
 source "${SCRIPT_DIR}/ego-production-defaults.sh"
+MODE_FILE="${ROOT}/data-lab-platform/.ego-derive-mode"
+INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+WORKER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
 
 TAG="${LEROBOT_IMAGE_TAG}"
 IMAGE="${LEROBOT_IMAGE}"
@@ -86,9 +85,9 @@ show_status() {
   if [[ -f "${MODE_FILE}" ]]; then
     cat "${MODE_FILE}"
   else
-    echo "(mode file unset — inferring from containers)"
+    echo "(mode file unset — default: ${EGO_DERIVE_MODE_DEFAULT})"
   fi
-  echo
+  echo "  production defaults: manual + EGO_DERIVE_COMMERCIAL_GATE=${EGO_DERIVE_COMMERCIAL_GATE}"
   echo "=== stream-ingest ==="
   if docker ps --format '{{.Names}}' | grep -q "^${INGEST}$"; then
     docker exec "${INGEST}" printenv DERIVE_ASYNC DERIVE_ASYNC_EGO_001 DERIVE_LAYOUT DERIVE_STANDALONE 2>/dev/null \

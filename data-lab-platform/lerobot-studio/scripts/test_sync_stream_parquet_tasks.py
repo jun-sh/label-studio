@@ -15,6 +15,8 @@ _mod = importlib.util.module_from_spec(_spec)
 assert _spec.loader is not None
 _spec.loader.exec_module(_mod)
 
+remap_unit_table_to_global = _mod.remap_unit_table_to_global
+
 
 def _write_station(root: Path) -> None:
     (root / "live").mkdir(parents=True)
@@ -161,3 +163,19 @@ def test_republish_unit_global_indices(tmp_path: Path | None = None) -> None:
         assert set(t1["episode_index"].to_pylist()) == {1}
         assert t1["frame_index"].to_pylist() == [2, 3, 4]
         assert _mod.validate_unit_manifest_data_shards(root) == []
+
+
+def test_remap_unit_table_episode_local_timestamp() -> None:
+    import pyarrow as pa
+
+    table = pa.table(
+        {
+            "frame_index": pa.array([0, 1, 2], type=pa.int64()),
+            "timestamp": pa.array([0.0, 0.033, 0.066], type=pa.float32()),
+            "observation.state": pa.array([[0.0] * 6] * 3, type=pa.list_(pa.float32(), 6)),
+        }
+    )
+    out = remap_unit_table_to_global(table, episode_index=2, from_index=100, fps=30.0)
+    assert out["frame_index"].to_pylist() == [0, 1, 2]
+    assert out["index"].to_pylist() == [100, 101, 102]
+    assert [round(x, 3) for x in out["timestamp"].to_pylist()] == [0.0, 0.033, 0.067]

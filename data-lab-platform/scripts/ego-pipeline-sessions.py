@@ -305,7 +305,7 @@ def _session_parquet_ready(stream_root: Path, session_id: str) -> bool:
 
         return session_parquet_ready(stream_root, session_id)
     except ImportError:
-        return True
+        return False
 
 
 def awaiting_convert_sessions(
@@ -322,6 +322,9 @@ def awaiting_convert_sessions(
     if slug is None and datalab_root is not None:
         slug = station_slug(pipe_root, station)
     for sid in list_stream_sessions(stream_root):
+        sess_dir = stream_root / "state" / "sessions" / sid
+        if _session_quarantined(sess_dir):
+            continue
         if backend == "oak":
             if datalab_root is None:
                 raise ValueError("datalab_root required for oak backend")

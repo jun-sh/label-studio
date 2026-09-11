@@ -1,0 +1,1116 @@
+{
+  "generated_at": "2026-09-11T06:57:43+00:00",
+  "reports": [
+    {
+      "generated_at": "2026-09-11T06:57:30+00:00",
+      "root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-m1-20260911",
+      "dataset": {
+        "total_episodes": 4,
+        "total_frames": 1500,
+        "fps": 30.0,
+        "codebase_version": "v3.0"
+      },
+      "environment": {
+        "lerobot_version": "0.6.1",
+        "lerobot_commit": "e40b58a8dfa9e7b86918c374791599d070518d11",
+        "lerobot_repo": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/lerobot"
+      },
+      "episodes": [
+        {
+          "episode_index": 0,
+          "length": 672,
+          "global_start": 0,
+          "global_end": 671,
+          "frame_index_min": 0,
+          "frame_index_max": 671,
+          "timestamp_min": 0.0,
+          "timestamp_max": 22.366667,
+          "expected_timestamp_max": 22.366667,
+          "timestamp_semantics_ok": true
+        },
+        {
+          "episode_index": 1,
+          "length": 299,
+          "global_start": 672,
+          "global_end": 970,
+          "frame_index_min": 0,
+          "frame_index_max": 298,
+          "timestamp_min": 0.0,
+          "timestamp_max": 9.933333,
+          "expected_timestamp_max": 9.933333,
+          "timestamp_semantics_ok": true
+        },
+        {
+          "episode_index": 2,
+          "length": 176,
+          "global_start": 971,
+          "global_end": 1146,
+          "frame_index_min": 0,
+          "frame_index_max": 175,
+          "timestamp_min": 0.0,
+          "timestamp_max": 5.833333,
+          "expected_timestamp_max": 5.833333,
+          "timestamp_semantics_ok": true
+        },
+        {
+          "episode_index": 3,
+          "length": 353,
+          "global_start": 1147,
+          "global_end": 1499,
+          "frame_index_min": 0,
+          "frame_index_max": 352,
+          "timestamp_min": 0.0,
+          "timestamp_max": 11.733334,
+          "expected_timestamp_max": 11.733333,
+          "timestamp_semantics_ok": true
+        }
+      ],
+      "pre_audit_errors": [],
+      "video_keys": [
+        "observation.images.camera_front_left",
+        "observation.images.camera_front_right",
+        "observation.images.camera_rear_left",
+        "observation.images.camera_rear_right"
+      ],
+      "backends": {
+        "pyav": {
+          "video_backend": "pyav",
+          "init_ok": true,
+          "len": 1500,
+          "samples": [
+            {
+              "global_index": 0,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 336,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 671,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 672,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 821,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 970,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 971,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1059,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1146,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1147,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1323,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1499,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            }
+          ],
+          "failures": [],
+          "dataloader_ok": true,
+          "dataloader_batch_keys": [
+            "action",
+            "episode_index",
+            "frame_index",
+            "index",
+            "observation.hands",
+            "observation.images.camera_front_left",
+            "observation.images.camera_front_right",
+            "observation.images.camera_rear_left",
+            "observation.images.camera_rear_right",
+            "observation.pose",
+            "observation.state",
+            "task",
+            "task_index",
+            "timestamp"
+          ]
+        },
+        "torchcodec": {
+          "video_backend": "torchcodec",
+          "init_ok": true,
+          "len": 1500,
+          "samples": [
+            {
+              "global_index": 0,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 336,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 671,
+              "episode_index": 0,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 672,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 821,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 970,
+              "episode_index": 1,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 971,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1059,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1146,
+              "episode_index": 2,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1147,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1323,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            },
+            {
+              "global_index": 1499,
+              "episode_index": 3,
+              "ok": true,
+              "keys": [
+                "action",
+                "episode_index",
+                "frame_index",
+                "index",
+                "observation.hands",
+                "observation.images.camera_front_left",
+                "observation.images.camera_front_right",
+                "observation.images.camera_rear_left",
+                "observation.images.camera_rear_right",
+                "observation.pose",
+                "observation.state",
+                "task",
+                "task_index",
+                "timestamp"
+              ],
+              "observation.images.camera_front_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_front_right.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_left.shape": [
+                3,
+                800,
+                1280
+              ],
+              "observation.images.camera_rear_right.shape": [
+                3,
+                800,
+                1280
+              ]
+            }
+          ],
+          "failures": [],
+          "dataloader_ok": true,
+          "dataloader_batch_keys": [
+            "action",
+            "episode_index",
+            "frame_index",
+            "index",
+            "observation.hands",
+            "observation.images.camera_front_left",
+            "observation.images.camera_front_right",
+            "observation.images.camera_rear_left",
+            "observation.images.camera_rear_right",
+            "observation.pose",
+            "observation.state",
+            "task",
+            "task_index",
+            "timestamp"
+          ]
+        }
+      },
+      "ok": true,
+      "errors": [],
+      "failure_count": 0
+    }
+  ]
+}

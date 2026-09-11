@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-09-11T08:00:00+00:00",
+  "candidate_id": "ego-001-m1-20260911",
+  "tier": "candidate",
+  "classification": "格式修复候选",
+  "derivation_method": {
+    "type": "corpus_timestamp_patch",
+    "description": "从现有 corpus/ego_001 复制到隔离目录，仅修补 data parquet 中 timestamp = frame_index/fps（1500 行）；未从原始 MCAP 完整重派生",
+    "not_proven": [
+      "完整 derive 流水线正确性",
+      "H.264 重派生后全库一致性",
+      "IMU 时钟域对齐",
+      "30fps 商业验收",
+      "6DoF / 三维手部精度"
+    ]
+  },
+  "source_binding": {
+    "corpus_path": "data-storage/corpus/ego_001",
+    "corpus_info_sha256": "fcf3cbfeccf4c4efb86d1c0627994fa198389243b3bb2b70b7daffb09c3b08cd",
+    "corpus_data_parquet_sha256_prefix": "a880552805457136",
+    "candidate_path": "data-storage/ego-delivery/candidates/ego-001-m1-20260911",
+    "candidate_info_sha256": "fcf3cbfeccf4c4efb86d1c0627994fa198389243b3bb2b70b7daffb09c3b08cd"
+  },
+  "code_binding": {
+    "data_lab_commit": "d7c6955727da6f17ec6a58febf4468adea5d2207",
+    "ego_platform_commit": "e80dea5ffe6921ee53b4c6ce4f9f10153c23dc0d",
+    "lerobot_official_commit": "e40b58a8dfa9e7b86918c374791599d070518d11",
+    "lerobot_version": "0.6.1",
+    "dirty_summary": "本批收尾含 mcap-materialize H.264 warmup 参考链、ingest 服务端 session seal、export/IMU gate 脚本；未部署 130/未重启线上"
+  },
+  "verification_config": {
+    "loader_gate": {
+      "script": "data-lab-platform/scripts/ego-lerobot-loader-gate.py",
+      "sample": "all",
+      "backends": ["pyav", "torchcodec"],
+      "dataloader": true,
+      "lerobot_venv": "/workspace/lerobot/.venv"
+    },
+    "h264_materialize": {
+      "script": "data-lab-platform/scripts/ego-h264-e2e-verify.py",
+      "report": "docs/m0-evidence/h264-e2e-ego-001-ep2.json"
+    },
+    "h264_derive_output": {
+      "script": "data-lab-platform/scripts/ego-h264-derive-output-verify.py",
+      "report": "docs/m0-evidence/h264-derive-output-ego-001.json",
+      "derive_entry": "lerobot-studio/derive/unit.mjs deriveUnit"
+    }
+  },
+  "reports": {
+    "loader_full": "docs/m0-evidence/loader-regression-candidate-full.json",
+    "h264_materialize": "docs/m0-evidence/h264-e2e-ego-001-ep2.json",
+    "h264_derive_output": "docs/m0-evidence/h264-derive-output-ego-001.json",
+    "imu_clock_audit": "docs/m0-evidence/imu-clock-audit-ego-001.json",
+    "export_subset": "docs/m0-evidence/export-subset-verify-ego-001.json",
+    "baseline": "docs/m0-evidence/baseline-20260911.json"
+  }
+}

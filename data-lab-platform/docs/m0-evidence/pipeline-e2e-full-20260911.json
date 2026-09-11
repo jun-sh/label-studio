@@ -1,0 +1,84 @@
+{
+  "generated_at": "2026-09-11T09:46:36+00:00",
+  "station": "ego-001",
+  "slug": "ego_001",
+  "session_ids": [
+    "sess_fcae98fafb24450485da10ef885ee4e2"
+  ],
+  "steps": [
+    {
+      "step": "S4-ingest-markers",
+      "ok": true,
+      "detail": "raw=5 DONE_UPLOAD=5 session_seals=0",
+      "sessions_raw": [
+        "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "sess_de088591b4a94457b49c1a5278292f7d",
+        "sess_fcae98fafb24450485da10ef885ee4e2"
+      ],
+      "sessions_done_upload": [
+        "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "sess_de088591b4a94457b49c1a5278292f7d",
+        "sess_fcae98fafb24450485da10ef885ee4e2"
+      ]
+    },
+    {
+      "step": "S5-derive-ready",
+      "ok": false,
+      "detail": "session.READY=4/5",
+      "sessions_ready": [
+        "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "sess_de088591b4a94457b49c1a5278292f7d"
+      ]
+    },
+    {
+      "step": "S6-convert-finalize",
+      "ok": true,
+      "detail": "finalize.done=4/4",
+      "sessions_finalize": [
+        "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+        "sess_48bcaf8d17c14fa08041d530b08ce734",
+        "sess_8aa298f87ba64b07b14afc7dbabab19a",
+        "sess_de088591b4a94457b49c1a5278292f7d"
+      ]
+    },
+    {
+      "step": "S7-corpus-published",
+      "ok": true,
+      "detail": "corpus episodes=4 frames=1500 slug=ego_001"
+    },
+    {
+      "step": "S7-viewer-samples",
+      "ok": true,
+      "detail": "samples.zip=yes"
+    },
+    {
+      "step": "S2-segments-sess_fcae98f",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_fcae98f",
+      "ok": true,
+      "detail": "no server seal (legacy path OK if DONE_UPLOAD set)",
+      "optional": true
+    },
+    {
+      "step": "S5-session-ready-sess_fcae98f",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=True"
+    },
+    {
+      "step": "S8-loader-gate-corpus",
+      "ok": false,
+      "detail": "  - torchcodec ep3 idx=1499: Invalid frame index=1499 for streamIndex=0; must be less than 353"
+    }
+  ],
+  "ok": false,
+  "failed_count": 4
+}

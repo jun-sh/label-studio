@@ -5,6 +5,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 let fluentFfmpeg = null;
 
@@ -295,6 +296,39 @@ export async function concatMp4FromList(listPath, destPath, codecMode = "copy") 
 }
 
 /** Remux annex-B H.264 elementary stream to MP4 (copy, no libx264). */
+/** Drop leading decoded frames after remux (H.264 decode-warmup must not become training content). */
+export async function trimMp4LeadingFrames(srcPath, destPath, { skipFrames = 0, fps = 30 } = {}) {
+  const skip = Math.max(0, Number(skipFrames || 0));
+  if (!srcPath || !fs.existsSync(srcPath)) {
+    return { ok: false, error: "mp4_missing", backend: "legacy" };
+  }
+  if (skip <= 0) {
+    if (path.resolve(srcPath) !== path.resolve(destPath)) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+    return { ok: true, skipFrames: 0, backend: "legacy" };
+  }
+  const tmpPath = `${destPath}.warmup-trim.tmp.mp4`;
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    srcPath,
+    "-vf",
+    `select='gte(n\\,${skip})',setpts=N/(${fps}*TB)`,
+    "-an",
+    ...x264OutputArgs(),
+    tmpPath,
+  ];
+  const res = await spawnFfmpeg(args);
+  if (res.ok && fs.existsSync(tmpPath)) {
+    fs.renameSync(tmpPath, destPath);
+  }
+  return { ...res, ok: res.ok && fs.existsSync(destPath), skipFrames: skip, backend: "legacy" };
+}
+
 export async function remuxH264AnnexBToMp4(h264Path, destPath, { fps = 30 } = {}) {
   if (!h264Path || !fs.existsSync(h264Path)) {
     return { ok: false, error: "h264_missing", backend: "legacy" };

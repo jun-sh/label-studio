@@ -1,0 +1,4 @@
+WARNING:lerobot.datasets.utils:Unknown fields in DatasetInfo: ['ego_capture', 'ego_platform', 'embodiment', 'sensor_raw']. These will be ignored.
+WARNING:lerobot.datasets.utils:Unknown fields in DatasetInfo: ['ego_capture', 'ego_platform', 'embodiment', 'sensor_raw']. These will be ignored.
+[OK] /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-m1-20260911
+report: /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/m0-evidence/loader-regression-candidate-full.json

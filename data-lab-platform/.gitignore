@@ -1,5 +1,4 @@
 # Runtime / local ops state (do not commit)
-.ego-derive-mode
 .*.log
 .p0-*
 .p2-*

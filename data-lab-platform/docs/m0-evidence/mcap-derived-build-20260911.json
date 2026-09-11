@@ -1,0 +1,401 @@
+{
+  "generated_at": "2026-09-11T08:22:33+00:00",
+  "candidate_id": "ego-001-mcap-derived-20260911",
+  "candidate_path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-mcap-derived-20260911",
+  "classification": "mcap_full_derive",
+  "distinct_from": "ego-001-m1-20260911 (format-fix candidate)",
+  "code_binding": {
+    "data_lab": {
+      "commit": "d7c6955727da6f17ec6a58febf4468adea5d2207",
+      "dirty_lines": [
+        "M data-lab-platform/ego-stream-client/segment_store.py",
+        " M data-lab-platform/ego-stream-client/segment_upload.py",
+        " M data-lab-platform/ego-stream-client/tests/test_segment_store.py",
+        " M data-lab-platform/lerobot-studio/derive/imu/align-main.py",
+        " M data-lab-platform/lerobot-studio/derive/mcap-materialize.py",
+        " M data-lab-platform/lerobot-studio/derive/test_mcap_materialize_h264_trim.py",
+        " M data-lab-platform/lerobot-studio/derive/unit.mjs",
+        " M data-lab-platform/lerobot-studio/ingest/ingest-mcap.test.mjs",
+        " M data-lab-platform/lerobot-studio/ingest/ingest.test.mjs",
+        " M data-lab-platform/lerobot-studio/ingest/receive-mcap.mjs",
+        " M data-lab-platform/lerobot-studio/ingest/receive-tar.mjs",
+        " M data-lab-platform/lerobot-studio/ingest/session-coordinator.mjs",
+        " M data-lab-platform/lerobot-studio/mux-exec.mjs",
+        " M data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py",
+        " M data-lab-platform/lerobot-studio/scripts/test_sync_stream_parquet_tasks.py",
+        " M data-lab-platform/lerobot-studio/stream-ingest.mjs",
+        " M data-lab-platform/scripts/ego-export-delivery.py",
+        " M data-lab-platform/scripts/ego-lerobot-loader-gate.py",
+        "?? .cursor/settings.json",
+        "?? None/",
+        "?? data-lab-platform/build-context/.frontend-hot-build",
+        "?? data-lab-platform/docs/m0-evidence/",
+        "?? data-lab-platform/lerobot-studio/ingest/session-seal.mjs",
+        "?? data-lab-platform/scripts/ego-export-subset-verify.py",
+        "?? data-lab-platform/scripts/ego-h264-derive-output-verify.py",
+        "?? data-lab-platform/scripts/ego-h264-e2e-verify.py",
+        "?? data-lab-platform/scripts/ego-imu-align-gate.py",
+        "?? data-lab-platform/scripts/ego-imu-clock-audit.py",
+        "?? data-lab-platform/scripts/ego-mcap-derived-candidate-build.py",
+        "?? data-lab-platform/scripts/ego-mcap-derived-candidate-verify.py"
+      ]
+    },
+    "lerobot": {
+      "commit": "e40b58a8dfa9e7b86918c374791599d070518d11",
+      "version": "0.6.1"
+    }
+  },
+  "config": {
+    "derive_entry": "derive/unit.mjs deriveUnit + publisher.mjs rebuildView",
+    "station_id": "ego-001",
+    "isolated_stream_data_root": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/work/mcap-rederive-20260911/station"
+  },
+  "phases": {
+    "video": {
+      "status": "recalculated",
+      "action": "deriveUnit mcap h264 remux+warmup-trim",
+      "source": "raw MCAP per session"
+    },
+    "table": {
+      "status": "recalculated",
+      "action": "publishUnitEpisode + sync-stream-parquet",
+      "source": "unit data.jsonl"
+    },
+    "imu": {
+      "status": "recalculated",
+      "action": "ingest-raw.py + merge-station-imu.py",
+      "source": "MCAP /ego/imu/raw"
+    },
+    "hands": {
+      "status": "skipped",
+      "action": "not in MCAP deriveUnit path (ego-001 h264)",
+      "source": null
+    },
+    "depth": {
+      "status": "skipped",
+      "action": "not in MCAP deriveUnit path (ego-001 h264)",
+      "source": null
+    },
+    "pose": {
+      "status": "skipped",
+      "action": "not in MCAP deriveUnit path (ego-001 h264)",
+      "source": null
+    }
+  },
+  "episodes": [
+    {
+      "episode_index": 0,
+      "session_id": "sess_8aa298f87ba64b07b14afc7dbabab19a",
+      "input_mcap": {
+        "path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-001/raw/segments/sess_8aa298f87ba64b07b14afc7dbabab19a/seg_000001.mcap.zst",
+        "sha256": "aa3b2e34889e1c66fef091ba6b89dd8e38a089b0ef3f99808468c184f67f00ba",
+        "bytes": 71405262,
+        "mcap_summary_frame_count": 699,
+        "video_codec": "h264"
+      },
+      "trim": {
+        "align_skip": 27,
+        "frames_before_trim": 699,
+        "frames_after_trim": 672,
+        "decode_warmup_packets": {
+          "front_left": 0,
+          "front_right": 2,
+          "rear_left": 1,
+          "rear_right": 0
+        }
+      },
+      "output_frames": 672,
+      "parquet_rows": 672,
+      "primary_device_timestamp_ns": {
+        "column": false,
+        "present": 0,
+        "total": 672
+      },
+      "timestamp_local_ok": true,
+      "counts": {
+        "raw_mcap_frames": 699,
+        "trim_before": 699,
+        "trim_after": 672,
+        "output_frames": 672,
+        "parquet_rows": 672,
+        "diff_reason": "h264_align_trim align_skip=27; raw_mcap_frames=699 derive_output=672"
+      }
+    },
+    {
+      "episode_index": 1,
+      "session_id": "sess_de088591b4a94457b49c1a5278292f7d",
+      "input_mcap": {
+        "path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-001/raw/segments/sess_de088591b4a94457b49c1a5278292f7d/seg_000001.mcap.zst",
+        "sha256": "65227765647e2a3da2ff0db5e6ee22d6a10786de64f720a024cb7a793a1c476a",
+        "bytes": 32928165,
+        "mcap_summary_frame_count": 325,
+        "video_codec": "h264"
+      },
+      "trim": {
+        "align_skip": 26,
+        "frames_before_trim": 325,
+        "frames_after_trim": 299,
+        "decode_warmup_packets": {
+          "front_left": 1,
+          "front_right": 2,
+          "rear_left": 1,
+          "rear_right": 0
+        }
+      },
+      "output_frames": 299,
+      "parquet_rows": 299,
+      "primary_device_timestamp_ns": {
+        "column": false,
+        "present": 0,
+        "total": 299
+      },
+      "timestamp_local_ok": true,
+      "counts": {
+        "raw_mcap_frames": 325,
+        "trim_before": 325,
+        "trim_after": 299,
+        "output_frames": 299,
+        "parquet_rows": 299,
+        "diff_reason": "h264_align_trim align_skip=26; raw_mcap_frames=325 derive_output=299"
+      }
+    },
+    {
+      "episode_index": 2,
+      "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+      "input_mcap": {
+        "path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-001/raw/segments/sess_2e8da6fee94a465e9a7fd79f8a6ab59e/seg_000001.mcap.zst",
+        "sha256": "ab4dd9831edaf87475ed808e0573202d5cacf3d40d6a270ba00c83b62b1e496b",
+        "bytes": 20262229,
+        "mcap_summary_frame_count": 202,
+        "video_codec": "h264"
+      },
+      "trim": {
+        "align_skip": 26,
+        "frames_before_trim": 202,
+        "frames_after_trim": 176,
+        "decode_warmup_packets": {
+          "front_left": 0,
+          "front_right": 2,
+          "rear_left": 1,
+          "rear_right": 0
+        }
+      },
+      "output_frames": 176,
+      "parquet_rows": 176,
+      "primary_device_timestamp_ns": {
+        "column": true,
+        "present": 176,
+        "total": 176,
+        "ratio": 1.0
+      },
+      "timestamp_local_ok": true,
+      "counts": {
+        "raw_mcap_frames": 202,
+        "trim_before": 202,
+        "trim_after": 176,
+        "output_frames": 176,
+        "parquet_rows": 176,
+        "diff_reason": "h264_align_trim align_skip=26; raw_mcap_frames=202 derive_output=176"
+      }
+    },
+    {
+      "episode_index": 3,
+      "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+      "input_mcap": {
+        "path": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/stream/ego-001/raw/segments/sess_48bcaf8d17c14fa08041d530b08ce734/seg_000001.mcap.zst",
+        "sha256": "b61babd834f9bc414b851d7c9e6ea9669129752fde5e374c3e68572a23337fbf",
+        "bytes": 38522667,
+        "mcap_summary_frame_count": 380,
+        "video_codec": "h264"
+      },
+      "trim": {
+        "align_skip": 27,
+        "frames_before_trim": 380,
+        "frames_after_trim": 353,
+        "decode_warmup_packets": {
+          "front_left": 0,
+          "front_right": 2,
+          "rear_left": 1,
+          "rear_right": 0
+        }
+      },
+      "output_frames": 353,
+      "parquet_rows": 353,
+      "primary_device_timestamp_ns": {
+        "column": true,
+        "present": 353,
+        "total": 353,
+        "ratio": 1.0
+      },
+      "timestamp_local_ok": true,
+      "counts": {
+        "raw_mcap_frames": 380,
+        "trim_before": 380,
+        "trim_after": 353,
+        "output_frames": 353,
+        "parquet_rows": 353,
+        "diff_reason": "h264_align_trim align_skip=27; raw_mcap_frames=380 derive_output=353"
+      }
+    }
+  ],
+  "totals": {
+    "output_frames": 1500,
+    "note": "not hardcoded; sum of per-episode derive outputs"
+  },
+  "rebuild_view": {
+    "ok": true,
+    "episodes": 4,
+    "total_frames": 1500
+  },
+  "derive_results": [
+    {
+      "session_id": "sess_8aa298f87ba64b07b14afc7dbabab19a",
+      "ok": true,
+      "frames": 672,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/work/mcap-rederive-20260911/station/ego-001/derived/sess_8aa298f87ba64b07b14afc7dbabab19a"
+    },
+    {
+      "session_id": "sess_de088591b4a94457b49c1a5278292f7d",
+      "ok": true,
+      "frames": 299,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/work/mcap-rederive-20260911/station/ego-001/derived/sess_de088591b4a94457b49c1a5278292f7d"
+    },
+    {
+      "session_id": "sess_2e8da6fee94a465e9a7fd79f8a6ab59e",
+      "ok": true,
+      "frames": 176,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/work/mcap-rederive-20260911/station/ego-001/derived/sess_2e8da6fee94a465e9a7fd79f8a6ab59e"
+    },
+    {
+      "session_id": "sess_48bcaf8d17c14fa08041d530b08ce734",
+      "ok": true,
+      "frames": 353,
+      "gate": {
+        "ok": true,
+        "checks": [
+          {
+            "ok": true,
+            "checkId": "G1"
+          },
+          {
+            "ok": true,
+            "checkId": "G2"
+          },
+          {
+            "ok": true,
+            "checkId": "G3"
+          },
+          {
+            "ok": true,
+            "checkId": "G2b"
+          },
+          {
+            "ok": true,
+            "checkId": "G7"
+          }
+        ],
+        "checksPassed": 5,
+        "checksTotal": 5,
+        "commercial": true,
+        "failedCheckId": null,
+        "reason": null
+      },
+      "unitDir": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/work/mcap-rederive-20260911/station/ego-001/derived/sess_48bcaf8d17c14fa08041d530b08ce734"
+    }
+  ],
+  "verify": {
+    "ok": false,
+    "report": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/docs/m0-evidence/mcap-derived-candidate-20260911.json"
+  },
+  "candidate_manifest": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/ego-delivery/candidates/ego-001-mcap-derived-20260911/meta/candidate_manifest.json"
+}

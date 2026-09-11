@@ -4,10 +4,12 @@ set -euo pipefail
 
 STATION=""
 RESET_MODE=""
+EXPORT_AFTER=0
 for arg in "$@"; do
   case "$arg" in
     --reset-34) RESET_MODE="34" ;;
     --reset-full|--reset) RESET_MODE="full" ;;
+    --export) EXPORT_AFTER=1 ;;
     -h|--help) STATION="" ;;
     -*)
       echo "未知参数: $arg" >&2
@@ -40,6 +42,9 @@ if [[ -z "$STATION" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 也可分步执行:
   130:  ego-upload ego-001
   34:   ego-process ego-001
+
+商业化交付导出（QC + 标注完成后）:
+  ego-deliver ego-001 --export
 
 环境变量:
   EDGE_HOST            默认 server@10.10.10.130（ego-001）
@@ -97,5 +102,20 @@ fi
 
 log "=== 2/2 34 派生 + 后处理 + Viewer (ego-process) ==="
 bash "${SCRIPT_DIR}/ego-process" "$STATION"
+
+if [[ "$EXPORT_AFTER" -eq 1 ]]; then
+  log "=== 3/3 商业化 order 导出 ==="
+  EXPORT_PY="${SCRIPT_DIR}/ego-export-delivery.py"
+  ORDER_MANIFEST="${DATALAB_ROOT}/data-storage/ego-delivery/${STATION}/orders/active-order.json"
+  python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" build-order-manifest "$STATION" \
+    --output "$ORDER_MANIFEST" --datalab-root "$DATALAB_ROOT"
+  python3 "$EXPORT_PY" "$STATION" \
+    --datalab-root "$DATALAB_ROOT" \
+    --order-manifest "$ORDER_MANIFEST" \
+    --gate-only
+  python3 "$EXPORT_PY" "$STATION" \
+    --datalab-root "$DATALAB_ROOT" \
+    --order-manifest "$ORDER_MANIFEST"
+fi
 
 log "交付完成 → ${VIEWER_URL}"

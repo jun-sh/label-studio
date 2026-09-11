@@ -60,6 +60,11 @@ services:
       - ./data-storage/ego-delivery:/datalab/data-storage/ego-delivery:ro
       - ./data-storage/lerobot-qc:/datalab/data-storage/lerobot-qc:ro
       - ./data-lab-platform/lerobot-studio/delivery-status.mjs:/app/delivery-status.mjs:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ingest:/app/ingest:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ../ego-platform/src:/ego-platform/src:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
@@ -93,6 +98,8 @@ services:
       - DERIVE_PARQUET_BACKEND=lerobot
       - DERIVE_STANDALONE=${DERIVE_STANDALONE:-1}
       - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
+      - EGO_DERIVE_COMMERCIAL_GATE=${EGO_DERIVE_COMMERCIAL_GATE:-0}
+      - PYTHONPATH=/ego-platform/src
     healthcheck:
       test:
         [
@@ -115,11 +122,14 @@ services:
     volumes:
       - ./data-storage/stream:/srv/stream
       - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ../ego-platform/src:/ego-platform/src:ro
     user: "1000:1000"
     environment:
       - STREAM_DATA_ROOT=/srv/stream
       - STATION_ID=${STATION_ID:-ego-001}
+      - PYTHONPATH=/ego-platform/src
       - DERIVE_WATCH_POLL_MS=${DERIVE_WATCH_POLL_MS:-10000}
       - DERIVE_EXTRACT_BACKEND=${DERIVE_EXTRACT_BACKEND:-python}
       - DERIVE_MUX_BACKEND=${DERIVE_MUX_BACKEND:-fluent}
@@ -132,6 +142,7 @@ services:
       - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
       - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}
       - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
+      - EGO_DERIVE_COMMERCIAL_GATE=${EGO_DERIVE_COMMERCIAL_GATE:-0}
     healthcheck:
       test:
         [

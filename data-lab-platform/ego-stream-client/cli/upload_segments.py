@@ -13,7 +13,11 @@ from ego_capture_studio.capture.camera_intrinsics import (
     load_camera_intrinsics_json,
 )
 from ego_capture_studio.capture.segment_store import list_closed_pending_segments
-from ego_capture_studio.capture.segment_upload import SegmentUploader, upload_pending_segments
+from ego_capture_studio.capture.segment_upload import (
+    SegmentUploader,
+    upload_pending_segments,
+    upload_session_seal_finalize,
+)
 
 try:
     from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
@@ -85,8 +89,6 @@ def main() -> None:
         include_uploaded=args.force,
     )
     print(f"session={session_id} pending_segments={len(pending)} force={args.force}", flush=True)
-    if not pending:
-        return
 
     uploader = SegmentUploader(args.upload_url)
     try:
@@ -111,16 +113,21 @@ def main() -> None:
                 video_shapes=shapes,
                 camera_intrinsics=camera_intrinsics,
             )
-        limit = args.limit if args.limit > 0 else None
-        n = upload_pending_segments(
-            root=root,
-            session_id=session_id,
-            uploader=uploader,
-            limit=limit,
-            include_uploaded=args.force,
-            force=args.force,
-        )
-        print(f"uploaded_segments={n}", flush=True)
+        if pending:
+            limit = args.limit if args.limit > 0 else None
+            n = upload_pending_segments(
+                root=root,
+                session_id=session_id,
+                uploader=uploader,
+                limit=limit,
+                include_uploaded=args.force,
+                force=args.force,
+            )
+            print(f"uploaded_segments={n}", flush=True)
+        elif upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader):
+            print("session_seal_uploaded=1", flush=True)
+        else:
+            print("uploaded_segments=0", flush=True)
     finally:
         uploader.close()
 

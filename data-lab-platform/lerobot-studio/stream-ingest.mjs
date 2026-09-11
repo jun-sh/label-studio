@@ -3391,7 +3391,12 @@ function headerValue(req, name) {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+function isSessionSealUploadRequest(req) {
+  return headerValue(req, "x-upload-kind").toLowerCase() === "session-seal";
+}
+
 function isMcapUploadRequest(req) {
+  if (isSessionSealUploadRequest(req)) return false;
   const protocol = headerValue(req, "x-upload-protocol").toLowerCase();
   if (protocol === "mcap") return true;
   const contentType = (req.headers["content-type"] || "").toLowerCase();
@@ -3823,6 +3828,7 @@ async function handleTarZstSegmentUpload(stationId, req) {
   const segmentId = headerValue(req, "x-segment-id");
   const expectedSha = headerValue(req, "x-content-sha256").toLowerCase();
   const expectedSegmentTotal = Number(headerValue(req, "x-session-segment-total") || 0);
+  const sealRaw = headerValue(req, "x-session-seal");
   if (!sessionId || !segmentId) {
     throw new Error("X-Session-Id and X-Segment-Id required for tarzst upload");
   }
@@ -3848,12 +3854,15 @@ async function handleTarZstSegmentUpload(stationId, req) {
   try {
     await streamRequestToFile(req, archivePath);
     const { handleTarZstIngestUpload } = await import("./ingest/index.mjs");
+    const { parseSessionSealHeader } = await import("./ingest/session-seal.mjs");
+    const sessionSeal = sealRaw ? parseSessionSealHeader(sealRaw) : null;
     return await handleTarZstIngestUpload(stationId, {
       archivePath,
       sessionId,
       segmentId,
       expectedSha,
       expectedSegmentTotal,
+      sessionSeal,
       source: "edge",
     });
   } finally {
@@ -3870,10 +3879,13 @@ async function handleMcapSegmentUpload(stationId, req) {
   const segmentId = headerValue(req, "x-segment-id");
   const expectedSha = headerValue(req, "x-content-sha256").toLowerCase();
   const expectedSegmentTotal = Number(headerValue(req, "x-session-segment-total") || 0);
+  const sealRaw = headerValue(req, "x-session-seal");
   if (!sessionId || !segmentId) {
     throw new Error("X-Session-Id and X-Segment-Id required for mcap upload");
   }
   const root = stationRoot(stationId);
+  const { parseSessionSealHeader } = await import("./ingest/session-seal.mjs");
+  const sessionSeal = sealRaw ? parseSessionSealHeader(sealRaw) : null;
 
   if (isStationSegmentCommitted(stationId, sessionId, segmentId)) {
     streamLog(stationId, "mcap_early_duplicate", { sessionId, segmentId, reason: "committed" });
@@ -3901,6 +3913,7 @@ async function handleMcapSegmentUpload(stationId, req) {
     segmentId,
     expectedSha,
     expectedSegmentTotal,
+    sessionSeal,
     source: "edge",
   };
   const asyncIngest = String(process.env.INGEST_MCAP_ASYNC ?? "1").trim() !== "0";
@@ -3955,6 +3968,47 @@ function queueMcapIngestBackground(stationId, ingestOpts) {
   });
 }
 
+async function handleSessionSealUpload(stationId, req) {
+  const sessionId = headerValue(req, "x-session-id");
+  const sealRaw = headerValue(req, "x-session-seal");
+  if (!sessionId || !sealRaw) {
+    throw new Error("X-Session-Id and X-Session-Seal required for session-seal upload");
+  }
+  await new Promise((resolve, reject) => {
+    req.on("data", () => {});
+    req.on("end", resolve);
+    req.on("error", reject);
+  });
+
+  const root = stationRoot(stationId);
+  const { parseSessionSealHeader, writeServerSessionSeal } = await import("./ingest/session-seal.mjs");
+  const { maybeMarkSessionDoneUpload, touchUploadActivity } = await import(
+    "./ingest/session-coordinator.mjs",
+  );
+  const sessionSeal = parseSessionSealHeader(sealRaw);
+  if (!sessionSeal?.complete) {
+    throw new Error("session seal must have complete=true");
+  }
+  writeServerSessionSeal(root, sessionId, sessionSeal, { source: "edge" });
+  touchUploadActivity(root, {
+    sessionId,
+    expectedSegmentTotal: Number(sessionSeal.segment_count || 0),
+  });
+  const done = maybeMarkSessionDoneUpload(root, sessionId, { source: "session_seal" });
+  streamLog(stationId, "session_seal_upload", {
+    sessionId,
+    segmentCount: sessionSeal.segment_count,
+    markedDoneUpload: done.marked,
+  });
+  return {
+    ok: true,
+    action: "session_seal",
+    sessionId,
+    markedDoneUpload: done.marked,
+    gate: done.gate,
+  };
+}
+
 export async function handleStreamUploadRequest(stationId, req) {
   const auth = verifyStationUploadToken(stationId, req);
   if (!auth.ok) {
@@ -3962,6 +4016,9 @@ export async function handleStreamUploadRequest(stationId, req) {
     err.statusCode = 401;
     err.reason = auth.reason;
     throw err;
+  }
+  if (isSessionSealUploadRequest(req)) {
+    return handleSessionSealUpload(stationId, req);
   }
   if (isMcapUploadRequest(req)) {
     return handleMcapSegmentUpload(stationId, req);

@@ -57,6 +57,10 @@ const optimizer = () => {
       }),
       new CssMinimizerPlugin({
         parallel: true,
+        // cssnano mergeRules can choke on Tailwind escaped selectors (e.g. gap-1\.5).
+        minimizerOptions: {
+          preset: ["default", { mergeRules: false }],
+        },
       }),
     );
   }

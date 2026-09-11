@@ -262,18 +262,14 @@ def _load_tasks_map(root: Path) -> dict[int, str]:
         return tasks_map
 
     df = pd.read_parquet(tasks_parquet)
-    if "task" in df.columns and "task_index" in df.columns:
-        for _, row in df.iterrows():
-            tasks_map[int(row["task_index"])] = str(row["task"])
-    elif "task_index" in df.columns:
-        for idx_name, row in df.iterrows():
-            tasks_map[int(row["task_index"])] = str(idx_name)
-    elif "task" in df.columns:
-        for i, row in df.iterrows():
-            tasks_map[int(i)] = str(row["task"])
-    else:
-        for i, idx_name in enumerate(df.index):
-            tasks_map[i] = str(idx_name)
+    if "task" in df.columns:
+        raise ValueError(
+            f"legacy tasks.parquet at {tasks_parquet}: task text must be the DataFrame index"
+        )
+    if "task_index" not in df.columns:
+        raise ValueError(f"tasks.parquet missing task_index column: {tasks_parquet}")
+    for task_text, row in df.iterrows():
+        tasks_map[int(row["task_index"])] = str(task_text)
     return tasks_map
 
 

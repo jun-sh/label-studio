@@ -294,6 +294,7 @@ class McapSegmentWriter:
         camera_jpegs: Mapping[str, bytes],
         row: Mapping[str, Any],
         camera_ts_offset_ns: dict[str, int] | None = None,
+        primary_device_timestamp_ns: int | None = None,
     ) -> None:
         ts = int(timestamp_ns)
         self._note_grid_ts(ts)
@@ -322,6 +323,11 @@ class McapSegmentWriter:
                 "timestamp_ns": ts,
                 "observation.state": obs_state,
             }
+            dev_ts = row.get("primary_device_timestamp_ns")
+            if dev_ts is None and primary_device_timestamp_ns is not None:
+                dev_ts = primary_device_timestamp_ns
+            if dev_ts is not None:
+                obs_payload["primary_device_timestamp_ns"] = int(dev_ts)
             offsets = row.get("camera_ts_offset_ns")
             if isinstance(offsets, dict) and offsets:
                 obs_payload["camera_ts_offset_ns"] = {

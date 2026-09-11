@@ -8,7 +8,8 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-DEFAULT_INTERVAL_MS = 33.0
+DEFAULT_INTERVAL_MS = 1000.0 / 30.0
+DEFAULT_INTERVAL_NS = 33_333_333
 TOPIC_OBS_STATE = "/ego/observation/state"
 TOPIC_IMU_RAW = "/ego/imu/raw"
 
@@ -104,27 +105,22 @@ def strict_timestamp_series_ok(report: dict[str, Any], *, interval_ms: float = D
         return False
     dt_ok = abs(report.get("dt_mean_ms", 0) - interval_ms) <= 0.5
     band_ok = report.get("pct_in_tight_band", 0) >= 99.0
-    if band_ok and dt_ok:
-        return True
     lo, hi = _eff_hz_band()
-    return bool(band_ok and dt_ok and lo <= report.get("eff_hz", 0) <= hi)
+    eff_hz_ok = lo <= report.get("eff_hz", 0) <= hi
+    return bool(band_ok and dt_ok and eff_hz_ok)
 
 
-def _read_mcap_series(mcap_path: Path) -> tuple[list[int], list[int]]:
-    """Read the grid timestamps and the IMU device timestamps in a single pass."""
+def _read_mcap_series(mcap_path: Path) -> tuple[list[int], list[int], list[int]]:
+    """Read grid timestamps, optional device timestamps, and IMU device timestamps."""
     from mcap.reader import make_reader
 
     grid_out: list[int] = []
+    device_out: list[int] = []
     imu_out: list[int] = []
     with open(mcap_path, "rb") as fp:
         reader = make_reader(fp)
         for _schema, channel, message in reader.iter_messages():
             if channel.topic == TOPIC_IMU_RAW:
-                # The writer stores each IMU record's ts_ns as its log_time, so the span
-                # is available without decoding ~27k JSON payloads per segment. This
-                # runs during segment rotation, so the saving matters. A zero log_time
-                # means the writer did not stamp it; too few usable samples degrades to
-                # "no reference" rather than a wrong answer.
                 if message.log_time:
                     imu_out.append(int(message.log_time))
                 continue
@@ -137,11 +133,15 @@ def _read_mcap_series(mcap_path: Path) -> tuple[list[int], list[int]]:
             ts = payload.get("timestamp_ns")
             if ts is not None:
                 grid_out.append(int(ts))
-    return grid_out, imu_out
+            dev_ts = payload.get("primary_device_timestamp_ns")
+            if dev_ts is not None:
+                device_out.append(int(dev_ts))
+    return grid_out, device_out, imu_out
 
 
 def _read_mcap_obs_timestamps(mcap_path: Path) -> list[int]:
-    return _read_mcap_series(mcap_path)[0]
+    grid_ns, device_ns, _imu_ns = _read_mcap_series(mcap_path)
+    return device_ns if len(device_ns) >= 2 else grid_ns
 
 
 def timeline_from_writer_spans(
@@ -299,7 +299,7 @@ def check_mcap_strict_fps(
         return False, ["missing_segment_mcap"]
     issues: list[str] = []
     try:
-        grid_ns, imu_ns = _read_mcap_series(mcap_path)
+        grid_ns, _device_ns, imu_ns = _read_mcap_series(mcap_path)
     except Exception as exc:
         # A segment truncated by an abrupt stop makes the reader raise while parsing
         # the footer (RecordLengthLimitExceeded). This runs inside segment integrity
@@ -354,7 +354,7 @@ def check_mcap_strict_fps(
 
 
 def audit_timeline(mcap_path: Path) -> dict[str, Any]:
-    grid_ns, imu_ns = _read_mcap_series(mcap_path)
+    grid_ns, _device_ns, imu_ns = _read_mcap_series(mcap_path)
     report = analyze_timeline_coherence(grid_ns, imu_ns)
     report["path"] = str(mcap_path)
     return report

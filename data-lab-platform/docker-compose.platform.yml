@@ -55,6 +55,11 @@ services:
       - "7862"
     volumes:
       - ./data-storage/stream:/srv/stream
+      - ./data-storage/pipeline:/datalab/data-storage/pipeline:ro
+      - ./data-storage/corpus:/datalab/data-storage/corpus:ro
+      - ./data-storage/ego-delivery:/datalab/data-storage/ego-delivery:ro
+      - ./data-storage/lerobot-qc:/datalab/data-storage/lerobot-qc:ro
+      - ./data-lab-platform/lerobot-studio/delivery-status.mjs:/app/delivery-status.mjs:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/collection-station-tokens.json:/app/config/collection-station-tokens.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
@@ -62,6 +67,7 @@ services:
     environment:
       - INGEST_PORT=7862
       - STREAM_DATA_ROOT=/srv/stream
+      - DATALAB_ROOT=/datalab
       - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
       - DERIVE_ASYNC=${DERIVE_ASYNC:-0}
       - DERIVE_ASYNC_EGO_001=${DERIVE_ASYNC_EGO_001:-0}
@@ -108,6 +114,8 @@ services:
     command: ["/app/ego-derive-watch.mjs"]
     volumes:
       - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
     user: "1000:1000"
     environment:
       - STREAM_DATA_ROOT=/srv/stream
@@ -149,7 +157,7 @@ services:
     environment:
       - STREAM_SYNC_INTERVAL=5
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_PARQUET_SYNC_SKIP_STATIONS=${STREAM_PARQUET_SYNC_SKIP_STATIONS:-ego-001}
+      - STREAM_PARQUET_SYNC_SKIP_STATIONS=${STREAM_PARQUET_SYNC_SKIP_STATIONS:-}
 
   lerobot:
     build:
@@ -175,6 +183,7 @@ services:
       - ./data-lab-platform/lerobot-studio/preview-proxy.mjs:/app/preview-proxy.mjs:ro
       - ./data-lab-platform/lerobot-studio/frame_bin_codec.mjs:/app/frame_bin_codec.mjs:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/ingest-bundled-datasets.sh:/app/ingest-bundled-datasets.sh:ro
       - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro

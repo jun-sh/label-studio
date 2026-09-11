@@ -15,10 +15,22 @@ import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SYNC_EPISODES_SCRIPT = path.join(__dirname, "../scripts/sync-stream-parquet.py");
+const MERGE_STATION_IMU_SCRIPT = path.join(__dirname, "../scripts/merge-station-imu.py");
 
 /** Rewrite meta/episodes parquet for unit layout (per-episode file_index). */
 export function syncUnitEpisodesMeta(root) {
   execFileSync("python3", [SYNC_EPISODES_SCRIPT, "--meta-only", root], { stdio: "pipe" });
+}
+
+/**
+ * Republish L2 data shards from derived units with global frame/episode indices.
+ * Required for ego-process convert (slice by episode_index).
+ */
+export function republishStreamDataShards(root) {
+  execFileSync("python3", [SYNC_EPISODES_SCRIPT, "--republish-units", root], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
 }
 
 export function hardlinkOrCopy(src, dest) {
@@ -64,6 +76,20 @@ function publishTableArtifacts(unitRoot, root, stationId, episodeIndex, paths) {
   }
 }
 
+function publishUnitImu(root, unitRoot, episodeIndex) {
+  const src = path.join(unitRoot, "imu.parquet");
+  if (!fs.existsSync(src)) return;
+  try {
+    execFileSync(
+      "python3",
+      [MERGE_STATION_IMU_SCRIPT, root, "--unit-imu", src, "--episode-index", String(episodeIndex)],
+      { stdio: "pipe" },
+    );
+  } catch (err) {
+    console.warn("[publisher] merge unit imu failed:", err?.message || err);
+  }
+}
+
 export function publishUnitEpisode(root, stationId, sessionId, episodeIndex, episodeMeta = null) {
   const unitRoot = unitDir(root, sessionId);
   const unitJson = readJson(path.join(unitRoot, "unit.json"), null);
@@ -72,6 +98,7 @@ export function publishUnitEpisode(root, stationId, sessionId, episodeIndex, epi
   }
   const paths = episodeChunkPaths(episodeIndex);
   publishTableArtifacts(unitRoot, root, stationId, episodeIndex, paths);
+  publishUnitImu(root, unitRoot, episodeIndex);
   for (const videoKey of videoKeysForStation(stationId)) {
     const rel = `videos/${videoKey}.mp4`;
     const src = unitArtifactPath(unitRoot, rel);
@@ -160,10 +187,11 @@ export function refreshViewerFromManifest(root, stationId, manifest) {
   marker.episodes_count = episodes.length;
   writeJsonAtomic(markerPath, marker);
   try {
-    syncUnitEpisodesMeta(root);
+    republishStreamDataShards(root);
     writeJsonAtomic(path.join(root, "meta", "info.viewer.json"), readJson(infoPath, info));
   } catch (err) {
-    console.warn("[publisher] syncUnitEpisodesMeta failed:", err?.message || err);
+    console.warn("[publisher] republishStreamDataShards failed:", err?.message || err);
+    throw err;
   }
   return { totalFrames, episodes: episodes.length };
 }
@@ -174,9 +202,20 @@ export function rebuildView(root, stationId) {
   for (const ep of manifest.episodes) {
     publishUnitEpisode(root, stationId, ep.session_id, ep.episode_index, ep);
   }
+  try {
+    execFileSync("python3", [MERGE_STATION_IMU_SCRIPT, root, "--rebuild"], { stdio: "pipe" });
+  } catch (err) {
+    console.warn("[publisher] rebuild station imu failed:", err?.message || err);
+  }
   updateInfoFromManifest(root, manifest);
   writeMuxValidatedFromManifest(root, stationId, manifest);
   refreshViewerFromManifest(root, stationId, manifest);
+  try {
+    republishStreamDataShards(root);
+  } catch (err) {
+    console.warn("[publisher] republishStreamDataShards after rebuild failed:", err?.message || err);
+    throw err;
+  }
   return manifest;
 }
 
@@ -188,5 +227,6 @@ export function publishSessionIfNeeded(root, stationId, sessionId) {
   }
   publishUnitEpisode(root, stationId, sessionId, ep.episode_index, ep);
   updateInfoFromManifest(root, manifest);
+  republishStreamDataShards(root);
   return { published: true, episodeIndex: ep.episode_index, replay: false };
 }

@@ -15,16 +15,25 @@ function datalabRoot() {
   return process.env.DATALAB_ROOT || process.env.EGO_DATALAB_ROOT || path.resolve(stationRoot(""), "../..");
 }
 
+function dataStorageRoot() {
+  if (process.env.DATALAB_ROOT || process.env.EGO_DATALAB_ROOT) {
+    return path.join(datalabRoot(), "data-storage");
+  }
+  return path.join(datalabRoot(), "data-storage");
+}
+
 function corpusRoot(stationId, slug) {
-  return path.join(datalabRoot(), "data-storage", "corpus", slug);
+  return path.join(dataStorageRoot(), "corpus", slug);
 }
 
 function deliveryRoot(stationId) {
-  return path.join(datalabRoot(), "data-storage", "ego-delivery", stationId);
+  return path.join(dataStorageRoot(), "ego-delivery", stationId);
 }
 
 function qcSidecarBase() {
-  return path.join(datalabRoot(), "data-storage", "lerobot-qc");
+  const base = path.join(dataStorageRoot(), "lerobot-qc");
+  const sidecar = path.join(base, "sidecar");
+  return fs.existsSync(sidecar) ? sidecar : base;
 }
 
 function readJson(filePath, fallback = null) {
@@ -73,7 +82,7 @@ function qcStatusForEpisode(qcManifest, episodeIndex) {
 }
 
 function exportMarkerPath(stationId, sessionId) {
-  const ordersRoot = path.join(datalabRoot(), "data-storage", "ego-delivery", "orders");
+  const ordersRoot = path.join(dataStorageRoot(), "ego-delivery", "orders");
   if (fs.existsSync(ordersRoot)) {
     for (const orderId of fs.readdirSync(ordersRoot)) {
       const marker = path.join(
@@ -119,8 +128,7 @@ export function episodeDeliveryRow(root, stationId, sessionId, options = {}) {
 
   const readyMarker = readSessionMarker(root, sessionId, SESSION_MARKERS.READY);
   const finalizePath = path.join(
-    datalabRoot(),
-    "data-storage",
+    dataStorageRoot(),
     "pipeline",
     stationId,
     sessionId,

@@ -13,11 +13,21 @@ from strict_fps_gate import (
 
 def test_strict_timestamp_series_ok_at_30hz() -> None:
     interval_ns = 33_333_333
+    interval_ms = 1000.0 / 30.0
     ts = [1_000_000_000 + i * interval_ns for i in range(120)]
-    report = analyze_timestamp_series(ts, interval_ms=33.0)
+    report = analyze_timestamp_series(ts, interval_ms=interval_ms)
     assert report["eff_hz"] > 29.8
     assert report["eff_hz"] < 30.2
-    assert strict_timestamp_series_ok(report, interval_ms=33.0)
+    assert report["eff_hz_ok"] is True
+    assert strict_timestamp_series_ok(report, interval_ms=interval_ms)
+
+
+def test_strict_timestamp_series_rejects_legacy_33ms_grid() -> None:
+    ts = [i * 33_000_000 for i in range(100)]
+    interval_ms = 1000.0 / 30.0
+    report = analyze_timestamp_series(ts, interval_ms=interval_ms)
+    assert report["eff_hz_ok"] is False
+    assert not strict_timestamp_series_ok(report, interval_ms=interval_ms)
 
 
 def test_timeline_from_writer_spans_ok_at_30hz() -> None:
@@ -102,5 +112,5 @@ def test_timeline_grace_does_not_mask_full_segment_compression() -> None:
 def test_strict_timestamp_series_fail_when_sparse() -> None:
     interval_ns = 100_000_000
     ts = [1_000_000_000 + i * interval_ns for i in range(30)]
-    report = analyze_timestamp_series(ts, interval_ms=33.0)
-    assert not strict_timestamp_series_ok(report, interval_ms=33.0)
+    report = analyze_timestamp_series(ts, interval_ms=1000.0 / 30.0)
+    assert not strict_timestamp_series_ok(report, interval_ms=1000.0 / 30.0)

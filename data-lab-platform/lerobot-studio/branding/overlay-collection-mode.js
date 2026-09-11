@@ -1350,7 +1350,7 @@
       dataset: zh ? "回放" : "Replay",
       offline: zh ? "采集离线" : "Offline",
       captureActive: zh
-        ? "采集中远程实时已禁用，保护数据采集质量"
+        ? "采集中远程实时已禁用"
         : "Remote live disabled during capture",
     };
   }

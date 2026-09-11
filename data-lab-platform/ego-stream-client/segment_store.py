@@ -466,6 +466,7 @@ def build_lerobot_row(
     imu6: np.ndarray,
     task: str,
     camera_ts_offset_ns: dict[str, int] | None = None,
+    primary_device_timestamp_ns: int | None = None,
 ) -> dict[str, Any]:
     # Raw capture rows: sensors + task only. Pose/hands are produced offline by ego-process convert.
     row: dict[str, Any] = {
@@ -475,6 +476,8 @@ def build_lerobot_row(
         "observation.state": imu6.reshape(OBS_STATE_DIM).astype(float).tolist(),
         "action": [0.0],
     }
+    if primary_device_timestamp_ns is not None:
+        row["primary_device_timestamp_ns"] = int(primary_device_timestamp_ns)
     if camera_ts_offset_ns:
         # Nanoseconds relative to primary camera at this grid tick (not grid phase).
         row["camera_ts_offset_ns"] = {k: int(v) for k, v in camera_ts_offset_ns.items()}
@@ -495,6 +498,7 @@ class _PersistJob:
     imu6: np.ndarray
     task: str
     camera_ts_offset_ns: dict[str, int] | None = None
+    primary_device_timestamp_ns: int | None = None
     imu_raw_batch: tuple[dict[str, Any], ...] = ()
 
 
@@ -564,6 +568,7 @@ class _OpenSegmentWriter:
             imu6=job.imu6,
             task=job.task,
             camera_ts_offset_ns=job.camera_ts_offset_ns,
+            primary_device_timestamp_ns=job.primary_device_timestamp_ns,
         )
         self._row_lines.append(json.dumps(row, separators=(",", ":")) + "\n")
         if job.imu_raw_batch:
@@ -661,6 +666,7 @@ class _OpenSegmentMcapWriter:
             imu6=job.imu6,
             task=job.task,
             camera_ts_offset_ns=job.camera_ts_offset_ns,
+            primary_device_timestamp_ns=job.primary_device_timestamp_ns,
         )
         self._writer.write_frame(
             frame_index=job.frame_index,
@@ -668,6 +674,7 @@ class _OpenSegmentMcapWriter:
             camera_jpegs=job.camera_jpegs,
             row=row,
             camera_ts_offset_ns=job.camera_ts_offset_ns,
+            primary_device_timestamp_ns=job.primary_device_timestamp_ns,
         )
         if job.imu_raw_batch:
             self._writer.append_imu_raw_records(job.imu_raw_batch)
@@ -1112,6 +1119,7 @@ class SegmentCaptureWriter:
         camera_jpegs: dict[str, bytes],
         imu6: np.ndarray,
         camera_ts_offset_ns: dict[str, int] | None = None,
+        primary_device_timestamp_ns: int | None = None,
         imu_raw_batch: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
     ) -> int:
         if not camera_jpegs:
@@ -1133,6 +1141,7 @@ class SegmentCaptureWriter:
                 imu6=imu6,
                 task=self.task,
                 camera_ts_offset_ns=camera_ts_offset_ns,
+                primary_device_timestamp_ns=primary_device_timestamp_ns,
                 imu_raw_batch=tuple(imu_raw_batch or ()),
             )
             self._next_frame_index += 1

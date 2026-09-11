@@ -30,12 +30,17 @@ def _bootstrap_ego_platform() -> None:
 
 _bootstrap_ego_platform()
 try:
-    from ego_platform.lerobot.data_schema import feature_arrow_type, values_to_feature_array
+    from ego_platform.lerobot.data_schema import (
+        cast_data_table_to_info,
+        feature_arrow_type,
+        values_to_feature_array,
+    )
     from ego_platform.lerobot.io import (
         write_episodes_parquet as ego_write_episodes_parquet,
         write_tasks_parquet as ego_write_tasks_parquet,
     )
 except ImportError:
+    cast_data_table_to_info = None
     feature_arrow_type = None
     values_to_feature_array = None
     ego_write_episodes_parquet = None
@@ -296,8 +301,12 @@ def write_station_tasks(
 
 
 def _write_tasks_parquet_rows(root: Path, rows: list[dict]) -> None:
-    table = pa.Table.from_pylist(rows)
-    _atomic_parquet_write(table, root / "meta" / "tasks.parquet")
+    if ego_write_tasks_parquet is None:
+        raise RuntimeError(
+            "ego_platform.lerobot.io.write_tasks_parquet unavailable; "
+            "set PYTHONPATH to ego-platform/src before running sync-stream-parquet"
+        )
+    ego_write_tasks_parquet(root, rows)
     legacy = root / "meta" / "tasks.jsonl"
     if legacy.is_file():
         legacy.unlink()
@@ -509,10 +518,89 @@ def data_parquet_row_count(path: Path) -> int:
         return -1
 
 
+INT_DATA_COLS = frozenset({"frame_index", "episode_index", "index", "task_index"})
+SYSTEM_FEATURE_SPECS = {
+    "timestamp": {"dtype": "float32", "shape": [1], "names": None},
+    "frame_index": {"dtype": "int64", "shape": [1], "names": None},
+    "episode_index": {"dtype": "int64", "shape": [1], "names": None},
+    "index": {"dtype": "int64", "shape": [1], "names": None},
+    "task_index": {"dtype": "int64", "shape": [1], "names": None},
+}
+
+
+def ensure_system_features(info: dict) -> dict:
+    features = info.get("features") if isinstance(info.get("features"), dict) else {}
+    for key, spec in SYSTEM_FEATURE_SPECS.items():
+        features.setdefault(key, spec)
+    info["features"] = features
+    return info
+
+
+def finalize_data_table(table: pa.Table, features: dict) -> pa.Table:
+    """Cast columns to LeRobot 0.4.x loader expectations (scalar shape-[1], int64 indices)."""
+    if cast_data_table_to_info is not None:
+        table = cast_data_table_to_info(table, features)
+    cols: dict[str, pa.Array] = {}
+    for name in table.column_names:
+        col = table[name]
+        if name in INT_DATA_COLS:
+            cols[name] = pa.array([int(x or 0) for x in col.to_pylist()], type=pa.int64())
+        else:
+            cols[name] = col
+    return pa.table(cols)
+
+
+def write_meta_stats_json(root: Path) -> bool:
+    """Write meta/stats.json (LeRobot training norm stats) when compute_stats is available."""
+    info = read_json(root / "meta" / "info.json", {})
+    features = info.get("features") or {}
+    frames: list = []
+    data_root = root / "data"
+    if not data_root.is_dir():
+        return False
+    for parquet_path in sorted(data_root.rglob("*.parquet")):
+        if "sensor_raw" in parquet_path.parts:
+            continue
+        try:
+            frames.append(pq.read_table(parquet_path).to_pandas())
+        except Exception:
+            continue
+    if not frames:
+        return False
+    import pandas as pd
+
+    data_df = pd.concat(frames, ignore_index=True)
+    try:
+        import numpy as np
+        from lerobot.datasets.compute_stats import DEFAULT_QUANTILES, get_feature_stats
+
+        stats: dict = {}
+        for feature_name, feature_info in features.items():
+            dtype = str(feature_info.get("dtype") or "")
+            if dtype in ("video", "image", "string") or feature_name not in data_df.columns:
+                continue
+            values = np.stack(data_df[feature_name].to_numpy())
+            stats[feature_name] = get_feature_stats(
+                values,
+                axis=0,
+                keepdims=values.ndim == 1,
+                quantile_list=DEFAULT_QUANTILES,
+            )
+        if not stats:
+            return False
+        from lerobot.datasets.utils import write_stats
+
+        write_stats(stats, root)
+        return True
+    except Exception as exc:
+        print(f"stats.json skipped for {root}: {exc}", file=sys.stderr)
+        return False
+
+
 def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[dict]) -> None:
     if not rows:
         return
-    info = read_json(root / "meta" / "info.json", {})
+    info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
     scalar_keys = scalar_feature_keys(info)
     rows_sorted = sorted(rows, key=lambda r: int(r.get("frame_index", 0)))
     frame_min = int(rows_sorted[0].get("frame_index", 0))
@@ -558,7 +646,8 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
             table_cols[key] = pa.array(values, type=parquet_feature_type(key, info))
 
     out = root / "data" / "chunk-000" / "file-000.parquet"
-    _atomic_parquet_write(pa.table(table_cols), out)
+    table = finalize_data_table(pa.table(table_cols), features)
+    _atomic_parquet_write(table, out)
 
     info["total_frames"] = len(rows_sorted)
     info["ingest_row_count"] = len(rows_sorted)
@@ -587,7 +676,8 @@ def _episode_row(
     ep_index = int(ep.get("episode_index", 0))
     per_file = bool(ep.get("per_episode_file"))
     file_index = int(ep.get("data/file_index", ep.get("file_index", ep_index if per_file else 0)))
-    if per_file:
+    global_frames = bool(ep.get("global_frame_indices"))
+    if per_file and not global_frames:
         from_idx = 0
         to_idx = length
         duration = length / fps if fps > 0 else 0.0
@@ -613,7 +703,7 @@ def _episode_row(
         v_file = int(ep.get(f"videos/{key}/file_index", file_index))
         row[f"videos/{key}/chunk_index"] = v_chunk
         row[f"videos/{key}/file_index"] = v_file
-        if per_file:
+        if per_file and not global_frames:
             row[f"videos/{key}/from_timestamp"] = 0.0
             row[f"videos/{key}/to_timestamp"] = duration
         else:
@@ -811,22 +901,52 @@ def episodes_from_unit_manifest(manifest: dict) -> list[dict]:
     for ep in manifest.get("episodes") or []:
         ep_index = int(ep.get("episode_index", len(out)))
         length = int(ep.get("frames") or 0)
+        from_idx = int(ep.get("from_index", ep.get("dataset_from_index", 0)))
+        to_idx = int(ep.get("to_index", from_idx + length))
+        if length <= 0:
+            length = max(0, to_idx - from_idx)
         out.append(
             {
                 "episode_index": ep_index,
                 "session_id": str(ep.get("session_id") or ""),
                 "length": length,
-                # Per-episode L2 files use local row indices 0..length-1 (not global concat).
-                "dataset_from_index": 0,
-                "dataset_to_index": length,
+                "dataset_from_index": from_idx,
+                "dataset_to_index": to_idx,
                 "data/chunk_index": 0,
                 "data/file_index": ep_index,
                 "file_index": ep_index,
                 "per_episode_file": True,
+                "global_frame_indices": True,
                 "title": str(ep.get("session_id") or ""),
             }
         )
     return out
+
+
+def remap_unit_table_to_global(
+    table: pa.Table, *, episode_index: int, from_index: int, fps: float
+) -> pa.Table:
+    """Align per-unit derived rows with LeRobot global frame / episode indices."""
+    cols: dict[str, pa.Array] = {}
+    n = table.num_rows
+    for name in table.column_names:
+        cols[name] = table[name]
+    local_frames = [
+        int(x if x is not None else i)
+        for i, x in enumerate(table["frame_index"].to_pylist())
+    ]
+    if len(set(local_frames)) <= 1 and n > 1:
+        local_frames = list(range(n))
+    cols["frame_index"] = pa.array([from_index + i for i in local_frames], type=pa.int64())
+    cols["episode_index"] = pa.array([episode_index] * n, type=pa.int64())
+    cols["index"] = pa.array([from_index + i for i in range(n)], type=pa.int64())
+    cols["task_index"] = pa.array([episode_index] * n, type=pa.int64())
+    if "timestamp" in table.column_names:
+        cols["timestamp"] = pa.array(
+            [float(from_index + i) / fps if fps > 0 else 0.0 for i in range(n)],
+            type=pa.float32(),
+        )
+    return pa.table(cols)
 
 
 def resolve_live_task(root: Path, live: dict) -> str:
@@ -950,10 +1070,88 @@ def sync_repaired_meta_to_viewer_samples(corpus_root: Path, *, viewer_sync: bool
         print("viewer sync skipped: docker not available", file=sys.stderr)
 
 
+def validate_unit_manifest_data_shards(root: Path) -> list[str]:
+    """Ensure published L2 parquet shards match manifest episode indices (convert slice gate)."""
+    manifest = unit_manifest_published(root)
+    if not manifest:
+        return []
+    errors: list[str] = []
+    for ep in episodes_from_unit_manifest(manifest):
+        ep_index = int(ep.get("episode_index", -1))
+        length = int(ep.get("length") or 0)
+        from_idx = int(ep.get("dataset_from_index") or 0)
+        session_id = str(ep.get("session_id") or "")
+        pq_path = root / "data" / "chunk-000" / f"file-{ep_index:03d}.parquet"
+        if not pq_path.is_file():
+            errors.append(f"missing data shard {pq_path.relative_to(root)} for {session_id}")
+            continue
+        table = pq.read_table(pq_path)
+        if "episode_index" not in table.column_names:
+            errors.append(f"{pq_path.name} missing episode_index column")
+            continue
+        ep_vals = {int(x or 0) for x in table["episode_index"].to_pylist()}
+        if ep_vals != {ep_index}:
+            errors.append(f"{pq_path.name} episode_index={sorted(ep_vals)} expected {{{ep_index}}}")
+        if length > 0 and table.num_rows != length:
+            errors.append(f"{pq_path.name} rows={table.num_rows} expected length={length}")
+        if "frame_index" in table.column_names and table.num_rows > 0:
+            frames = [int(x or 0) for x in table["frame_index"].to_pylist()]
+            if min(frames) != from_idx or max(frames) != from_idx + table.num_rows - 1:
+                errors.append(
+                    f"{pq_path.name} frame_index range [{min(frames)},{max(frames)}] "
+                    f"expected [{from_idx},{from_idx + table.num_rows - 1}]"
+                )
+    return errors
+
+
+def republish_unit_data_shards(root: Path) -> int:
+    """Copy derived/sess_*/data.parquet into data/chunk-000/file-{episode_index}.parquet."""
+    manifest = unit_manifest_published(root)
+    if not manifest:
+        return 0
+    info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
+    features = info.get("features") or {}
+    fps = float(info.get("fps") or 30)
+    episodes = episodes_from_unit_manifest(manifest)
+    count = 0
+    for ep in episodes:
+        session_id = str(ep.get("session_id") or "").strip()
+        ep_index = int(ep.get("episode_index", count))
+        from_idx = int(ep.get("dataset_from_index") or 0)
+        if not session_id:
+            continue
+        derived = root / "derived" / session_id / "data.parquet"
+        if not derived.is_file():
+            continue
+        table = remap_unit_table_to_global(
+            pq.read_table(derived),
+            episode_index=ep_index,
+            from_index=from_idx,
+            fps=fps,
+        )
+        table = finalize_data_table(table, features)
+        out = root / "data" / "chunk-000" / f"file-{ep_index:03d}.parquet"
+        _atomic_parquet_write(table, out)
+        count += 1
+    if count:
+        sync_unit_manifest_info(root, manifest)
+        write_episodes_parquet(
+            root,
+            episodes,
+            fps,
+            resolve_live_task(root, read_json(root / "live" / "session.json", {})),
+        )
+        (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        errors = validate_unit_manifest_data_shards(root)
+        if errors:
+            raise RuntimeError("; ".join(errors))
+    return count
+
+
 def sync_unit_manifest_info(root: Path, manifest: dict) -> int:
     total_frames = int(manifest.get("total_frames") or 0)
     episodes = episodes_from_unit_manifest(manifest)
-    info = read_json(root / "meta" / "info.json", {})
+    info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
     info["total_frames"] = total_frames
     info["ingest_row_count"] = total_frames
     info["total_episodes"] = len(episodes)
@@ -970,10 +1168,30 @@ def main() -> int:
     argv = [a for a in sys.argv[1:] if a]
     viewer_scaffold = "--viewer-scaffold" in argv
     meta_only = "--meta-only" in argv
+    republish_units = "--republish-units" in argv
     repair_corpus = "--repair-corpus-task-dates" in argv
     no_viewer_sync = "--no-viewer-sync" in argv
-    flags = {"--meta-only", "--viewer-scaffold", "--repair-corpus-task-dates", "--no-viewer-sync"}
+    flags = {
+        "--meta-only",
+        "--viewer-scaffold",
+        "--repair-corpus-task-dates",
+        "--no-viewer-sync",
+        "--republish-units",
+    }
     positional = [a for a in argv if a not in flags]
+    if republish_units:
+        if len(positional) != 1:
+            print("usage: sync-stream-parquet.py --republish-units <station_root>", file=sys.stderr)
+            return 1
+        root = Path(positional[0])
+        try:
+            count = republish_unit_data_shards(root)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        write_meta_stats_json(root)
+        print(f"republished {count}")
+        return 0
     if repair_corpus:
         if len(positional) != 2:
             print(
@@ -988,7 +1206,7 @@ def main() -> int:
         )
     if len(positional) < 1:
         print(
-            "usage: sync-stream-parquet.py [--meta-only|--viewer-scaffold|--repair-corpus-task-dates] <station_root> [corpus_root]",
+            "usage: sync-stream-parquet.py [--meta-only|--viewer-scaffold|--repair-corpus-task-dates|--republish-units] <station_root> [corpus_root]",
             file=sys.stderr,
         )
         return 1
@@ -1031,6 +1249,7 @@ def main() -> int:
         sync_lerobot_info_frame_counts(root, info, episodes)
     elif unit_manifest:
         write_episodes_parquet(root, episodes, fps, task)
+        republish_unit_data_shards(root)
     if meta_only:
         marker_path.parent.mkdir(parents=True, exist_ok=True)
         marker_path.write_text(
@@ -1066,6 +1285,8 @@ def main() -> int:
         + "\n",
         encoding="utf-8",
     )
+    if not meta_only:
+        write_meta_stats_json(root)
     return 0
 
 

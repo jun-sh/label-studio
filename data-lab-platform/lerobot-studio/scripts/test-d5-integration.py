@@ -162,7 +162,7 @@ def _make_human_dataset(tmp_path: Path) -> Path:
                 "observation.state": pa.array([[0.0] * 6] * 3, type=pa.list_(pa.float32(), 6)),
                 "observation.pose": pa.array([[0, 0, 0, 0, 0, 0, 1.0]] * 3, type=pa.list_(pa.float32(), 7)),
                 "observation.hands": pa.array([[0.0] * 63] * 3, type=pa.list_(pa.float32(), 63)),
-                "action": pa.array([[0.0]] * 3, type=pa.list_(pa.float32(), 1)),
+                "action": pa.array([0.0, 0.0, 0.0], type=pa.float32()),
             }
         ),
         data_path,

@@ -15,7 +15,14 @@ export type DataVizNavigateMessage = {
   datasetId: string | null;
 };
 
-type DatasetRecord = { id: string; name: string };
+type DatasetRecord = { id: string; name: string; httpDatasetUrl?: string; url?: string };
+
+/** Datasets served from HTTP folder, not bundled zip (matches data-page.js). */
+const DATASET_URL_OVERRIDES: Record<string, string> = {
+  "ego-001": "/lerobot/api/sample/ego_001/dataset/",
+  ego_001: "/lerobot/api/sample/ego_001/dataset/",
+  egodome: "/lerobot/api/sample/ego_001/dataset/",
+};
 
 let datasetCatalogPromise: Promise<DatasetRecord[]> | null = null;
 
@@ -27,7 +34,26 @@ export function isValidDatasetSlug(slug: string): boolean {
   return DATASET_SLUG_RE.test(slug);
 }
 
+function pickDatasetOpenUrl(entry: DatasetRecord): string {
+  if (entry.httpDatasetUrl) return entry.httpDatasetUrl;
+  if (entry.url && entry.url.includes("/api/sample/") && entry.url.includes("/dataset/")) {
+    return entry.url;
+  }
+  return `sample://${entry.id}`;
+}
+
 export function datasetIdToSampleUrl(datasetId: string): string {
+  return DATASET_URL_OVERRIDES[datasetId] || `sample://${datasetId}`;
+}
+
+/** Resolve canonical open URL (HTTP dataset folder when not bundled as zip). */
+export async function resolveDatasetSampleUrl(datasetId: string): Promise<string> {
+  const override = DATASET_URL_OVERRIDES[datasetId];
+  if (override) return override;
+
+  const catalog = await fetchDatasetCatalog();
+  const row = catalog.find((entry) => entry.id === datasetId);
+  if (row) return pickDatasetOpenUrl(row);
   return `sample://${datasetId}`;
 }
 
@@ -81,12 +107,42 @@ export async function resolveDatasetSlug(slug: string): Promise<string | null> {
   return isValidDatasetSlug(decoded) ? decoded : null;
 }
 
-export function iframeShowsDataset(frame: HTMLIFrameElement, datasetId: string | null, lang: string): boolean {
+function normalizeEmbedUrlParam(raw: string | null): string {
+  if (!raw) return "";
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    try {
+      return new URL(raw).pathname + new URL(raw).search;
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+export function iframeShowsDataset(
+  frame: HTMLIFrameElement,
+  datasetId: string | null,
+  lang: string,
+  datasetUrl?: string | null,
+): boolean {
   try {
     const url = new URL(frame.src, window.location.origin);
     if (url.searchParams.get("datalab_embed") !== "1") return false;
     if ((url.searchParams.get("lang") || "en") !== lang) return false;
-    const sample = parseDatasetFromSampleUrl(url.searchParams.get("url"));
+    const rawParam = url.searchParams.get("url");
+    if (!datasetId) return !rawParam;
+    if (datasetUrl) {
+      const expected = normalizeEmbedUrlParam(
+        datasetUrl.startsWith("stream://")
+          ? `/lerobot/api/stream/${encodeURIComponent(datasetUrl.slice("stream://".length).replace(/\/$/, ""))}/`
+          : datasetUrl,
+      );
+      const actual = normalizeEmbedUrlParam(rawParam);
+      if (expected.startsWith("/lerobot/api/sample/") || expected.startsWith("/lerobot/api/stream/")) {
+        return actual === expected;
+      }
+    }
+    const sample = parseDatasetFromSampleUrl(rawParam);
     return sample === datasetId;
   } catch {
     return false;

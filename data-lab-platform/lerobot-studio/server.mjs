@@ -391,15 +391,15 @@ function injectBranding(html, search = "") {
   }
   inject +=
     '<link rel="shortcut icon" href="/static/images/favicon.ico" />' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=56"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=57"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=71"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=7"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-groups.css?v=8"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
-    '<script defer src="/lerobot/branding/overlay.js?v=61"></script>' +
-    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=71"></script>' +
+    '<script defer src="/lerobot/branding/overlay.js?v=62"></script>' +
+    '<script defer src="/lerobot/branding/overlay-collection-mode.js?v=72"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=27"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>' +

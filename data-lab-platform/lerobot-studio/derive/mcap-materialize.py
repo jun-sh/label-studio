@@ -27,7 +27,7 @@ def _bootstrap_h264_import() -> None:
 
 
 _bootstrap_h264_import()
-from h264_segment_boundary import contains_idr  # noqa: E402
+from h264_segment_boundary import contains_idr, iter_nal_units  # noqa: E402
 
 CAMERA_TOPICS: dict[str, str] = {
     "/ego/camera/front_left": "front_left",
@@ -103,11 +103,38 @@ def _first_idr_packet_index(packets: list[tuple[int, bytes]]) -> int | None:
     return None
 
 
+def _idr_parameter_prefix(idr_access_unit: bytes) -> bytes:
+    """SPS/PPS/IDR prefix from an IDR access unit for prepending to dependent P-frames."""
+    prefix = bytearray()
+    for nal in iter_nal_units(idr_access_unit):
+        if len(nal) < 5:
+            continue
+        start_len = 3 if nal[0:3] == b"\x00\x00\x01" else 4
+        ntype = nal[start_len] & 0x1F
+        if ntype in (5, 7, 8):
+            prefix.extend(nal)
+    return bytes(prefix)
+
+
+def _ensure_decodable_packet(idr_access_unit: bytes, payload: bytes) -> bytes:
+    if contains_idr(payload):
+        return payload
+    prefix = _idr_parameter_prefix(idr_access_unit)
+    if not prefix:
+        return payload
+    return prefix + payload
+
+
 def trim_h264_camera_streams(
     camera_h264: dict[str, list[tuple[int, bytes]]],
     rows: list[dict[str, Any]],
 ) -> tuple[dict[str, list[tuple[int, bytes]]], list[dict[str, Any]], dict[str, Any]]:
-    """Drop pre-IDR packets per camera; align rows to max(first_idr) and min remaining length."""
+    """Align all cameras to shared global packet index (max first IDR across cameras).
+
+    Output frame i uses source packet index align_skip + i on every camera so content
+    stays synchronous. When that packet is not an IDR, prepend SPS/PPS/IDR from the
+    camera's first IDR access unit so the bitstream remains decodable.
+    """
     sorted_items = {
         cam: sorted(items, key=lambda item: item[0]) for cam, items in camera_h264.items()
     }
@@ -120,11 +147,18 @@ def trim_h264_camera_streams(
             raise RuntimeError(f"h264_trim_no_idr:camera={cam}")
         first_idr[cam] = idx
 
-    trimmed = {cam: sorted_items[cam][first_idr[cam] :] for cam in sorted_items}
     align_skip = max(first_idr.values())
-    frame_count = min(len(trimmed[cam]) for cam in trimmed)
+    frame_count = min(len(sorted_items[cam]) - align_skip for cam in sorted_items)
     if frame_count <= 0:
         raise RuntimeError("h264_trim_no_frames_after_align")
+
+    out_streams: dict[str, list[tuple[int, bytes]]] = {}
+    for cam, items in sorted_items.items():
+        content = items[align_skip : align_skip + frame_count]
+        idr_au = items[first_idr[cam]][1]
+        out_streams[cam] = [
+            (ts, _ensure_decodable_packet(idr_au, raw)) for ts, raw in content
+        ]
 
     if len(rows) >= align_skip + frame_count:
         out_rows = [dict(row) for row in rows[align_skip : align_skip + frame_count]]
@@ -138,12 +172,12 @@ def trim_h264_camera_streams(
     for i, row in enumerate(out_rows):
         row["frame_index"] = i
 
-    out_streams = {cam: trimmed[cam][:frame_count] for cam in trimmed}
     meta = {
         "h264_trim_to_idr": True,
         "trim_align_skip_rows": align_skip,
+        "trim_content_packet_index": align_skip,
         "trim_first_idr_index": first_idr,
-        "trim_frames_dropped": {cam: first_idr[cam] for cam in first_idr},
+        "trim_frames_dropped": {cam: align_skip for cam in first_idr},
         "frame_count_before_trim": min(len(sorted_items[c]) for c in sorted_items),
         "frame_count_after_trim": frame_count,
     }
@@ -263,6 +297,9 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
                         continue
                     row = rows_by_index.setdefault(frame_index, {"frame_index": frame_index})
                     row["timestamp_ns"] = int(payload.get("timestamp_ns") or message.log_time)
+                    dev_ts = payload.get("primary_device_timestamp_ns")
+                    if dev_ts is not None:
+                        row["primary_device_timestamp_ns"] = int(dev_ts)
                     if payload.get("observation.state") is not None:
                         row["observation.state"] = payload["observation.state"]
                 elif topic == TOPIC_OBS_POSE:

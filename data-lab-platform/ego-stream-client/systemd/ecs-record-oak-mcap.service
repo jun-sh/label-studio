@@ -16,4 +16,4 @@ RestartSec=5
 TimeoutStopSec=300
 
 [Install]
-WantedBy=ecs-oak-mcap-capture-stack.target default.target
+WantedBy=ecs-oak-mcap-capture-stack.target

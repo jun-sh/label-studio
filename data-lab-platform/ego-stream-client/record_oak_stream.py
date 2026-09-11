@@ -160,6 +160,7 @@ def _append_capture_frame(
     preview_out: dict,
     imu6,
     camera_ts_offset_ns: dict[str, int] | None = None,
+    primary_device_timestamp_ns: int | None = None,
     imu_raw_batch: list | tuple | None = None,
 ) -> None:
     mode = _capture_codec_mode(recorder)
@@ -174,6 +175,7 @@ def _append_capture_frame(
         camera_jpegs=capture_out,
         imu6=imu6,
         camera_ts_offset_ns=camera_ts_offset_ns,
+        primary_device_timestamp_ns=primary_device_timestamp_ns,
         imu_raw_batch=imu_raw_batch,
     )
 
@@ -431,10 +433,15 @@ def main() -> None:
             imu_interpolate=imu_interpolate,
             shutdown_check=lambda: _SHUTDOWN,
         )
-        for ts_ns, capture_out, preview_out, imu6, cam_offsets in frame_iter:
+        for frame in frame_iter:
             if _SHUTDOWN:
                 print("capture_shutdown exit frame loop", flush=True)
                 break
+            if len(frame) == 6:
+                ts_ns, capture_out, preview_out, imu6, cam_offsets, primary_dev_ts = frame
+            else:
+                ts_ns, capture_out, preview_out, imu6, cam_offsets = frame
+                primary_dev_ts = None
             imu_raw_batch = recorder.pop_pending_imu_raw()
             emit_mono = time.monotonic()
             _append_capture_frame(
@@ -446,6 +453,7 @@ def main() -> None:
                 preview_out=preview_out,
                 imu6=imu6,
                 camera_ts_offset_ns=cam_offsets,
+                primary_device_timestamp_ns=primary_dev_ts,
                 imu_raw_batch=imu_raw_batch,
             )
             frame_count += 1

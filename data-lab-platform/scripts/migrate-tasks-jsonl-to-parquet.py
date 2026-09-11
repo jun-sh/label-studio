@@ -60,15 +60,10 @@ def migrate_root(root: Path, *, remove_jsonl: bool) -> str:
 
     try:
         from ego_platform.lerobot.io import write_tasks_parquet
-    except ImportError:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        meta.mkdir(parents=True, exist_ok=True)
-        pq.write_table(pa.Table.from_pylist(rows), parquet)
-        if remove_jsonl:
-            jsonl.unlink()
-        return "migrated-fallback"
+    except ImportError as exc:
+        raise RuntimeError(
+            "ego_platform required to migrate tasks.jsonl to canonical tasks.parquet"
+        ) from exc
 
     write_tasks_parquet(root, rows)
     if remove_jsonl and jsonl.is_file():

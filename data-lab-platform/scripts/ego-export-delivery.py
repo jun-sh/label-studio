@@ -552,7 +552,7 @@ def run_gate(
     stream_root = datalab_root / "data-storage" / "stream" / station
     slug = _slug_for_station(datalab_root, station)
     corpus_root = datalab_root / "data-storage" / "corpus" / slug
-    qc_base = datalab_root / "data-storage" / "lerobot-qc"
+    qc_base = datalab_root / "data-storage" / "lerobot-qc" / "sidecar"
     qc_manifest = _find_qc_manifest(corpus_root, qc_base)
     episode_map = _episode_map(stream_root)
     annotations = _load_annotations(corpus_root)
@@ -624,7 +624,7 @@ def run_export(
         print(f"FAIL: missing corpus {corpus_root}", file=sys.stderr)
         return 1
 
-    qc_base = datalab_root / "data-storage" / "lerobot-qc"
+    qc_base = datalab_root / "data-storage" / "lerobot-qc" / "sidecar"
     qc_manifest = _find_qc_manifest(corpus_root, qc_base)
     annotations = _load_annotations(corpus_root)
     episode_map = _episode_map(stream_root)

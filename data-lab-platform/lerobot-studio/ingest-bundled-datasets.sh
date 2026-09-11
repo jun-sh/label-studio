@@ -71,7 +71,8 @@ if [ -d "${SAMPLES}" ]; then
       rsync -a --delete "${SAMPLES}/ego_001/dataset/" "${BUNDLED}/ego_001/" || true
     else
       rm -rf "${BUNDLED}/ego_001"
-      cp -a "${SAMPLES}/ego_001/dataset" "${BUNDLED}/ego_001" || true
+      mkdir -p "${BUNDLED}/ego_001"
+      cp -a "${SAMPLES}/ego_001/dataset/." "${BUNDLED}/ego_001/" || true
     fi
   elif [ -d "${SAMPLES}/egodome/dataset" ]; then
     mkdir -p "${BUNDLED}/ego_001"
@@ -79,7 +80,8 @@ if [ -d "${SAMPLES}" ]; then
       rsync -a --delete "${SAMPLES}/egodome/dataset/" "${BUNDLED}/ego_001/" || true
     else
       rm -rf "${BUNDLED}/ego_001"
-      cp -a "${SAMPLES}/egodome/dataset" "${BUNDLED}/ego_001" || true
+      mkdir -p "${BUNDLED}/ego_001"
+      cp -a "${SAMPLES}/egodome/dataset/." "${BUNDLED}/ego_001/" || true
     fi
   fi
   if [ -f "${SAMPLES}/ego_001_hand_kp2d.json" ]; then
@@ -98,7 +100,8 @@ if [ -d "${SAMPLES}" ]; then
       rsync -a --delete "${SAMPLES}/ego_001_depth_preview_frames/" "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
     else
       rm -rf "${BUNDLED}/overlays/ego_001_depth_preview_frames"
-      cp -a "${SAMPLES}/ego_001_depth_preview_frames" "${BUNDLED}/overlays/" || true
+      mkdir -p "${BUNDLED}/overlays/ego_001_depth_preview_frames"
+      cp -a "${SAMPLES}/ego_001_depth_preview_frames/." "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
     fi
   elif [ -d "${SAMPLES}/egodome_depth_preview_frames" ]; then
     mkdir -p "${BUNDLED}/overlays/ego_001_depth_preview_frames"
@@ -106,7 +109,8 @@ if [ -d "${SAMPLES}" ]; then
       rsync -a --delete "${SAMPLES}/egodome_depth_preview_frames/" "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
     else
       rm -rf "${BUNDLED}/overlays/ego_001_depth_preview_frames"
-      cp -a "${SAMPLES}/egodome_depth_preview_frames" "${BUNDLED}/overlays/" || true
+      mkdir -p "${BUNDLED}/overlays/ego_001_depth_preview_frames"
+      cp -a "${SAMPLES}/egodome_depth_preview_frames/." "${BUNDLED}/overlays/ego_001_depth_preview_frames/" || true
     fi
   fi
   if [ -f "${SAMPLES}/DualPiper Pulling.zip" ]; then

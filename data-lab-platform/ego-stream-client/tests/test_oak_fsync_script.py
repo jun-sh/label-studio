@@ -255,17 +255,14 @@ def test_timeline_is_blind_without_an_imu_reference(gate) -> None:
     assert report["error"] == "no_imu_reference"
 
 
-def test_strict_fps_gate_cannot_see_compression(gate) -> None:
-    """Documents why the timeline check had to be added.
-
-    A 26fps and a 30fps capture produce identical grid spacing, so the existing gate
-    passes both. This is the blind spot, asserted so it cannot be silently reintroduced.
-    """
+def test_strict_fps_gate_flags_legacy_33ms_grid(gate) -> None:
+    """Legacy 33ms synthetic spacing is 30.303Hz and must not pass the 30Hz band."""
     grid, _ = _series(1800, 33.0, 68.58)
     report = gate.analyze_timestamp_series(grid)
     assert report["dt_mean_ms"] == pytest.approx(33.0)
     assert report["dt_std_ms"] == pytest.approx(0.0)
-    assert gate.strict_timestamp_series_ok(report) is True
+    assert report["eff_hz_ok"] is False
+    assert gate.strict_timestamp_series_ok(report) is False
 
 
 def test_timeline_from_writer_spans_matches_full_read(gate) -> None:

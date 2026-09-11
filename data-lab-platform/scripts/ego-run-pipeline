@@ -33,6 +33,7 @@ for arg in "$@"; do
 环境变量（oak 子模块覆盖，一般无需设置）:
   EGO_HANDS_FORCE=1
   EGO_WILOR_BACKEND=repo
+  EGO_HAMER_BACKEND=geopavlakos
   WILOR_ROOT=<ego-hand-pipeline>/third_party/wilor
   WILOR_IMPL=repo
 EOF
@@ -68,6 +69,8 @@ WILOR_ROOT="${WILOR_ROOT:-$PIPE_ROOT/third_party/wilor}"
 export WILOR_ROOT WILOR_IMPL="${WILOR_IMPL:-repo}"
 export EGO_WILOR_BACKEND="${EGO_WILOR_BACKEND:-repo}"
 export EGO_WILOR_DEVICE="${EGO_WILOR_DEVICE:-cuda:0}"
+export EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-}"
+export EGO_HAMER_DEVICE="${EGO_HAMER_DEVICE:-${EGO_WILOR_DEVICE:-cuda:0}}"
 PIPELINE_BACKEND="${EGO_PIPELINE_BACKEND:-oak}"
 OAK_MODE="${EGO_OAK_MODE:-hands}"
 export EGO_OAK_TRACK_MODE="${EGO_OAK_TRACK_MODE:-vio}"
@@ -119,6 +122,7 @@ _run_oak_convert_session() {
   (
     cd "$PLATFORM_ROOT" && \
     PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+    DATALAB_ROOT="$DATALAB_ROOT" WILOR_ROOT="$WILOR_ROOT" \
     "$PLATFORM_PYTHON" -m ego_platform.cli.convert \
       --station "$STATION" \
       --session "$SID" \
@@ -290,7 +294,7 @@ fi
 PROCESSED=0
 FAILED=0
 if [[ ${#PENDING[@]} -gt 0 ]]; then
-  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE}, batch=${EGO_CONVERT_BATCH:-1}, parallel=${EGO_CONVERT_PARALLEL:-1}, worker=${EGO_USE_CONVERT_WORKER:-0})"
+  log "待处理 session: ${PENDING[*]} (backend=${PIPELINE_BACKEND}, oak_mode=${OAK_MODE}, batch=${EGO_CONVERT_BATCH:-0}, parallel=${EGO_CONVERT_PARALLEL:-1}, worker=${EGO_USE_CONVERT_WORKER:-0})"
   if [[ "${EGO_USE_CONVERT_WORKER:-0}" == "1" ]]; then
     _ensure_convert_worker
     log "等待 convert worker 消化 ${#PENDING[@]} 个 session…"
@@ -298,7 +302,26 @@ if [[ ${#PENDING[@]} -gt 0 ]]; then
     for SID in "${PENDING[@]}"; do
       _count_convert_markers "$SID"
     done
-  elif [[ "$PIPELINE_BACKEND" == "oak" && "${EGO_CONVERT_BATCH:-1}" != "0" && ${#PENDING[@]} -gt 1 ]]; then
+  elif [[ "$PIPELINE_BACKEND" == "oak" && "${EGO_CONVERT_BATCH:-0}" != "0" && ${#PENDING[@]} -gt 1 ]]; then
+    if ! (
+      cd "$PLATFORM_ROOT" && \
+      PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+      "$PLATFORM_PYTHON" -c "import ego_platform.cli.convert_batch" 2>/dev/null
+    ); then
+      log "batch convert 不可用（缺少 ego_platform.cli.convert_batch），回退单 session convert"
+      for SID in "${PENDING[@]}"; do
+        set +e
+        _run_oak_convert_session "$SID"
+        rc=$?
+        set -e
+        if [[ "$rc" -ne 0 ]]; then
+          log "session ${SID} 失败 (exit ${rc})"
+          FAILED=$((FAILED + 1))
+          continue
+        fi
+        _count_convert_markers "$SID"
+      done
+    else
     log "batch convert（WiLoR 模型常驻，单进程多 session）…"
     _convert_force=()
     if [[ "${EGO_HANDS_FORCE:-}" == "1" ]]; then
@@ -324,6 +347,7 @@ if [[ ${#PENDING[@]} -gt 0 ]]; then
     for SID in "${PENDING[@]}"; do
       _count_convert_markers "$SID"
     done
+    fi
   elif [[ "$PIPELINE_BACKEND" == "oak" && "${EGO_CONVERT_PARALLEL:-1}" -gt 1 ]]; then
     log "parallel convert（workers=${EGO_CONVERT_PARALLEL}，每 worker 独立加载 WiLoR）…"
     _pids=()

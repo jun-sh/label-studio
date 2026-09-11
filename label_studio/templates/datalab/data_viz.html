@@ -48,12 +48,45 @@
       return match ? decodeURIComponent(match[1]) : null;
     }
 
+    var datasetUrlOverrides = {
+      "ego-001": "/lerobot/api/sample/ego_001/dataset/",
+      ego_001: "/lerobot/api/sample/ego_001/dataset/",
+      egodome: "/lerobot/api/sample/ego_001/dataset/",
+    };
+
+    function datasetOpenUrl(datasetId) {
+      if (!datasetId) return null;
+      if (datasetUrlOverrides[datasetId]) return datasetUrlOverrides[datasetId];
+      return "sample://" + datasetId;
+    }
+
+    function loadDatasetUrlOverrides() {
+      return fetch("/lerobot/api/datasets", { credentials: "same-origin" })
+        .then(function (response) {
+          if (!response.ok) return;
+          return response.json();
+        })
+        .then(function (items) {
+          if (!Array.isArray(items)) return;
+          items.forEach(function (entry) {
+            if (entry && entry.id && entry.httpDatasetUrl) {
+              datasetUrlOverrides[entry.id] = entry.httpDatasetUrl;
+            } else if (entry && entry.id && entry.url && String(entry.url).indexOf("/api/sample/") >= 0) {
+              datasetUrlOverrides[entry.id] = entry.url;
+            }
+          });
+        })
+        .catch(function () {
+          /* keep static fallback */
+        });
+    }
+
     function buildVisualizerSrc(lang, datasetId) {
       var params = new URLSearchParams();
       params.set("datalab_embed", "1");
       params.set("lang", lang || "en");
       if (datasetId) {
-        params.set("url", "sample://" + datasetId);
+        params.set("url", datasetOpenUrl(datasetId));
       }
       return "/lerobot/?" + params.toString();
     }
@@ -136,7 +169,6 @@
 
     normalizeDataVizUrl();
     attachDataVizParentUrlSync();
-    var SRC = buildVisualizerSrc(LANG, readDatasetFromPath());
 
     function hideDuplicateIframes() {
       document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
@@ -208,7 +240,7 @@
       layer.id = LAYER_ID;
       var iframe = document.createElement("iframe");
       iframe.id = FRAME_ID;
-      iframe.src = SRC;
+      iframe.src = buildVisualizerSrc(LANG, readDatasetFromPath());
       iframe.title = TITLE;
       iframe.allow = "fullscreen";
       layer.appendChild(iframe);
@@ -266,13 +298,15 @@
       }
     }
 
-    mountLayer();
-    attachLayoutListeners();
+    loadDatasetUrlOverrides().finally(function () {
+      mountLayer();
+      attachLayoutListeners();
 
-    [0, 50, 160, 300, 500, 800].forEach(function (ms) {
-      setTimeout(syncBounds, ms);
+      [0, 50, 160, 300, 500, 800].forEach(function (ms) {
+        setTimeout(syncBounds, ms);
+      });
+      setInterval(syncBounds, 500);
     });
-    setInterval(syncBounds, 500);
   })();
 </script>
 {% endblock %}

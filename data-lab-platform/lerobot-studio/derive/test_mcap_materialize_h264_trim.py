@@ -49,6 +49,7 @@ def test_trim_h264_aligns_rows_and_streams() -> None:
     ]
     streams, out_rows, meta = trim_h264_camera_streams(camera_h264, rows)
     assert meta["trim_align_skip_rows"] == 1
+    assert meta["trim_content_packet_index"] == 1
     assert meta["frame_count_after_trim"] == 2
     assert len(out_rows) == 2
     assert out_rows[0]["frame_index"] == 0
@@ -56,6 +57,9 @@ def test_trim_h264_aligns_rows_and_streams() -> None:
     for cam in streams:
         assert len(streams[cam]) == 2
         assert _mod.contains_idr(streams[cam][0][1])
+    # Both cameras must map output frame 0 to the same source packet index.
+    assert camera_h264["front_left"][1][1] in streams["front_left"][0][1]
+    assert camera_h264["front_right"][1][1] in streams["front_right"][0][1]
 
 
 def test_materialize_h264_mcap_trims_leading_p_frames(tmp_path: Path) -> None:

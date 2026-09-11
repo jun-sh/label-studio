@@ -215,6 +215,18 @@ meta/                                # info.json, episodes, intrinsics
 
 **验收：** `http://34:8080/collection?station=ego-001`
 
+### 7.4 Unit 布局 L2 发布（P2 publisher）
+
+多 session 时每个 unit 写入 `data/chunk-000/file-{episode_index}.parquet`。Unit 内 `derived/*/data.parquet` 使用**本地**行序（`episode_index=0`），**不能**直接给 `ego-process convert` 切片。
+
+derive 发布末尾必须执行：
+
+```bash
+python3 lerobot-studio/scripts/sync-stream-parquet.py --republish-units data-storage/stream/ego-001
+```
+
+该步骤从 `derived/sess_*/data.parquet` 重映射全局 `frame_index` / `episode_index`，并校验 manifest 一致性。实现：`derive/publisher.mjs` → `republishStreamDataShards()`（`publishSessionIfNeeded` / `rebuildView` 自动调用）。
+
 ---
 
 ## 8. Session 状态机（磁盘 marker）

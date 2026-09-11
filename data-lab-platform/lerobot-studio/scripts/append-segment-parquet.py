@@ -65,6 +65,19 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def _ensure_ego_platform_path() -> None:
+    here = Path(__file__).resolve()
+    candidates = [Path("/ego-platform/src")]
+    for parent in here.parents:
+        candidates.append(parent / "ego-platform" / "src")
+    for candidate in candidates:
+        if (candidate / "ego_platform").is_dir():
+            candidate_str = str(candidate)
+            if candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+            return
+
+
 def unpack_frame_bin(data: bytes) -> dict[str, bytes]:
     if len(data) < _FRAME_HEADER.size:
         raise ValueError("frame bin too short")
@@ -466,13 +479,15 @@ def write_tasks_parquet_if_missing(root: Path, info: dict) -> None:
         )
         if tasks_pq.is_file():
             return
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     label = str(info.get("robot_type") or root.name)
-    table = pa.Table.from_pylist([{"task_index": 0, "task": label}])
-    tasks_pq.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, tasks_pq)
+    _ensure_ego_platform_path()
+    try:
+        from ego_platform.lerobot.io import write_tasks_parquet
+    except ImportError as exc:
+        raise RuntimeError(
+            "ego_platform required to write canonical meta/tasks.parquet"
+        ) from exc
+    write_tasks_parquet(root, [{"task_index": 0, "task": label}])
 
 
 def _episode_index_value(dataset) -> int:

@@ -97,3 +97,67 @@ def test_episode_row_uses_session_registry_not_live_task() -> None:
 if __name__ == "__main__":
     test_episode_row_uses_session_registry_not_live_task()
     print("ok")
+
+
+def test_republish_unit_global_indices(tmp_path: Path | None = None) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "ego-001"
+        root.mkdir()
+        (root / "manifest").mkdir()
+        (root / "meta").mkdir()
+        (root / "derived" / "sess_a").mkdir(parents=True)
+        (root / "derived" / "sess_b").mkdir(parents=True)
+        (root / "meta" / "info.json").write_text(
+            json.dumps({"fps": 30, "features": _mod.SYSTEM_FEATURE_SPECS}, indent=2),
+            encoding="utf-8",
+        )
+        (root / "manifest" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "total_frames": 5,
+                    "episodes": [
+                        {
+                            "episode_index": 0,
+                            "session_id": "sess_a",
+                            "frames": 2,
+                            "from_index": 0,
+                            "to_index": 1,
+                        },
+                        {
+                            "episode_index": 1,
+                            "session_id": "sess_b",
+                            "frames": 3,
+                            "from_index": 2,
+                            "to_index": 4,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _unit_table(rows: int) -> pa.Table:
+            return pa.table(
+                {
+                    "frame_index": pa.array(list(range(rows)), type=pa.int64()),
+                    "episode_index": pa.array([0] * rows, type=pa.int64()),
+                    "index": pa.array(list(range(rows)), type=pa.int64()),
+                    "task_index": pa.array([0] * rows, type=pa.int64()),
+                    "timestamp": pa.array([float(i) / 30 for i in range(rows)], type=pa.float32()),
+                    "observation.state": pa.array([[0.0] * 6] * rows, type=pa.list_(pa.float32(), 6)),
+                }
+            )
+
+        pq.write_table(_unit_table(2), root / "derived" / "sess_a" / "data.parquet")
+        pq.write_table(_unit_table(3), root / "derived" / "sess_b" / "data.parquet")
+        count = _mod.republish_unit_data_shards(root)
+        assert count == 2
+        t0 = pq.read_table(root / "data" / "chunk-000" / "file-000.parquet")
+        t1 = pq.read_table(root / "data" / "chunk-000" / "file-001.parquet")
+        assert set(t0["episode_index"].to_pylist()) == {0}
+        assert set(t1["episode_index"].to_pylist()) == {1}
+        assert t1["frame_index"].to_pylist() == [2, 3, 4]
+        assert _mod.validate_unit_manifest_data_shards(root) == []

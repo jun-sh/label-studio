@@ -7,10 +7,10 @@ import { useFixedLocation, useParams } from "../../providers/RoutesProvider";
 import { attachDataVizLayoutListeners, FRAME_ID, LAYER_ID, mountLayer } from "./dataVizLayer";
 import {
   buildDataVizPath,
-  datasetIdToSampleUrl,
   iframeShowsDataset,
   parseDataVizPath,
   readDatasetQueryParam,
+  resolveDatasetSampleUrl,
   resolveDatasetSlug,
 } from "./dataVizRoute";
 import { attachDataVizUrlSync } from "./dataVizUrlSync";
@@ -28,6 +28,7 @@ export const DataVizPage = () => {
   const location = useFixedLocation();
   const params = useParams();
   const [resolvedDatasetId, setResolvedDatasetId] = useState<string | null>(null);
+  const [resolvedDatasetUrl, setResolvedDatasetUrl] = useState<string | null>(null);
 
   const rawDatasetSlug = useMemo(() => {
     if (params.datasetId) return decodeURIComponent(String(params.datasetId));
@@ -49,6 +50,7 @@ export const DataVizPage = () => {
 
     if (!rawDatasetSlug) {
       setResolvedDatasetId(null);
+      setResolvedDatasetUrl(null);
       return;
     }
 
@@ -66,6 +68,24 @@ export const DataVizPage = () => {
   }, [history, rawDatasetSlug]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    if (!resolvedDatasetId) {
+      setResolvedDatasetUrl(null);
+      return;
+    }
+
+    resolveDatasetSampleUrl(resolvedDatasetId).then((url) => {
+      if (cancelled) return;
+      setResolvedDatasetUrl(url);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedDatasetId]);
+
+  useEffect(() => {
     document.body.dataset.datalabDataPage = "1";
     const detachLayout = attachDataVizLayoutListeners();
     const detachUrlSync = attachDataVizUrlSync(history, FRAME_ID);
@@ -80,15 +100,15 @@ export const DataVizPage = () => {
 
   useEffect(() => {
     const lang = i18n.language?.toLowerCase().startsWith("zh") ? "zh" : "en";
-    const datasetUrl = resolvedDatasetId ? datasetIdToSampleUrl(resolvedDatasetId) : null;
+    const datasetUrl = resolvedDatasetUrl;
     const src = buildLerobotEmbedSrc(lang, datasetUrl);
     const title = t("dataViz.page_title");
     const frame = document.getElementById(FRAME_ID) as HTMLIFrameElement | null;
 
-    if (!frame || !iframeShowsDataset(frame, resolvedDatasetId, lang)) {
+    if (!frame || !iframeShowsDataset(frame, resolvedDatasetId, lang, datasetUrl)) {
       mountLayer(src, title);
     }
-  }, [i18n.language, resolvedDatasetId, t]);
+  }, [i18n.language, resolvedDatasetId, resolvedDatasetUrl, t]);
 
   return null;
 };

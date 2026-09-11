@@ -328,14 +328,19 @@
     btn.setAttribute("data-datalab-chrome", "theme-toggle");
   }
 
-  /** Collection embed: theme picker handled separately from parent chrome. */
+  /** Data viz embed: hide in-iframe theme picker (parent shell owns chrome). */
   function hideThemeStyleControl() {
-    /* no-op */
+    if (!isDataVizEmbed()) return;
+
+    document.querySelectorAll("button[aria-label]").forEach(function (btn) {
+      if (!isThemeTriggerButton(btn)) return;
+      hideThemeDropdownRoot(btn);
+    });
   }
 
-  /** Embed mode: hide language toggle on collection embed only (/data keeps it). */
+  /** Embed mode: hide in-iframe language toggle. */
   function hideLanguageSwitcher() {
-    if (!isDataLabEmbed() || isDataVizEmbed()) return;
+    if (!isDataLabEmbed()) return;
 
     document.querySelectorAll("button[aria-label]").forEach(function (btn) {
       var aria = btn.getAttribute("aria-label") || "";
@@ -464,7 +469,7 @@
     hideLanguageSwitcher();
   }
 
-  /** /data embed: keep full toolbar (browse, export, health, home, theme, language). */
+  /** /data embed: compact toolbar (browse, export, health, home; no theme/language). */
   function applyDataVizNavbarChrome() {
     if (!isDataVizEmbed()) return;
 
@@ -508,11 +513,6 @@
         side.style.pointerEvents = "";
       });
 
-      nav.querySelectorAll('[data-datalab-chrome="language-switch"]').forEach(function (btn) {
-        btn.style.display = "";
-        btn.removeAttribute("data-datalab-chrome");
-      });
-
       nav.querySelectorAll("div").forEach(function (node) {
         if (!isNavbarTitleCluster(node)) return;
         node.style.display = "flex";
@@ -524,6 +524,9 @@
         });
       });
     });
+
+    hideThemeStyleControl();
+    hideLanguageSwitcher();
   }
 
   /** Collection embed: collapse top toolbar; data viz keeps compact title bar. */
@@ -590,6 +593,7 @@
         initEmbedFlag();
         patchCollectionGoHome();
         hideThemeStyleControl();
+        hideLanguageSwitcher();
         applyDataVizNavbarChrome();
       });
       g.__DATALAB_GO_HOME_OBSERVER__.observe(document.body, {

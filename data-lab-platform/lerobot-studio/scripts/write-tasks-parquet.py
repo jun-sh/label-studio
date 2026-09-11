@@ -40,6 +40,8 @@ def write_tasks_parquet(root: Path, rows: list[dict]) -> None:
     except ImportError:
         pass
 
+    import pandas as pd
+
     meta = root / "meta"
     meta.mkdir(parents=True, exist_ok=True)
     normalized = [
@@ -48,8 +50,10 @@ def write_tasks_parquet(root: Path, rows: list[dict]) -> None:
     ]
     if not normalized:
         normalized = [{"task_index": 0, "task": ""}]
-    table = pa.Table.from_pylist(normalized)
-    _atomic_parquet_write(table, meta / "tasks.parquet")
+    tasks = [row["task"] for row in normalized]
+    task_indices = [row["task_index"] for row in normalized]
+    df = pd.DataFrame({"task_index": task_indices}, index=pd.Index(tasks, name="task"))
+    _atomic_parquet_write(pa.Table.from_pandas(df, preserve_index=True), meta / "tasks.parquet")
     legacy = meta / "tasks.jsonl"
     if legacy.is_file():
         legacy.unlink()

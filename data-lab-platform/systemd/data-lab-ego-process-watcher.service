@@ -12,6 +12,11 @@ WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/da
 Environment=STATION_ID=ego-001
 Environment=EGO_PROCESS_WATCH_STATIONS=ego-001,ego-mcap-pilot
 Environment=EGO_DATALAB_ROOT=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=HUGGINGFACE_HUB_ENDPOINT=https://hf-mirror.com
+Environment=HF_HOME=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/cache/huggingface
+Environment=HUGGINGFACE_HUB_CACHE=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/cache/huggingface/hub
+Environment=TRANSFORMERS_CACHE=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/cache/huggingface/hub
 ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/scripts/ego-process-watcher.sh once
 StandardOutput=journal
 StandardError=journal

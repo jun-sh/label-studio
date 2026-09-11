@@ -144,6 +144,8 @@ EGO_STRICT_SYNC_PREVIEW_DRAIN = os.environ.get(
 # Phase-2: depth socket capture rate divisor vs RGB (1=every frame, 2=half, etc.)
 OAK_DEPTH_FRAME_DIVISOR = max(1, int(os.environ.get("OAK_DEPTH_FRAME_DIVISOR", "1")))
 EGO_FRAME_INTERVAL_MS = int(os.environ.get("EGO_FRAME_INTERVAL_MS", "33"))
+_env_interval_ns = os.environ.get("EGO_FRAME_INTERVAL_NS", "").strip()
+EGO_FRAME_INTERVAL_NS = int(_env_interval_ns) if _env_interval_ns.isdigit() else 0
 EGO_IMU_INTERPOLATE = os.environ.get("EGO_IMU_INTERPOLATE", "1").strip().lower() in (
     "1",
     "true",
@@ -469,6 +471,16 @@ def infer_cam_props(sensor_name: str, supported_types: list) -> dict[str, Any]:
 
 def _device_ts_ns(ts_device: Any) -> int:
     return int(float(ts_device.total_seconds()) * 1e9)
+
+
+def resolve_frame_interval_ns(*, interval_ms: int | None = None) -> int:
+    """Return strict grid interval in nanoseconds (true 30Hz when legacy 33ms default)."""
+    if EGO_FRAME_INTERVAL_NS > 0:
+        return EGO_FRAME_INTERVAL_NS
+    ms = int(interval_ms if interval_ms is not None else EGO_FRAME_INTERVAL_MS)
+    if ms == 33:
+        return 33_333_333
+    return ms * 1_000_000
 
 
 def _frame_from_packet(pkt: Any) -> np.ndarray | None:
@@ -1628,10 +1640,11 @@ class Oak4pEgoRecorder:
         grid_epoch_ns: int = 0,
         shutdown_check: Callable[[], bool] | None = None,
     ):
-        """Yield strict grid frames: (t_grid_ns, capture, preview, imu6, camera_ts_offset_ns).
+        """Yield strict grid frames: (t_grid_ns, capture, preview, imu6, camera_ts_offset_ns, primary_device_ts_ns).
 
         OAK device_fps (typically 30) feeds per-camera ring buffers; a wall-clock gate emits
-        exactly one frame per interval_ms. timestamp_ns is the uniform grid (not raw device ts).
+        exactly one frame per interval. timestamp_ns is the uniform 30Hz grid; primary device
+        time is returned separately for MCAP preservation.
         """
         if self._device is None:
             raise RuntimeError("Call connect() first")
@@ -1641,8 +1654,7 @@ class Oak4pEgoRecorder:
         from ego_capture_studio.capture.imu_align import imu6_at_timestamp
         from ego_capture_studio.capture.lerobot_episode import _buffers_to_numpy
 
-        ms = int(interval_ms if interval_ms is not None else EGO_FRAME_INTERVAL_MS)
-        interval_ns = int(ms) * 1_000_000
+        interval_ns = resolve_frame_interval_ns(interval_ms=interval_ms)
         interval_s = interval_ns / 1e9
         use_imu_interp = EGO_IMU_INTERPOLATE if imu_interpolate is None else bool(imu_interpolate)
 
@@ -1815,7 +1827,7 @@ class Oak4pEgoRecorder:
             if reanchor_warmup_ticks > 0:
                 reanchor_warmup_ticks -= 1
             global_idx += 1
-            yield int(t_emit_ns), capture_out, preview_out, imu6, offsets
+            yield int(t_emit_ns), capture_out, preview_out, imu6, offsets, int(primary_ts_ns)
 
     def __enter__(self) -> "Oak4pEgoRecorder":
         self.connect()

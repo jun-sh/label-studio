@@ -13,7 +13,8 @@ a[href*="feishu" i] {
   display: none !important;
 }
 
-html[data-datalab-embed="1"]:not([data-datalab-data-viz-embed="1"]) [data-datalab-chrome="language-switch"] {
+html[data-datalab-embed="1"] [data-datalab-chrome="language-switch"],
+html[data-datalab-data-viz-embed="1"] [data-datalab-chrome="theme-toggle"] {
   display: none !important;
 }
 
@@ -54,7 +55,7 @@ html[data-datalab-embed="1"] body {
   overflow: hidden !important;
 }
 
-/* /data embed: full LeRobot toolbar (browse, export, health, title) like io-ai.tech */
+/* /data embed: LeRobot toolbar (browse, export, health, title; theme/language hidden) */
 html[data-datalab-data-viz-embed="1"] #lerobot-root,
 html[data-datalab-data-viz-embed="1"] body > #root,
 html[data-datalab-data-viz-embed="1"] body > div#root {

@@ -39,14 +39,15 @@
 }
 
 #datalab-station-theme-pill {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border-radius: 9999px;
-  border: 1px solid var(--color-neutral-border, #e1ded5);
-  background: var(--color-neutral-surface, #f5f4ed);
-  gap: 2px;
-  margin-left: auto;
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+#datalab-vendor-meta {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 
 #datalab-station-toolbar button.datalab-station-mode-seg,

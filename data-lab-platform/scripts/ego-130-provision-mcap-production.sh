@@ -188,13 +188,16 @@ elif [[ -f "\${CACHE_ROOT}/segments/checkpoint.json" && -f "\${CK}" ]]; then
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable ecs-record-oak-mcap.service
-systemctl --user enable ecs-oak-mcap-capture-stack.target
+# Capture is manual-only (phone UI). Never enable for boot — avoids post-reboot auto-record + beep.
+systemctl --user stop ecs-oak-mcap-capture-stack.target 2>/dev/null || true
+systemctl --user disable ecs-record-oak-mcap.service 2>/dev/null || true
+systemctl --user disable ecs-oak-mcap-capture-stack.target 2>/dev/null || true
 systemctl --user restart ecs-ego-web.service
 
 echo "OK: MCAP stack aligned"
-echo "  capture target: ecs-oak-mcap-capture-stack.target"
-echo "  record unit:    ecs-record-oak-mcap.service"
+echo "  capture target: ecs-oak-mcap-capture-stack.target (disabled at boot)"
+echo "  record unit:    ecs-record-oak-mcap.service (disabled at boot)"
+echo "  start capture:  phone UI :8080, or: systemctl --user start ecs-oak-mcap-capture-stack.target"
 echo "  checkpoint:     \${CK}"
 REMOTE
 )"
@@ -204,4 +207,4 @@ echo "==> Hotspot watchdog (AX201 AP recovery)"
 bash "${ROOT}/scripts/ego-130-provision-hotspot-watchdog.sh" "${TARGET}" || \
   echo "WARN: hotspot watchdog provision failed (run manually: ego-130-provision-hotspot-watchdog.sh ${TARGET})"
 echo "Verify: bash data-lab-platform/scripts/ego-station-doctor.sh ${STATION_ID} ${TARGET}"
-echo "Record: phone UI or systemctl --user start ecs-oak-mcap-capture-stack.target"
+echo "Record: phone UI :8080 (capture disabled at boot; manual start only)"

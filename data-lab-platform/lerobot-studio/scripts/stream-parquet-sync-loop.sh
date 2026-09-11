@@ -31,7 +31,9 @@ while true; do
     if station_skipped "$station"; then
       continue
     fi
-    if [ -f "${d}data/chunk-000/file-000.jsonl" ] || [ -f "${d}meta/info.json" ]; then
+    if [ -f "${d}manifest/manifest.json" ]; then
+      python3 /scripts/sync-stream-parquet.py --republish-units "$d" || true
+    elif [ -f "${d}data/chunk-000/file-000.jsonl" ] || [ -f "${d}meta/info.json" ]; then
       python3 /scripts/sync-stream-parquet.py --meta-only "$d" || true
     fi
   done

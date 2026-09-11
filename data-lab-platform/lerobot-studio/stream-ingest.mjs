@@ -2553,7 +2553,10 @@ function loadTasksParquetRows(root) {
     py,
     [
       "-c",
-      "import sys,json,pyarrow.parquet as pq; t=pq.read_table(sys.argv[1]); print(json.dumps([{c:t[c][i].as_py() for c in t.column_names} for i in range(t.num_rows)]))",
+      "import sys,json,pandas as pd; df=pd.read_parquet(sys.argv[1]); "
+      + "('task' in df.columns) and sys.exit('legacy tasks.parquet format'); "
+      + "rows=[{'task_index':int(row.task_index),'task':str(task)} for task,row in df.iterrows()]; "
+      + "print(json.dumps(rows))",
       tasksPath,
     ],
     { ...parquetSpawnOptions(), encoding: "utf8" },

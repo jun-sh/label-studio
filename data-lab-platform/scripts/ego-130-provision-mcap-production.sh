@@ -35,22 +35,44 @@ fi
 
 _run_remote() {
   local script="$1"
-  local timeout="${2:-600}"
+  local timeout="${2:-${EGO_130_PROVISION_REMOTE_TIMEOUT:-1800}}"
   if [[ -n "${RC_CAPTURE_PASS:-}" ]]; then
     RC_CAPTURE_PASS="${RC_CAPTURE_PASS}" TARGET="$TARGET" REMOTE_BODY="$script" REMOTE_TIMEOUT="$timeout" python3 - <<'PY'
-import os, paramiko
+import os
+import select
+import sys
+import paramiko
+
 target = os.environ["TARGET"]
 user, _, host = target.partition("@")
 body = os.environ["REMOTE_BODY"]
-timeout = int(os.environ.get("REMOTE_TIMEOUT", "600"))
-c = paramiko.SSHClient()
-c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=30)
-_, o, e = c.exec_command(f"bash -s <<'REMOTE'\n{body}\nREMOTE", timeout=timeout)
-out = (o.read() + e.read()).decode()
-print(out, end="")
-rc = o.channel.recv_exit_status()
-c.close()
+timeout = int(os.environ.get("REMOTE_TIMEOUT", "1800"))
+client = paramiko.SSHClient()
+client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+client.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=30)
+chan = client.get_transport().open_session()
+chan.settimeout(1.0)
+chan.exec_command(f"bash -s <<'REMOTE'\n{body}\nREMOTE")
+deadline = __import__("time").time() + timeout
+while True:
+    if chan.exit_status_ready():
+        break
+    if __import__("time").time() > deadline:
+        chan.close()
+        client.close()
+        print("remote command timed out", file=sys.stderr)
+        raise SystemExit(124)
+    r, _, _ = select.select([chan], [], [], 1.0)
+    if r:
+        try:
+            chunk = chan.recv(4096)
+        except Exception:
+            chunk = b""
+        if chunk:
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.flush()
+rc = chan.recv_exit_status()
+client.close()
 raise SystemExit(rc)
 PY
     return $?
@@ -230,7 +252,7 @@ echo "  record unit:    ecs-record-oak-mcap.service (disabled at boot)"
 echo "  start capture:  phone UI :8080, or: systemctl --user start ecs-oak-mcap-capture-stack.target"
 echo "  checkpoint:     \${CK}"
 REMOTE
-)"
+)" "${EGO_130_PROVISION_REMOTE_TIMEOUT:-1800}"
 
 echo "Done."
 echo "==> Hotspot watchdog (AX201 AP recovery)"

@@ -48,6 +48,33 @@ class RingOverflowStats:
     def note_main_overflow(self, cam_name: str) -> None:
         self._main[cam_name] += 1
 
+    def snapshot(self) -> tuple[dict[str, int], dict[str, int]]:
+        return (
+            {cam: int(count) for cam, count in self._parallel.items()},
+            {cam: int(count) for cam, count in self._main.items()},
+        )
+
+    def delta_since(
+        self,
+        baseline: tuple[dict[str, int], dict[str, int]] | None,
+    ) -> dict[str, int]:
+        if baseline is None:
+            parallel_base: dict[str, int] = {}
+            main_base: dict[str, int] = {}
+        else:
+            parallel_base, main_base = baseline
+        out: dict[str, int] = {}
+        for cam in sorted(set(self._parallel) | set(self._main) | set(parallel_base) | set(main_base)):
+            delta = (
+                int(self._parallel.get(cam, 0))
+                - int(parallel_base.get(cam, 0))
+                + int(self._main.get(cam, 0))
+                - int(main_base.get(cam, 0))
+            )
+            if delta:
+                out[cam] = delta
+        return out
+
     def report(self, *, prefix: str = "ingest_overflow_final") -> None:
         if not self._parallel and not self._main:
             return

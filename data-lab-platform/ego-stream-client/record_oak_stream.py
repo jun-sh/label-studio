@@ -356,6 +356,17 @@ def _station_id() -> str:
     return os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
 
 
+def _capture_sync_mode_label() -> str:
+    from ego_capture_studio.capture.capture_h264_production import (
+        capture_sync_mode,
+        h264_production_backend_enabled,
+    )
+
+    if h264_production_backend_enabled():
+        return capture_sync_mode() or "fsync_quad"
+    return "egoverse_30hz"
+
+
 def main() -> None:
     global _SHUTDOWN, _WARM_IDLE_REQUEST, _WARM_RESUME_REQUEST
     _SHUTDOWN = False
@@ -366,6 +377,10 @@ def main() -> None:
     if _oak_warm_idle_enabled():
         signal.signal(signal.SIGUSR1, _request_warm_idle)
         signal.signal(signal.SIGUSR2, _request_warm_resume)
+
+    from ego_capture_studio.capture.capture_h264_production import install_h264_production_backend
+
+    install_h264_production_backend(sys.modules[__name__])
 
     station = _station_id()
     p = argparse.ArgumentParser(
@@ -560,7 +575,7 @@ def main() -> None:
                 f"warm_resume={int(warm_resume)} "
                 f"fps_target={args.fps} device_fps={device_fps} imu_hz={args.imu_hz} "
                 f"hw_jpeg={recorder.use_hw_jpeg} hw_h264={recorder.use_hw_h264} "
-                f"sync_mode=egoverse_30hz "
+                f"sync_mode={_capture_sync_mode_label()} "
                 f"interval_ms={interval_ms} imu_interpolate={int(imu_interpolate)}",
                 flush=True,
             )

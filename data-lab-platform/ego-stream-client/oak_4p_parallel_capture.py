@@ -182,6 +182,23 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
         self._ingest_overflow = RingOverflowStats()
         self._device_ingest_diag = DeviceIngestDiagnostics() if device_ingest_diag_enabled() else None
+        self._overflow_health_baseline: tuple[dict[str, int], dict[str, int]] | None = None
+
+    def begin_segment_health_window(self) -> None:
+        super().begin_segment_health_window()
+        if getattr(self, "_ingest_overflow", None) is not None:
+            self._overflow_health_baseline = self._ingest_overflow.snapshot()
+
+    def ingest_health(self) -> dict[str, Any]:
+        health = super().ingest_health()
+        overflow = getattr(self, "_ingest_overflow", None)
+        if overflow is None:
+            return health
+        ring_ovf = dict(health.get("ring_ovf") or {})
+        for cam, delta in overflow.delta_since(self._overflow_health_baseline).items():
+            ring_ovf[cam] = int(ring_ovf.get(cam, 0)) + int(delta)
+        health["ring_ovf"] = ring_ovf
+        return health
 
     def _poc_ring_len(self, oak_socket: str) -> int:
         from ego_capture_studio.capture.ingest_buffer import poc_ring_len_for_oak

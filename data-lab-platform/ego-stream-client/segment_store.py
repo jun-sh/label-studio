@@ -419,8 +419,7 @@ def _assess_segment_integrity(
             )
             if total_ovf > ovf_threshold:
                 issues.append(f"capture_ring_overflow:total={total_ovf}")
-            elif total_ovf > 0:
-                qc_issues.append(f"capture_ring_overflow:total={total_ovf}")
+            # Below threshold: recorded in capture_health only (stress/soak), not upload-blocking.
         quad_skew = int(capture_health.get("quad_skew_events") or 0)
         # Sequential lockstep can show multi-ms spread at pop time even when FSYNC is
         # healthy; only reject when rings overflowed in the same segment window.

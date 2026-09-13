@@ -515,7 +515,6 @@
   var previewPollTimer = null;
   var previewPollMs = __PREVIEW_POLL_MS__;
   var actionInFlight = false;
-  var pendingStart = false;
   var lastState = "idle";
   var previewWantLive = false;
   var previewHasFrame = false;
@@ -665,14 +664,6 @@
 
     if (st === "idle") {
       setStatusLink("idle");
-      if (pendingStart && !actionInFlight) {
-        setHeader("设备待机中", "保存完成，正在开始下一段…", { spinner: true });
-        setBtnMode("start", "启动中…", true);
-        stopPreview();
-        updatePreviewOverlays(st, data);
-        maybeStartQueued();
-        return;
-      }
       setHeader("设备待机中", data.msg || "等待连接", { subClass: data.msg ? "err" : "", spinner: false });
       setBtnMode("start", "开始录制", false);
       stopPreview();
@@ -707,13 +698,8 @@
       setAbandonVisible(false);
     } else if (st === "stopping") {
       setStatusLink("busy");
-      if (pendingStart) {
-        setHeader("正在保存上一段", "保存完成后将自动开始下一段…", { spinner: true });
-        setBtnMode("start", "即将开始…", true);
-      } else {
-        setHeader("正在保存数据", "保存完成后可开始下一段", { spinner: true });
-        setBtnMode("start", "开始下一段", false);
-      }
+      setHeader("正在保存数据", data.msg || "请勿断电", { spinner: true });
+      setBtnMode("stop", "保存中…", true);
       stopPreview();
       showPreviewPlaceholder("正在写入磁盘，请勿断电…");
       updatePreviewOverlays(st, data);
@@ -728,10 +714,10 @@
       setAbandonVisible(false);
     }
 
-    if (st === "stopping") {
-      mainBtn.disabled = !!pendingStart;
+    if (st === "stopping" || st === "starting") {
+      mainBtn.disabled = true;
       abandonBtn.disabled = true;
-    } else if (st !== "starting" && st !== "stopping" && !actionInFlight) {
+    } else if (!actionInFlight) {
       mainBtn.disabled = false;
       abandonBtn.disabled = false;
     }
@@ -791,32 +777,13 @@
     previewImg.removeAttribute("src");
   }
 
-  function queueStart() {
-    if (pendingStart) return;
-    pendingStart = true;
-    fetchStatus();
-  }
-
-  function maybeStartQueued() {
-    if (!pendingStart || actionInFlight) return;
-    pendingStart = false;
-    doAction("/api/capture/start", { fromQueue: true });
-  }
-
   function doAction(path, opts) {
     opts = opts || {};
-    if (path === "/api/capture/start" && !opts.fromQueue) {
-      if (actionInFlight || lastState === "stopping" || lastState === "starting") {
-        queueStart();
-        return;
-      }
-    }
     if (actionInFlight) return;
     actionInFlight = true;
     mainBtn.disabled = true;
     abandonBtn.disabled = true;
     if (path === "/api/capture/abandon") {
-      pendingStart = false;
       setStatusLink("busy");
       setHeader("正在放弃录制", "请稍候…", { spinner: true });
       setAbandonVisible(false);
@@ -839,17 +806,7 @@
           setStatusLink("error");
           setHeader("放弃失败", res.msg || "请稍后重试", { subClass: "err" });
         }
-        if (path === "/api/capture/stop" && res.success) {
-          if (pendingStart) {
-            return fetchStatus().then(function () { maybeStartQueued(); });
-          }
-        }
         if (path === "/api/capture/start" && !res.success) {
-          if (pendingStart || /保存|稍候|退出|停止/.test(res.msg || "")) {
-            queueStart();
-            setTimeout(maybeStartQueued, 600);
-            return fetchStatus();
-          }
           setStatusLink("error");
           setHeader("操作失败", res.msg, { subClass: "err" });
         }
@@ -860,10 +817,6 @@
 
   mainBtn.addEventListener("click", function () {
     var mode = mainBtn.getAttribute("data-mode");
-    if (lastState === "stopping" && mode === "start") {
-      queueStart();
-      return;
-    }
     if (mode === "stop") doAction("/api/capture/stop");
     else if (mode === "start") doAction("/api/capture/start");
   });

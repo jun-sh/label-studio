@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { readJsonl } from "./io.mjs";
 import { appendJournalEvent, rebuildManifestFromDisk, readJournal } from "./manifest.mjs";
 import { episodeChunkPaths } from "./unit-paths.mjs";
-import { appendH264AnnexBStream, buildUnitFrameMap } from "./unit.mjs";
+import { appendH264AnnexBStream, buildUnitFrameMap, sliceAnnexBFromFirstIdr } from "./unit.mjs";
 import { chunkSortedIndices } from "./encode-pool.mjs";
 import { hardlinkOrCopy, publishUnitEpisode } from "./publisher.mjs";
 import { deriveLayout } from "./station-context.mjs";
@@ -69,6 +69,17 @@ describe("P2 unit h264 multi-segment", () => {
     assert.equal(appendH264AnnexBStream(dest, seg1), true);
     assert.equal(appendH264AnnexBStream(dest, seg2), true);
     assert.equal(fs.readFileSync(dest, "utf8"), "segment1segment2");
+  });
+
+  it("sliceAnnexBFromFirstIdr drops leading P-slice prefix", () => {
+    const sps = Buffer.from([0, 0, 0, 1, 0x67, 0x01]);
+    const pps = Buffer.from([0, 0, 0, 1, 0x68, 0x01]);
+    const idr = Buffer.from([0, 0, 0, 1, 0x65, 0x99]);
+    const pframe = Buffer.from([0, 0, 0, 1, 0x41, 0x01]);
+    const seg = Buffer.concat([pframe, sps, pps, idr, Buffer.from([0, 0, 0, 1, 0x41, 0x02])]);
+    const sliced = sliceAnnexBFromFirstIdr(seg);
+    assert.ok(sliced.indexOf(pframe) < 0);
+    assert.ok(sliced.indexOf(idr) >= 0);
   });
 });
 

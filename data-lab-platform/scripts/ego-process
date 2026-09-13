@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ego-process — 34 平台一句话：derive 批量 + convert + 轻量 Viewer 同步
+# ego-process — 34 平台一句话：derive 批量 + L2 干净语料 + L3 预览 + Viewer 同步
 #
 # 用法: ego-process <station> [选项]
 # 示例: ego-process ego-001
@@ -9,12 +9,16 @@ STATION=""
 SKIP_DERIVE=0
 SKIP_SYNC=0
 SKIP_GATE=0
+SKIP_CONVERT=0
+RUN_WILOR=0
 FORCE_MANUAL_DERIVE=0
 RUN_DELIVERY_EXPORT=0
 
 for arg in "$@"; do
   case "$arg" in
     --skip-derive) SKIP_DERIVE=1 ;;
+    --skip-convert) SKIP_CONVERT=1 ;;
+    --wilor|--convert-hands) RUN_WILOR=1 ;;
     --skip-sync) SKIP_SYNC=1 ;;
     --skip-gate) SKIP_GATE=1 ;;
     --force-manual-derive) FORCE_MANUAL_DERIVE=1 ;;
@@ -25,29 +29,30 @@ for arg in "$@"; do
 
   <station>              采集站 ID，如 ego-001（只处理该站，非全站混跑）
   --skip-derive          跳过 derive（已全部 READY 时）
+  --skip-convert         跳过 L2/L3/Viewer 后处理（仅 derive，压测/快速验证）
+  --wilor                跑完整 WiLoR convert（非日常；L4 请用 ego-delivery-run）
   --force-manual-derive  强制手动 ego-derive run（忽略 async worker）
   --skip-sync            跳过 Viewer ingest（调试用）
   --skip-gate            跳过发布门禁
   --export               运行商业化 order 导出（默认跳过；QC/标注完成后使用）
 
-步骤:
-  1. derive   manual 模式：批量 ego-derive run
-              async 模式：等待 derive-worker 派生至 READY
-  2. convert  增量后处理（ego-run-pipeline，不含 full deploy）
-  3. sync     docker exec … ingest-bundled-datasets.sh
-  4. gate     ego-viewer-publish-gate（可选）
+步骤（产品默认 L2/L3 路径）:
+  1. derive   manual/async 派生至 READY
+  2. L2       ego-run-l2（passthrough append → corpus/ego_001，无 WiLoR）
+  3. purity   ego-lerobot-purity-gate
+  4. preview  ego-viewer-preview（MediaPipe + depth → samples/）
+  5. sync     ingest-bundled-datasets
+  6. gate     ego-viewer-publish-gate（L2 模式，不要求 MANO backend）
 
-日常 SOP（生产默认：manual + legacy gate）:
+日常 SOP（生产默认）:
   130:  ego-upload ego-001
-  34:   bash data-lab-platform/scripts/ego-derive-mode.sh manual   # 首次或 recreate 后
   34:   ego-process ego-001
-  34:   bash data-lab-platform/scripts/ego-stress-fast.sh          # 34 端冒烟（~30s）
+
+L4 手动交付（WiLoR / HaMeR）:
+  ego-delivery-run ego-001 --algo wilor
 
 商业化交付（QC + 标注完成后）:
   EGO_DERIVE_COMMERCIAL_GATE=1 ego-process ego-001 --export
-
-实验/扩容（非日常）:
-  bash data-lab-platform/scripts/ego-derive-mode.sh async
 EOF
       exit 0
       ;;
@@ -83,6 +88,9 @@ SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 DERIVE_SH="${SCRIPT_DIR}/ego-derive"
 WAIT_DERIVE_SH="${SCRIPT_DIR}/ego-wait-derive-sessions.sh"
 PIPELINE_SH="${SCRIPT_DIR}/ego-run-pipeline"
+L2_SH="${SCRIPT_DIR}/ego-run-l2"
+PURITY_SH="${SCRIPT_DIR}/ego-lerobot-purity-gate.sh"
+PREVIEW_SH="${SCRIPT_DIR}/ego-viewer-preview"
 GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
 VIEWER_SYNC_SH="${SCRIPT_DIR}/ego-viewer-sync.sh"
 LEROBOT_CONTAINER="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
@@ -123,6 +131,10 @@ _is_async_derive_mode() {
 }
 
 if [[ "$SKIP_DERIVE" -eq 0 ]]; then
+  mapfile -t CLEARED < <(_py clear-stale-derive "$STATION" --apply 2>/dev/null || true)
+  if [[ ${#CLEARED[@]} -gt 0 ]]; then
+    log "cleared stale derive state: ${CLEARED[*]}"
+  fi
   mapfile -t REQUEUED < <(_py requeue-failed "$STATION" --apply 2>/dev/null || true)
   if [[ ${#REQUEUED[@]} -gt 0 ]]; then
     log "requeue mux-failed sessions (${#REQUEUED[@]}): ${REQUEUED[*]}"
@@ -166,13 +178,54 @@ if [[ "$DERIVE_FAILED" -gt 0 ]]; then
   die "有 ${DERIVE_FAILED} 个 session derive 失败，修复后重跑 ego-process ${STATION}。日志: ${RUN_LOG}"
 fi
 
-log "后处理 convert（增量，跳过 full deploy）…"
-set +e
-EGO_AUTO_VIEWER_SYNC=1 bash "$PIPELINE_SH" "$STATION" --skip-deploy --skip-gate 2>&1 | tee -a "$RUN_LOG"
-pipe_rc=${PIPESTATUS[0]}
-set -e
-if [[ "$pipe_rc" -ne 0 ]]; then
-  die "后处理失败 (exit ${pipe_rc})。日志: ${RUN_LOG}"
+if [[ "$SKIP_CONVERT" -eq 1 ]]; then
+  ready_n=$(find "${DATALAB_ROOT}/data-storage/stream/${STATION}/state/sessions" -name 'session.READY' 2>/dev/null | wc -l)
+  log "跳过 L2/L3 后处理（--skip-convert）READY=${ready_n} derive_ok=${DERIVED}"
+  log "日志: ${RUN_LOG}"
+  exit 0
+fi
+
+if [[ "$RUN_WILOR" -eq 1 || "${EGO_RUN_WILOR_CONVERT:-0}" == "1" ]]; then
+  log "⚠️  WiLoR convert 路径（非日常；L4 推荐 ego-delivery-run --algo wilor）…"
+  set +e
+  EGO_AUTO_VIEWER_SYNC=1 EGO_OAK_MODE=hands EGO_L2_PUBLISH=0 EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-1}" \
+    bash "$PIPELINE_SH" "$STATION" --skip-deploy --skip-gate 2>&1 | tee -a "$RUN_LOG"
+  pipe_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$pipe_rc" -ne 0 ]]; then
+    die "WiLoR 后处理失败 (exit ${pipe_rc})。日志: ${RUN_LOG}"
+  fi
+else
+  log "L2 干净语料 append（passthrough，无 WiLoR）…"
+  set +e
+  bash "$L2_SH" "$STATION" 2>&1 | tee -a "$RUN_LOG"
+  l2_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$l2_rc" -ne 0 ]]; then
+    die "L2 append 失败 (exit ${l2_rc})。日志: ${RUN_LOG}"
+  fi
+
+  if [[ -x "$PURITY_SH" ]]; then
+    log "L2 corpus purity gate…"
+    set +e
+    EGO_STATION="$STATION" bash "$PURITY_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+    purity_rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$purity_rc" -ne 0 ]]; then
+      die "L2 purity gate 未通过。日志: ${RUN_LOG}"
+    fi
+  fi
+
+  if [[ -x "$PREVIEW_SH" ]]; then
+    log "L3 viewer preview（MediaPipe + depth → samples/）…"
+    set +e
+    bash "$PREVIEW_SH" "$STATION" 2>&1 | tee -a "$RUN_LOG"
+    preview_rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$preview_rc" -ne 0 ]]; then
+      log "⚠️  L3 preview 部分失败 (exit ${preview_rc}) — 不阻塞 L2"
+    fi
+  fi
 fi
 
 PIPELINE_DID_SYNC=0
@@ -195,9 +248,10 @@ fi
 
 if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
   SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
-  if [[ -f "$SAMPLES_ZIP" ]]; then
-    log "Viewer 发布门禁…"
-    EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+  HTTP_DATASET="${DATALAB_ROOT}/data-storage/samples/${SLUG}/dataset"
+  if [[ -f "$SAMPLES_ZIP" || -d "$HTTP_DATASET" ]]; then
+    log "Viewer 发布门禁（L2 模式）…"
+    EGO_STATION="$STATION" EGO_VIEWER_PUBLISH_L2=1 bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
   fi
 fi
 

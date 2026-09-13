@@ -25,6 +25,7 @@ from ego_capture_studio.capture.segment_upload import (
     list_ready_archives,
     upload_pending_segments,
     upload_ready_archives,
+    upload_session_until_complete,
 )
 from ego_capture_studio.capture.upload_status import (
     LiveStatusPrinter,
@@ -117,6 +118,19 @@ def main() -> None:
         action="store_true",
         help="Disable in-terminal live progress panel",
     )
+    p.add_argument(
+        "--until-complete",
+        action="store_true",
+        default=os.environ.get("EGO_UPLOAD_UNTIL_COMPLETE", "0").strip().lower()
+        in ("1", "true", "yes"),
+        help="Wait for segment finalize and upload all CLOSED segments before session seal",
+    )
+    p.add_argument(
+        "--no-until-complete",
+        action="store_false",
+        dest="until_complete",
+        help="Single-pass upload (legacy); may leave multi-segment sessions incomplete",
+    )
     args = p.parse_args()
 
     if args.status_only:
@@ -192,7 +206,7 @@ def main() -> None:
                     skip_init=True,
                 )
             else:
-                if not pending:
+                if not pending and not args.until_complete:
                     print(
                         "nothing to upload in segments/; try --source ready or ego-export first",
                         file=sys.stderr,
@@ -206,16 +220,24 @@ def main() -> None:
                     _ensure_session(uploader, root, session_id, task)
                 limit = args.limit if args.limit > 0 else None
                 print(
-                    f"source=segments pending={len(pending)} session={session_id}",
+                    f"source=segments pending={len(pending)} session={session_id} "
+                    f"until_complete={args.until_complete}",
                     file=sys.stderr,
                     flush=True,
                 )
-                n = upload_pending_segments(
-                    root=root,
-                    session_id=session_id,
-                    uploader=uploader,
-                    limit=limit,
-                )
+                if args.until_complete:
+                    n = upload_session_until_complete(
+                        root=root,
+                        session_id=session_id,
+                        uploader=uploader,
+                    )
+                else:
+                    n = upload_pending_segments(
+                        root=root,
+                        session_id=session_id,
+                        uploader=uploader,
+                        limit=limit,
+                    )
         print(f"uploaded_segments={n}", file=sys.stderr, flush=True)
         if n > 0:
             kick = kick_derive_after_upload(uploader)

@@ -12,6 +12,7 @@ import {
   canonicalVideoKey,
   featureMatchesText,
   handsToDraw,
+  isMediapipePreview,
   isValidJoint,
   normalizeEpisodeNumber,
   parseEpisodeFromLabel,
@@ -689,21 +690,32 @@ if (!g.__DATALAB_HAND_KP2D__) {
     const fp = activeSessionFingerprint();
     const epTag = fp ? `ep${ep} · ${fp}` : `ep${ep}`;
     const styleTag = renderStyleLabel(activeRenderStyle(state.payload));
+    const previewMode = isMediapipePreview(state.payload);
+    const previewTag = previewMode
+      ? isZh()
+        ? "预览骨架·非训练真值"
+        : "Preview skeleton (not GT)"
+      : "";
+    const previewPrefix = previewTag ? `${previewTag} · ` : "";
     label.textContent = isZh()
       ? on
         ? dual
-          ? `双手 2D · ${styleTag} · ${epTag}`
-          : `手部 2D · ${styleTag} · ${epTag}`
+          ? `${previewPrefix}双手 2D · ${styleTag} · ${epTag}`
+          : `${previewPrefix}手部 2D · ${styleTag} · ${epTag}`
         : dual
           ? "双手 2D（关）"
-          : "手部 2D 标注（关）"
+          : previewMode
+            ? "预览骨架（关）"
+            : "手部 2D 标注（关）"
       : on
         ? dual
-          ? `Hand 2D · ${styleTag} · ${epTag}`
-          : `Hand 2D · ${styleTag} · ${epTag}`
+          ? `${previewPrefix}Hand 2D · ${styleTag} · ${epTag}`
+          : `${previewPrefix}Hand 2D · ${styleTag} · ${epTag}`
         : dual
           ? "Hand 2D off"
-          : "Hand 2D overlay (off)";
+          : previewMode
+            ? "Preview skeleton off"
+            : "Hand 2D overlay (off)";
   }
 
   function ensurePill() {

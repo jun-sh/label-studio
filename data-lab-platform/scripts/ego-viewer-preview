@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# ego-viewer-preview — L3 preview track: MediaPipe hand_kp2d + depth → samples/ (not corpus).
+set -euo pipefail
+
+STATION="${1:-}"
+if [[ -z "$STATION" || "$STATION" == "-h" || "$STATION" == "--help" ]]; then
+  cat <<'EOF'
+用法: ego-viewer-preview <station> [选项]
+
+  L3 预览轨（Viewer 骨架 + depth，非训练真值）:
+    MediaPipe kp2d + depth preview → data-storage/samples/*_hand_kp2d.json
+    失败不阻塞 L2；不写入 corpus/offline sidecar。
+
+  --skip-depth   跳过 depth preview
+  --skip-hands   跳过 MediaPipe hand overlay
+  --session ID   仅处理指定 session（可重复）
+EOF
+  exit 0
+fi
+
+shift || true
+SKIP_DEPTH=0
+SKIP_HANDS=0
+SESSION_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-depth) SKIP_DEPTH=1 ;;
+    --skip-hands) SKIP_HANDS=1 ;;
+    --session) SESSION_ARGS+=(--session "$2"); shift ;;
+    *)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
+PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
+
+SLUG="$(python3 "$SESSIONS_PY" slug "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_001")"
+
+CLI_ARGS=(--station "$STATION" --corpus-slug "$SLUG" --datalab-root "$DATALAB_ROOT")
+[[ "$SKIP_DEPTH" -eq 1 ]] && CLI_ARGS+=(--skip-depth)
+[[ "$SKIP_HANDS" -eq 1 ]] && CLI_ARGS+=(--skip-hands)
+CLI_ARGS+=("${SESSION_ARGS[@]}")
+
+_host_cv2_ok() {
+  python3 -c "import cv2; assert hasattr(cv2, 'VideoCapture')" 2>/dev/null
+}
+
+_run_preview_host() {
+  (
+    cd "$PLATFORM_ROOT" && \
+    PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+    python3 -m ego_platform.cli.viewer_preview "${CLI_ARGS[@]}"
+  )
+}
+
+_run_preview_container() {
+  local image="${LEROBOT_IMAGE:-data-lab-lerobot-studio:local}"
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    image="data-lab-lerobot-studio:local"
+  fi
+  local container_args=(--station "$STATION" --corpus-slug "$SLUG" --datalab-root /datalab)
+  [[ "$SKIP_DEPTH" -eq 1 ]] && container_args+=(--skip-depth)
+  [[ "$SKIP_HANDS" -eq 1 ]] && container_args+=(--skip-hands)
+  container_args+=("${SESSION_ARGS[@]}")
+  echo "L3 preview: host cv2 unavailable, running in ${image}" >&2
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v "${DATALAB_ROOT}:/datalab:rw" \
+    -v "${PLATFORM_ROOT}/src:/ego-platform/src:ro" \
+    -e PYTHONPATH=/ego-platform/src \
+    -e HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}" \
+    -e EGO_PREVIEW_HANDS_STRIDE="${EGO_PREVIEW_HANDS_STRIDE:-3}" \
+    -e EGO_DEPTH_PREVIEW="${EGO_DEPTH_PREVIEW:-1}" \
+    "$image" \
+    python3 -m ego_platform.cli.viewer_preview "${container_args[@]}"
+}
+
+set +e
+if _host_cv2_ok; then
+  _run_preview_host
+else
+  _run_preview_container
+fi
+rc=$?
+set -e
+exit "$rc"

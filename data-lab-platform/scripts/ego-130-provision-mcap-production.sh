@@ -4,10 +4,16 @@
 # - Mobile UI: ecs-ego-web → MCAP capture stack
 # - Upload: ego-upload (MCAP) + station profile SSOT
 # Usage: ego-130-provision-mcap-production.sh [ssh_target] [station_id]
+# Production default: pilot rings only (130 never needs daily profile switching).
+# Stress large rings: EGO_STRESS_CAPTURE=1 CAPTURE_PROFILE=long ego-130-provision-mcap-production.sh …
 set -euo pipefail
 
 TARGET="${1:-server@10.10.10.130}"
 STATION_ID="${2:-ego-001}"
+CAPTURE_PROFILE="${CAPTURE_PROFILE:-pilot}"
+if [[ "${EGO_STRESS_CAPTURE:-0}" == "1" ]]; then
+  CAPTURE_PROFILE="${CAPTURE_PROFILE:-long}"
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "${ROOT}/.." && pwd)"
 CAPTURE_SRC="${ROOT}/ego-stream-client"
@@ -20,7 +26,7 @@ CACHE_ROOT="/home/server/cache/${STATION_ID}"
 CAPTURE_HOST="${TARGET#*@}"
 PROFILE="${ROOT}/config/station-profiles/${STATION_ID}-mcap-production.env"
 
-echo "==> Provision MCAP production (full align) ${TARGET} station=${STATION_ID}"
+echo "==> Provision MCAP production (full align) ${TARGET} station=${STATION_ID} capture_profile=${CAPTURE_PROFILE}"
 
 if [[ ! -f "$PROFILE" ]]; then
   echo "missing profile: $PROFILE" >&2
@@ -72,6 +78,7 @@ echo "==> Sync capture Python"
 if rsync -av --delete --exclude '__pycache__' --exclude '*.pyc' "${CAPTURE_SRC}/" "${TARGET}:${REMOTE_CAPTURE}/" 2>/dev/null; then
   rsync -av "${CAPTURE_SRC}/cli/record_oak_stream.py" "${TARGET}:${REMOTE_CLI}/record_oak_stream.py"
   rsync -av "${CAPTURE_SRC}/cli/upload_segments.py" "${TARGET}:${REMOTE_CLI}/upload_segments.py"
+  rsync -av "${CAPTURE_SRC}/cli/ego_upload.py" "${TARGET}:${REMOTE_CLI}/ego_upload.py"
 else
   echo "rsync failed — using paramiko sftp (slower)"
   RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" python3 - <<'PY'
@@ -100,7 +107,7 @@ for path in src.rglob("*"):
     except Exception:
         pass
     sftp.put(str(path), remote)
-for name in ("record_oak_stream.py", "upload_segments.py"):
+for name in ("record_oak_stream.py", "upload_segments.py", "ego_upload.py"):
     sftp.put(str(src / "cli" / name), f"{remote_cli}/{name}")
 sftp.close()
 c.close()
@@ -111,6 +118,9 @@ fi
 echo "==> Install MCAP systemd + mobile UI drop-in + station env"
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service" "/tmp/ecs-record-oak-mcap.service"
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-mcap-production.conf" "/tmp/z-mcap-production.conf"
+if [[ "${CAPTURE_PROFILE}" == "long" ]]; then
+  _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-mcap-long-capture.conf" "/tmp/z-mcap-long-capture.conf"
+fi
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/capture-stack.conf" "/tmp/z-mcap-capture-stack.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf" "/tmp/z-oak-boot-pre.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-mcap-capture-stack.target" "/tmp/ecs-oak-mcap-capture-stack.target"
@@ -131,6 +141,15 @@ mkdir -p "\$HOME/.local/bin"
 
 cp /tmp/ecs-record-oak-mcap.service "\$HOME/.config/systemd/user/"
 cp /tmp/z-mcap-production.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-production.conf"
+CAPTURE_PROFILE="${CAPTURE_PROFILE}"
+if [[ "\${CAPTURE_PROFILE}" == "long" ]] && [[ -f /tmp/z-mcap-long-capture.conf ]]; then
+  cp /tmp/z-mcap-long-capture.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-long-capture.conf"
+  echo "capture profile: long (stress-only rings)"
+else
+  rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-long-capture.conf"
+  rm -f /tmp/z-mcap-long-capture.conf
+  echo "capture profile: pilot (2026-08-18 stable rings)"
+fi
 cp /tmp/z-mcap-capture-stack.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/capture-stack.conf"
 cp /tmp/z-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf"
 # Legacy pilot drop-ins override z-mcap-production (zz-* wins alphabetically → 80s cap).
@@ -161,6 +180,7 @@ STATION_UPLOAD_TOKEN=dl-upload-\${STATION_ID}-v1
 DATALAB_CAPTURE_HOST=${CAPTURE_HOST}
 EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
 EGO_NOTIFY_PROCESS=1
+EGO_UPLOAD_UNTIL_COMPLETE=1
 UPLOAD_PROTOCOL=mcap
 SEGMENT_MCAP=1
 SEGMENT_FRAME_BIN=0
@@ -174,7 +194,8 @@ echo '1' | sudo -S install -m 0755 /tmp/ego-upload-station.sh /usr/local/bin/ego
 
 # Stop legacy JPEG capture path; align to MCAP stack only.
 systemctl --user stop ecs-oak-capture-stack.target 2>/dev/null || true
-systemctl --user stop ecs-record-oak-stream.service 2>/dev/null || true
+systemctl --user stop ecs-preview-standby.service 2>/dev/null || true
+systemctl --user stop ecs-record-oak-mcap.service 2>/dev/null || true
 systemctl --user disable ecs-record-oak-stream.service 2>/dev/null || true
 systemctl --user disable ecs-record-oak-mcap-pilot.service 2>/dev/null || true
 systemctl --user disable ecs-record-oak-mcap-track2.service 2>/dev/null || true
@@ -207,4 +228,5 @@ echo "==> Hotspot watchdog (AX201 AP recovery)"
 bash "${ROOT}/scripts/ego-130-provision-hotspot-watchdog.sh" "${TARGET}" || \
   echo "WARN: hotspot watchdog provision failed (run manually: ego-130-provision-hotspot-watchdog.sh ${TARGET})"
 echo "Verify: bash data-lab-platform/scripts/ego-station-doctor.sh ${STATION_ID} ${TARGET}"
+echo "Release: bash data-lab-platform/scripts/ego-release-check.sh ${STATION_ID} ${TARGET}"
 echo "Record: phone UI :8080 (capture disabled at boot; manual start only)"

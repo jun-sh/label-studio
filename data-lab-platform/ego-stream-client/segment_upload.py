@@ -24,10 +24,12 @@ from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
 from ego_capture_studio.capture.frame_bin_codec import unpack_frame_bin
 from ego_capture_studio.capture.segment_store import (
     GC_ELIGIBLE_STATUS,
+    check_segment_upload_qc,
     clear_segment_uploaded,
     flush_pending_segment_deletes,
     list_closed_pending_segments,
     manifest_status,
+    mark_segment_qc_failed,
     mark_segment_upload_failed,
     mark_segment_uploaded,
     mark_segment_uploading,
@@ -36,6 +38,8 @@ from ego_capture_studio.capture.segment_store import (
     read_session_seal,
     sealed_segment_total,
     segment_file_key,
+    session_segment_status_summary,
+    iter_session_segment_dirs,
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
 from ego_capture_studio.capture.segment_mcap import pack_segment_mcap_zst, parse_mcap_archive_name
@@ -48,6 +52,12 @@ from ego_capture_studio.capture.upload_status import UploadStatusWriter, live_ui
 STATION_TOKEN_HEADER = "X-Station-Token"
 DEFAULT_UPLOAD_TIMEOUT_S = float(os.environ.get("DATALAB_UPLOAD_TIMEOUT_S", "900"))
 UPLOAD_PROTOCOL = os.environ.get("UPLOAD_PROTOCOL", "tarzst").strip().lower()
+UPLOAD_UNTIL_COMPLETE_POLL_S = max(
+    0.5, float(os.environ.get("EGO_UPLOAD_UNTIL_COMPLETE_POLL_S", "2.0"))
+)
+UPLOAD_UNTIL_COMPLETE_TIMEOUT_S = max(
+    60.0, float(os.environ.get("EGO_UPLOAD_UNTIL_COMPLETE_TIMEOUT_S", "3600"))
+)
 UPLOAD_MAX_RETRIES = max(1, int(os.environ.get("EGO_UPLOAD_MAX_RETRIES", "3")))
 UPLOAD_CONCURRENCY = max(1, int(os.environ.get("EGO_UPLOAD_CONCURRENCY", "2")))
 DELETE_AFTER_UPLOAD = os.environ.get("EGO_SEGMENT_DELETE_AFTER_UPLOAD", "1").strip().lower() in (
@@ -571,6 +581,14 @@ def _prepare_segment_for_upload(segment_dir: Path, *, force: bool) -> str | None
     status = manifest_status(read_manifest(segment_dir))
     if force and status == "UPLOADED":
         clear_segment_uploaded(segment_dir)
+    qc_ok, qc_issues = check_segment_upload_qc(segment_dir)
+    if not qc_ok:
+        try:
+            mark_segment_qc_failed(segment_dir, qc_issues)
+        except (OSError, json.JSONDecodeError, FileNotFoundError, ValueError):
+            pass
+        hint = qc_issues[0] if qc_issues else "upload_qc_failed"
+        return f"upload_qc:{hint}"
     return None
 
 
@@ -948,6 +966,130 @@ def upload_session_seal_finalize(
     return True
 
 
+def should_upload_session_seal(
+    root: Path,
+    session_id: str,
+    *,
+    session_uploaded: int = 0,
+) -> bool:
+    """Finalize ingest seal when every sealed segment is uploaded (local or purged)."""
+    summary = session_segment_status_summary(root, session_id)
+    if not summary["seal_complete"]:
+        return False
+    if summary["pending_closed"] > 0:
+        return False
+    if summary["corrupt_issues"]:
+        return False
+    expected = int(summary["seal_segment_count"] or 0)
+    if expected <= 0:
+        return False
+    uploaded = int(summary["uploaded_closed"] or 0)
+    if uploaded >= expected:
+        return True
+    if session_uploaded >= expected:
+        return True
+    # delete-after-upload removes UPLOADED dirs; treat "nothing left to send" as ready.
+    blocking = sum(
+        int((summary["status_counts"] or {}).get(status, 0))
+        for status in ("CLOSED", "UPLOAD_FAILED", "RECORDING", "UPLOADING")
+    )
+    if blocking == 0 and len(iter_session_segment_dirs(root, session_id)) == 0:
+        return session_uploaded > 0 or uploaded > 0
+    return False
+
+
+def upload_session_until_complete(
+    *,
+    root: Path,
+    session_id: str,
+    uploader: SegmentUploader,
+    force: bool = False,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
+) -> int:
+    """Poll segment finalize + upload all CLOSED segments; seal only when complete."""
+    deadline = time.monotonic() + (timeout_s or UPLOAD_UNTIL_COMPLETE_TIMEOUT_S)
+    poll = poll_s or UPLOAD_UNTIL_COMPLETE_POLL_S
+    total_uploaded = 0
+    last_wait_reason = ""
+
+    while time.monotonic() < deadline:
+        summary = session_segment_status_summary(root, session_id)
+        corrupt_n = int((summary.get("status_counts") or {}).get("CORRUPT", 0))
+        if summary["corrupt_issues"] or corrupt_n > 0:
+            issues = list(summary.get("corrupt_issues") or [])
+            if not issues:
+                issues = list(summary.get("qc_issues") or [])
+            if not issues and corrupt_n > 0:
+                issues = [f"CORRUPT segments={corrupt_n}"]
+            raise RuntimeError(
+                f"session {session_id} has {max(len(issues), corrupt_n)} CORRUPT segment(s): "
+                + "; ".join(issues[:5])
+            )
+
+        if not summary["seal_complete"]:
+            if last_wait_reason != "seal":
+                _log("upload_wait", session_id=session_id, reason="session_seal_incomplete")
+                last_wait_reason = "seal"
+            time.sleep(poll)
+            continue
+
+        recording = int((summary["status_counts"] or {}).get("RECORDING", 0))
+        uploading = int((summary["status_counts"] or {}).get("UPLOADING", 0))
+        if recording > 0 or uploading > 0:
+            if last_wait_reason != "finalize":
+                _log(
+                    "upload_wait",
+                    session_id=session_id,
+                    reason="segments_finalizing",
+                    recording=recording,
+                    uploading=uploading,
+                )
+                last_wait_reason = "finalize"
+            time.sleep(poll)
+            continue
+
+        pending_n = int(summary["pending_closed"] or 0)
+        if pending_n > 0:
+            last_wait_reason = ""
+            batch = upload_pending_segments(
+                root=root,
+                session_id=session_id,
+                uploader=uploader,
+                force=force,
+                finalize_seal=False,
+            )
+            total_uploaded += batch
+            continue
+
+        if should_upload_session_seal(root, session_id, session_uploaded=total_uploaded):
+            upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
+            return total_uploaded
+
+        expected = int(summary["seal_segment_count"] or 0)
+        uploaded = int(summary["uploaded_closed"] or 0)
+        if last_wait_reason != "shortfall":
+            _log(
+                "upload_wait",
+                session_id=session_id,
+                reason="upload_shortfall",
+                uploaded=uploaded,
+                session_uploaded=total_uploaded,
+                expected=expected,
+            )
+            last_wait_reason = "shortfall"
+        time.sleep(poll)
+
+    summary = session_segment_status_summary(root, session_id)
+    raise TimeoutError(
+        f"upload_until_complete timeout session={session_id} "
+        f"pending={summary.get('pending_closed')} "
+        f"uploaded={summary.get('uploaded_closed')} "
+        f"expected={summary.get('seal_segment_count')} "
+        f"status={summary.get('status_counts')}"
+    )
+
+
 def upload_pending_segments(
     *,
     root: Path,
@@ -956,6 +1098,7 @@ def upload_pending_segments(
     limit: int | None = None,
     include_uploaded: bool = False,
     force: bool = False,
+    finalize_seal: bool = True,
 ) -> int:
     _quarantine_orphan_segments(root, session_id)
     pending = list_closed_pending_segments(
@@ -1004,9 +1147,10 @@ def upload_pending_segments(
     if DELETE_AFTER_UPLOAD:
         flush_pending_segment_deletes()
         purge_uploaded_segments(root, session_id, strict=True)
-    try:
-        upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
-    except Exception as exc:
-        _log("session_seal_upload_failed", session_id=session_id, error=str(exc))
-        raise
+    if finalize_seal and should_upload_session_seal(root, session_id, session_uploaded=uploaded):
+        try:
+            upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
+        except Exception as exc:
+            _log("session_seal_upload_failed", session_id=session_id, error=str(exc))
+            raise
     return uploaded

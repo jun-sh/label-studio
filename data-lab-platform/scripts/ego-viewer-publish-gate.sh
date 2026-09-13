@@ -27,6 +27,7 @@ export PYTHONPATH="${DATALAB_ROOT}/../ego-platform/src:${PYTHONPATH:-}"
 
 python3 << PY
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -51,6 +52,7 @@ report = validate_viewer_publish(
     raise_on_error=True,
     datalab_root=Path("${DATALAB_ROOT}"),
     station="${STATION}",
+    l2_publish=os.environ.get("EGO_VIEWER_PUBLISH_L2", "0").strip().lower() in ("1", "true", "yes"),
 )
 print(json.dumps(report, indent=2))
 print("B7 viewer publish gate OK")

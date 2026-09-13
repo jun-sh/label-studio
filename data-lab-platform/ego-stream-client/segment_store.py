@@ -120,12 +120,23 @@ def _default_upload_meta() -> dict[str, Any]:
     }
 
 
-def _default_integrity_meta(*, ok: bool = True, issues: list[str] | None = None) -> dict[str, Any]:
-    return {
+def _default_integrity_meta(
+    *,
+    ok: bool = True,
+    issues: list[str] | None = None,
+    qc_ok: bool | None = None,
+    qc_issues: list[str] | None = None,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {
         "checked_at": _utc_now_iso(),
         "ok": ok,
         "issues": list(issues or []),
     }
+    if qc_ok is not None:
+        meta["qc_ok"] = bool(qc_ok)
+        meta["qc_issues"] = list(qc_issues or [])
+        meta["qc_checked_at"] = _utc_now_iso()
+    return meta
 
 
 def _count_jsonl_lines(path: Path) -> int:
@@ -272,6 +283,56 @@ def sealed_segment_total(root: Path, session_id: str) -> int | None:
     return int(seal.get("segment_count") or 0)
 
 
+def iter_session_segment_dirs(root: Path, session_id: str) -> list[Path]:
+    seg_root = root / "sessions" / session_id / "segments"
+    if not seg_root.is_dir():
+        return []
+    return sorted(p for p in seg_root.iterdir() if p.is_dir())
+
+
+def session_segment_status_summary(root: Path, session_id: str) -> dict[str, Any]:
+    """Aggregate on-disk segment manifest states for upload / ops diagnostics."""
+    counts: dict[str, int] = {}
+    corrupt_issues: list[str] = []
+    qc_issues: list[str] = []
+    qc_pending: list[str] = []
+    for seg_dir in iter_session_segment_dirs(root, session_id):
+        try:
+            manifest = read_manifest(seg_dir)
+            status = manifest_status(manifest)
+        except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+            status = "unknown"
+            manifest = {}
+        counts[status] = counts.get(status, 0) + 1
+        integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else {}
+        seg_qc = list(integrity.get("qc_issues") or [])
+        if status == "CORRUPT":
+            issues = list(integrity.get("issues") or [])
+            if seg_qc and not issues:
+                qc_issues.append(f"{seg_dir.name}:{seg_qc[0]}")
+            else:
+                hint = issues[0] if issues else (seg_qc[0] if seg_qc else "corrupt")
+                corrupt_issues.append(f"{seg_dir.name}:{hint}")
+        elif status in UPLOADABLE_STATUSES and integrity.get("qc_ok") is False:
+            hint = seg_qc[0] if seg_qc else "qc_pending"
+            qc_pending.append(f"{seg_dir.name}:{hint}")
+    seal = read_session_seal(root, session_id)
+    pending = list_closed_pending_segments(root, session_id)
+    uploaded = counts.get(GC_ELIGIBLE_STATUS, 0)
+    expected = int(seal.get("segment_count") or 0) if seal else 0
+    return {
+        "session_id": session_id,
+        "seal_complete": bool(seal and seal.get("complete")),
+        "seal_segment_count": expected,
+        "status_counts": counts,
+        "pending_closed": len(pending),
+        "uploaded_closed": uploaded,
+        "corrupt_issues": corrupt_issues,
+        "qc_issues": qc_issues,
+        "qc_pending": qc_pending,
+    }
+
+
 def write_manifest_v2(segment_dir: Path, payload: dict[str, Any]) -> None:
     """Write manifest schema v2 (status enum only; no closed/uploaded bools)."""
     body = dict(payload)
@@ -287,17 +348,47 @@ def check_segment_integrity(
     segment_dir: Path,
     *,
     require_imu: bool | None = None,
+    qa_layer: Literal["capture", "upload"] = "capture",
 ) -> tuple[bool, list[str]]:
-    """Appendix A integrity checks for a closed segment directory."""
-    issues: list[str] = []
+    """Integrity check with QA layering (A+C commercial default).
+
+    capture: hard faults only — timeline recorded as qc_issues, does not CORRUPT close.
+    upload: capture hard faults + timeline QC (EGO_TIMELINE_MAX_DEV, default 3%).
+    """
+    capture_ok, capture_issues, qc_issues = _assess_segment_integrity(
+        segment_dir,
+        require_imu=require_imu,
+    )
+    try:
+        from ego_capture_studio.capture.strict_fps_gate import timeline_capture_blocks
+    except ImportError:
+        from strict_fps_gate import timeline_capture_blocks
+    if qa_layer == "upload":
+        all_issues = capture_issues + qc_issues
+        return len(all_issues) == 0, all_issues
+    if qa_layer == "capture" and timeline_capture_blocks():
+        all_issues = capture_issues + qc_issues
+        return len(all_issues) == 0, all_issues
+    return capture_ok, capture_issues
+
+
+def _assess_segment_integrity(
+    segment_dir: Path,
+    *,
+    require_imu: bool | None = None,
+) -> tuple[bool, list[str], list[str]]:
+    """Return (capture_ok, capture_issues, qc_issues)."""
+    capture_issues: list[str] = []
+    qc_issues: list[str] = []
+    issues: list[str] = capture_issues
     manifest_path = segment_dir / "manifest.json"
     if not manifest_path.is_file():
-        return False, ["missing_manifest"]
+        return False, ["missing_manifest"], []
 
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return False, ["manifest_unparseable"]
+        return False, ["manifest_unparseable"], []
 
     frame_count = int(manifest.get("frame_count") or 0)
     if frame_count <= 0:
@@ -314,9 +405,10 @@ def check_segment_integrity(
             from strict_fps_gate import log_timeline_verdict, timeline_integrity_issues
 
         log_timeline_verdict(segment_dir.name, timeline, frame_count=frame_count)
-        issues.extend(timeline_integrity_issues(timeline, frame_count=frame_count))
+        qc_issues.extend(timeline_integrity_issues(timeline, frame_count=frame_count))
 
     capture_health = manifest.get("capture_health")
+    total_ovf = 0
     if isinstance(capture_health, dict):
         ring_ovf = capture_health.get("ring_ovf")
         if isinstance(ring_ovf, dict):
@@ -361,8 +453,8 @@ def check_segment_integrity(
                 try:
                     summary = summarize_mcap_segment(mcap_path)
                 except Exception as exc:
-                    issues.append(f"mcap_unreadable:{type(exc).__name__}")
-                    return False, issues
+                    capture_issues.append(f"mcap_unreadable:{type(exc).__name__}")
+                    return False, capture_issues, qc_issues
 
                 cam_topics = [f"/ego/camera/{k}" for k in cam_roles]
                 cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
@@ -403,8 +495,12 @@ def check_segment_integrity(
                     )
             elif strict_fps_gate_enabled() or timeline_gate_enabled():
                 _fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
-                issues.extend(fps_issues)
-        return len(issues) == 0, issues
+                for issue in fps_issues:
+                    if issue.startswith("timeline_"):
+                        qc_issues.append(issue)
+                    else:
+                        capture_issues.append(issue)
+        return len(capture_issues) == 0, capture_issues, qc_issues
 
     rows_path = segment_dir / "rows.jsonl"
     if not rows_path.is_file():
@@ -438,7 +534,39 @@ def check_segment_integrity(
         elif _count_jsonl_lines(imu_path) < 1:
             issues.append("empty_imu_raw")
 
-    return len(issues) == 0, issues
+    return len(capture_issues) == 0, capture_issues, qc_issues
+
+
+def check_segment_upload_qc(segment_dir: Path) -> tuple[bool, list[str]]:
+    """Upload/QC gate: hard capture faults + timeline at EGO_TIMELINE_MAX_DEV."""
+    try:
+        from ego_capture_studio.capture.strict_fps_gate import timeline_upload_qc_enabled
+    except ImportError:
+        from strict_fps_gate import timeline_upload_qc_enabled
+
+    if not timeline_upload_qc_enabled():
+        ok, issues = check_segment_integrity(segment_dir, qa_layer="capture")
+        return ok, issues
+    ok, issues = check_segment_integrity(segment_dir, qa_layer="upload")
+    return ok, issues
+
+
+def mark_segment_qc_failed(segment_dir: Path, qc_issues: list[str]) -> None:
+    """Upload rejected timeline/QC — mark CORRUPT without rewriting capture hard issues."""
+    manifest = read_manifest(segment_dir)
+    integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else {}
+    capture_issues = list(integrity.get("issues") or [])
+    _update_manifest_status(
+        segment_dir,
+        "CORRUPT",
+        integrity_patch={
+            "ok": len(capture_issues) == 0,
+            "issues": capture_issues,
+            "qc_ok": False,
+            "qc_issues": list(qc_issues),
+            "qc_checked_at": _utc_now_iso(),
+        },
+    )
 
 
 def can_gc_segment(segment_dir: Path) -> bool:
@@ -481,7 +609,8 @@ def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
     manifest_path = segment_dir / "manifest.json"
     if not manifest_path.is_file():
         return reconcile_orphan_active_segment(segment_dir)
-    ok, issues = check_segment_integrity(segment_dir)
+    ok, issues = check_segment_integrity(segment_dir, qa_layer="capture")
+    _, _, qc_issues = _assess_segment_integrity(segment_dir)
     status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
     if not manifest_path.is_file():
         return reconcile_orphan_active_segment(segment_dir)
@@ -491,7 +620,12 @@ def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
         "status": status,
         "closed_at": _utc_now_iso(),
         "upload": manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta(),
-        "integrity": _default_integrity_meta(ok=ok, issues=issues),
+        "integrity": _default_integrity_meta(
+            ok=ok,
+            issues=issues,
+            qc_ok=len(qc_issues) == 0,
+            qc_issues=qc_issues,
+        ),
         **_capture_meta_fields(manifest),
     }
     write_manifest_v2(segment_dir, payload)
@@ -500,7 +634,8 @@ def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
 
 def reconcile_orphan_active_segment(segment_dir: Path) -> SegmentStatus:
     """Finalize a crash orphan on tmpfs: integrity check → CLOSED or CORRUPT."""
-    ok, issues = check_segment_integrity(segment_dir)
+    ok, issues = check_segment_integrity(segment_dir, qa_layer="capture")
+    _, _, qc_issues = _assess_segment_integrity(segment_dir)
     if "missing_manifest" in issues or "manifest_unparseable" in issues:
         issues.append("orphan_active")
         ok = False
@@ -525,7 +660,12 @@ def reconcile_orphan_active_segment(segment_dir: Path) -> SegmentStatus:
         "status": status,
         "closed_at": _utc_now_iso(),
         "upload": manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta(),
-        "integrity": _default_integrity_meta(ok=ok, issues=issues),
+        "integrity": _default_integrity_meta(
+            ok=ok,
+            issues=issues,
+            qc_ok=len(qc_issues) == 0,
+            qc_issues=qc_issues,
+        ),
         **_capture_meta_fields(manifest),
     }
     write_manifest_v2(segment_dir, payload)

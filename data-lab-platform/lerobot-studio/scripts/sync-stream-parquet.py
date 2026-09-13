@@ -501,7 +501,18 @@ def fallback_values_to_feature_array(values: list, spec: dict) -> pa.Array:
             for v in values
         ]
         return pa.array(flat, type=value_type)
-    return pa.array(values, type=pa.list_(value_type, size))
+    if values_to_feature_array is not None:
+        return values_to_feature_array(values, spec)
+    normalized = []
+    for v in values:
+        if v is None or v == []:
+            normalized.append([0.0 if not dtype.startswith("int") else 0] * size)
+        elif isinstance(v, list) and len(v) < size:
+            pad = [0.0 if not dtype.startswith("int") else 0] * (size - len(v))
+            normalized.append(list(v) + pad)
+        else:
+            normalized.append(v)
+    return pa.array(normalized, type=pa.list_(value_type, size))
 
 
 def parquet_feature_type(key: str, info: dict) -> pa.DataType:

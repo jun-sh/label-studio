@@ -55,6 +55,7 @@ COPY ego-stream-client/h264_segment_boundary.py /app/ego-stream-client/h264_segm
 COPY lerobot-studio/download-assets.sh lerobot-studio/docker-entrypoint.sh lerobot-studio/prepare-bundled-dataset.sh lerobot-studio/ingest-bundled-datasets.sh lerobot-studio/server.mjs lerobot-studio/stream-ingest.mjs lerobot-studio/mux-exec.mjs lerobot-studio/lerobot-converter.mjs lerobot-studio/task-naming.mjs lerobot-studio/ingest-server.mjs lerobot-studio/delivery-status.mjs lerobot-studio/qc-dataset-key.mjs lerobot-studio/frame_bin_codec.mjs lerobot-studio/import-handlers.mjs lerobot-studio/derive-async.mjs lerobot-studio/derive-pipeline.mjs /app/
 COPY lerobot-studio/vendor/ /app/vendor/
 COPY lerobot-studio/scripts/sync-stream-parquet.py /app/scripts/sync-stream-parquet.py
+COPY lerobot-studio/scripts/merge-station-imu.py /app/scripts/merge-station-imu.py
 COPY lerobot-studio/scripts/write-tasks-parquet.py /app/scripts/write-tasks-parquet.py
 COPY lerobot-studio/scripts/append-segment-parquet.py /app/scripts/append-segment-parquet.py
 COPY lerobot-studio/scripts/test_sync_stream_parquet_tasks.py /app/scripts/test_sync_stream_parquet_tasks.py

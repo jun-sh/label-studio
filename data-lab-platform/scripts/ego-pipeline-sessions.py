@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,69 @@ def _session_marker_exists(stream_root: Path, session_id: str, marker: str) -> b
 
 def _session_failed(stream_root: Path, session_id: str) -> bool:
     return _session_marker_exists(stream_root, session_id, "session.FAILED")
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _session_needs_derive_parquet(stream_root: Path, session_id: str) -> bool:
+    """Sessions that finished upload and should have derive parquet before convert."""
+    sess_dir = stream_root / "state" / "sessions" / session_id
+    if not sess_dir.is_dir() or _session_quarantined(sess_dir):
+        return False
+    if _session_failed(stream_root, session_id):
+        return False
+    return (sess_dir / "session.DONE_UPLOAD").is_file() or (sess_dir / "session.READY").is_file()
+
+
+def sessions_needing_derive_parquet(stream_root: Path) -> list[str]:
+    return [
+        sid
+        for sid in list_stream_sessions(stream_root)
+        if _session_needs_derive_parquet(stream_root, sid)
+    ]
+
+
+def clear_stale_derive_state(stream_root: Path, *, apply: bool = True) -> list[str]:
+    """Remove stale deriver.lock / session.DERIVING markers that block manual derive."""
+    actions: list[str] = []
+    lock_path = stream_root / "state" / "deriver.lock"
+    if lock_path.is_file():
+        data = _read_json(lock_path, {})
+        pid = data.get("pid") if isinstance(data, dict) else None
+        try:
+            pid_i = int(pid) if pid is not None else -1
+        except (TypeError, ValueError):
+            pid_i = -1
+        if not _pid_alive(pid_i):
+            actions.append(f"stale deriver.lock pid={pid}")
+            if apply:
+                lock_path.unlink(missing_ok=True)
+
+    sessions_dir = stream_root / "state" / "sessions"
+    if sessions_dir.is_dir():
+        for sess_dir in sorted(sessions_dir.glob("sess_*")):
+            if not sess_dir.is_dir():
+                continue
+            deriving = sess_dir / "session.DERIVING"
+            if not deriving.is_file():
+                continue
+            if (sess_dir / "session.READY").is_file():
+                actions.append(f"{sess_dir.name}: stale DERIVING (already READY)")
+                if apply:
+                    deriving.unlink(missing_ok=True)
+            elif (sess_dir / "session.FAILED").is_file():
+                actions.append(f"{sess_dir.name}: stale DERIVING (FAILED)")
+                if apply:
+                    deriving.unlink(missing_ok=True)
+    return actions
 
 
 def _add_session_id(sessions: set[str], session_id: object) -> None:
@@ -369,18 +433,92 @@ def all_awaiting_parquet_ready(
     backend: str = DEFAULT_PIPELINE_BACKEND,
     datalab_root: Path | None = None,
 ) -> bool:
-    slug = station_slug(pipe_root, station) if datalab_root is not None else None
-    awaiting = awaiting_convert_sessions(
-        stream_root,
-        pipe_root,
-        station,
-        backend=backend,
-        datalab_root=datalab_root,
-        corpus_slug=slug,
-    )
-    if not awaiting:
+    needing = sessions_needing_derive_parquet(stream_root)
+    if not needing:
         return True
-    return all(_session_parquet_ready(stream_root, sid) for sid in awaiting)
+    return all(_session_parquet_ready(stream_root, sid) for sid in needing)
+
+
+def parquet_blockers(stream_root: Path) -> list[str]:
+    """Uploaded sessions still missing derive parquet (READY / parquet files)."""
+    return [
+        sid
+        for sid in sessions_needing_derive_parquet(stream_root)
+        if not _session_parquet_ready(stream_root, sid)
+    ]
+
+
+def session_phase(
+    stream_root: Path,
+    datalab_root: Path,
+    station: str,
+    session_id: str,
+) -> dict[str, object]:
+    """Structured pipeline phase for one session (upload → derive → convert → done)."""
+    sess_dir = stream_root / "state" / "sessions" / session_id
+    out: dict[str, object] = {"session_id": session_id, "phase": "unknown", "blocker": None}
+    if not sess_dir.is_dir():
+        out["phase"] = "missing"
+        out["blocker"] = "no_state_dir"
+        return out
+    if _session_quarantined(sess_dir):
+        out["phase"] = "quarantined"
+        out["blocker"] = "quarantined"
+        return out
+    failed = sess_dir / "session.FAILED"
+    if failed.is_file():
+        out["phase"] = "failed"
+        out["blocker"] = _failed_session_reason_code(failed) or "failed"
+        detail = _failed_session_reason_message(failed)
+        if detail:
+            out["detail"] = detail
+        return out
+    if oak_finalize_marker(datalab_root, station, session_id).is_file():
+        out["phase"] = "done"
+        return out
+    if (sess_dir / "session.READY").is_file():
+        out["phase"] = "convert"
+        out["blocker"] = "awaiting_finalize"
+        return out
+    if (sess_dir / "session.DERIVING").is_file():
+        out["phase"] = "derive"
+        out["blocker"] = "deriving"
+        return out
+    if (sess_dir / "session.DONE_UPLOAD").is_file():
+        out["phase"] = "derive"
+        out["blocker"] = "derive_pending"
+        return out
+    raw_dir = stream_root / "raw" / "segments" / session_id
+    if raw_dir.is_dir():
+        out["phase"] = "upload"
+        out["blocker"] = "upload_pending"
+        return out
+    return out
+
+
+def session_status_report(
+    stream_root: Path,
+    datalab_root: Path,
+    station: str,
+    *,
+    pipe_root: Path,
+) -> dict[str, object]:
+    slug = station_slug(pipe_root, station)
+    sessions = list_stream_sessions(stream_root)
+    items = [session_phase(stream_root, datalab_root, station, sid) for sid in sessions]
+    return {
+        "station": station,
+        "corpus_slug": slug,
+        "sessions": items,
+        "derive_pending": derive_pending_sessions(stream_root),
+        "convert_pending": pending_sessions(
+            stream_root,
+            pipe_root,
+            station,
+            backend=DEFAULT_PIPELINE_BACKEND,
+            datalab_root=datalab_root,
+        ),
+    }
 
 
 def derive_pending_sessions(stream_root: Path) -> list[str]:
@@ -681,6 +819,9 @@ def main() -> int:
             "requeue-failed",
             "quarantine-failed",
             "all-parquet-ready",
+            "parquet-blockers",
+            "clear-stale-derive",
+            "session-status",
             "has-data",
             "slug",
             "manifest-id",
@@ -747,6 +888,10 @@ def main() -> int:
             print(line)
         return 0
 
+    if args.command == "session-status":
+        report = session_status_report(stream, datalab, args.station, pipe_root=pipe)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "has-data":
         return 0 if stream_has_ingested_data(stream) else 1
     if args.command == "slug":
@@ -832,6 +977,15 @@ def main() -> int:
             stream, pipe, args.station, backend=backend, datalab_root=datalab
         )
         return 0 if ok else 1
+    if args.command == "parquet-blockers":
+        for sid in parquet_blockers(stream):
+            print(sid)
+        return 0
+    if args.command == "clear-stale-derive":
+        actions = clear_stale_derive_state(stream, apply=bool(args.apply))
+        for line in actions:
+            print(line)
+        return 0
     return 2
 
 

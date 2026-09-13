@@ -57,14 +57,70 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const IMU_INGEST_SCRIPT = path.join(__dirname, "imu", "ingest-raw.py");
 
+const NAL_TYPE_IDR = 5;
+const NAL_TYPE_SPS = 7;
+const NAL_TYPE_PPS = 8;
+
+function _nalHeaderOffset(nal) {
+  if (nal.length >= 4 && nal[0] === 0 && nal[1] === 0 && nal[2] === 0 && nal[3] === 1) return 4;
+  if (nal.length >= 3 && nal[0] === 0 && nal[1] === 0 && nal[2] === 1) return 3;
+  return -1;
+}
+
+function _nalType(nal) {
+  const off = _nalHeaderOffset(nal);
+  if (off < 0 || off >= nal.length) return null;
+  return nal[off] & 0x1f;
+}
+
+function _iterAnnexBNals(buf) {
+  if (!buf?.length) return [];
+  let i = 0;
+  const starts = [];
+  while (i < buf.length - 3) {
+    if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 1) {
+      starts.push(i);
+      i += 3;
+      continue;
+    }
+    if (i < buf.length - 4 && buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 0 && buf[i + 3] === 1) {
+      starts.push(i);
+      i += 4;
+      continue;
+    }
+    i += 1;
+  }
+  if (!starts.length) return [buf];
+  const nals = [];
+  for (let idx = 0; idx < starts.length; idx += 1) {
+    const start = starts[idx];
+    const end = idx + 1 < starts.length ? starts[idx + 1] : buf.length;
+    nals.push(buf.subarray(start, end));
+  }
+  return nals;
+}
+
+/** Drop prefix before first SPS/PPS/IDR access unit (segment-boundary safe concat). */
+export function sliceAnnexBFromFirstIdr(buf) {
+  if (!buf?.length) return buf;
+  const nals = _iterAnnexBNals(buf);
+  const startIdx = nals.findIndex((nal) => {
+    const t = _nalType(nal);
+    return t === NAL_TYPE_SPS || t === NAL_TYPE_PPS || t === NAL_TYPE_IDR;
+  });
+  if (startIdx < 0) return buf;
+  return Buffer.concat(nals.slice(startIdx));
+}
+
 /** Concatenate per-segment annex-B H.264 elementary streams (multi-segment session merge). */
 export function appendH264AnnexBStream(destPath, srcPath) {
   if (!srcPath || !fs.existsSync(srcPath)) return false;
+  const src = fs.readFileSync(srcPath);
   if (!fs.existsSync(destPath)) {
-    fs.copyFileSync(srcPath, destPath);
+    fs.writeFileSync(destPath, src);
     return true;
   }
-  fs.appendFileSync(destPath, fs.readFileSync(srcPath));
+  fs.appendFileSync(destPath, sliceAnnexBFromFirstIdr(src));
   return true;
 }
 

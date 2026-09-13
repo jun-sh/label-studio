@@ -17,6 +17,7 @@ from ego_capture_studio.capture.segment_upload import (
     SegmentUploader,
     upload_pending_segments,
     upload_session_seal_finalize,
+    upload_session_until_complete,
 )
 
 try:
@@ -53,6 +54,19 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Re-upload closed segments even if manifest uploaded=true (e.g. after 34 reset)",
+    )
+    p.add_argument(
+        "--until-complete",
+        action="store_true",
+        default=os.environ.get("EGO_UPLOAD_UNTIL_COMPLETE", "0").strip().lower()
+        in ("1", "true", "yes"),
+        help="Wait for finalize and upload all segments before session seal",
+    )
+    p.add_argument(
+        "--no-until-complete",
+        action="store_false",
+        dest="until_complete",
+        help="Single-pass upload (legacy)",
     )
     args = p.parse_args()
 
@@ -113,7 +127,15 @@ def main() -> None:
                 video_shapes=shapes,
                 camera_intrinsics=camera_intrinsics,
             )
-        if pending:
+        if args.until_complete:
+            n = upload_session_until_complete(
+                root=root,
+                session_id=session_id,
+                uploader=uploader,
+                force=args.force,
+            )
+            print(f"uploaded_segments={n}", flush=True)
+        elif pending:
             limit = args.limit if args.limit > 0 else None
             n = upload_pending_segments(
                 root=root,

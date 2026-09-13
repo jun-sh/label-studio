@@ -589,6 +589,7 @@ class Oak4pEgoRecorder:
         self._quad_skew_events = 0
         self._quad_skew_max_ns = 0
         self._health_window_baseline: dict[str, dict[str, int]] | None = None
+        self._strict_cam_rings: dict[str, deque[_CamRingSample]] | None = None
 
     def build_session_camera_intrinsics_document(self) -> dict[str, Any]:
         """EEPROM intrinsics for all connected cameras at ISP output resolution."""
@@ -1120,6 +1121,7 @@ class Oak4pEgoRecorder:
         self._preview_queues = {}
         self._h264_enc_ctrl_queues = {}
         self._imu_queue = None
+        self._strict_cam_rings = None
 
     def _drain_imu(self, buf: EpisodeBuffers) -> None:
         if self._imu_queue is None:
@@ -1174,8 +1176,24 @@ class Oak4pEgoRecorder:
                     q.send(ctrl)
             except Exception:
                 pass
-        if OAK_H264_BOUNDARY_DRAIN_MS > 0:
+        if OAK_H264_BOUNDARY_DRAIN_MS > 0 and self._strict_cam_rings is None:
             time.sleep(OAK_H264_BOUNDARY_DRAIN_MS / 1000.0)
+            return
+        rings = self._strict_cam_rings
+        if rings is None:
+            return
+        for round_i in range(OAK_H264_BOUNDARY_DRAIN_ROUNDS):
+            self._drain_cam_queues_to_rings(rings)
+            pending = 0
+            for queue in self._cam_queues.values():
+                try:
+                    if queue.has():
+                        pending += 1
+                except Exception:
+                    pass
+            if pending == 0 and round_i >= 3:
+                break
+            time.sleep(0.002)
 
     def _drain_cam_queues_to_rings(
         self,
@@ -1667,6 +1685,7 @@ class Oak4pEgoRecorder:
         cam_rings: dict[str, deque[_CamRingSample]] = {
             oak: deque(maxlen=self._strict_ring_len(oak)) for oak in self._cam_list
         }
+        self._strict_cam_rings = cam_rings
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         global_idx = 0
         t_end = time.monotonic() + float(duration_s)

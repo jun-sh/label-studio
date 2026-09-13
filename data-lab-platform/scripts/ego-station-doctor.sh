@@ -60,6 +60,22 @@ dropin="$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-producti
 grep -q "^Environment=OAK_HW_PREVIEW_H264=1" "$dropin" \
   || die "z-mcap-production.conf missing OAK_HW_PREVIEW_H264=1"
 ok "z-mcap-production preview enabled"
+grep -q "^Environment=STRICT_DEPTH_RING_LEN=32" "$dropin" \
+  && ok "pilot depth ring=32" || die "z-mcap-production not pilot rings (expected DEPTH=32)"
+grep -q "^Environment=OAK_CAM_QUEUE_MAX=32" "$dropin" \
+  && ok "pilot OAK_CAM_QUEUE_MAX=32" || die "OAK_CAM_QUEUE_MAX!=32 (pilot SOP)"
+grep -q "^Environment=EGO_TIMELINE_CAPTURE_BLOCK=0" "$dropin" \
+  && ok "QA capture timeline non-blocking" || die "EGO_TIMELINE_CAPTURE_BLOCK!=0 (expected 0)"
+grep -q "^Environment=EGO_TIMELINE_UPLOAD_QC=1" "$dropin" \
+  && ok "QA upload timeline QC on" || die "EGO_TIMELINE_UPLOAD_QC!=1"
+grep -q "^Environment=EGO_TIMELINE_MAX_DEV=0.03" "$dropin" \
+  && ok "corpus timeline max_dev=3%" || die "EGO_TIMELINE_MAX_DEV!=0.03"
+long_dropin="$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-long-capture.conf"
+if [[ -f "$long_dropin" ]]; then
+  die "z-mcap-long-capture.conf present — use only for CAPTURE_PROFILE=long stress"
+else
+  ok "no long-capture overlay (pilot)"
+fi
 if systemctl --user is-active ecs-record-oak-mcap.service >/dev/null 2>&1; then
   pid="$(systemctl --user show ecs-record-oak-mcap.service -p MainPID --value 2>/dev/null || true)"
   if [[ -n "$pid" && "$pid" != "0" && -r "/proc/${pid}/environ" ]]; then
@@ -115,24 +131,46 @@ fi
 exit "$fail"'
 
 echo "==> 130 checks"
-if ssh -o BatchMode=yes -o ConnectTimeout=8 "${TARGET}" "bash -s" <<< "$REMOTE_SCRIPT"; then
-  :
-else
-  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" REMOTE_SCRIPT="$REMOTE_SCRIPT" python3 - <<'PY' || fail=1
-import os, paramiko
+_run_130_checks() {
+  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" REMOTE_SCRIPT="$REMOTE_SCRIPT" python3 - <<'PY'
+import os, sys, paramiko
 target = os.environ["TARGET"]
 user, _, host = target.partition("@")
+if not user or not host:
+    print(f"FAIL: invalid TARGET={target!r}", file=sys.stderr)
+    sys.exit(1)
 script = os.environ["REMOTE_SCRIPT"]
+password = os.environ.get("RC_CAPTURE_PASS", "")
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=20)
+try:
+    c.connect(
+        host,
+        username=user,
+        password=password or None,
+        timeout=20,
+        allow_agent=not bool(password),
+        look_for_keys=not bool(password),
+    )
+except Exception as exc:
+    print(f"FAIL: 130 SSH connect: {exc}", file=sys.stderr)
+    sys.exit(1)
 _, o, e = c.exec_command(f"bash -s <<'REMOTE'\n{script}\nREMOTE", timeout=120)
 out = (o.read() + e.read()).decode()
 print(out, end="")
 rc = o.channel.recv_exit_status()
 c.close()
-raise SystemExit(rc)
+sys.exit(rc)
 PY
+}
+if [[ -n "${RC_CAPTURE_PASS:-}" ]]; then
+  if ! _run_130_checks; then
+    fail=1
+  fi
+elif ssh -o BatchMode=yes -o ConnectTimeout=8 "${TARGET}" "bash -s" <<< "$REMOTE_SCRIPT"; then
+  :
+else
+  die "130 SSH failed (set RC_CAPTURE_PASS for password auth fallback)"
 fi
 
 echo "==> 34 stream markers"
@@ -147,6 +185,13 @@ if python3 "$SESSIONS_PY" doctor "$STATION" --datalab-root "$DATALAB_ROOT" 2>/de
   ok "pipeline markers clean"
 else
   die "stale pipeline markers — run: ego-pipeline-sessions.py reconcile-markers ${STATION} --apply"
+fi
+
+if systemctl is-active data-lab-ego-process-watcher.timer >/dev/null 2>&1 \
+  || systemctl --user is-active data-lab-ego-process-watcher.timer >/dev/null 2>&1; then
+  ok "ego-process-watcher timer active"
+else
+  die "ego-process-watcher timer not active"
 fi
 
 if [[ "$fail" -eq 0 ]]; then

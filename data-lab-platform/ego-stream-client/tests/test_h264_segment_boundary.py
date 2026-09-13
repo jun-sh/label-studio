@@ -11,6 +11,7 @@ from h264_segment_boundary import (
     contains_sps_pps,
     iter_nal_units,
     require_camera_parity,
+    slice_annex_b_from_first_idr,
 )
 
 
@@ -47,6 +48,13 @@ def test_camera_counts_parity_ok() -> None:
     )
     assert not bad
     assert "mismatch" in msg
+
+
+def test_slice_annex_b_from_first_idr_drops_leading_p_slice() -> None:
+    pframe = _fake_nal(1)
+    cluster = _fake_nal(7) + _fake_nal(8) + _fake_nal(5) + _fake_nal(1)
+    data = pframe + cluster
+    assert slice_annex_b_from_first_idr(data) == cluster
 
 
 def test_require_camera_parity_raises() -> None:

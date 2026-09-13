@@ -12,16 +12,20 @@ export DERIVE_FFPROBE_HEARTBEAT="${DERIVE_FFPROBE_HEARTBEAT:-1}"
 export DERIVE_MCAP_SINGLE_FAST="${DERIVE_MCAP_SINGLE_FAST:-1}"
 
 # --- convert (34 host ego-process) ---
+# Daily hot path: L2 passthrough (ego-run-l2). WiLoR only via ego-delivery-run.
+export EGO_OAK_MODE="${EGO_OAK_MODE:-passthrough}"
+export EGO_L2_PUBLISH="${EGO_L2_PUBLISH:-1}"
+export EGO_VIEWER_PUBLISH_L2="${EGO_VIEWER_PUBLISH_L2:-1}"
+export EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-0}"
 export EGO_WILOR_WARM="${EGO_WILOR_WARM:-1}"
-# 0 = per-session convert.py (production default; convert_batch CLI not shipped yet).
 export EGO_CONVERT_BATCH="${EGO_CONVERT_BATCH:-0}"
 export EGO_WILOR_DEVICE="${EGO_WILOR_DEVICE:-cuda:0}"
 export EGO_WILOR_REQUIRE_CUDA="${EGO_WILOR_REQUIRE_CUDA:-1}"
-export EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-1}"
 # Single GPU: keep 1; raise to 2–4 only with multiple GPUs or CPU-only WiLoR.
-export EGO_CONVERT_PARALLEL="${EGO_CONVERT_PARALLEL:-1}"
+export EGO_CONVERT_PARALLEL="${EGO_CONVERT_PARALLEL:-2}"
 
-# Sparse WiLoR inference (production default stride=3; set 1 for QC/debug).
+# L3 preview stride (MediaPipe); L4 WiLoR uses EGO_HANDS_FRAME_STRIDE when --algo wilor.
+export EGO_PREVIEW_HANDS_STRIDE="${EGO_PREVIEW_HANDS_STRIDE:-3}"
 export EGO_HANDS_FRAME_STRIDE="${EGO_HANDS_FRAME_STRIDE:-3}"
 
 # Depth preview on by default in production (Viewer overlay on front_left; set 0 to skip).

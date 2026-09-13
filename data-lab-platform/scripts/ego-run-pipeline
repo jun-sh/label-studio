@@ -152,6 +152,45 @@ _convert_worker_pidfile() {
   echo "${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.pid"
 }
 
+_convert_worker_heartbeat() {
+  echo "${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.heartbeat"
+}
+
+_reclaim_stale_convert_worker() {
+  [[ "${EGO_USE_CONVERT_WORKER:-0}" == "1" ]] || return 0
+  local pf hb pid stale_sec opid
+  stale_sec="${EGO_CONVERT_WORKER_STALE_SEC:-1800}"
+  pf="$(_convert_worker_pidfile)"
+  hb="$(_convert_worker_heartbeat)"
+  [[ -f "$pf" ]] || return 0
+  pid="$(tr -d '[:space:]' < "$pf" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || return 0
+
+  mapfile -t _pending_check < <(_py pending "$STATION" 2>/dev/null || true)
+  [[ ${#_pending_check[@]} -gt 0 ]] || return 0
+
+  if [[ ! -f "$hb" ]]; then
+    log "convert worker pid ${pid} has pending work but no heartbeat — restarting"
+  else
+    local hb_mtime now age
+    hb_mtime="$(stat -c %Y "$hb" 2>/dev/null || echo 0)"
+    now="$(date +%s)"
+    age=$((now - hb_mtime))
+    if (( age < stale_sec )); then
+      return 0
+    fi
+    log "convert worker stale (${age}s > ${stale_sec}s) with pending ${#_pending_check[@]} — restarting pid ${pid}"
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 2
+  kill -KILL "$pid" 2>/dev/null || true
+  rm -f "$pf"
+  while read -r opid; do
+    [[ -z "$opid" || "$opid" == "$pid" ]] && continue
+    kill -TERM "$opid" 2>/dev/null || true
+  done < <(pgrep -f "ego-convert-worker\\.sh[[:space:]]+${STATION}(\\s|$)" 2>/dev/null || true)
+}
+
 _reclaim_convert_worker_orphans() {
   local pf pid opid
   pf="$(_convert_worker_pidfile)"
@@ -174,6 +213,7 @@ _ensure_convert_worker() {
   local pf
   pf="$(_convert_worker_pidfile)"
   _reclaim_convert_worker_orphans
+  _reclaim_stale_convert_worker
   if [[ -f "$pf" ]]; then
     local pid
     pid="$(tr -d '[:space:]' < "$pf" 2>/dev/null || true)"
@@ -209,22 +249,33 @@ _wait_convert_worker_drain() {
 _wait_session_parquet_ready() {
   local timeout_sec="${WAIT_PARQUET_SEC:-1800}"
   local interval_sec="${WAIT_PARQUET_INTERVAL_SEC:-5}"
+  local fail_fast_sec="${EGO_PARQUET_FAIL_FAST_SEC:-120}"
   local deadline=$((SECONDS + timeout_sec))
-  log "等待各 session derive parquet 就绪（超时 ${timeout_sec}s）…"
+  local started=$SECONDS
+  log "等待各 session derive parquet 就绪（超时 ${timeout_sec}s，fail-fast ${fail_fast_sec}s）…"
+
+  mapfile -t FAILED < <(find "${DATALAB_ROOT}/data-storage/stream/${STATION}/state/sessions" -name 'session.FAILED' 2>/dev/null \
+    | while read -r f; do basename "$(dirname "$f")"; done | sort -u)
+  if [[ ${#FAILED[@]} -gt 0 ]]; then
+    die "derive 阻塞：存在 FAILED session: ${FAILED[*]}"
+  fi
+
   while (( SECONDS < deadline )); do
-    mapfile -t AWAITING < <(_py awaiting "$STATION" 2>/dev/null || true)
-    if [[ ${#AWAITING[@]} -eq 0 ]]; then
+    mapfile -t BLOCKERS < <(_py parquet-blockers "$STATION" 2>/dev/null || true)
+    if [[ ${#BLOCKERS[@]} -eq 0 ]]; then
       return 0
     fi
-    if _py all-parquet-ready "$STATION" 2>/dev/null; then
-      log "全部待处理 session parquet 就绪: ${AWAITING[*]}"
-      return 0
+    local elapsed=$((SECONDS - started))
+    if (( elapsed >= fail_fast_sec )); then
+      mapfile -t PENDING_DERIVE < <(_py derive-pending "$STATION" 2>/dev/null || true)
+      if [[ ${#PENDING_DERIVE[@]} -gt 0 ]]; then
+        die "derive 未完成（${elapsed}s）：待 derive ${PENDING_DERIVE[*]}；待 parquet ${BLOCKERS[*]}"
+      fi
     fi
-    mapfile -t NOT_READY < <(comm -23 <(_py awaiting "$STATION" | sort) <(_py pending "$STATION" | sort) 2>/dev/null || true)
-    log "derive 进行中，待 parquet: ${NOT_READY[*]:-${AWAITING[*]}}"
+    log "derive 进行中，待 parquet (${elapsed}s): ${BLOCKERS[*]}"
     sleep "$interval_sec"
   done
-  die "等待 session parquet 超时（${timeout_sec}s）— 检查 derive-worker 日志"
+  die "等待 session parquet 超时（${timeout_sec}s）— 待处理: $(_py parquet-blockers "$STATION" 2>/dev/null | tr '\n' ' ')"
 }
 
 if [[ "$RESET_MODE" == "34" ]]; then

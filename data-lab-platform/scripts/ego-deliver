@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# ego-deliver — edge upload → 34 derive + postprocess → Viewer publish
+# ego-deliver — edge upload → 34 derive + L2/L3 postprocess → Viewer publish
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" == "run" ]]; then
+  shift
+  exec bash "${SCRIPT_DIR}/ego-delivery-run" "$@"
+fi
 
 STATION=""
 RESET_MODE=""
@@ -29,10 +36,15 @@ done
 if [[ -z "$STATION" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 用法: ego-deliver <station> [选项]
+      ego-deliver run <station> --algo <wilor|hamer> [L4 选项]
 
 录完后在 34 上执行的唯一交付命令:
   1. 边缘 ego-upload（幂等上传待传 segment）
-  2. 34 ego-process（derive 批量 + convert + 轻量 Viewer sync）
+  2. 34 ego-process（derive + L2 干净语料 + L3 预览 + Viewer sync）
+
+L4 可插拔算法交付:
+  ego-deliver run ego-001 --algo wilor
+  ego-deliver run ego-001 --algo hamer --order-id ORD-20260912-demo
 
 示例:
   ego-deliver ego-001
@@ -53,7 +65,6 @@ EOF
   exit 0
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EDGE_HOST="${EDGE_HOST:-server@10.10.10.130}"
 PLATFORM_HOST="${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}"
@@ -100,7 +111,7 @@ export PYTHONPATH="${EGO_CAPTURE_SRC:-/home/server/workspace/ego-studio/src}${PY
 REMOTE
 fi
 
-log "=== 2/2 34 派生 + 后处理 + Viewer (ego-process) ==="
+log "=== 2/2 34 派生 + L2/L3 + Viewer (ego-process) ==="
 bash "${SCRIPT_DIR}/ego-process" "$STATION"
 
 if [[ "$EXPORT_AFTER" -eq 1 ]]; then

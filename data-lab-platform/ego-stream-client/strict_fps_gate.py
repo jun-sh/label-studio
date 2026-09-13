@@ -21,11 +21,9 @@ def _eff_hz_band() -> tuple[float, float]:
 
 
 def timeline_gate_enabled() -> bool:
-    """Whether a compressed timeline should fail the segment, rather than just warn.
+    """Legacy: timeline blocks capture close (pre–QA-layering behaviour).
 
-    Off by default: enabling it turns a pre-existing silent defect into rejected
-    segments, which would stall the upload chain for every recording made while the
-    capture rate is still short of the grid rate.
+    Prefer EGO_TIMELINE_CAPTURE_BLOCK=0 + EGO_TIMELINE_UPLOAD_QC=1 (commercial default).
     """
     return os.environ.get("EGO_TIMELINE_GATE", "0").strip().lower() in (
         "1",
@@ -34,8 +32,33 @@ def timeline_gate_enabled() -> bool:
     )
 
 
+def timeline_capture_blocks() -> bool:
+    """Whether timeline incoherence marks CORRUPT at segment close."""
+    if timeline_gate_enabled():
+        return True
+    return os.environ.get("EGO_TIMELINE_CAPTURE_BLOCK", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def timeline_upload_qc_enabled() -> bool:
+    """Upload path rejects segments whose timeline exceeds EGO_TIMELINE_MAX_DEV."""
+    return os.environ.get("EGO_TIMELINE_UPLOAD_QC", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _timeline_max_dev() -> float:
     return float(os.environ.get("EGO_TIMELINE_MAX_DEV", "0.03"))
+
+
+def timeline_stats_max_dev() -> float:
+    """Stress/soak reporting tier only — does not relax corpus or upload QC."""
+    return float(os.environ.get("EGO_TIMELINE_STATS_MAX_DEV", "0.05"))
 
 
 def _timeline_min_frames() -> int:
@@ -189,19 +212,30 @@ def timeline_from_writer_spans(
     }
 
 
+def timeline_ratio_ok(timeline: dict[str, Any], *, max_dev: float | None = None) -> bool:
+    if timeline.get("error"):
+        return False
+    ratio = timeline.get("ratio")
+    if ratio is None:
+        return bool(timeline.get("ok"))
+    dev = _timeline_max_dev() if max_dev is None else max_dev
+    return abs(float(ratio) - 1.0) <= dev
+
+
 def timeline_integrity_issues(
     timeline: dict[str, Any],
     *,
     frame_count: int | None = None,
+    max_dev: float | None = None,
 ) -> list[str]:
-    """Flag compressed segments even when EGO_TIMELINE_GATE is off."""
+    """Timeline QC issues (upload/corpus tier uses EGO_TIMELINE_MAX_DEV by default)."""
     if not timeline:
         return []
     if frame_count is not None and timeline_grace_applies(timeline, frame_count=frame_count):
         return []
     if timeline.get("error"):
         return [f"timeline_unavailable:{timeline['error']}"]
-    if timeline.get("ok"):
+    if timeline_ratio_ok(timeline, max_dev=max_dev):
         return []
     return [
         "timeline_incoherent:"
@@ -209,6 +243,19 @@ def timeline_integrity_issues(
         f"real_fps={timeline.get('real_fps', 0):.3f},"
         f"claimed_fps={timeline.get('claimed_fps', 0):.3f}",
     ]
+
+
+def timeline_stats_issues(
+    timeline: dict[str, Any],
+    *,
+    frame_count: int | None = None,
+) -> list[str]:
+    """Stress/soak stats tier (EGO_TIMELINE_STATS_MAX_DEV, default 5%)."""
+    return timeline_integrity_issues(
+        timeline,
+        frame_count=frame_count,
+        max_dev=timeline_stats_max_dev(),
+    )
 
 
 def log_timeline_verdict(

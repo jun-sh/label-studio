@@ -82,6 +82,21 @@ def leading_parameter_sets(data: bytes) -> bytes:
     return b"".join(parts)
 
 
+def slice_annex_b_from_first_idr(data: bytes) -> bytes:
+    """Drop prefix before first SPS/PPS/IDR cluster (multi-segment H.264 concat)."""
+    if not data:
+        return data
+    parts: list[bytes] = []
+    started = False
+    for nal in iter_nal_units(data):
+        ntype = _nal_type(nal)
+        if ntype in (NAL_TYPE_SPS, NAL_TYPE_PPS, NAL_TYPE_IDR):
+            started = True
+        if started:
+            parts.append(nal)
+    return b"".join(parts) if parts else bytes(data)
+
+
 def _iter_avcc_nal_units(data: bytes) -> Iterable[bytes]:
     """Parse length-prefixed (AVCC) NAL units from OAK VideoEncoder packets."""
     i = 0

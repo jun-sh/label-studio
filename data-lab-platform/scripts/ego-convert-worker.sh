@@ -13,11 +13,16 @@ DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPELINE_SH="${SCRIPT_DIR}/ego-run-pipeline"
 POLL_SEC="${EGO_CONVERT_WORKER_POLL_SEC:-5}"
 PIDFILE="${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.pid"
+HEARTBEAT="${DATALAB_ROOT}/data-storage/pipeline/.convert-worker-${STATION}.heartbeat"
 LOG_DIR="${DATALAB_ROOT}/data-storage/logs"
 mkdir -p "$LOG_DIR" "${DATALAB_ROOT}/data-storage/pipeline"
 RUN_LOG="${LOG_DIR}/ego-convert-worker-${STATION}.log"
 
 log() { echo "[convert-worker $(date +%H:%M:%S)] $*" | tee -a "$RUN_LOG"; }
+
+_touch_heartbeat() {
+  date -Iseconds > "$HEARTBEAT"
+}
 
 _reclaim_orphan_workers() {
   local opid
@@ -47,9 +52,11 @@ sleep 1
 _reclaim_orphan_workers
 
 echo "$$" > "$PIDFILE"
+_touch_heartbeat
 log "started station=${STATION} pid=$$ poll=${POLL_SEC}s"
 
 while true; do
+  _touch_heartbeat
   mapfile -t PENDING < <(
     python3 "${SCRIPT_DIR}/ego-pipeline-sessions.py" pending "$STATION" \
       --datalab-root "$DATALAB_ROOT" 2>/dev/null || true
@@ -59,6 +66,7 @@ while true; do
     EGO_USE_CONVERT_WORKER=0 EGO_AUTO_VIEWER_SYNC=0 \
       bash "$PIPELINE_SH" "$STATION" --skip-deploy --skip-gate --skip-viewer-sync \
       2>&1 | tee -a "$RUN_LOG" || log "batch drain exited non-zero (will retry)"
+    _touch_heartbeat
   fi
   sleep "$POLL_SEC"
 done

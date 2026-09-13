@@ -8,6 +8,7 @@ from strict_fps_gate import (
     timeline_from_writer_spans,
     timeline_grace_applies,
     timeline_integrity_issues,
+    timeline_stats_issues,
 )
 
 
@@ -114,3 +115,23 @@ def test_strict_timestamp_series_fail_when_sparse() -> None:
     ts = [1_000_000_000 + i * interval_ns for i in range(30)]
     report = analyze_timestamp_series(ts, interval_ms=1000.0 / 30.0)
     assert not strict_timestamp_series_ok(report, interval_ms=1000.0 / 30.0)
+
+
+def test_timeline_stats_tier_allows_4pct_compression() -> None:
+    frames = 400
+    grid_min = 1_000_000_000
+    grid_max = grid_min + int((frames - 1) * 33_333_333)
+    grid_span_ns = grid_max - grid_min
+    imu_min = grid_min
+    imu_max = imu_min + int(grid_span_ns * 1.04)
+    timeline = timeline_from_writer_spans(
+        frame_count=frames,
+        grid_min_ns=grid_min,
+        grid_max_ns=grid_max,
+        imu_min_ns=imu_min,
+        imu_max_ns=imu_max,
+        imu_samples=frames * 6,
+    )
+    assert abs(float(timeline["ratio"]) - 1.04) < 0.001
+    assert timeline_integrity_issues(timeline, frame_count=frames)
+    assert not timeline_stats_issues(timeline, frame_count=frames)

@@ -10,8 +10,12 @@ from unittest.mock import MagicMock
 import pytest
 
 import segment_upload as su
-from segment_store import manifest_status, read_manifest, write_manifest_v2
-from segment_upload import SegmentUploader, upload_pending_segments
+from segment_store import manifest_status, read_manifest, write_manifest_v2, write_session_seal
+from segment_upload import (
+    SegmentUploader,
+    should_upload_session_seal,
+    upload_pending_segments,
+)
 
 
 def _write_uploadable_segment(
@@ -20,13 +24,20 @@ def _write_uploadable_segment(
     session_id: str = "sess_upload",
     status: str = "CLOSED",
     v1: bool = False,
+    frame_count: int = 1,
 ) -> None:
     segment_dir.mkdir(parents=True, exist_ok=True)
     (segment_dir / "frames").mkdir(exist_ok=True)
-    frame_count = 1
-    rows = [{"frame_index": 0, "timestamp_ns": 1, "task": "t", "observation.state": [0.0] * 6}]
-    (segment_dir / "rows.jsonl").write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
-    (segment_dir / "frames" / "00000000.bin").write_bytes(b"DLB1\x00")
+    rows = [
+        {"frame_index": i, "timestamp_ns": i + 1, "task": "t", "observation.state": [0.0] * 6}
+        for i in range(frame_count)
+    ]
+    (segment_dir / "rows.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n",
+        encoding="utf-8",
+    )
+    for i in range(frame_count):
+        (segment_dir / "frames" / f"{i:08d}.bin").write_bytes(b"DLB1" + bytes([i % 256]))
     (segment_dir / "imu_raw.jsonl").write_text(
         json.dumps({"ts_ns": 1, "sensor": "gyro", "x": 0.0, "y": 0.0, "z": 0.0}) + "\n",
         encoding="utf-8",
@@ -183,3 +194,68 @@ def test_corrupt_segment_skipped(segment_root: Path) -> None:
     n = upload_pending_segments(root=segment_root, session_id=session_id, uploader=uploader)
     assert n == 0
     uploader.upload_segment_dir.assert_not_called()
+
+
+def test_upload_qc_rejects_timeline_incoherent(
+    segment_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_TIMELINE_UPLOAD_QC", "1")
+    monkeypatch.setenv("EGO_TIMELINE_CAPTURE_BLOCK", "0")
+    session_id = "sess_qc"
+    seg = segment_root / "sessions" / session_id / "segments" / "seg_qc"
+    _write_uploadable_segment(seg, session_id=session_id, status="CLOSED", frame_count=400)
+    manifest = read_manifest(seg)
+    manifest["timeline"] = {
+        "source": "writer_spans",
+        "ratio": 1.05,
+        "real_fps": 28.5,
+        "claimed_fps": 30.0,
+        "grid_span_s": 13.0,
+        "imu_span_s": 13.65,
+        "ok": False,
+    }
+    write_manifest_v2(seg, manifest)
+    uploader = _mock_uploader()
+    n = upload_pending_segments(root=segment_root, session_id=session_id, uploader=uploader)
+    assert n == 0
+    uploader.upload_segment_dir.assert_not_called()
+    assert manifest_status(read_manifest(seg)) == "CORRUPT"
+
+
+def test_should_upload_session_seal_requires_all_uploaded(segment_root: Path) -> None:
+    session_id = "sess_seal_gate"
+    seg_a = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    seg_b = segment_root / "sessions" / session_id / "segments" / "seg_000002"
+    _write_uploadable_segment(seg_a, session_id=session_id, status="UPLOADED")
+    _write_uploadable_segment(seg_b, session_id=session_id, status="CLOSED")
+    write_session_seal(segment_root, session_id, complete=True)
+    assert should_upload_session_seal(segment_root, session_id, session_uploaded=1) is False
+    uploader = _mock_uploader()
+    n = upload_pending_segments(
+        root=segment_root,
+        session_id=session_id,
+        uploader=uploader,
+        finalize_seal=False,
+    )
+    assert n == 1
+    assert should_upload_session_seal(segment_root, session_id) is True
+    assert should_upload_session_seal(segment_root, session_id, session_uploaded=1) is True
+
+
+def test_should_upload_session_seal_after_purge(segment_root: Path) -> None:
+    session_id = "sess_purged"
+    seg_a = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    _write_uploadable_segment(seg_a, session_id=session_id, status="CLOSED")
+    write_session_seal(segment_root, session_id, complete=True)
+    uploader = _mock_uploader()
+    n = upload_pending_segments(
+        root=segment_root,
+        session_id=session_id,
+        uploader=uploader,
+        finalize_seal=False,
+    )
+    assert n == 1
+    import shutil
+
+    shutil.rmtree(seg_a)
+    assert should_upload_session_seal(segment_root, session_id, session_uploaded=n) is True

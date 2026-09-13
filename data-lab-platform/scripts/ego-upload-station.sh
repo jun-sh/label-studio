@@ -334,12 +334,17 @@ FAILED_SIDS=()
 
 if _has_session_id_flag; then
   echo "[ego-upload] mode=single-session (--session-id)" | tee -a "$LOG_FILE"
+  UNTIL_ARGS=()
+  if [[ "${EGO_UPLOAD_UNTIL_COMPLETE:-1}" == "1" ]]; then
+    UNTIL_ARGS=(--until-complete)
+  fi
   set +e
   "$PY" -m ego_capture_studio.cli.upload_segments \
     --limit 0 \
     --ensure-session \
     --segment-root "$SEG_ROOT" \
     --upload-url "$UPLOAD_URL" \
+    "${UNTIL_ARGS[@]}" \
     "${EXTRA[@]}" 2>&1 | tee -a "$LOG_FILE"
   rc=${PIPESTATUS[0]}
   set -e

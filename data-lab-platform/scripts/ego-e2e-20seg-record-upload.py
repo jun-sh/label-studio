@@ -19,7 +19,18 @@ EPISODES = int(os.environ.get("EPISODES", "20"))
 START_EPISODE = int(os.environ.get("START_EPISODE", "1"))
 MIN_SEC = int(os.environ.get("MIN_SEC", "30"))
 MAX_SEC = int(os.environ.get("MAX_SEC", "60"))
-WAIT_AFTER_STOP = int(os.environ.get("WAIT_AFTER_STOP", "20"))
+WAIT_AFTER_STOP = int(os.environ.get("WAIT_AFTER_STOP", "25"))
+SEGMENT_FINALIZE_TIMEOUT = int(os.environ.get("SEGMENT_FINALIZE_TIMEOUT", "300"))
+UPLOAD_UNTIL_COMPLETE = os.environ.get("EGO_UPLOAD_UNTIL_COMPLETE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+RECORD_ONLY = os.environ.get("EGO_E2E_RECORD_ONLY", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 PIPELINE_READY_TIMEOUT = int(os.environ.get("PIPELINE_READY_TIMEOUT", "120"))
 POST_READY_SEC = int(os.environ.get("POST_READY_SEC", "8"))
 UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "3600"))
@@ -280,6 +291,64 @@ def validate_done_line(
     return True, "ok", meta
 
 
+def wait_session_sealed(c: paramiko.SSHClient, session_id: str, timeout: int) -> bool:
+    """Wait until session_seal.json exists with complete=true on 130."""
+    seal = f"/home/server/cache/{STATION}/segments/sessions/{session_id}/session_seal.json"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rc, out = ssh_run(
+            c,
+            f"""
+if [ -f '{seal}' ]; then
+  python3 -c "import json; d=json.load(open('{seal}')); print('complete', d.get('complete'), 'count', d.get('segment_count'))"
+fi
+""",
+            timeout=30,
+        )
+        if rc == 0 and "complete True" in out:
+            return True
+        time.sleep(3)
+    return False
+
+
+def session_segment_gate(c: paramiko.SSHClient, session_id: str) -> tuple[bool, str]:
+    """Check 130 segment manifests for CORRUPT / incomplete finalize before upload."""
+    rc, out = ssh_run(
+        c,
+        f"""
+export PYTHONPATH=/home/server/workspace/ego-studio/src
+/home/server/workspace/ego-studio/.venv/bin/python3 - <<'IN'
+from ego_capture_studio.capture.segment_store import session_segment_status_summary
+summary = session_segment_status_summary(
+    __import__('pathlib').Path('/home/server/cache/{STATION}/segments'),
+    '{session_id}',
+)
+print('pending', summary.get('pending_closed'))
+print('corrupt', len(summary.get('corrupt_issues') or []))
+for issue in (summary.get('corrupt_issues') or [])[:5]:
+    print('corrupt_issue', issue)
+print('status', summary.get('status_counts'))
+IN
+""",
+        timeout=60,
+    )
+    if rc != 0:
+        return False, f"segment_gate_rc={rc}"
+    corrupt_n = 0
+    corrupt_sample = ""
+    for line in out.splitlines():
+        if line.startswith("corrupt "):
+            try:
+                corrupt_n = int(line.split()[1])
+            except (IndexError, ValueError):
+                pass
+        if line.startswith("corrupt_issue "):
+            corrupt_sample = line.split("corrupt_issue ", 1)[1]
+    if corrupt_n > 0:
+        return False, f"corrupt_segments={corrupt_n}:{corrupt_sample}"
+    return True, "ok"
+
+
 def record_one_episode(
     c: paramiko.SSHClient, known: set[str], record_seconds: int
 ) -> tuple[str | None, str | None]:
@@ -443,12 +512,52 @@ def main() -> int:
 
             known.add(sid)
             log(f"session={sid}")
+            if not wait_session_sealed(c, sid, SEGMENT_FINALIZE_TIMEOUT):
+                log(f"FAIL session seal timeout after {SEGMENT_FINALIZE_TIMEOUT}s")
+                append_metric(
+                    {
+                        "episode": episode,
+                        "session": sid,
+                        "status": "seal_timeout",
+                        "record_seconds": record_seconds,
+                    }
+                )
+                return 1
+            ok_gate, gate_reason = session_segment_gate(c, sid)
+            if not ok_gate:
+                log(f"FAIL segment gate: {gate_reason}")
+                append_metric(
+                    {
+                        "episode": episode,
+                        "session": sid,
+                        "status": "segment_gate_fail",
+                        "reason": gate_reason,
+                        "record_seconds": record_seconds,
+                    }
+                )
+                return 1
+            if RECORD_ONLY:
+                uploaded.append(sid)
+                append_metric(
+                    {
+                        "episode": episode,
+                        "session": sid,
+                        "status": "record_only_ok",
+                        "record_seconds_target": record_seconds,
+                    }
+                )
+                log(f"OK {episode}/{EPISODES} record-only session={sid}")
+                episode_ok = True
+                time.sleep(4)
+                break
             upload_start = time.time()
+            upload_flags = "--until-complete" if UPLOAD_UNTIL_COMPLETE else ""
             rc, out = ssh_run(
                 c,
                 f"""export PATH="$HOME/.local/bin:$PATH"
 export SEGMENT_MCAP=1 SEGMENT_FRAME_BIN=0 UPLOAD_PROTOCOL=mcap OAK_H264=1 OAK_HW_JPEG=0
-ego-upload {STATION} --session-id {sid} --notify""",
+export EGO_UPLOAD_UNTIL_COMPLETE={'1' if UPLOAD_UNTIL_COMPLETE else '0'}
+ego-upload {STATION} --session-id {sid} --notify {upload_flags}""",
                 timeout=UPLOAD_TIMEOUT,
             )
             upload_sec = time.time() - upload_start

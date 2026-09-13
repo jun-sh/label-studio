@@ -12,6 +12,7 @@ from segment_store import (
     MANIFEST_SCHEMA_VERSION,
     build_session_seal,
     check_segment_integrity,
+    check_segment_upload_qc,
     clear_segment_uploaded,
     finalize_segment_manifest_after_persist,
     flush_pending_segment_deletes,
@@ -72,7 +73,7 @@ def _write_valid_segment(
         encoding="utf-8",
     )
     for i in range(frame_count):
-        (segment_dir / "frames" / f"{i:08d}.bin").write_bytes(b"DLB1" + bytes([i]))
+        (segment_dir / "frames" / f"{i:08d}.bin").write_bytes(b"DLB1" + bytes([i % 256]))
     if with_imu:
         (segment_dir / "imu_raw.jsonl").write_text(
             json.dumps({"ts_ns": 1, "sensor": "gyro", "x": 0.0, "y": 0.0, "z": 0.0}) + "\n",
@@ -334,3 +335,36 @@ def test_session_seal_complete_and_total(tmp_path: Path) -> None:
     assert loaded["segment_count"] == 1
     assert sealed_segment_total(tmp_path, session_id) == 1
     assert sealed_segment_total(tmp_path, "sess_missing") is None
+
+
+def test_capture_close_timeline_qc_warn_not_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """QA layering: bad timeline → CLOSED + qc_ok=false, not CORRUPT at capture close."""
+    monkeypatch.setenv("EGO_STATION_ID", "ego-001")
+    monkeypatch.setenv("EGO_TIMELINE_CAPTURE_BLOCK", "0")
+    seg = tmp_path / "seg_timeline"
+    _write_valid_segment(seg, frame_count=350, session_id="sess_tl")
+    manifest = read_manifest(seg)
+    manifest["timeline"] = {
+        "source": "writer_spans",
+        "ratio": 1.05,
+        "real_fps": 28.5,
+        "claimed_fps": 30.0,
+        "grid_span_s": 11.67,
+        "imu_span_s": 12.25,
+        "ok": False,
+    }
+    write_manifest_v2(seg, manifest)
+    ok, issues = check_segment_integrity(seg, qa_layer="capture")
+    assert ok, issues
+    assert not issues
+    status = finalize_segment_manifest_after_persist(seg)
+    assert status == "CLOSED"
+    closed = read_manifest(seg)
+    assert closed["integrity"]["ok"] is True
+    assert closed["integrity"]["qc_ok"] is False
+    assert closed["integrity"]["qc_issues"]
+    qc_ok, qc_issues = check_segment_upload_qc(seg)
+    assert not qc_ok
+    assert qc_issues

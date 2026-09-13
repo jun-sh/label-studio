@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# ego-delivery-run — L4 pluggable algorithm delivery (WiLoR / HaMeR → ego-delivery/orders/).
+set -euo pipefail
+
+STATION=""
+ALGO=""
+ORDER_ID=""
+SESSIONS=()
+GATE_ONLY=0
+SKIP_EXPORT=0
+
+usage() {
+  cat <<'EOF'
+用法: ego-delivery-run <station> --algo <wilor|hamer|...> [选项]
+
+  L4 可插拔交付：对 corpus 中 session 跑指定算法，导出到 ego-delivery/orders/<order_id>/
+
+  --algo NAME        必填：wilor | hamer（扩展名预留）
+  --order-id ID      order 目录名（默认 ego-<station>-<algo>-<timestamp>）
+  --session ID       限定 session（可重复；默认全部 finalize.done）
+  --gate-only        仅跑交付门禁
+  --skip-export      仅 convert/hands，不导出
+
+环境变量:
+  EGO_HANDS_FORCE=1  强制重跑 hands
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --algo) ALGO="${2:-}"; shift ;;
+    --order-id) ORDER_ID="${2:-}"; shift ;;
+    --session) SESSIONS+=("$2"); shift ;;
+    --gate-only) GATE_ONLY=1 ;;
+    --skip-export) SKIP_EXPORT=1 ;;
+    -*)
+      echo "未知参数: $1" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -z "$STATION" ]]; then
+        STATION="$1"
+      else
+        echo "多余参数: $1" >&2
+        exit 2
+      fi
+      ;;
+  esac
+  shift
+done
+
+[[ -n "$STATION" && -n "$ALGO" ]] || {
+  usage >&2
+  exit 2
+}
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-pipeline-performance.env.sh
+source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
+DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
+PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
+SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
+EXPORT_PY="${SCRIPT_DIR}/ego-export-delivery.py"
+PIPELINE_SH="${SCRIPT_DIR}/ego-run-pipeline"
+PURITY_SH="${SCRIPT_DIR}/ego-lerobot-purity-gate.sh"
+
+SLUG="$(python3 "$SESSIONS_PY" slug "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || echo "ego_001")"
+STAMP="$(date +%Y%m%d-%H%M%S)"
+ORDER_ID="${ORDER_ID:-ego-${STATION}-${ALGO}-${STAMP}}"
+ORDER_DIR="${DATALAB_ROOT}/data-storage/ego-delivery/orders/${ORDER_ID}"
+ORDER_MANIFEST="${ORDER_DIR}/order-manifest.json"
+
+LOG_DIR="${DATALAB_ROOT}/data-storage/logs"
+mkdir -p "$LOG_DIR" "$ORDER_DIR"
+RUN_LOG="${LOG_DIR}/ego-delivery-run-${STATION}-${ALGO}-${STAMP}.log"
+
+log() { echo "[delivery-run] $*" | tee -a "$RUN_LOG"; }
+
+case "${ALGO,,}" in
+  wilor)
+    export EGO_OAK_MODE=hands
+    export EGO_WILOR_BACKEND="${EGO_WILOR_BACKEND:-repo}"
+    export EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-1}"
+    export EGO_L2_PUBLISH=0
+    export EGO_VIEWER_PUBLISH_L2=0
+    ;;
+  hamer)
+    export EGO_OAK_MODE=hands
+    export EGO_HAMER_BACKEND="${EGO_HAMER_BACKEND:-geopavlakos}"
+    export EGO_WILOR_BACKEND="${EGO_WILOR_BACKEND:-stub}"
+    export EGO_USE_CONVERT_WORKER=0
+    export EGO_L2_PUBLISH=0
+    export EGO_VIEWER_PUBLISH_L2=0
+    ;;
+  *)
+    echo "不支持的 algo: ${ALGO}（当前: wilor, hamer）" >&2
+    exit 2
+    ;;
+esac
+
+mapfile -t TARGET_SESSIONS < <(
+  if [[ ${#SESSIONS[@]} -gt 0 ]]; then
+    printf '%s\n' "${SESSIONS[@]}"
+  else
+    python3 "$SESSIONS_PY" exportable-sessions "$STATION" --datalab-root "$DATALAB_ROOT" 2>/dev/null || true
+  fi
+)
+
+if [[ ${#TARGET_SESSIONS[@]} -eq 0 ]]; then
+  log "无 finalize.done session，退出"
+  exit 1
+fi
+
+log "algo=${ALGO} order=${ORDER_ID} sessions=${TARGET_SESSIONS[*]}"
+
+CORPUS="${DATALAB_ROOT}/data-storage/corpus/${SLUG}"
+if [[ -f "$CORPUS/meta/info.json" ]]; then
+  CORPUS_HASH="$(python3 -c "import hashlib, pathlib; p=pathlib.Path('${CORPUS}/meta/info.json'); print(hashlib.sha256(p.read_bytes()).hexdigest()[:16])")"
+else
+  CORPUS_HASH=""
+fi
+
+for SID in "${TARGET_SESSIONS[@]}"; do
+  log ">>> L4 convert ${ALGO} ${STATION}/${SID}"
+  set +e
+  (
+    cd "$PLATFORM_ROOT" && \
+    PYTHONPATH="${PLATFORM_ROOT}/src:${PYTHONPATH:-}" \
+    DATALAB_ROOT="$DATALAB_ROOT" WILOR_ROOT="${WILOR_ROOT:-$PIPE_ROOT/third_party/wilor}" \
+    python3 -m ego_platform.cli.convert \
+      --station "$STATION" \
+      --session "$SID" \
+      --datalab-root "$DATALAB_ROOT" \
+      --corpus-slug "$SLUG" \
+      --mode hands \
+      $([[ "${EGO_HANDS_FORCE:-}" == "1" ]] && echo --force)
+  ) 2>&1 | tee -a "$RUN_LOG"
+  rc=${PIPESTATUS[0]}
+  set -e
+  [[ "$rc" -eq 0 ]] || {
+    log "session ${SID} convert 失败 (exit ${rc})"
+    exit "$rc"
+  }
+done
+
+SESSIONS_FILE="${ORDER_DIR}/.sessions.txt"
+printf '%s\n' "${TARGET_SESSIONS[@]}" > "$SESSIONS_FILE"
+
+python3 - <<PY | tee -a "$RUN_LOG"
+import json
+from pathlib import Path
+
+sessions = [
+    line.strip()
+    for line in Path("${SESSIONS_FILE}").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+manifest = {
+    "order_id": "${ORDER_ID}",
+    "customer_id": "internal",
+    "session_ids": sessions,
+    "algo": "${ALGO}",
+    "corpus_slug": "${SLUG}",
+    "corpus_info_hash": "${CORPUS_HASH}",
+    "delivery_layer": "L4",
+}
+path = Path("${ORDER_MANIFEST}")
+path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(json.dumps({"path": str(path), **manifest}, ensure_ascii=False))
+PY
+rm -f "$SESSIONS_FILE"
+
+if [[ "$GATE_ONLY" -eq 1 || "$SKIP_EXPORT" -eq 0 ]]; then
+  log "交付门禁…"
+  python3 "$EXPORT_PY" "$STATION" \
+    --datalab-root "$DATALAB_ROOT" \
+    --order-manifest "$ORDER_MANIFEST" \
+    --gate-only 2>&1 | tee -a "$RUN_LOG"
+fi
+
+if [[ "$GATE_ONLY" -eq 1 ]]; then
+  log "gate-only 完成 → ${ORDER_MANIFEST}"
+  exit 0
+fi
+
+if [[ "$SKIP_EXPORT" -eq 0 ]]; then
+  log "导出 order → ${ORDER_DIR}"
+  python3 "$EXPORT_PY" "$STATION" \
+    --datalab-root "$DATALAB_ROOT" \
+    --order-manifest "$ORDER_MANIFEST" 2>&1 | tee -a "$RUN_LOG"
+fi
+
+log "L4 delivery 完成 order=${ORDER_ID} log=${RUN_LOG}"

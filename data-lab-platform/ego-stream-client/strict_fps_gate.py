@@ -14,9 +14,19 @@ TOPIC_OBS_STATE = "/ego/observation/state"
 TOPIC_IMU_RAW = "/ego/imu/raw"
 
 
-def _eff_hz_band() -> tuple[float, float]:
-    lo = float(os.environ.get("EGO_STRICT_EFF_HZ_LO", "29.8"))
-    hi = float(os.environ.get("EGO_STRICT_EFF_HZ_HI", "30.2"))
+def capture_interval_ms() -> float:
+    """Configured capture grid interval (ms); production ego-001 uses 33."""
+    return float(os.environ.get("EGO_FRAME_INTERVAL_MS", str(DEFAULT_INTERVAL_MS)))
+
+
+def _eff_hz_band(*, interval_ms: float | None = None) -> tuple[float, float]:
+    ms = capture_interval_ms() if interval_ms is None else float(interval_ms)
+    nominal_hz = 1000.0 / ms
+    lo = float(os.environ.get("EGO_STRICT_EFF_HZ_LO", str(nominal_hz - 0.503)))
+    hi = float(os.environ.get("EGO_STRICT_EFF_HZ_HI", str(nominal_hz + 0.1)))
+    # 33ms grid is 30.303Hz — env band 29.8–30.2 must not reject nominal spacing.
+    hi = max(hi, nominal_hz + 0.05)
+    lo = min(lo, nominal_hz - 0.05)
     return lo, hi
 
 
@@ -108,7 +118,7 @@ def analyze_timestamp_series(
     dts_ms = [(ts_ns[i] - ts_ns[i - 1]) / 1e6 for i in range(1, len(ts_ns))]
     tight_lo, tight_hi = interval_ms - 0.5, interval_ms + 0.5
     eff_hz = 1000.0 / statistics.mean(dts_ms)
-    lo, hi = _eff_hz_band()
+    lo, hi = _eff_hz_band(interval_ms=interval_ms)
     return {
         "frames": len(ts_ns),
         "eff_hz": eff_hz,
@@ -128,7 +138,7 @@ def strict_timestamp_series_ok(report: dict[str, Any], *, interval_ms: float = D
         return False
     dt_ok = abs(report.get("dt_mean_ms", 0) - interval_ms) <= 0.5
     band_ok = report.get("pct_in_tight_band", 0) >= 99.0
-    lo, hi = _eff_hz_band()
+    lo, hi = _eff_hz_band(interval_ms=interval_ms)
     eff_hz_ok = lo <= report.get("eff_hz", 0) <= hi
     return bool(band_ok and dt_ok and eff_hz_ok)
 
@@ -338,10 +348,12 @@ def check_mcap_strict_fps(
     mcap_path: Path,
     frame_count: int,
     *,
-    interval_ms: float = DEFAULT_INTERVAL_MS,
+    interval_ms: float | None = None,
 ) -> tuple[bool, list[str]]:
     if not strict_fps_gate_enabled() and not timeline_gate_enabled():
         return True, []
+    if interval_ms is None:
+        interval_ms = capture_interval_ms()
     if not mcap_path.is_file():
         return False, ["missing_segment_mcap"]
     issues: list[str] = []

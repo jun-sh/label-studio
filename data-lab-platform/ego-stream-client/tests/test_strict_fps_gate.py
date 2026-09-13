@@ -24,11 +24,26 @@ def test_strict_timestamp_series_ok_at_30hz() -> None:
 
 
 def test_strict_timestamp_series_rejects_legacy_33ms_grid() -> None:
+    """33ms timestamps fail when checked against 30.0Hz (33.333ms) interval."""
     ts = [i * 33_000_000 for i in range(100)]
     interval_ms = 1000.0 / 30.0
     report = analyze_timestamp_series(ts, interval_ms=interval_ms)
     assert report["eff_hz_ok"] is False
     assert not strict_timestamp_series_ok(report, interval_ms=interval_ms)
+
+
+def test_strict_timestamp_series_ok_at_33ms_production_grid() -> None:
+    import os
+
+    os.environ["EGO_FRAME_INTERVAL_MS"] = "33"
+    os.environ["EGO_STRICT_EFF_HZ_LO"] = "29.8"
+    os.environ["EGO_STRICT_EFF_HZ_HI"] = "30.2"
+    ts = [1_000_000_000 + i * 33_000_000 for i in range(120)]
+    interval_ms = 33.0
+    report = analyze_timestamp_series(ts, interval_ms=interval_ms)
+    assert abs(report["dt_mean_ms"] - 33.0) < 0.01
+    assert report["eff_hz_ok"] is True
+    assert strict_timestamp_series_ok(report, interval_ms=interval_ms)
 
 
 def test_timeline_from_writer_spans_ok_at_30hz() -> None:

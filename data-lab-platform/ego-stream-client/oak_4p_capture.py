@@ -955,19 +955,27 @@ class Oak4pEgoRecorder:
             return False
         return imu_type.strip().upper() not in ("", "NONE", "UNKNOWN")
 
+    def _normalized_center_crop_rect(
+        self, *, out_w: int, out_h: int, in_w: int, in_h: int
+    ) -> tuple[float, float, float, float]:
+        crop_x = max(0, (int(in_w) - int(out_w)) // 2)
+        crop_y = max(0, (int(in_h) - int(out_h)) // 2)
+        return (
+            float(crop_x) / float(in_w),
+            float(crop_y) / float(in_h),
+            float(crop_x + int(out_w)) / float(in_w),
+            float(crop_y + int(out_h)) / float(in_h),
+        )
+
     def _create_center_crop_manip(
         self, pipeline: Any, *, out_w: int, out_h: int, in_w: int, in_h: int
     ) -> Any:
         """Center-crop ISP frames (e.g. 1280×800) to deliverable 720p."""
         dai = self._dai
         manip = pipeline.create(dai.node.ImageManip)
-        crop_x = max(0, (int(in_w) - int(out_w)) // 2)
-        crop_y = max(0, (int(in_h) - int(out_h)) // 2)
-        # DepthAI 2.x setCropRect expects normalized [0..1] corners, not pixel coords.
-        x_min = float(crop_x) / float(in_w)
-        y_min = float(crop_y) / float(in_h)
-        x_max = float(crop_x + int(out_w)) / float(in_w)
-        y_max = float(crop_y + int(out_h)) / float(in_h)
+        x_min, y_min, x_max, y_max = self._normalized_center_crop_rect(
+            out_w=out_w, out_h=out_h, in_w=in_w, in_h=in_h
+        )
         try:
             cfg = dai.ImageManipConfig()
             cfg.setCropRect(x_min, y_min, x_max, y_max)
@@ -995,12 +1003,11 @@ class Oak4pEgoRecorder:
         if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(cam_name, is_color=True):
             cam.setPreviewSize(pv_w, pv_h)
         if isp_w != cap_w or isp_h != cap_h:
-            manip_crop = self._create_center_crop_manip(
-                pipeline, out_w=cap_w, out_h=cap_h, in_w=isp_w, in_h=isp_h
+            # Single ImageManip: center-crop + NV12 (dual-node chain dropped ~4fps on OAK-4).
+            manip_cap = self._create_h264_input_manip(
+                pipeline, cap_w, cap_h, crop_from=(isp_w, isp_h)
             )
-            manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
-            cam.isp.link(manip_crop.inputImage)
-            manip_crop.out.link(manip_cap.inputImage)
+            cam.isp.link(manip_cap.inputImage)
         else:
             manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
             cam.isp.link(manip_cap.inputImage)
@@ -1030,19 +1037,48 @@ class Oak4pEgoRecorder:
         manip.setMaxOutputFrameSize(max(1, width * height * 3))
         return manip
 
-    def _create_h264_input_manip(self, pipeline: Any, width: int, height: int) -> Any:
-        """Resize ISP output to NV12 for VideoEncoder H.264 (DepthAI 3.x)."""
+    def _create_h264_input_manip(
+        self,
+        pipeline: Any,
+        width: int,
+        height: int,
+        *,
+        crop_from: tuple[int, int] | None = None,
+    ) -> Any:
+        """Resize (and optional center-crop) to NV12 for VideoEncoder H.264."""
         dai = self._dai
         manip = pipeline.create(dai.node.ImageManip)
-        manip.initialConfig.setResize(int(width), int(height))
+        w, h = int(width), int(height)
         try:
-            manip.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
-        except Exception:
+            cfg = dai.ImageManipConfig()
+            if crop_from is not None:
+                in_w, in_h = int(crop_from[0]), int(crop_from[1])
+                x_min, y_min, x_max, y_max = self._normalized_center_crop_rect(
+                    out_w=w, out_h=h, in_w=in_w, in_h=in_h
+                )
+                cfg.setCropRect(x_min, y_min, x_max, y_max)
+            cfg.setResize(w, h)
             try:
-                manip.initialConfig.setFrameType(dai.RawImgFrame.Type.NV12)
+                cfg.setFrameType(dai.ImgFrame.Type.NV12)
             except Exception:
-                pass
-        manip.setMaxOutputFrameSize(max(1, int(width) * int(height) * 3 // 2))
+                cfg.setFrameType(dai.RawImgFrame.Type.NV12)
+            manip.initialConfig.set(cfg)
+        except Exception:
+            if crop_from is not None:
+                in_w, in_h = int(crop_from[0]), int(crop_from[1])
+                x_min, y_min, x_max, y_max = self._normalized_center_crop_rect(
+                    out_w=w, out_h=h, in_w=in_w, in_h=in_h
+                )
+                manip.initialConfig.setCropRect(x_min, y_min, x_max, y_max)
+            manip.initialConfig.setResize(w, h)
+            try:
+                manip.initialConfig.setFrameType(dai.ImgFrame.Type.NV12)
+            except Exception:
+                try:
+                    manip.initialConfig.setFrameType(dai.RawImgFrame.Type.NV12)
+                except Exception:
+                    pass
+        manip.setMaxOutputFrameSize(max(1, w * h * 3 // 2))
         return manip
 
     def _create_mjpeg_encoder(self, pipeline: Any) -> Any:

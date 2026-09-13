@@ -1,13 +1,13 @@
 """EGO capture constants (edge host ego_capture_studio.capture.ego_spec)."""
 
-from ego_video_spec import OAK_ISP_OUTPUT_HEIGHT, OAK_ISP_OUTPUT_WIDTH
-
+# 720p deliverable + ISP crop source (mirrors ego_video_spec / video_spec contract).
+OAK_ISP_OUTPUT_WIDTH = 1280
+OAK_ISP_OUTPUT_HEIGHT = 800
+OAK_ISP_FRAME_WIDTH = OAK_ISP_OUTPUT_WIDTH
+OAK_ISP_FRAME_HEIGHT = OAK_ISP_OUTPUT_HEIGHT
 OAK_CAPTURE_RES_KEY = "800"
 OAK_CAPTURE_FPS = 30
 OAK_CAPTURE_IMU_HZ = 200
-# Product deliverable: 720p (1280×720). ISP may emit 1280×800 before center-crop.
-OAK_ISP_FRAME_WIDTH = OAK_ISP_OUTPUT_WIDTH
-OAK_ISP_FRAME_HEIGHT = OAK_ISP_OUTPUT_HEIGHT
 OAK_DEFAULT_FRAME_WIDTH = 1280
 OAK_DEFAULT_FRAME_HEIGHT = 720
 

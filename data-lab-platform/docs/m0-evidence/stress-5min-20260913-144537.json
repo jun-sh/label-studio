@@ -1,0 +1,67 @@
+{
+  "station": "ego-001",
+  "episodes_target": 2,
+  "record_seconds": 45,
+  "post_ready_sec": 0,
+  "inter_episode_sec": 15,
+  "done_upload": 2,
+  "ready": 2,
+  "failed": 0,
+  "record_upload_sec": 239,
+  "derive_sec": 135,
+  "pipeline_sec": 374,
+  "total_sec": 398,
+  "pipeline_budget_sec": 600,
+  "timeline_ratios": [
+    {
+      "segment": "seg_000001",
+      "ratio": 1.0131
+    },
+    {
+      "segment": "seg_000001",
+      "ratio": 1.0094
+    }
+  ],
+  "timeline_retries": 0,
+  "timeline_max_ratio": 1.0131,
+  "timeline_max_dev": 0.030000000000000027,
+  "timeline_ok": true,
+  "corpus_mp4_count": 8,
+  "corpus_mp4_expected": 8,
+  "corpus_mp4_ok": true,
+  "corpus_mp4_dims": [
+    {
+      "path": "videos/observation.images.camera_front_left/chunk-000/file-000.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_front_left/chunk-000/file-001.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_front_right/chunk-000/file-000.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_front_right/chunk-000/file-001.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_rear_left/chunk-000/file-000.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_rear_left/chunk-000/file-001.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_rear_right/chunk-000/file-000.mp4",
+      "size": "1280x800"
+    },
+    {
+      "path": "videos/observation.images.camera_rear_right/chunk-000/file-001.mp4",
+      "size": "1280x800"
+    }
+  ],
+  "passed": true
+}

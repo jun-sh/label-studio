@@ -3,6 +3,11 @@
 services:
   stream-ingest:
     image: data-lab-lerobot-studio:v0.1.9-commercial-l2
+    environment:
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_MCAP_SINGLE_FAST=${DERIVE_MCAP_SINGLE_FAST:-1}
 
   derive-worker:
     image: data-lab-lerobot-studio:v0.1.9-commercial-l2

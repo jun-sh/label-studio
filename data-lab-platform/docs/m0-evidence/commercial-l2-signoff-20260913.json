@@ -1,0 +1,41 @@
+{
+  "tag": "v0.1.9-commercial-l2",
+  "deployed_at": "2026-09-13",
+  "stress_runs": [
+    {
+      "audit": "stress-5min-20260913-111758.json",
+      "timeline_ratios": [1.0115, 1.0066],
+      "timeline_retries": 0,
+      "passed": true
+    },
+    {
+      "audit": "stress-5min-20260913-120555.json",
+      "timeline_ratios_final": [1.0087, 1.0107],
+      "timeline_retries": 1,
+      "note": "ep2 first attempt 1.058, retry OK",
+      "passed": true
+    },
+    {
+      "audit": "stress-5min-20260913-144537.json",
+      "timeline_ratios": [1.0131, 1.0094],
+      "timeline_retries": 0,
+      "passed": true,
+      "note": "post-deploy validation"
+    }
+  ],
+  "commercial_l2_signoff": {
+    "timeline_ok": true,
+    "corpus_mp4_ok": true,
+    "deploy_130_34": true,
+    "derive_sla_p95_30s": false,
+    "export_e2e": false,
+    "commercial_derive_gate": false
+  },
+  "export_gate_blockers_default": [
+    "preview_not_ready",
+    "pose_not_ready",
+    "qc_pending",
+    "annotation_missing"
+  ],
+  "export_command": "ego-deliver ego-001 --export (after QC + annotation)"
+}

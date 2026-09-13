@@ -37,8 +37,13 @@ from ego_capture_studio.capture.upload_status import (
 
 try:
     from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
+    from ego_capture_studio.capture.ego_spec import (
+        OAK_DEFAULT_FRAME_HEIGHT,
+        OAK_DEFAULT_FRAME_WIDTH,
+    )
 except ImportError:
     from camera_map import ALL_LEROBOT_VIDEO_KEYS  # type: ignore[no-redef]
+    from ego_spec import OAK_DEFAULT_FRAME_HEIGHT, OAK_DEFAULT_FRAME_WIDTH  # type: ignore[no-redef]
 
 DEFAULT_STATION = os.environ.get("EGO_STATION_ID", "ego-001").strip() or "ego-001"
 DEFAULT_UPLOAD_URL = os.environ.get(
@@ -56,7 +61,7 @@ DEFAULT_EXPORT_ROOT = Path(
 def _ensure_session(uploader: SegmentUploader, root: Path, session_id: str, task: str) -> None:
     shapes: dict[str, tuple[int, int]] = {}
     for key in ALL_LEROBOT_VIDEO_KEYS:
-        shapes[key] = (720, 1280)
+        shapes[key] = (int(OAK_DEFAULT_FRAME_HEIGHT), int(OAK_DEFAULT_FRAME_WIDTH))
     intrinsics_path = root / "sessions" / session_id / "meta" / "camera_intrinsics.json"
     camera_intrinsics = None
     if intrinsics_path.is_file():

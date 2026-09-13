@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy v0.2.0-rectified-720p-l2 to 34 (docker) + 130 (MCAP 720p crop capture).
+# Deploy v0.2.0-rectified-720p-l2 to 34 (docker) + 130 (MCAP 1280×800 passthrough).
 #
 # Usage:
 #   RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/deploy-v0.2.0-rectified-720p-l2.sh [station] [130_target]
@@ -63,7 +63,7 @@ if docker ps --format '{{.Names}}' | grep -qx "${NGINX_CONTAINER}"; then
 fi
 
 if [[ "${EGO_SKIP_130:-0}" != "1" ]]; then
-  log "=== 3/5 provision 130 MCAP 720p capture stack (normalized crop hotfix) ==="
+  log "=== 3/5 provision 130 MCAP 1280×800 passthrough (720p crop on 34 rectify only) ==="
   RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" \
     bash "${SCRIPT_DIR}/ego-130-provision-720p-l2.sh" "${TARGET}" "${STATION}"
 else
@@ -84,5 +84,5 @@ fi
 
 log "Done. tag=${TAG} station=${STATION} derive_mode=manual"
 log "34: stream-ingest + lerobot on ${IMAGE}; EGO_OAK_MODE=rectify corpus=1280x720"
-log "130: ${TARGET} MCAP center-crop 720p — re-record required (old 800p corpus archived)"
+log "130: ${TARGET} MCAP 1280×800 passthrough — 720p only after rectify on 34"
 log "SOP: 130 record/upload → 34: ego-process ${STATION}"

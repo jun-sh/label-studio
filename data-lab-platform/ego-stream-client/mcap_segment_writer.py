@@ -280,7 +280,7 @@ class McapSegmentWriter:
             "task": self.task,
             "video_codec": self.video_codec,
             "frame_width": int(os.environ.get("OAK_DEFAULT_FRAME_WIDTH", "1280")),
-            "frame_height": int(os.environ.get("OAK_DEFAULT_FRAME_HEIGHT", "720")),
+            "frame_height": int(os.environ.get("OAK_DEFAULT_FRAME_HEIGHT", "800")),
             "camera_topics": CAMERA_TOPICS,
             "asset_semantics": "raw_sensors_only",
         }

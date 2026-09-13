@@ -22,8 +22,13 @@ from ego_capture_studio.capture.segment_upload import (
 
 try:
     from ego_capture_studio.capture.camera_map import ALL_LEROBOT_VIDEO_KEYS
+    from ego_capture_studio.capture.ego_spec import (
+        OAK_DEFAULT_FRAME_HEIGHT,
+        OAK_DEFAULT_FRAME_WIDTH,
+    )
 except ImportError:
     from camera_map import ALL_LEROBOT_VIDEO_KEYS  # type: ignore[no-redef]
+    from ego_spec import OAK_DEFAULT_FRAME_HEIGHT, OAK_DEFAULT_FRAME_WIDTH  # type: ignore[no-redef]
 
 
 def main() -> None:
@@ -109,7 +114,7 @@ def main() -> None:
         if args.ensure_session:
             shapes: dict[str, tuple[int, int]] = {}
             for key in ALL_LEROBOT_VIDEO_KEYS:
-                shapes[key] = (720, 1280)
+                shapes[key] = (int(OAK_DEFAULT_FRAME_HEIGHT), int(OAK_DEFAULT_FRAME_WIDTH))
             intrinsics_path = root / "sessions" / session_id / "meta" / "camera_intrinsics.json"
             camera_intrinsics = None
             if intrinsics_path.is_file():

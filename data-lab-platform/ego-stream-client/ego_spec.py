@@ -1,6 +1,6 @@
 """EGO capture constants (edge host ego_capture_studio.capture.ego_spec)."""
 
-# 720p deliverable + ISP crop source (mirrors ego_video_spec / video_spec contract).
+# 130 passthrough: ISP 1280×800 fisheye MCAP. Rectified 720p corpus is produced on 34 (rectify).
 OAK_ISP_OUTPUT_WIDTH = 1280
 OAK_ISP_OUTPUT_HEIGHT = 800
 OAK_ISP_FRAME_WIDTH = OAK_ISP_OUTPUT_WIDTH
@@ -9,7 +9,7 @@ OAK_CAPTURE_RES_KEY = "800"
 OAK_CAPTURE_FPS = 30
 OAK_CAPTURE_IMU_HZ = 200
 OAK_DEFAULT_FRAME_WIDTH = 1280
-OAK_DEFAULT_FRAME_HEIGHT = 720
+OAK_DEFAULT_FRAME_HEIGHT = 800
 
 OBS_STATE_DIM = 6
 OBS_POSE_DIM = 7

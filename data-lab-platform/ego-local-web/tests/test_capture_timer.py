@@ -33,7 +33,8 @@ class CaptureTimerTest(unittest.TestCase):
         run.assert_called_once()
 
     def test_journal_beep_epoch_uses_cache(self) -> None:
-        ego_web._journal_cache = (time.monotonic(), 42.0, 99.5)
+        cached = {"beep_epoch": 99.5, "captured": 0, "capture_fps": 0.0}
+        ego_web._journal_cache = (time.monotonic(), 42.0, cached)
         with mock.patch.object(ego_web.subprocess, "run") as run:
             ts = ego_web._journal_beep_epoch(42.0)
         self.assertEqual(ts, 99.5)
@@ -45,7 +46,10 @@ class CaptureTimerTest(unittest.TestCase):
             mock.patch.object(ego_web, "_reconcile_orphan_capture_stack"),
             mock.patch.object(ego_web, "_capture_active", return_value=True),
             mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
-            mock.patch.object(ego_web, "_journal_beep_epoch", return_value=None),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=False),
+            mock.patch.object(ego_web, "_oak_warm_seconds_remaining", return_value=0),
+            mock.patch.object(ego_web, "_read_capture_live_stats", return_value={}),
+            mock.patch.object(ego_web, "_journal_capture_info", return_value={"beep_epoch": None}),
             mock.patch.object(ego_web, "_storage_free_bytes", return_value=10**12),
             mock.patch.object(ego_web, "_count_segments", return_value=0),
             mock.patch.object(ego_web, "_maybe_stop_idle_standby_preview"),
@@ -62,7 +66,18 @@ class CaptureTimerTest(unittest.TestCase):
             mock.patch.object(ego_web, "_reconcile_orphan_capture_stack"),
             mock.patch.object(ego_web, "_capture_active", return_value=True),
             mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
-            mock.patch.object(ego_web, "_journal_beep_epoch", return_value=beep),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=False),
+            mock.patch.object(ego_web, "_oak_warm_seconds_remaining", return_value=0),
+            mock.patch.object(
+                ego_web,
+                "_read_capture_live_stats",
+                return_value={"beep_epoch": beep, "frame_count": 90},
+            ),
+            mock.patch.object(
+                ego_web,
+                "_journal_capture_info",
+                return_value={"beep_epoch": beep, "captured": 90, "capture_fps": 30.0},
+            ),
             mock.patch.object(ego_web, "_storage_free_bytes", return_value=10**12),
             mock.patch.object(ego_web, "_count_segments", return_value=0),
             mock.patch.object(ego_web, "_maybe_stop_idle_standby_preview"),
@@ -72,6 +87,30 @@ class CaptureTimerTest(unittest.TestCase):
         self.assertTrue(status["frames_writing"])
         self.assertGreaterEqual(status["duration"], 2)
         self.assertLessEqual(status["duration"], 5)
+
+    def test_build_status_ignores_stale_journal_beep_without_live_stats(self) -> None:
+        ego_web._journal_cache = None
+        stale_beep = time.time() - 120.0
+        with (
+            mock.patch.object(ego_web, "_reconcile_orphan_capture_stack"),
+            mock.patch.object(ego_web, "_capture_active", return_value=True),
+            mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=False),
+            mock.patch.object(ego_web, "_oak_warm_seconds_remaining", return_value=0),
+            mock.patch.object(ego_web, "_read_capture_live_stats", return_value={"beep_epoch": None}),
+            mock.patch.object(
+                ego_web,
+                "_journal_capture_info",
+                return_value={"beep_epoch": stale_beep, "captured": 3600},
+            ),
+            mock.patch.object(ego_web, "_storage_free_bytes", return_value=10**12),
+            mock.patch.object(ego_web, "_count_segments", return_value=0),
+            mock.patch.object(ego_web, "_maybe_stop_idle_standby_preview"),
+        ):
+            status = ego_web._build_status()
+        self.assertEqual(status["state"], "warming")
+        self.assertEqual(status["duration"], 0)
+        self.assertFalse(status["frames_writing"])
 
     def test_reconcile_orphan_capture_stack(self) -> None:
         def _state(unit: str) -> str:

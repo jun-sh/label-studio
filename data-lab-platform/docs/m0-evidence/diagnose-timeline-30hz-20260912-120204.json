@@ -1,0 +1,25 @@
+{
+  "stamp": "20260912-120204",
+  "tests": [
+    {
+      "label": "A_single_60s",
+      "exit_code": 0,
+      "elapsed_s": 159.5,
+      "sessions": []
+    },
+    {
+      "label": "B_six_60s",
+      "exit_code": 0,
+      "elapsed_s": 958.4,
+      "sessions": []
+    }
+  ],
+  "log": "/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/logs/diagnose-timeline-30hz-20260912-120204.log",
+  "interpretation": {
+    "A_single_worst_ratio": null,
+    "B_six_worst_ratio": null,
+    "A_passed_gate": true,
+    "B_passed_gate": true,
+    "hypothesis": "both_ok → stress-20min 失败为更长 clip(>60s)或方差"
+  }
+}

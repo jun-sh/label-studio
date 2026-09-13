@@ -9,6 +9,8 @@ STATION="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=ego-pipeline-performance.env.sh
 source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
+# shellcheck source=ego-convert-coord.sh
+source "${SCRIPT_DIR}/ego-convert-coord.sh"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIPELINE_SH="${SCRIPT_DIR}/ego-run-pipeline"
 POLL_SEC="${EGO_CONVERT_WORKER_POLL_SEC:-5}"
@@ -62,6 +64,11 @@ while true; do
       --datalab-root "$DATALAB_ROOT" 2>/dev/null || true
   )
   if [[ ${#PENDING[@]} -gt 0 ]]; then
+    if ego_convert_coord_inline_active "$STATION" "$DATALAB_ROOT"; then
+      log "skip drain — inline ego-process/L2 convert active for ${STATION}"
+      sleep "$POLL_SEC"
+      continue
+    fi
     log "drain pending (${#PENDING[@]}): ${PENDING[*]}"
     EGO_USE_CONVERT_WORKER=0 EGO_AUTO_VIEWER_SYNC=0 \
       bash "$PIPELINE_SH" "$STATION" --skip-deploy --skip-gate --skip-viewer-sync \

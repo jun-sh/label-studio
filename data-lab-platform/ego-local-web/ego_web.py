@@ -56,6 +56,15 @@ CHECKPOINT_PATH = Path(
         f"/home/server/cache/{os.environ.get('EGO_STATION_ID', 'ego-001').strip() or 'ego-001'}/segments/checkpoint.json",
     )
 )
+OAK_WARM_IDLE_ENABLED = os.environ.get("EGO_OAK_WARM_IDLE", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+OAK_WARM_STATE_PATH = Path(
+    os.environ.get("EGO_OAK_WARM_STATE", str(CHECKPOINT_PATH.parent / "oak_warm_state.json"))
+)
+WARM_START_TIMEOUT_S = float(os.environ.get("EGO_WARM_START_TIMEOUT_S", "30"))
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 SEGMENT_STORE_VERSION = 1
 DEFAULT_CAPTURE_TASK = os.environ.get(
@@ -94,6 +103,7 @@ _last_error = ""
 _journal_cache: tuple[float, float | None, dict[str, Any]] | None = None
 _standby_preview_touch_mono = 0.0
 _last_preview_jpeg: bytes | None = None
+_start_expect_warm = False
 
 
 def _unit_active_since_epoch(unit: str) -> float | None:
@@ -223,6 +233,41 @@ def _read_capture_live_stats() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _read_oak_warm_state() -> dict[str, Any]:
+    if not OAK_WARM_STATE_PATH.is_file():
+        return {}
+    try:
+        raw = json.loads(OAK_WARM_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _oak_warm_seconds_remaining(now: float | None = None) -> int:
+    st = _read_oak_warm_state()
+    if not st.get("active"):
+        return 0
+    expires_at = st.get("expires_at")
+    if expires_at is None:
+        return 0
+    ts = time.time() if now is None else now
+    try:
+        return max(0, int(float(expires_at) - ts))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _oak_warm_idle_active() -> bool:
+    if not OAK_WARM_IDLE_ENABLED:
+        return False
+    if _oak_warm_seconds_remaining() <= 0:
+        return False
+    return (
+        _capture_unit_state(CAPTURE_RECORD_UNIT) == "active"
+        and _read_oak_warm_state().get("active") is True
+    )
+
+
 def _journal_capture_info(since_epoch: float | None) -> dict[str, Any]:
     """Parse beep / captured / capture_fps from the current capture journal run."""
     global _journal_cache
@@ -231,11 +276,8 @@ def _journal_capture_info(since_epoch: float | None) -> dict[str, Any]:
         return empty
     now = time.monotonic()
     if _journal_cache is not None and _journal_cache[1] == since_epoch:
-        cached_beep = _journal_cache[2]
-        if cached_beep is not None:
-            return cached_beep
         if now - _journal_cache[0] < JOURNAL_CACHE_TTL_S:
-            return None
+            return _journal_cache[2]
     since_local = datetime.fromtimestamp(since_epoch).strftime("%Y-%m-%d %H:%M:%S")
     proc = subprocess.run(
         [
@@ -487,6 +529,8 @@ def _wake_standby_preview_if_idle() -> None:
             return
     if _capture_active() or _capture_stopping():
         return
+    if _oak_warm_idle_active():
+        return
     _touch_standby_preview_activity()
     if _capture_unit_state(STANDBY_PREVIEW_UNIT) != "active":
         _systemctl("start", STANDBY_PREVIEW_UNIT, timeout=20)
@@ -498,6 +542,8 @@ def _maybe_stop_idle_standby_preview() -> None:
     with _lock:
         busy = _busy
     if _capture_active() or busy or _capture_stopping():
+        return
+    if _oak_warm_idle_active():
         return
     if _standby_preview_touch_mono <= 0:
         return
@@ -692,6 +738,7 @@ def _fail_start_capture(session_id: str, msg: str) -> tuple[bool, str]:
     global _last_error
     _last_error = msg
     _ensure_capture_fully_stopped(timeout_s=30.0)
+    _stop_capture_hard()
     _cleanup_orphan_session(session_id, "start_failed")
     _start_standby_preview()
     return False, msg
@@ -715,10 +762,15 @@ def _log_abandon(session_id: str) -> None:
         print(f"capture_abandon session_id={session_id}", flush=True)
 
 
-def _stop_capture_wait() -> bool:
-    """Stop capture stack and wait until the record unit is idle."""
+def _stop_capture_hard() -> bool:
+    """Stop capture stack completely (no warm idle). Used for abandon and failures."""
     global _last_error
     if not _capture_active():
+        clear_path = OAK_WARM_STATE_PATH
+        try:
+            clear_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return True
     _systemctl("stop", CAPTURE_RECORD_UNIT, timeout=30)
     _systemctl("stop", CAPTURE_TARGET, timeout=15)
@@ -750,8 +802,67 @@ def _stop_capture_wait() -> bool:
     if not ok:
         _last_error = "停止超时，请再次点击结束录制"
         return False
+    try:
+        OAK_WARM_STATE_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
     _start_standby_preview()
     return True
+
+
+def _stop_capture_to_warm() -> bool:
+    """End recording but keep OAK connected for fast restart within warm window."""
+    global _last_error
+    if not _capture_active():
+        return True
+    _systemctl("kill", "-s", "SIGUSR1", CAPTURE_RECORD_UNIT, timeout=10)
+    deadline = time.monotonic() + STOP_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if _oak_warm_idle_active():
+            return True
+        if _capture_fully_idle():
+            _last_error = "采集进程已退出，未能保持相机连接"
+            _start_standby_preview()
+            return False
+        time.sleep(0.3)
+    _last_error = "停止超时，请再次点击结束录制"
+    return False
+
+
+def _stop_capture_wait() -> bool:
+    """Stop capture; enter warm idle when enabled, else full shutdown + standby preview."""
+    if OAK_WARM_IDLE_ENABLED and _capture_active():
+        return _stop_capture_to_warm()
+    return _stop_capture_hard()
+
+
+def _start_capture_warm_resume() -> tuple[bool, str]:
+    """Resume recording on an warm-idle capture process (SIGUSR2)."""
+    global _journal_cache, _last_error
+    prior_beep = _read_capture_live_stats().get("beep_epoch")
+    _journal_cache = None
+    proc = _systemctl("kill", "-s", "SIGUSR2", CAPTURE_RECORD_UNIT, timeout=10)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "resume signal failed").strip()
+        return False, f"无法快速启动：{detail}"
+    deadline = time.monotonic() + WARM_START_TIMEOUT_S
+    while time.monotonic() < deadline:
+        if _capture_fully_idle():
+            return False, "相机连接已断开，请重新点击开始录制"
+        stats = _read_capture_live_stats()
+        beep = stats.get("beep_epoch")
+        if beep is not None:
+            try:
+                beep_f = float(beep)
+            except (TypeError, ValueError):
+                beep_f = None
+            if beep_f is not None and (
+                prior_beep is None or beep_f > float(prior_beep) + 0.05
+            ):
+                return True, ""
+        time.sleep(0.25)
+    _last_error = "快速启动超时，请重试"
+    return False, _last_error
 
 
 def _build_status() -> dict[str, Any]:
@@ -768,8 +879,29 @@ def _build_status() -> dict[str, Any]:
     rec_state = _capture_unit_state(CAPTURE_RECORD_UNIT)
     since = _capture_run_since_epoch() if active else None
     journal_info = _journal_capture_info(since) if active else {}
-    beep_epoch = journal_info.get("beep_epoch")
-    frames_writing = active and rec_state not in ("deactivating",) and beep_epoch is not None
+    warm_remaining = _oak_warm_seconds_remaining()
+    warm_idle = _oak_warm_idle_active()
+    live_stats = _read_capture_live_stats()
+    beep_epoch: float | None = None
+    live_beep_raw = live_stats.get("beep_epoch")
+    if live_beep_raw is not None:
+        try:
+            beep_epoch = float(live_beep_raw)
+        except (TypeError, ValueError):
+            beep_epoch = None
+    if beep_epoch is None and active and not warm_idle and not OAK_WARM_IDLE_ENABLED:
+        journal_beep = journal_info.get("beep_epoch")
+        if journal_beep is not None:
+            try:
+                beep_epoch = float(journal_beep)
+            except (TypeError, ValueError):
+                beep_epoch = None
+    frames_writing = (
+        active
+        and rec_state not in ("deactivating",)
+        and beep_epoch is not None
+        and not warm_idle
+    )
 
     if not active:
         _journal_cache = None
@@ -781,7 +913,6 @@ def _build_status() -> dict[str, Any]:
     fps_warn = False
     if frames_writing and beep_epoch is not None:
         duration = max(0, int(time.time() - beep_epoch))
-        live_stats = _read_capture_live_stats()
         captured = int(journal_info.get("captured") or live_stats.get("frame_count") or 0)
         effective_duration = int(captured / 30)
         capture_fps = float(
@@ -797,7 +928,11 @@ def _build_status() -> dict[str, Any]:
 
     if busy and busy_action == "start":
         state = "starting"
-        msg = "正在启动采集服务，请稍候…"
+        msg = (
+            "正在快速启动…"
+            if _start_expect_warm
+            else "正在启动相机，首次约需 15–20 秒…"
+        )
     elif busy and busy_action == "abandon":
         state = "stopping"
         msg = "正在放弃录制，请稍候…"
@@ -816,6 +951,9 @@ def _build_status() -> dict[str, Any]:
             msg = f"帧率偏低 {capture_fps:.1f} Hz（目标 30 Hz）"
         else:
             msg = err if err else ""
+    elif warm_idle:
+        state = "idle"
+        msg = ""
     elif active:
         state = "warming"
         msg = err or "正在准备录制，相机初始化中…"
@@ -840,12 +978,14 @@ def _build_status() -> dict[str, Any]:
         "msg": msg,
         "capture_active": active,
         "frames_writing": frames_writing,
+        "oak_warm_active": warm_idle,
+        "oak_warm_seconds_remaining": warm_remaining,
     }
 
 
 def _run_capture_action(action: str) -> tuple[bool, str]:
     global _busy, _busy_action, _last_error, _last_action_mono, _last_completed_action
-    global _journal_cache
+    global _journal_cache, _start_expect_warm
 
     now = time.monotonic()
     if action == "start":
@@ -866,29 +1006,43 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
         _busy = True
         _busy_action = action
         _last_error = ""
+        if action == "start":
+            _start_expect_warm = _oak_warm_idle_active()
 
     try:
         if action == "start":
+            if _oak_warm_idle_active():
+                return _start_capture_warm_resume()
+
             if _capture_active():
-                return True, "采集已在运行"
-            if _capture_stopping():
+                since = _capture_run_since_epoch()
+                info = _journal_capture_info(since) if since else {}
+                if info and info.get("beep_epoch"):
+                    return True, "采集已在运行"
+                if not _ensure_capture_fully_stopped():
+                    _last_error = "采集服务未能完全停止，请稍后再试"
+                    return False, _last_error
+            elif _capture_stopping():
                 if not _ensure_capture_fully_stopped():
                     _last_error = "上一段采集仍在退出，请稍后再试"
                     return False, _last_error
             elif not _ensure_capture_fully_stopped():
                 _last_error = "采集服务未能完全停止，请稍后再试"
                 return False, _last_error
+
             cached = _grab_preview_bytes()
             if cached:
                 global _last_preview_jpeg
                 _last_preview_jpeg = cached
             _stop_standby_preview()
             if _preview_port_in_use():
-                _last_error = "预览端口 8765 未释放，请等待 10 秒后重试"
-                _start_standby_preview()
-                return False, _last_error
+                if not _oak_warm_idle_active():
+                    _last_error = "预览端口 8765 未释放，请等待 10 秒后重试"
+                    _start_standby_preview()
+                    return False, _last_error
             session_id = _begin_new_capture_session()
             _journal_cache = None
+            start_wall = time.time()
             proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
@@ -899,7 +1053,12 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 since = _capture_run_since_epoch()
                 if _capture_active() and since is not None:
                     info = _journal_capture_info(since)
-                    if info.get("beep_epoch"):
+                    beep = info.get("beep_epoch") if info else None
+                    if beep is not None and float(beep) >= since - 1.0:
+                        return True, ""
+                    stats = _read_capture_live_stats()
+                    stats_beep = stats.get("beep_epoch")
+                    if stats_beep is not None and float(stats_beep) >= start_wall - 1.0:
                         return True, ""
                     fail = _journal_capture_start_failure(since)
                     if fail:
@@ -933,6 +1092,8 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             _last_action_mono = time.monotonic()
             if action in ("start", "stop", "abandon"):
                 _last_completed_action = action
+            if action == "start":
+                _start_expect_warm = False
 
 
 def _run_capture_abandon() -> tuple[bool, str]:
@@ -960,7 +1121,7 @@ def _run_capture_abandon() -> tuple[bool, str]:
         _last_error = ""
 
     try:
-        if not _stop_capture_wait():
+        if not _stop_capture_hard():
             return False, _last_error
         if session_id:
             _delete_session_data(session_id)

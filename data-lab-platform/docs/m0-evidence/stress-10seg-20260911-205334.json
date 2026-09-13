@@ -1,0 +1,222 @@
+{
+  "generated_at": "2026-09-11T14:22:27+00:00",
+  "station": "ego-001",
+  "slug": "ego_001",
+  "session_ids": [
+    "sess_c1d607db1f12492f8d71109b1185c1e1",
+    "sess_e95e9caab0264535bac117de5a79770c",
+    "sess_a4b0063e193e4d8bba985d8c68dc4b6f",
+    "sess_7d0c5afa45da43d087b959b5f1ae95b6",
+    "sess_6101027c091b4357a713cabdc58a1aad",
+    "sess_acc48fa8ee0042eebfca93b762b85eb4",
+    "sess_ce50b8b50bf94e30a4525a9382b5797f",
+    "sess_91c75f3c6fdd474598d0d6a530390132",
+    "sess_0f7839275b4a4f78a16082392f71954c",
+    "sess_85e7a24050454e919378370e97a7a4db"
+  ],
+  "steps": [
+    {
+      "step": "S4-ingest-markers",
+      "ok": false,
+      "detail": "raw=10 DONE_UPLOAD=2 session_seals=10",
+      "sessions_raw": [
+        "sess_0f7839275b4a4f78a16082392f71954c",
+        "sess_6101027c091b4357a713cabdc58a1aad",
+        "sess_7d0c5afa45da43d087b959b5f1ae95b6",
+        "sess_85e7a24050454e919378370e97a7a4db",
+        "sess_91c75f3c6fdd474598d0d6a530390132",
+        "sess_a4b0063e193e4d8bba985d8c68dc4b6f",
+        "sess_acc48fa8ee0042eebfca93b762b85eb4",
+        "sess_c1d607db1f12492f8d71109b1185c1e1",
+        "sess_ce50b8b50bf94e30a4525a9382b5797f",
+        "sess_e95e9caab0264535bac117de5a79770c"
+      ],
+      "sessions_done_upload": [
+        "sess_6101027c091b4357a713cabdc58a1aad",
+        "sess_e95e9caab0264535bac117de5a79770c"
+      ]
+    },
+    {
+      "step": "S5-derive-ready",
+      "ok": false,
+      "detail": "session.READY=2/10",
+      "sessions_ready": [
+        "sess_6101027c091b4357a713cabdc58a1aad",
+        "sess_e95e9caab0264535bac117de5a79770c"
+      ]
+    },
+    {
+      "step": "S6-convert-finalize",
+      "ok": false,
+      "detail": "finalize.done=0/2",
+      "sessions_finalize": []
+    },
+    {
+      "step": "S7-corpus-published",
+      "ok": false,
+      "detail": "missing /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-storage/corpus/ego_001/meta/info.json"
+    },
+    {
+      "step": "S7-viewer-samples",
+      "ok": false,
+      "detail": "samples.zip=no"
+    },
+    {
+      "step": "S2-segments-sess_c1d607d",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_c1d607d",
+      "ok": true,
+      "detail": "complete=True segment_count=7"
+    },
+    {
+      "step": "S5-session-ready-sess_c1d607d",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_e95e9ca",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_e95e9ca",
+      "ok": true,
+      "detail": "complete=True segment_count=1"
+    },
+    {
+      "step": "S5-session-ready-sess_e95e9ca",
+      "ok": true,
+      "detail": "READY=True DONE_UPLOAD=True"
+    },
+    {
+      "step": "S2-segments-sess_a4b0063",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_a4b0063",
+      "ok": true,
+      "detail": "complete=True segment_count=4"
+    },
+    {
+      "step": "S5-session-ready-sess_a4b0063",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_7d0c5af",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_7d0c5af",
+      "ok": true,
+      "detail": "complete=True segment_count=2"
+    },
+    {
+      "step": "S5-session-ready-sess_7d0c5af",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_6101027",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_6101027",
+      "ok": true,
+      "detail": "complete=True segment_count=1"
+    },
+    {
+      "step": "S5-session-ready-sess_6101027",
+      "ok": true,
+      "detail": "READY=True DONE_UPLOAD=True"
+    },
+    {
+      "step": "S2-segments-sess_acc48fa",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_acc48fa",
+      "ok": true,
+      "detail": "complete=True segment_count=7"
+    },
+    {
+      "step": "S5-session-ready-sess_acc48fa",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_ce50b8b",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_ce50b8b",
+      "ok": true,
+      "detail": "complete=True segment_count=3"
+    },
+    {
+      "step": "S5-session-ready-sess_ce50b8b",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_91c75f3",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_91c75f3",
+      "ok": true,
+      "detail": "complete=True segment_count=6"
+    },
+    {
+      "step": "S5-session-ready-sess_91c75f3",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_0f78392",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_0f78392",
+      "ok": true,
+      "detail": "complete=True segment_count=4"
+    },
+    {
+      "step": "S5-session-ready-sess_0f78392",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S2-segments-sess_85e7a24",
+      "ok": false,
+      "detail": "segments=0 mcap=0 corrupt=0"
+    },
+    {
+      "step": "S3-session-seal-sess_85e7a24",
+      "ok": true,
+      "detail": "complete=True segment_count=8"
+    },
+    {
+      "step": "S5-session-ready-sess_85e7a24",
+      "ok": false,
+      "detail": "READY=False DONE_UPLOAD=False"
+    },
+    {
+      "step": "S8-loader-gate",
+      "ok": false,
+      "detail": "missing gate script or corpus"
+    }
+  ],
+  "ok": false,
+  "failed_count": 24
+}

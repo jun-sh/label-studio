@@ -168,39 +168,6 @@
       padding: 24px;
       text-align: center;
     }
-    .preview-cam-switch {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 6px;
-      margin-top: -2px;
-    }
-    .preview-cam-switch[hidden] {
-      display: none !important;
-    }
-    .preview-cam-btn {
-      border: 1px solid #d8e2f0;
-      border-radius: 10px;
-      background: #fff;
-      color: var(--muted);
-      font-size: .72rem;
-      font-weight: 600;
-      line-height: 1.2;
-      padding: 8px 4px;
-      cursor: pointer;
-      transition: background .15s, color .15s, border-color .15s, box-shadow .15s;
-      -webkit-tap-highlight-color: transparent;
-      touch-action: manipulation;
-    }
-    .preview-cam-btn[aria-pressed="true"] {
-      color: var(--primary);
-      border-color: var(--primary);
-      background: var(--primary-soft);
-      box-shadow: 0 0 0 1px rgba(91, 143, 249, 0.25);
-    }
-    .preview-cam-btn:disabled {
-      opacity: .45;
-      cursor: not-allowed;
-    }
     .preview-placeholder[hidden] {
       display: none !important;
     }
@@ -438,7 +405,6 @@
       </div>
       <div class="preview-overlay top-left" id="previewTimer" hidden>00:00:00</div>
     </section>
-    <nav class="preview-cam-switch" id="previewCamSwitch" aria-label="切换相机" hidden></nav>
 
     <button type="button" class="btn-main" id="mainBtn" data-mode="start">
       <svg class="btn-icon btn-play-svg" id="btnIconPlay" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -504,7 +470,6 @@
   var btnIconPlay = document.getElementById("btnIconPlay");
   var btnIconStop = document.getElementById("btnIconStop");
   var previewImg = document.getElementById("previewImg");
-  var previewCamSwitch = document.getElementById("previewCamSwitch");
   var previewPh = document.getElementById("previewPh");
   var previewTimer = document.getElementById("previewTimer");
   var storageNum = document.getElementById("storageNum");
@@ -518,14 +483,6 @@
   var lastState = "idle";
   var previewWantLive = false;
   var previewHasFrame = false;
-  var previewCameras = [
-    { id: "front_left", label: "前左" },
-    { id: "front_right", label: "前右" },
-    { id: "rear_left", label: "后左" },
-    { id: "rear_right", label: "后右" }
-  ];
-  var selectedPreviewCam = "front_left";
-  var previewSwitcherReady = false;
 
   function formatDuration(sec) {
     var h = Math.floor(sec / 3600);
@@ -541,64 +498,6 @@
     btnIconPlay.hidden = mode !== "start";
     btnIconStop.hidden = mode !== "stop";
     if (typeof disabled === "boolean") mainBtn.disabled = disabled;
-  }
-
-  function buildPreviewSwitcher() {
-    if (previewSwitcherReady) return;
-    previewCamSwitch.innerHTML = "";
-    previewCameras.forEach(function (cam) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "preview-cam-btn";
-      btn.textContent = cam.label || cam.id;
-      btn.setAttribute("data-cam", cam.id);
-      btn.setAttribute("aria-pressed", cam.id === selectedPreviewCam ? "true" : "false");
-      btn.addEventListener("click", function () {
-        selectPreviewCam(cam.id);
-      });
-      previewCamSwitch.appendChild(btn);
-    });
-    previewSwitcherReady = true;
-    previewCamSwitch.hidden = false;
-  }
-
-  function updatePreviewSwitcherState() {
-    previewCamSwitch.querySelectorAll(".preview-cam-btn").forEach(function (btn) {
-      btn.setAttribute(
-        "aria-pressed",
-        btn.getAttribute("data-cam") === selectedPreviewCam ? "true" : "false"
-      );
-    });
-  }
-
-  function selectPreviewCam(camId) {
-    if (!camId || camId === selectedPreviewCam) return;
-    selectedPreviewCam = camId;
-    updatePreviewSwitcherState();
-    previewHasFrame = false;
-    previewImg.hidden = true;
-    if (previewWantLive) tickPreview();
-  }
-
-  function loadPreviewCameras() {
-    return fetch("/api/preview/cameras", { cache: "no-store" })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.cameras && data.cameras.length) {
-          previewCameras = data.cameras.map(function (cam) {
-            return { id: cam.id, label: cam.label || cam.id };
-          });
-          if (!previewCameras.some(function (c) { return c.id === selectedPreviewCam; })) {
-            selectedPreviewCam = previewCameras[0].id;
-          }
-        }
-        if (data.poll_ms) previewPollMs = data.poll_ms;
-        previewSwitcherReady = false;
-        buildPreviewSwitcher();
-      })
-      .catch(function () {
-        buildPreviewSwitcher();
-      });
   }
 
   function hidePreviewPlaceholder() {
@@ -740,7 +639,7 @@
   }
 
   function tickPreview() {
-    previewImg.src = "/api/preview/" + selectedPreviewCam + ".jpg?t=" + Date.now();
+    previewImg.src = "/api/preview/main.jpg?t=" + Date.now();
   }
 
   previewImg.addEventListener("load", function () {
@@ -835,10 +734,8 @@
     doAction("/api/capture/abandon");
   });
 
-  loadPreviewCameras().then(function () {
-    fetchStatus();
-    pollTimer = setInterval(fetchStatus, __STATUS_POLL_MS__);
-  });
+  fetchStatus();
+  pollTimer = setInterval(fetchStatus, __STATUS_POLL_MS__);
 })();
   </script>
 </body>

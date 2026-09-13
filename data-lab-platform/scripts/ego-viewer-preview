@@ -70,6 +70,7 @@ _run_preview_container() {
   container_args+=("${SESSION_ARGS[@]}")
   echo "L3 preview: host cv2 unavailable, running in ${image}" >&2
   docker run --rm \
+    --entrypoint python3 \
     --user "$(id -u):$(id -g)" \
     -v "${DATALAB_ROOT}:/datalab:rw" \
     -v "${PLATFORM_ROOT}/src:/ego-platform/src:ro" \
@@ -78,7 +79,7 @@ _run_preview_container() {
     -e EGO_PREVIEW_HANDS_STRIDE="${EGO_PREVIEW_HANDS_STRIDE:-3}" \
     -e EGO_DEPTH_PREVIEW="${EGO_DEPTH_PREVIEW:-1}" \
     "$image" \
-    python3 -m ego_platform.cli.viewer_preview "${container_args[@]}"
+    -m ego_platform.cli.viewer_preview "${container_args[@]}"
 }
 
 set +e

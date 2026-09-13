@@ -35,22 +35,31 @@ fi
 
 _run_remote() {
   local script="$1"
-  if ssh -o BatchMode=yes -o ConnectTimeout=8 "${TARGET}" "bash -s" <<< "$script"; then
-    return 0
-  fi
-  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" REMOTE_BODY="$script" python3 - <<'PY'
+  local timeout="${2:-600}"
+  if [[ -n "${RC_CAPTURE_PASS:-}" ]]; then
+    RC_CAPTURE_PASS="${RC_CAPTURE_PASS}" TARGET="$TARGET" REMOTE_BODY="$script" REMOTE_TIMEOUT="$timeout" python3 - <<'PY'
 import os, paramiko
 target = os.environ["TARGET"]
 user, _, host = target.partition("@")
 body = os.environ["REMOTE_BODY"]
+timeout = int(os.environ.get("REMOTE_TIMEOUT", "600"))
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=20)
-_, o, e = c.exec_command(f"bash -s <<'REMOTE'\n{body}\nREMOTE", timeout=300)
+c.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=30)
+_, o, e = c.exec_command(f"bash -s <<'REMOTE'\n{body}\nREMOTE", timeout=timeout)
 out = (o.read() + e.read()).decode()
 print(out, end="")
-raise SystemExit(o.channel.recv_exit_status())
+rc = o.channel.recv_exit_status()
+c.close()
+raise SystemExit(rc)
 PY
+    return $?
+  fi
+  if ssh -o BatchMode=yes -o ConnectTimeout=8 "${TARGET}" "bash -s" <<< "$script"; then
+    return 0
+  fi
+  die "130 SSH failed (set RC_CAPTURE_PASS for password auth)"
+  return 1
 }
 
 _scp() {

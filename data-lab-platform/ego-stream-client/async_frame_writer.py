@@ -31,6 +31,7 @@ class CaptureFramePacket:
     preview_out: dict
     imu6: Any
     camera_ts_offset_ns: dict[str, int] | None
+    primary_device_timestamp_ns: int | None
     imu_raw_batch: tuple | list | None
 
 
@@ -79,6 +80,7 @@ class AsyncFrameWriter:
         preview_out: dict,
         imu6: Any,
         camera_ts_offset_ns: dict[str, int] | None = None,
+        primary_device_timestamp_ns: int | None = None,
         imu_raw_batch: list | tuple | None = None,
     ) -> None:
         packet = CaptureFramePacket(
@@ -90,6 +92,7 @@ class AsyncFrameWriter:
             preview_out=preview_out,
             imu6=imu6,
             camera_ts_offset_ns=camera_ts_offset_ns,
+            primary_device_timestamp_ns=primary_device_timestamp_ns,
             imu_raw_batch=tuple(imu_raw_batch or ()),
         )
         while True:
@@ -150,6 +153,7 @@ class AsyncFrameWriter:
                 preview_out=packet.preview_out,
                 imu6=packet.imu6,
                 camera_ts_offset_ns=packet.camera_ts_offset_ns,
+                primary_device_timestamp_ns=packet.primary_device_timestamp_ns,
                 imu_raw_batch=packet.imu_raw_batch,
             )
             self._written += 1

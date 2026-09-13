@@ -19,5 +19,22 @@
   "notes": [
     "Historical 1280x800 passthrough corpus abandoned; re-record required.",
     "Viewer gate failure skips HTTP sync (/data/ego-001 unchanged)."
+  ],
+  "deploy_status_20260913": {
+    "tag": "v0.2.0-rectified-720p-l2",
+    "data_lab_commit": "dd44b56",
+    "corpus_archived": "ego_001.abandoned-pre720p-20260913-155205",
+    "34_docker": "data-lab-lerobot-studio:v0.2.0-rectified-720p-l2",
+    "130_ego_spec": "1280x720 verified",
+    "doctor": "PASS",
+    "release_check": "PASS",
+    "stress_5min": "pending re-record",
+    "130_capture_hotfix": "oak_4p_capture normalized setCropRect + _link_isp_to_h264 dai init"
+  },
+  "sop_after_deploy": [
+    "130: phone UI :8080 → start capture → record 2×45s → ego-upload ego-001",
+    "34: ego-process ego-001",
+    "verify: corpus MP4 1280x720 rectified + viewer /data/ego-001 640x360",
+    "stress: RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/ego-stress-5min.sh ego-001 server@10.10.10.130"
   ]
 }

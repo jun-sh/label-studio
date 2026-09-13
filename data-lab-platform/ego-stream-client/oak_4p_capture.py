@@ -963,12 +963,17 @@ class Oak4pEgoRecorder:
         manip = pipeline.create(dai.node.ImageManip)
         crop_x = max(0, (int(in_w) - int(out_w)) // 2)
         crop_y = max(0, (int(in_h) - int(out_h)) // 2)
+        # DepthAI 2.x setCropRect expects normalized [0..1] corners, not pixel coords.
+        x_min = float(crop_x) / float(in_w)
+        y_min = float(crop_y) / float(in_h)
+        x_max = float(crop_x + int(out_w)) / float(in_w)
+        y_max = float(crop_y + int(out_h)) / float(in_h)
         try:
             cfg = dai.ImageManipConfig()
-            cfg.setCropRect(crop_x, crop_y, int(out_w), int(out_h))
+            cfg.setCropRect(x_min, y_min, x_max, y_max)
             manip.initialConfig.set(cfg)
         except Exception:
-            manip.initialConfig.setCropRect(crop_x, crop_y, int(out_w), int(out_h))
+            manip.initialConfig.setCropRect(x_min, y_min, x_max, y_max)
         manip.setMaxOutputFrameSize(max(1, int(out_w) * int(out_h) * 3))
         return manip
 
@@ -984,6 +989,7 @@ class Oak4pEgoRecorder:
         pv_w: int,
         pv_h: int,
     ) -> None:
+        dai = self._dai
         isp_w = int(OAK_ISP_FRAME_WIDTH)
         isp_h = int(OAK_ISP_FRAME_HEIGHT)
         if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(cam_name, is_color=True):

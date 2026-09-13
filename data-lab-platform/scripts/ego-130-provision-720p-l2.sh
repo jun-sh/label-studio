@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PROFILE="${ROOT}/data-lab-platform/config/station-profiles/${STATION_ID}-mcap-production.env"
 
+OAK_CAPTURE="${ROOT}/data-lab-platform/ego-stream-client/oak_4p_capture.py"
+
 echo "==> ego-130-provision-720p-l2 tag=${TAG} target=${TARGET} station=${STATION_ID}"
 
 grep -q '^EGO_OAK_MODE=rectify' "$PROFILE" || {
@@ -23,6 +25,24 @@ grep -q '^OAK_DEFAULT_FRAME_HEIGHT=720' "${ROOT}/data-lab-platform/ego-stream-cl
   echo "ego_spec.py not at 720p deliverable height" >&2
   exit 2
 }
+grep -q 'normalized \[0..1\] corners' "$OAK_CAPTURE" \
+  && grep -q 'x_min = float(crop_x)' "$OAK_CAPTURE" || {
+  echo "oak_4p_capture.py missing DepthAI normalized center-crop fix" >&2
+  exit 2
+}
+python3 - <<'PY' "$OAK_CAPTURE"
+import sys
+from pathlib import Path
+text = Path(sys.argv[1]).read_text()
+start = text.index("def _link_isp_to_h264")
+end = text.index("\n    def ", start + 1)
+body = text[start:end]
+dai_pos = body.index("dai = self._dai")
+isp_pos = body.index("isp_w = int(OAK_ISP_FRAME_WIDTH)")
+if dai_pos > isp_pos:
+    raise SystemExit("oak_4p_capture.py: _link_isp_to_h264 must set dai before isp_w")
+print("local oak_4p_capture 720p crop hotfix ok")
+PY
 
 bash "${SCRIPT_DIR}/ego-130-provision-mcap-production.sh" "${TARGET}" "${STATION_ID}"
 
@@ -31,13 +51,23 @@ set -euo pipefail
 python3 - <<'PY'
 import importlib.util
 from pathlib import Path
-p = Path.home() / "workspace/ego-studio/src/ego_capture_studio/capture/ego_spec.py"
-spec = importlib.util.spec_from_file_location("ego_spec", p)
+
+spec_path = Path.home() / "workspace/ego-studio/src/ego_capture_studio/capture/ego_spec.py"
+spec = importlib.util.spec_from_file_location("ego_spec", spec_path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 assert int(mod.OAK_DEFAULT_FRAME_HEIGHT) == 720, mod.OAK_DEFAULT_FRAME_HEIGHT
 assert int(mod.OAK_DEFAULT_FRAME_WIDTH) == 1280, mod.OAK_DEFAULT_FRAME_WIDTH
 print("130 ego_spec ok:", mod.OAK_DEFAULT_FRAME_WIDTH, "x", mod.OAK_DEFAULT_FRAME_HEIGHT)
+
+capture_path = Path.home() / "workspace/ego-studio/src/ego_capture_studio/capture/oak_4p_capture.py"
+text = capture_path.read_text()
+assert "x_min = float(crop_x)" in text, "missing normalized crop"
+start = text.index("def _link_isp_to_h264")
+end = text.index("\n    def ", start + 1)
+body = text[start:end]
+assert body.index("dai = self._dai") < body.index("isp_w = int(OAK_ISP_FRAME_WIDTH)")
+print("130 oak_4p_capture 720p crop hotfix ok")
 PY
 REMOTE
 )

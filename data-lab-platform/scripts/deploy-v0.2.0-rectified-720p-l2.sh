@@ -63,7 +63,7 @@ if docker ps --format '{{.Names}}' | grep -qx "${NGINX_CONTAINER}"; then
 fi
 
 if [[ "${EGO_SKIP_130:-0}" != "1" ]]; then
-  log "=== 3/5 provision 130 MCAP 720p capture stack ==="
+  log "=== 3/5 provision 130 MCAP 720p capture stack (normalized crop hotfix) ==="
   RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" \
     bash "${SCRIPT_DIR}/ego-130-provision-720p-l2.sh" "${TARGET}" "${STATION}"
 else

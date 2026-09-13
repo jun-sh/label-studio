@@ -1,0 +1,23 @@
+# v0.2.0-rectified-720p-l2 — ego-001 MCAP L2 rectified 720p production.
+# Image tag only; keep platform.yml volume mounts (corpus, ego-platform, derive bind-mounts).
+services:
+  stream-ingest:
+    image: data-lab-lerobot-studio:v0.2.0-rectified-720p-l2
+    environment:
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_MCAP_SINGLE_FAST=${DERIVE_MCAP_SINGLE_FAST:-1}
+
+  derive-worker:
+    image: data-lab-lerobot-studio:v0.2.0-rectified-720p-l2
+    entrypoint: ["/app/scripts/ego-derive-worker-entry.sh"]
+    environment:
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}
+      - DERIVE_MCAP_SINGLE_FAST=${DERIVE_MCAP_SINGLE_FAST:-1}
+
+  lerobot:
+    image: data-lab-lerobot-studio:v0.2.0-rectified-720p-l2

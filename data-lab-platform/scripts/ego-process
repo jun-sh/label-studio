@@ -38,7 +38,7 @@ for arg in "$@"; do
 
 步骤（产品默认 L2/L3 路径）:
   1. derive   manual/async 派生至 READY
-  2. L2       ego-run-l2（passthrough append → corpus/ego_001，无 WiLoR）
+  2. L2       ego-run-l2（rectify 720p append → corpus/ego_001，无 WiLoR）
   3. purity   ego-lerobot-purity-gate
   4. preview  ego-viewer-preview（MediaPipe + depth → samples/）
   5. sync     ingest-bundled-datasets
@@ -196,7 +196,7 @@ if [[ "$RUN_WILOR" -eq 1 || "${EGO_RUN_WILOR_CONVERT:-0}" == "1" ]]; then
     die "WiLoR 后处理失败 (exit ${pipe_rc})。日志: ${RUN_LOG}"
   fi
 else
-  log "L2 干净语料 append（passthrough，无 WiLoR）…"
+  log "L2 干净语料 append（rectify 720p，无 WiLoR）…"
   set +e
   bash "$L2_SH" "$STATION" 2>&1 | tee -a "$RUN_LOG"
   l2_rc=${PIPESTATUS[0]}
@@ -229,11 +229,29 @@ else
 fi
 
 PIPELINE_DID_SYNC=0
+VIEWER_GATE_OK=1
+
+if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
+  SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
+  HTTP_DATASET="${DATALAB_ROOT}/data-storage/samples/${SLUG}/dataset"
+  if [[ -f "$SAMPLES_ZIP" || -d "$HTTP_DATASET" ]]; then
+    log "Viewer 发布门禁（rectify + 720p + B7）…"
+    set +e
+    EGO_STATION="$STATION" EGO_VIEWER_PUBLISH_L2=1 bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+    gate_rc=${PIPESTATUS[0]}
+    set -e
+    if [[ "$gate_rc" -ne 0 ]]; then
+      VIEWER_GATE_OK=0
+      log "⚠️  Viewer publish gate 未通过 — 不更新 ${VIEWER_URL}（跳过 sync）"
+    fi
+  fi
+fi
+
 if grep -q '自动 Viewer sync 完成' "$RUN_LOG" 2>/dev/null; then
   PIPELINE_DID_SYNC=1
 fi
 
-if [[ "$SKIP_SYNC" -eq 0 && "$PIPELINE_DID_SYNC" -eq 0 ]]; then
+if [[ "$SKIP_SYNC" -eq 0 && "$VIEWER_GATE_OK" -eq 1 && "$PIPELINE_DID_SYNC" -eq 0 ]]; then
   if [[ -x "$VIEWER_SYNC_SH" ]] && docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${LEROBOT_CONTAINER}$"; then
     log "轻量同步 Viewer（ingest-bundled-datasets）…"
     bash "$VIEWER_SYNC_SH" 2>&1 | tee -a "$RUN_LOG"
@@ -243,16 +261,13 @@ if [[ "$SKIP_SYNC" -eq 0 && "$PIPELINE_DID_SYNC" -eq 0 ]]; then
 elif [[ "$PIPELINE_DID_SYNC" -eq 1 ]]; then
   log "Viewer sync 已由 pipeline 自动完成（P-Ops-3）"
 else
-  log "跳过 Viewer sync（--skip-sync）"
+  log "跳过 Viewer sync（--skip-sync 或 gate 未通过）"
 fi
 
-if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
-  SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
-  HTTP_DATASET="${DATALAB_ROOT}/data-storage/samples/${SLUG}/dataset"
-  if [[ -f "$SAMPLES_ZIP" || -d "$HTTP_DATASET" ]]; then
-    log "Viewer 发布门禁（L2 模式）…"
-    EGO_STATION="$STATION" EGO_VIEWER_PUBLISH_L2=1 bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
-  fi
+if [[ "$SKIP_GATE" -eq 1 ]]; then
+  :
+elif [[ "$VIEWER_GATE_OK" -eq 0 ]]; then
+  log "⚠️  因 gate 未通过，已跳过 Viewer HTTP 更新"
 fi
 
 _should_run_delivery_export() {

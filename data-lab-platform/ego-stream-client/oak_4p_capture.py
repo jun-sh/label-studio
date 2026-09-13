@@ -22,7 +22,9 @@ from ego_capture_studio.capture.camera_map import (
     topology_snapshot,
 )
 from ego_capture_studio.capture.camera_intrinsics import (
+    adjust_intrinsics_center_crop,
     build_camera_intrinsics_document,
+    finalize_intrinsics_document,
     read_calibration_from_device,
     read_camera_intrinsics_entry,
 )
@@ -31,13 +33,15 @@ from ego_capture_studio.capture.ego_spec import (
     OAK_CAPTURE_IMU_HZ,
     OAK_DEFAULT_FRAME_HEIGHT,
     OAK_DEFAULT_FRAME_WIDTH,
+    OAK_ISP_FRAME_HEIGHT,
+    OAK_ISP_FRAME_WIDTH,
 )
 try:
     from ego_capture_studio.capture.topology import active_topology
 except ImportError:
     from topology import active_topology  # type: ignore[no-redef]
 
-# AR0234 module: sensor fixed 1200P; ISP scale 2/3 -> 1280x800 (manufacturer FPS recipe).
+# AR0234 module: sensor fixed 1200P; ISP scale 2/3 -> 1280x800; center-crop -> 1280x720 deliverable.
 OAK_SENSOR_RES_KEY = "1200"
 OAK_ISP_SCALE_NUM = int(os.environ.get("OAK_ISP_SCALE_NUM", "2"))
 OAK_ISP_SCALE_DEN = int(os.environ.get("OAK_ISP_SCALE_DEN", "3"))
@@ -617,16 +621,16 @@ class Oak4pEgoRecorder:
             }
 
         if len(cameras) < len(self._cam_list):
-            cap_w = int(OAK_DEFAULT_FRAME_WIDTH)
-            cap_h = int(OAK_DEFAULT_FRAME_HEIGHT)
+            isp_w = int(OAK_ISP_FRAME_WIDTH)
+            isp_h = int(OAK_ISP_FRAME_HEIGHT)
             for cam_name in self._cam_list:
                 lerobot_key = OAK_SOCKET_TO_LEROBOT_VIDEO[cam_name]
                 if lerobot_key in cameras:
                     continue
                 cameras[lerobot_key] = {
                     "socket": CAM_SOCKET_OPTS[cam_name],
-                    "width": cap_w,
-                    "height": cap_h,
+                    "width": isp_w,
+                    "height": isp_h,
                     "oak_socket": cam_name,
                 }
 
@@ -636,6 +640,27 @@ class Oak4pEgoRecorder:
             cameras=cameras,
             calibration_source=self._calibration_source,
         )
+        cap_w = int(OAK_DEFAULT_FRAME_WIDTH)
+        cap_h = int(OAK_DEFAULT_FRAME_HEIGHT)
+        isp_w = int(OAK_ISP_FRAME_WIDTH)
+        isp_h = int(OAK_ISP_FRAME_HEIGHT)
+        if isp_w != cap_w or isp_h != cap_h:
+            adjusted: dict[str, Any] = {}
+            for key, entry in (doc.get("cameras") or {}).items():
+                adjusted[key] = adjust_intrinsics_center_crop(
+                    entry,
+                    src_w=isp_w,
+                    src_h=isp_h,
+                    dst_w=cap_w,
+                    dst_h=cap_h,
+                )
+            doc["cameras"] = adjusted
+            doc["crop"] = {
+                "from": {"width": isp_w, "height": isp_h},
+                "to": {"width": cap_w, "height": cap_h},
+                "mode": "center",
+            }
+            doc = finalize_intrinsics_document(doc)
         doc["topology"] = topology_snapshot()
         self._intrinsics_document = doc
         return doc
@@ -878,7 +903,7 @@ class Oak4pEgoRecorder:
             self.prepare_h264_segment_boundary()
 
     def _verify_camera_output_resolution(self, *, timeout_s: float = 8.0) -> None:
-        """Ensure capture streams match ego_spec (1280x800 ISP output)."""
+        """Ensure capture streams match ego_spec (1280x720 deliverable)."""
         expected_h = int(OAK_DEFAULT_FRAME_HEIGHT)
         expected_w = int(OAK_DEFAULT_FRAME_WIDTH)
         deadline = time.monotonic() + timeout_s
@@ -929,6 +954,68 @@ class Oak4pEgoRecorder:
         if not imu_type:
             return False
         return imu_type.strip().upper() not in ("", "NONE", "UNKNOWN")
+
+    def _create_center_crop_manip(
+        self, pipeline: Any, *, out_w: int, out_h: int, in_w: int, in_h: int
+    ) -> Any:
+        """Center-crop ISP frames (e.g. 1280×800) to deliverable 720p."""
+        dai = self._dai
+        manip = pipeline.create(dai.node.ImageManip)
+        crop_x = max(0, (int(in_w) - int(out_w)) // 2)
+        crop_y = max(0, (int(in_h) - int(out_h)) // 2)
+        try:
+            cfg = dai.ImageManipConfig()
+            cfg.setCropRect(crop_x, crop_y, int(out_w), int(out_h))
+            manip.initialConfig.set(cfg)
+        except Exception:
+            manip.initialConfig.setCropRect(crop_x, crop_y, int(out_w), int(out_h))
+        manip.setMaxOutputFrameSize(max(1, int(out_w) * int(out_h) * 3))
+        return manip
+
+    def _link_isp_to_h264(
+        self,
+        pipeline: Any,
+        cam: Any,
+        xout: Any,
+        *,
+        cam_name: str,
+        cap_w: int,
+        cap_h: int,
+        pv_w: int,
+        pv_h: int,
+    ) -> None:
+        isp_w = int(OAK_ISP_FRAME_WIDTH)
+        isp_h = int(OAK_ISP_FRAME_HEIGHT)
+        if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(cam_name, is_color=True):
+            cam.setPreviewSize(pv_w, pv_h)
+        if isp_w != cap_w or isp_h != cap_h:
+            manip_crop = self._create_center_crop_manip(
+                pipeline, out_w=cap_w, out_h=cap_h, in_w=isp_w, in_h=isp_h
+            )
+            manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
+            cam.isp.link(manip_crop.inputImage)
+            manip_crop.out.link(manip_cap.inputImage)
+        else:
+            manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
+            cam.isp.link(manip_cap.inputImage)
+        enc_cap = self._create_h264_encoder(pipeline)
+        manip_cap.out.link(enc_cap.input)
+        enc_cap.bitstream.link(xout.input)
+        ctrl_stream = f"{cam_name}_h264_ctrl"
+        if hasattr(enc_cap, "inputControl"):
+            dai = self._dai
+            enc_ctrl_in = pipeline.create(dai.node.XLinkIn)
+            enc_ctrl_in.setStreamName(ctrl_stream)
+            enc_ctrl_in.out.link(enc_cap.inputControl)
+            self._h264_ctrl_stream_names.append(ctrl_stream)
+        if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(cam_name, is_color=True):
+            manip_pv = self._create_h264_input_manip(pipeline, pv_w, pv_h)
+            enc_pv = self._create_mjpeg_encoder(pipeline)
+            cam.preview.link(manip_pv.inputImage)
+            manip_pv.out.link(enc_pv.input)
+            xout_pv = pipeline.create(dai.node.XLinkOut)
+            xout_pv.setStreamName(f"{cam_name}_preview")
+            enc_pv.bitstream.link(xout_pv.input)
 
     def _create_image_manip_resize(self, pipeline: Any, width: int, height: int) -> Any:
         dai = self._dai
@@ -1016,31 +1103,16 @@ class Oak4pEgoRecorder:
                 cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
                 if self._hw_h264:
-                    if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(
-                        cam_name, is_color=True
-                    ):
-                        cam.setPreviewSize(pv_w, pv_h)
-                    manip_cap = self._create_h264_input_manip(pipeline, cap_w, cap_h)
-                    cam.isp.link(manip_cap.inputImage)
-                    enc_cap = self._create_h264_encoder(pipeline)
-                    manip_cap.out.link(enc_cap.input)
-                    enc_cap.bitstream.link(xout.input)
-                    ctrl_stream = f"{cam_name}_h264_ctrl"
-                    if hasattr(enc_cap, "inputControl"):
-                        enc_ctrl_in = pipeline.create(dai.node.XLinkIn)
-                        enc_ctrl_in.setStreamName(ctrl_stream)
-                        enc_ctrl_in.out.link(enc_cap.inputControl)
-                        self._h264_ctrl_stream_names.append(ctrl_stream)
-                    if pv_w > 0 and pv_h > 0 and oak_camera_has_h264_preview(
-                        cam_name, is_color=True
-                    ):
-                        manip_pv = self._create_h264_input_manip(pipeline, pv_w, pv_h)
-                        enc_pv = self._create_mjpeg_encoder(pipeline)
-                        cam.preview.link(manip_pv.inputImage)
-                        manip_pv.out.link(enc_pv.input)
-                        xout_pv = pipeline.create(dai.node.XLinkOut)
-                        xout_pv.setStreamName(f"{cam_name}_preview")
-                        enc_pv.bitstream.link(xout_pv.input)
+                    self._link_isp_to_h264(
+                        pipeline,
+                        cam,
+                        xout,
+                        cam_name=cam_name,
+                        cap_w=cap_w,
+                        cap_h=cap_h,
+                        pv_w=pv_w,
+                        pv_h=pv_h,
+                    )
                 elif self._hw_jpeg:
                     cam.setVideoSize(cap_w, cap_h)
                     enc_cap = self._create_mjpeg_encoder(pipeline)
@@ -1056,9 +1128,20 @@ class Oak4pEgoRecorder:
                         xout_pv.setStreamName(f"{cam_name}_preview")
                         enc_pv.bitstream.link(xout_pv.input)
                 elif OAK_USE_IMAGEMANIP:
-                    manip_cap = self._create_image_manip_resize(pipeline, cap_w, cap_h)
-                    cam.isp.link(manip_cap.inputImage)
-                    manip_cap.out.link(xout.input)
+                    isp_w = int(OAK_ISP_FRAME_WIDTH)
+                    isp_h = int(OAK_ISP_FRAME_HEIGHT)
+                    if isp_w != cap_w or isp_h != cap_h:
+                        manip_crop = self._create_center_crop_manip(
+                            pipeline, out_w=cap_w, out_h=cap_h, in_w=isp_w, in_h=isp_h
+                        )
+                        cam.isp.link(manip_crop.inputImage)
+                        manip_cap = self._create_image_manip_resize(pipeline, cap_w, cap_h)
+                        manip_crop.out.link(manip_cap.inputImage)
+                        manip_cap.out.link(xout.input)
+                    else:
+                        manip_cap = self._create_image_manip_resize(pipeline, cap_w, cap_h)
+                        cam.isp.link(manip_cap.inputImage)
+                        manip_cap.out.link(xout.input)
                     if pv_w > 0 and pv_h > 0:
                         manip_pv = self._create_image_manip_resize(pipeline, pv_w, pv_h)
                         xout_pv = pipeline.create(dai.node.XLinkOut)

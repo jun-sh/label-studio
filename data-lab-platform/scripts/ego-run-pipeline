@@ -475,7 +475,21 @@ else
 fi
 
 VIEWER_SYNCED=0
-if [[ "$PROCESSED" -gt 0 && "$SKIP_DEPLOY" -eq 1 && "$SKIP_VIEWER_SYNC" -eq 0 && "$AUTO_VIEWER_SYNC" != "0" ]]; then
+VIEWER_GATE_OK=1
+GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
+if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
+  log "Viewer 发布门禁（内参 + rectify + 720p + B7）…"
+  set +e
+  EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
+  gate_rc=${PIPESTATUS[0]}
+  set -e
+  if [[ "$gate_rc" -ne 0 ]]; then
+    VIEWER_GATE_OK=0
+    log "⚠️  Viewer publish gate 未通过 — 跳过 HTTP sync"
+  fi
+fi
+
+if [[ "$PROCESSED" -gt 0 && "$SKIP_DEPLOY" -eq 1 && "$SKIP_VIEWER_SYNC" -eq 0 && "$AUTO_VIEWER_SYNC" != "0" && "$VIEWER_GATE_OK" -eq 1 ]]; then
   if [[ -x "$VIEWER_SYNC_SH" ]]; then
     log "自动 Viewer sync（convert 完成，P-Ops-3）…"
     if bash "$VIEWER_SYNC_SH" 2>&1 | tee -a "$RUN_LOG"; then
@@ -485,12 +499,6 @@ if [[ "$PROCESSED" -gt 0 && "$SKIP_DEPLOY" -eq 1 && "$SKIP_VIEWER_SYNC" -eq 0 &&
       log "⚠️  Viewer sync 失败（可稍后 ego-viewer-sync.sh）"
     fi
   fi
-fi
-
-GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
-if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
-  log "Viewer 发布门禁（内参 + rectify + B7）…"
-  EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
 fi
 
 echo ""

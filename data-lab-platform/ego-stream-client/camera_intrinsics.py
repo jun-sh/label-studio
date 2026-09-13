@@ -98,6 +98,33 @@ def _scale_intrinsics_matrix(mat: np.ndarray, from_w: int, from_h: int, to_w: in
     return out
 
 
+def adjust_intrinsics_center_crop(
+    entry: dict[str, Any],
+    *,
+    src_w: int,
+    src_h: int,
+    dst_w: int,
+    dst_h: int,
+) -> dict[str, Any]:
+    """Shift principal point after center crop (no scale when only vertical crop)."""
+    out = dict(entry)
+    crop_x = max(0, (int(src_w) - int(dst_w)) // 2)
+    crop_y = max(0, (int(src_h) - int(dst_h)) // 2)
+    out["width"] = int(dst_w)
+    out["height"] = int(dst_h)
+    if "ppx" in out:
+        out["ppx"] = float(out["ppx"]) - float(crop_x)
+    if "ppy" in out:
+        out["ppy"] = float(out["ppy"]) - float(crop_y)
+    if "fx" in out and crop_x == 0 and int(dst_w) == int(src_w):
+        pass
+    elif "fx" in out and int(dst_w) != int(src_w):
+        scale = float(dst_w) / float(src_w)
+        out["fx"] = float(out["fx"]) * scale
+        out["fy"] = float(out.get("fy", out["fx"])) * scale
+    return out
+
+
 def _normalize_distortion_coeffs(raw: list[Any]) -> tuple[list[float], list[float]]:
     """Return (fisheye_4, full_list) for cv2.fisheye and audit."""
     full = [float(x) for x in raw]

@@ -12,8 +12,8 @@ export DERIVE_FFPROBE_HEARTBEAT="${DERIVE_FFPROBE_HEARTBEAT:-1}"
 export DERIVE_MCAP_SINGLE_FAST="${DERIVE_MCAP_SINGLE_FAST:-1}"
 
 # --- convert (34 host ego-process) ---
-# Daily hot path: L2 passthrough (ego-run-l2). WiLoR only via ego-delivery-run.
-export EGO_OAK_MODE="${EGO_OAK_MODE:-passthrough}"
+# Daily hot path: L2 rectified 720p (ego-run-l2). WiLoR only via ego-delivery-run.
+export EGO_OAK_MODE="${EGO_OAK_MODE:-rectify}"
 export EGO_L2_PUBLISH="${EGO_L2_PUBLISH:-1}"
 export EGO_VIEWER_PUBLISH_L2="${EGO_VIEWER_PUBLISH_L2:-1}"
 export EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-0}"
@@ -43,5 +43,5 @@ export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HUGGINGFACE_HUB_CACHE}}"
 export HF_HUB_DISABLE_TELEMETRY="${HF_HUB_DISABLE_TELEMETRY:-1}"
 unset _ego_pipeline_datalab_root
 
-# SLO-B: batch convert may exceed 10min per session; 3600s for operational validation.
+# SLO-B: batch convert+rectify may exceed derive P95; track convert P95 separately from derive READY.
 export EGO_CONVERT_SLO_B_SEC="${EGO_CONVERT_SLO_B_SEC:-3600}"

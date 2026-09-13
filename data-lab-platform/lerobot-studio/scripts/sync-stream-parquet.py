@@ -842,7 +842,7 @@ def write_placeholder_videos(root: Path, info: dict) -> None:
     features = info.get("features") or {}
     for key in video_keys_from_info(info):
         feat = features.get(key, {})
-        shape = feat.get("shape") or [800, 1280, 3]
+        shape = feat.get("shape") or [720, 1280, 3]
         h, w = int(shape[0]), int(shape[1])
         out = root / "videos" / key / "chunk-000" / "file-000.mp4"
         if out.is_file() and out.stat().st_size > 0:

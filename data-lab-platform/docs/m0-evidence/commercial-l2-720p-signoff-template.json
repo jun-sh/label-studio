@@ -1,0 +1,23 @@
+{
+  "tag": "v0.2.0-rectified-720p-l2",
+  "video_contract": {
+    "corpus_resolution": "1280x720",
+    "viewer_resolution": "640x360",
+    "coord_space": "rectified",
+    "oak_mode": "rectify"
+  },
+  "commercial_l2_signoff": {
+    "timeline_ok": "requires stress re-run",
+    "corpus_mp4_ok": "requires new sessions",
+    "corpus_rectified_720p": true,
+    "deploy_130_34": "pending",
+    "derive_sla_p95_30s": false,
+    "convert_sla_tracked_separately": true,
+    "export_e2e": false,
+    "commercial_derive_gate": false
+  },
+  "notes": [
+    "Historical 1280x800 passthrough corpus abandoned; re-record required.",
+    "Viewer gate failure skips HTTP sync (/data/ego-001 unchanged)."
+  ]
+}

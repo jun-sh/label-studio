@@ -56,7 +56,7 @@ DEFAULT_EXPORT_ROOT = Path(
 def _ensure_session(uploader: SegmentUploader, root: Path, session_id: str, task: str) -> None:
     shapes: dict[str, tuple[int, int]] = {}
     for key in ALL_LEROBOT_VIDEO_KEYS:
-        shapes[key] = (800, 1280)
+        shapes[key] = (720, 1280)
     intrinsics_path = root / "sessions" / session_id / "meta" / "camera_intrinsics.json"
     camera_intrinsics = None
     if intrinsics_path.is_file():

@@ -41,8 +41,8 @@ fi
 
 # --- P0 L2/L3 product path (34 daily hot path) ---
 if [[ -f "$PROFILE" ]]; then
-  grep -q '^EGO_OAK_MODE=passthrough' "$PROFILE" && ok "profile EGO_OAK_MODE=passthrough (L2)" \
-    || die "profile missing EGO_OAK_MODE=passthrough"
+  grep -q '^EGO_OAK_MODE=rectify' "$PROFILE" && ok "profile EGO_OAK_MODE=rectify (L2 720p)" \
+    || die "profile missing EGO_OAK_MODE=rectify"
   grep -q '^EGO_USE_CONVERT_WORKER=0' "$PROFILE" && ok "profile EGO_USE_CONVERT_WORKER=0 (WiLoR off daily path)" \
     || die "profile missing EGO_USE_CONVERT_WORKER=0"
   grep -q '^EGO_NOTIFY_PROCESS=1' "$PROFILE" && ok "profile EGO_NOTIFY_PROCESS=1" \

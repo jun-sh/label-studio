@@ -141,7 +141,7 @@ rm -f "${STREAM}/state/process-notify.pending.json" "${STREAM}/state/process-not
 pkill -f "ego-process[[:space:]]+${STATION}(\\s|$)" 2>/dev/null || true
 sleep 1
 export EGO_USE_CONVERT_WORKER=0
-export EGO_OAK_MODE=passthrough
+export EGO_OAK_MODE=rectify
 export WAIT_PARQUET_SEC=90
 export EGO_PARQUET_FAIL_FAST_SEC=60
 export EGO_PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(cd "${DATALAB}/../ego-platform" && pwd)}"

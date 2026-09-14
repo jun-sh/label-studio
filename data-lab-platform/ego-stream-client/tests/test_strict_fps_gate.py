@@ -49,13 +49,17 @@ def test_strict_timestamp_series_ok_at_33ms_production_grid() -> None:
 def test_timeline_from_writer_spans_ok_at_30hz() -> None:
     frames = 300
     grid_min = 1_000_000_000
-    grid_max = grid_min + int(frames * 33_333_333)
-    imu_min = grid_min + 5_000_000
-    imu_max = imu_min + int(frames * 33_333_333)
+    grid_max = grid_min + int((frames - 1) * 33_333_333)
+    device_min = grid_min + 2_000_000
+    device_max = device_min + int((frames - 1) * 33_333_333)
+    imu_min = device_min + 5_000_000
+    imu_max = device_max + 1_000_000
     timeline = timeline_from_writer_spans(
         frame_count=frames,
         grid_min_ns=grid_min,
         grid_max_ns=grid_max,
+        device_min_ns=device_min,
+        device_max_ns=device_max,
         imu_min_ns=imu_min,
         imu_max_ns=imu_max,
         imu_samples=frames * 6,

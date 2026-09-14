@@ -166,6 +166,8 @@ class McapSegmentStats:
     video_codec: str
     grid_min_ns: int | None = None
     grid_max_ns: int | None = None
+    device_min_ns: int | None = None
+    device_max_ns: int | None = None
     imu_min_ns: int | None = None
     imu_max_ns: int | None = None
 
@@ -203,6 +205,8 @@ class McapSegmentWriter:
         self._camera_message_counts: dict[str, int] = {k: 0 for k in CAMERA_TOPICS}
         self._grid_min_ns: int | None = None
         self._grid_max_ns: int | None = None
+        self._device_min_ns: int | None = None
+        self._device_max_ns: int | None = None
         self._imu_min_ns: int | None = None
         self._imu_max_ns: int | None = None
         self._camera_ts_offset_max_ns: dict[str, int] = {}
@@ -213,6 +217,13 @@ class McapSegmentWriter:
             self._grid_min_ns = ts
         if self._grid_max_ns is None or ts > self._grid_max_ns:
             self._grid_max_ns = ts
+
+    def _note_device_ts(self, timestamp_ns: int) -> None:
+        ts = int(timestamp_ns)
+        if self._device_min_ns is None or ts < self._device_min_ns:
+            self._device_min_ns = ts
+        if self._device_max_ns is None or ts > self._device_max_ns:
+            self._device_max_ns = ts
 
     def _note_imu_ts(self, timestamp_ns: int) -> None:
         ts = int(timestamp_ns)
@@ -297,7 +308,16 @@ class McapSegmentWriter:
         primary_device_timestamp_ns: int | None = None,
     ) -> None:
         ts = int(timestamp_ns)
-        self._note_grid_ts(ts)
+        dev_ts = primary_device_timestamp_ns
+        if dev_ts is None:
+            dev_ts = row.get("primary_device_timestamp_ns") if isinstance(row, Mapping) else None
+        if dev_ts is not None:
+            dev_ts = int(dev_ts)
+            self._note_device_ts(dev_ts)
+            log_ts = dev_ts
+        else:
+            log_ts = ts
+        self._note_grid_ts(log_ts)
         normalized = normalize_camera_payloads(camera_jpegs)
         if self.video_codec == "h264":
             if len(normalized) != len(CAMERA_TOPICS):
@@ -310,17 +330,17 @@ class McapSegmentWriter:
             assert self._writer is not None
             channel_id = self._channels[f"camera:{cam_key}"]
             if self.video_codec == "h264":
-                data = _compressed_video_payload(timestamp_ns=ts, frame_id=cam_key, h264=payload_bytes)
+                data = _compressed_video_payload(timestamp_ns=log_ts, frame_id=cam_key, h264=payload_bytes)
             else:
-                data = _compressed_image_payload(timestamp_ns=ts, frame_id=cam_key, jpeg=payload_bytes)
-            self._writer.add_message(channel_id=channel_id, log_time=ts, publish_time=ts, data=data)
+                data = _compressed_image_payload(timestamp_ns=log_ts, frame_id=cam_key, jpeg=payload_bytes)
+            self._writer.add_message(channel_id=channel_id, log_time=log_ts, publish_time=log_ts, data=data)
             self._camera_message_counts[cam_key] += 1
 
         obs_state = row.get("observation.state")
         if obs_state is not None:
             obs_payload: dict[str, Any] = {
                 "frame_index": frame_index,
-                "timestamp_ns": ts,
+                "timestamp_ns": log_ts,
                 "observation.state": obs_state,
             }
             dev_ts = row.get("primary_device_timestamp_ns")
@@ -344,9 +364,9 @@ class McapSegmentWriter:
                     prev = self._camera_ts_offset_max_ns.get(str(key), 0)
                     if abs_off > prev:
                         self._camera_ts_offset_max_ns[str(key)] = abs_off
-            self._add_json("obs_state", obs_payload, log_time_ns=ts)
+            self._add_json("obs_state", obs_payload, log_time_ns=log_ts)
         task = row.get("task", self.task)
-        self._add_json("task", {"frame_index": frame_index, "timestamp_ns": ts, "task": task}, log_time_ns=ts)
+        self._add_json("task", {"frame_index": frame_index, "timestamp_ns": log_ts, "task": task}, log_time_ns=log_ts)
         self._frame_count += 1
 
     def append_imu_raw_records(self, records: tuple[dict[str, Any], ...] | list[dict[str, Any]]) -> None:
@@ -395,6 +415,8 @@ class McapSegmentWriter:
             video_codec=self.video_codec,
             grid_min_ns=self._grid_min_ns,
             grid_max_ns=self._grid_max_ns,
+            device_min_ns=self._device_min_ns,
+            device_max_ns=self._device_max_ns,
             imu_min_ns=self._imu_min_ns,
             imu_max_ns=self._imu_max_ns,
         )
@@ -409,6 +431,8 @@ class McapSegmentWriter:
             frame_count=self._frame_count,
             grid_min_ns=self._grid_min_ns,
             grid_max_ns=self._grid_max_ns,
+            device_min_ns=self._device_min_ns,
+            device_max_ns=self._device_max_ns,
             imu_min_ns=self._imu_min_ns,
             imu_max_ns=self._imu_max_ns,
             imu_samples=self._imu_message_count,

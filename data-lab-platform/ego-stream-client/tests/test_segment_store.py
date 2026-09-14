@@ -14,6 +14,7 @@ from segment_store import (
     check_segment_integrity,
     check_segment_upload_qc,
     clear_segment_uploaded,
+    clear_session_seal,
     finalize_segment_manifest_after_persist,
     flush_pending_segment_deletes,
     gc_segment_dir,
@@ -26,6 +27,7 @@ from segment_store import (
     reconcile_orphan_active_segment,
     scan_orphan_active_segments,
     sealed_segment_total,
+    SegmentCaptureWriter,
     write_manifest_v2,
     write_session_seal,
     can_gc_segment,
@@ -368,3 +370,27 @@ def test_capture_close_timeline_qc_warn_not_corrupt(
     qc_ok, qc_issues = check_segment_upload_qc(seg)
     assert not qc_ok
     assert qc_issues
+
+
+def test_pause_for_warm_idle_clears_complete_seal(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEGMENT_MCAP", "0")
+    monkeypatch.setenv("SEGMENT_FINALIZE_ASYNC", "0")
+    root = tmp_path / "segments"
+    writer = SegmentCaptureWriter(
+        root,
+        session_id="sess_warm",
+        task="task",
+        quota_bytes=1024**3,
+    )
+    write_session_seal(root, "sess_warm", complete=True)
+    assert read_session_seal(root, "sess_warm") is not None
+    writer.pause_for_warm_idle()
+    assert read_session_seal(root, "sess_warm") is None
+
+
+def test_clear_session_seal_is_idempotent(tmp_path):
+    root = tmp_path / "segments"
+    write_session_seal(root, "sess_x", complete=True)
+    clear_session_seal(root, "sess_x")
+    clear_session_seal(root, "sess_x")
+    assert read_session_seal(root, "sess_x") is None

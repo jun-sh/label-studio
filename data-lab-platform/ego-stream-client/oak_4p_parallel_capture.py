@@ -32,6 +32,11 @@ from ego_capture_studio.capture.oak_4p_capture import (
     oak_hw_preview_h264_enabled,
 )
 
+try:
+    from ego_capture_studio.capture.capture_timestamps import resolve_commit_timestamp_ns
+except ImportError:
+    from capture_timestamps import resolve_commit_timestamp_ns
+
 EGO_CAPTURE_SYNC_MODE = os.environ.get("EGO_CAPTURE_SYNC_MODE", "strict_grid").strip().lower()
 EGO_IMU_INCREMENTAL = os.environ.get("EGO_IMU_INCREMENTAL", "1").strip().lower() in (
     "1",
@@ -500,14 +505,16 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             if len(capture_out) < len(self._cam_list):
                 return None
 
+            primary_dev_ns = int(primary_ts_ns)
+            t_emit_ns = resolve_commit_timestamp_ns(
+                primary_dev_ns,
+                last_emit_ns=last_emit_ts_ns,
+                interval_ns=interval_ns,
+                grid_epoch_ns=grid_epoch_ns,
+                align_epoch_to_device=self._align_epoch_to_device,
+            )
             if last_emit_ts_ns is None:
-                if int(grid_epoch_ns) > 0:
-                    t_emit_ns = int(grid_epoch_ns)
-                else:
-                    t_emit_ns = self._align_epoch_to_device(int(primary_ts_ns), interval_ns)
                 self._strict_grid_epoch_ns = int(t_emit_ns)
-            else:
-                t_emit_ns = int(last_emit_ts_ns) + interval_ns
 
             imu_flush_tick += 1
             if imu_flush_tick % 3 == 0:
@@ -515,7 +522,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             t_imu = time.perf_counter()
             imu6 = imu6_for_frame(
                 buf,
-                t_emit_ns,
+                primary_dev_ns,
                 interpolate=use_imu_interp,
                 incremental=EGO_IMU_INCREMENTAL,
             )
@@ -532,7 +539,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             self._strict_last_emit_ts_ns = last_emit_ts_ns
             if prof is not None:
                 prof.add("commit_pop_imu", time.perf_counter() - t_commit)
-            return int(t_emit_ns), capture_out, preview_out, imu6, offsets
+            return int(t_emit_ns), capture_out, preview_out, imu6, offsets, primary_dev_ns
 
         while time.monotonic() < t_end:
             if shutdown_check and shutdown_check():
@@ -654,16 +661,18 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             offsets: dict,
             primary_ts_ns: int,
             pre_depths: dict[str, int],
-        ) -> tuple[int, dict, dict, Any, dict]:
+        ) -> tuple[int, dict, dict, Any, dict, int]:
             nonlocal last_emit_ts_ns, imu_flush_tick
+            primary_dev_ns = int(primary_ts_ns)
+            t_emit_ns = resolve_commit_timestamp_ns(
+                primary_dev_ns,
+                last_emit_ns=last_emit_ts_ns,
+                interval_ns=interval_ns,
+                grid_epoch_ns=grid_epoch_ns,
+                align_epoch_to_device=self._align_epoch_to_device,
+            )
             if last_emit_ts_ns is None:
-                if int(grid_epoch_ns) > 0:
-                    t_emit_ns = int(grid_epoch_ns)
-                else:
-                    t_emit_ns = self._align_epoch_to_device(int(primary_ts_ns), interval_ns)
                 self._strict_grid_epoch_ns = int(t_emit_ns)
-            else:
-                t_emit_ns = int(last_emit_ts_ns) + interval_ns
 
             imu_flush_tick += 1
             if imu_flush_tick % 3 == 0:
@@ -671,7 +680,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             t_imu = time.perf_counter()
             imu6 = imu6_for_frame(
                 buf,
-                t_emit_ns,
+                primary_dev_ns,
                 interpolate=use_imu_interp,
                 incremental=EGO_IMU_INCREMENTAL,
             )
@@ -688,9 +697,9 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             }
             last_emit_ts_ns = int(t_emit_ns)
             self._strict_last_emit_ts_ns = last_emit_ts_ns
-            return int(t_emit_ns), capture_out, preview_out, imu6, offsets
+            return int(t_emit_ns), capture_out, preview_out, imu6, offsets, primary_dev_ns
 
-        def _try_commit_tick() -> tuple[int, dict, dict, Any, dict] | None:
+        def _try_commit_tick() -> tuple[int, dict, dict, Any, dict, int] | None:
             t_commit = time.perf_counter()
             pre_depths = {oak: len(cam_rings[oak]) for oak in self._cam_list}
             quad = fsync_quad_take_frame(

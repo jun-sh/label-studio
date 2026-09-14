@@ -79,6 +79,37 @@ def _timeline_min_span_s() -> float:
     return float(os.environ.get("EGO_TIMELINE_MIN_SPAN_S", "10.0"))
 
 
+def timestamps_uniform(ts_ns: list[int], *, tolerance_ms: float = 0.5) -> bool:
+    """True when consecutive timestamps follow a fixed grid within tolerance."""
+    if len(ts_ns) < 2:
+        return True
+    dts_ms = [(int(ts_ns[i]) - int(ts_ns[i - 1])) / 1e6 for i in range(1, len(ts_ns))]
+    mean_ms = sum(dts_ms) / len(dts_ms)
+    return all(abs(d - mean_ms) <= tolerance_ms for d in dts_ms)
+
+
+def _record_span_from_bounds(
+    *,
+    device_min_ns: int | None,
+    device_max_ns: int | None,
+    grid_min_ns: int | None,
+    grid_max_ns: int | None,
+    grid_ns: list[int] | None = None,
+) -> tuple[int | None, int | None, str]:
+    """Pick QC record span: device time preferred, uniform grid as legacy fallback."""
+    if (
+        device_min_ns is not None
+        and device_max_ns is not None
+        and int(device_max_ns) > int(device_min_ns)
+    ):
+        return int(device_min_ns), int(device_max_ns), "device"
+    if grid_ns is not None and len(grid_ns) >= 2 and timestamps_uniform(grid_ns):
+        return int(min(grid_ns)), int(max(grid_ns)), "grid_uniform"
+    if grid_min_ns is not None and grid_max_ns is not None and int(grid_max_ns) > int(grid_min_ns):
+        return int(grid_min_ns), int(grid_max_ns), "grid"
+    return None, None, "missing"
+
+
 def timeline_grace_applies(timeline: dict[str, Any], *, frame_count: int) -> bool:
     """Short tail segments (e.g. stop mid-segment) have noisy ratio — do not reject."""
     if frame_count < _timeline_min_frames():
@@ -86,7 +117,13 @@ def timeline_grace_applies(timeline: dict[str, Any], *, frame_count: int) -> boo
     min_span = _timeline_min_span_s()
     if float(timeline.get("imu_span_s") or 0) < min_span:
         return True
-    if float(timeline.get("grid_span_s") or 0) < min_span:
+    record_span = float(
+        timeline.get("device_span_s")
+        or timeline.get("record_span_s")
+        or timeline.get("grid_span_s")
+        or 0
+    )
+    if record_span < min_span:
         return True
     return False
 
@@ -185,37 +222,64 @@ def timeline_from_writer_spans(
     imu_min_ns: int | None,
     imu_max_ns: int | None,
     imu_samples: int,
+    device_min_ns: int | None = None,
+    device_max_ns: int | None = None,
 ) -> dict[str, Any]:
     """O(1) timeline coherence from writer min/max spans (no MCAP re-read)."""
     if frame_count < 2:
         return {"error": "too_few_frames", "grid_frames": frame_count, "source": "writer_spans"}
-    if grid_min_ns is None or grid_max_ns is None:
-        return {"error": "missing_grid_span", "grid_frames": frame_count, "source": "writer_spans"}
     if imu_min_ns is None or imu_max_ns is None or imu_samples < 2:
         return {
             "error": "no_imu_reference",
             "imu_samples": imu_samples,
             "source": "writer_spans",
         }
-    grid_span_s = (int(grid_max_ns) - int(grid_min_ns)) / 1e9
+    record_min, record_max, record_source = _record_span_from_bounds(
+        device_min_ns=device_min_ns,
+        device_max_ns=device_max_ns,
+        grid_min_ns=grid_min_ns,
+        grid_max_ns=grid_max_ns,
+    )
+    if record_min is None or record_max is None:
+        return {
+            "error": "missing_record_span",
+            "grid_frames": frame_count,
+            "source": "writer_spans",
+        }
+    grid_span_s = (
+        (int(grid_max_ns) - int(grid_min_ns)) / 1e9
+        if grid_min_ns is not None and grid_max_ns is not None and int(grid_max_ns) > int(grid_min_ns)
+        else None
+    )
+    device_span_s = (
+        (int(device_max_ns) - int(device_min_ns)) / 1e9
+        if device_min_ns is not None and device_max_ns is not None and int(device_max_ns) > int(device_min_ns)
+        else None
+    )
+    record_span_s = (int(record_max) - int(record_min)) / 1e9
     imu_span_s = (int(imu_max_ns) - int(imu_min_ns)) / 1e9
-    if grid_span_s <= 0 or imu_span_s <= 0:
+    if record_span_s <= 0 or imu_span_s <= 0:
         return {
             "error": "degenerate_span",
+            "record_span_s": record_span_s,
+            "device_span_s": device_span_s,
             "grid_span_s": grid_span_s,
             "imu_span_s": imu_span_s,
             "source": "writer_spans",
         }
-    ratio = imu_span_s / grid_span_s
+    ratio = imu_span_s / record_span_s
     max_dev = _timeline_max_dev()
     return {
         "source": "writer_spans",
+        "record_source": record_source,
         "grid_frames": frame_count,
         "grid_span_s": grid_span_s,
+        "device_span_s": device_span_s,
+        "record_span_s": record_span_s,
         "imu_samples": imu_samples,
         "imu_span_s": imu_span_s,
         "real_fps": frame_count / imu_span_s,
-        "claimed_fps": frame_count / grid_span_s,
+        "claimed_fps": frame_count / record_span_s,
         "ratio": ratio,
         "max_dev": max_dev,
         "ok": abs(ratio - 1.0) <= max_dev,
@@ -286,46 +350,67 @@ def log_timeline_verdict(
         )
         return
     verdict = "ok" if timeline.get("ok") else "COMPRESSED"
+    record_span = timeline.get("record_span_s", timeline.get("device_span_s", timeline.get("grid_span_s", 0)))
     print(
         f"[timeline] {segment_name}: {verdict} ratio={timeline.get('ratio', 0):.4f} "
         f"real_fps={timeline.get('real_fps', 0):.3f} claimed_fps={timeline.get('claimed_fps', 0):.3f} "
         f"real_span={timeline.get('imu_span_s', 0):.2f}s "
-        f"recorded_span={timeline.get('grid_span_s', 0):.2f}s "
+        f"recorded_span={record_span:.2f}s "
+        f"record_source={timeline.get('record_source', timeline.get('source', 'unknown'))} "
         f"source={timeline.get('source', 'unknown')}",
         flush=True,
     )
 
 
-def analyze_timeline_coherence(grid_ns: list[int], imu_ns: list[int]) -> dict[str, Any]:
-    """Compare recorded time against real elapsed time.
-
-    The grid timestamps written to MCAP are synthesised at a fixed interval, so they
-    carry no information about how long the recording actually took: a segment captured
-    at 26fps and one captured at 30fps produce byte-identical timestamp spacing. That
-    makes the strict fps gate blind to a rate shortfall, because it validates the grid
-    against itself. The IMU stream is the only series in the file carrying device time,
-    so its span is used as the real-elapsed-time reference.
-
-    ratio > 1 means the recording claims less time than it took, i.e. playback and any
-    timestamp-derived velocity are that much too fast.
-    """
-    if len(grid_ns) < 2:
-        return {"error": "too_few_grid_timestamps", "grid_frames": len(grid_ns)}
+def analyze_timeline_coherence(
+    grid_ns: list[int],
+    imu_ns: list[int],
+    device_ns: list[int] | None = None,
+) -> dict[str, Any]:
+    """Compare device (preferred) or verified-uniform grid span against IMU wall clock."""
+    device_ns = list(device_ns or [])
     if len(imu_ns) < 2:
         return {"error": "no_imu_reference", "imu_samples": len(imu_ns)}
-    grid_span_s = (max(grid_ns) - min(grid_ns)) / 1e9
+
+    record_min, record_max, record_source = _record_span_from_bounds(
+        device_min_ns=min(device_ns) if len(device_ns) >= 2 else None,
+        device_max_ns=max(device_ns) if len(device_ns) >= 2 else None,
+        grid_min_ns=min(grid_ns) if len(grid_ns) >= 2 else None,
+        grid_max_ns=max(grid_ns) if len(grid_ns) >= 2 else None,
+        grid_ns=grid_ns,
+    )
+    if record_min is None or record_max is None:
+        if len(grid_ns) >= 2 and not timestamps_uniform(grid_ns):
+            return {
+                "error": "non_uniform_grid_without_device",
+                "grid_frames": len(grid_ns),
+            }
+        return {"error": "too_few_record_timestamps", "grid_frames": len(grid_ns)}
+
+    grid_span_s = (max(grid_ns) - min(grid_ns)) / 1e9 if len(grid_ns) >= 2 else None
+    device_span_s = (max(device_ns) - min(device_ns)) / 1e9 if len(device_ns) >= 2 else None
+    record_span_s = (int(record_max) - int(record_min)) / 1e9
     imu_span_s = (max(imu_ns) - min(imu_ns)) / 1e9
-    if grid_span_s <= 0 or imu_span_s <= 0:
-        return {"error": "degenerate_span", "grid_span_s": grid_span_s, "imu_span_s": imu_span_s}
-    ratio = imu_span_s / grid_span_s
+    if record_span_s <= 0 or imu_span_s <= 0:
+        return {
+            "error": "degenerate_span",
+            "record_span_s": record_span_s,
+            "device_span_s": device_span_s,
+            "grid_span_s": grid_span_s,
+            "imu_span_s": imu_span_s,
+        }
+    ratio = imu_span_s / record_span_s
     max_dev = _timeline_max_dev()
     return {
-        "grid_frames": len(grid_ns),
+        "grid_frames": len(grid_ns) if grid_ns else len(device_ns),
         "grid_span_s": grid_span_s,
+        "device_span_s": device_span_s,
+        "record_span_s": record_span_s,
+        "record_source": record_source,
         "imu_samples": len(imu_ns),
         "imu_span_s": imu_span_s,
-        "real_fps": len(grid_ns) / imu_span_s,
-        "claimed_fps": len(grid_ns) / grid_span_s,
+        "real_fps": (len(device_ns) if len(device_ns) >= 2 else len(grid_ns)) / imu_span_s,
+        "claimed_fps": (len(device_ns) if len(device_ns) >= 2 else len(grid_ns)) / record_span_s,
         "ratio": ratio,
         "max_dev": max_dev,
         "ok": abs(ratio - 1.0) <= max_dev,
@@ -358,7 +443,7 @@ def check_mcap_strict_fps(
         return False, ["missing_segment_mcap"]
     issues: list[str] = []
     try:
-        grid_ns, _device_ns, imu_ns = _read_mcap_series(mcap_path)
+        grid_ns, device_ns, imu_ns = _read_mcap_series(mcap_path)
     except Exception as exc:
         # A segment truncated by an abrupt stop makes the reader raise while parsing
         # the footer (RecordLengthLimitExceeded). This runs inside segment integrity
@@ -371,15 +456,19 @@ def check_mcap_strict_fps(
     # It belongs on the upload/QC path, not on the capture rotation hot path, unless
     # EGO_TIMELINE_GATE is explicitly enabled to reject compressed segments.
     if timeline_gate_enabled():
-        timeline = analyze_timeline_coherence(grid_ns, imu_ns)
+        timeline = analyze_timeline_coherence(grid_ns, imu_ns, device_ns)
         if timeline.get("error"):
             print(f"[timeline] {mcap_path.name}: unavailable ({timeline['error']})", flush=True)
         else:
             verdict = "ok" if timeline["ok"] else "COMPRESSED"
+            record_span = timeline.get(
+                "record_span_s", timeline.get("device_span_s", timeline.get("grid_span_s", 0))
+            )
             print(
                 f"[timeline] {mcap_path.name}: {verdict} ratio={timeline['ratio']:.4f} "
                 f"real_fps={timeline['real_fps']:.3f} claimed_fps={timeline['claimed_fps']:.3f} "
-                f"real_span={timeline['imu_span_s']:.2f}s recorded_span={timeline['grid_span_s']:.2f}s",
+                f"real_span={timeline['imu_span_s']:.2f}s recorded_span={record_span:.2f}s "
+                f"record_source={timeline.get('record_source', 'unknown')}",
                 flush=True,
             )
             if not timeline["ok"]:
@@ -413,8 +502,8 @@ def check_mcap_strict_fps(
 
 
 def audit_timeline(mcap_path: Path) -> dict[str, Any]:
-    grid_ns, _device_ns, imu_ns = _read_mcap_series(mcap_path)
-    report = analyze_timeline_coherence(grid_ns, imu_ns)
+    grid_ns, device_ns, imu_ns = _read_mcap_series(mcap_path)
+    report = analyze_timeline_coherence(grid_ns, imu_ns, device_ns)
     report["path"] = str(mcap_path)
     return report
 

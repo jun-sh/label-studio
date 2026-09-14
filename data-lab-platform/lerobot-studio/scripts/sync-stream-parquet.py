@@ -647,6 +647,12 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
     feature_cols: dict[str, list[list]] = {key: [] for key in scalar_keys}
 
     ep_local_seq: dict[int, int] = {}
+    device_ts_values = [
+        int(r["primary_device_timestamp_ns"])
+        for r in rows_sorted
+        if r.get("primary_device_timestamp_ns") is not None
+    ]
+    device_base_ns = min(device_ts_values) if len(device_ts_values) >= 2 else None
     for seq, src in enumerate(rows_sorted):
         frame = int(src.get("frame_index", seq))
         ep_idx = row_episode_index(src, episodes, frame)
@@ -660,7 +666,11 @@ def write_data_parquet(root: Path, rows: list[dict], fps: float, episodes: list[
             if src.get("task_index") is not None
             else ep_idx
         )
-        timestamp_col.append(float(local_i) / fps if fps > 0 else 0.0)
+        dev_ts = src.get("primary_device_timestamp_ns")
+        if device_base_ns is not None and dev_ts is not None:
+            timestamp_col.append((int(dev_ts) - device_base_ns) / 1e9)
+        else:
+            timestamp_col.append(float(local_i) / fps if fps > 0 else 0.0)
         for key in scalar_keys:
             if key in OPTIONAL_META_INT_KEYS:
                 raw = src.get(key)

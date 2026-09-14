@@ -87,6 +87,12 @@ def install_h264_production_backend(record_module: Any) -> bool:
             async_writer.flush()
         orig_writer_close(self)
 
+    def _flush_async_capture_queue() -> None:
+        if async_writer is not None:
+            async_writer.flush()
+
+    record_module._flush_async_capture_queue = _flush_async_capture_queue  # type: ignore[attr-defined]
+
     if writer_async_enabled():
         append_fn = _profiled_writer_append if profile_enabled() else orig_append
         async_writer = AsyncFrameWriter(append_fn)

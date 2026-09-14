@@ -422,6 +422,35 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
     }
     if trim_meta:
         manifest["h264_trim"] = trim_meta
+    device_ts = [
+        int(row.get("primary_device_timestamp_ns") or row.get("timestamp_ns") or 0)
+        for row in rows
+    ]
+    if len(device_ts) >= 2 and device_ts[-1] > device_ts[0]:
+        device_span_s = (device_ts[-1] - device_ts[0]) / 1e9
+        effective_fps = (len(device_ts) - 1) / device_span_s if device_span_s > 0 else 30.0
+        manifest["device_timeline"] = {
+            "timestamps_ns": device_ts,
+            "device_span_s": device_span_s,
+            "effective_fps": effective_fps,
+            "interval_ns": int(device_span_s * 1e9 / max(len(device_ts) - 1, 1)),
+        }
+        if video_codec == "h264":
+            streams_dir = extract_dir / "streams"
+            streams_dir.mkdir(parents=True, exist_ok=True)
+            (streams_dir / "device_timestamps.json").write_text(
+                json.dumps(
+                    {
+                        "frame_count": len(device_ts),
+                        "timestamps_ns": device_ts,
+                        "device_span_s": device_span_s,
+                        "effective_fps": effective_fps,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
     (extract_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     (extract_dir / "rows.jsonl").write_text(
         "\n".join(json.dumps(row, separators=(",", ":")) for row in rows) + "\n",

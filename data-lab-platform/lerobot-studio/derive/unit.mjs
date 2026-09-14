@@ -21,7 +21,7 @@ import { buildMainTableRows } from "./parquet-writer.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
 import { frameBinName, readSegmentManifest, resolveFrameIndex, stagingFrameName } from "../ingest/frame-index.mjs";
 import { unpackFrameBin } from "../frame_bin_codec.mjs";
-import { probeMp4FrameCount, remuxH264AnnexBToMp4, trimMp4LeadingFrames } from "../mux-exec.mjs";
+import { probeMp4FrameCount, remuxH264AnnexBToMp4DevicePts } from "../mux-exec.mjs";
 import {
   checkG2bMp4Decode,
   checkG2bMp4DecodeFast,
@@ -260,6 +260,26 @@ function writeUnitTable(tmpRoot, stationId, frameMap, segmentExtracts, stationRo
   return { rows: rows.length, jsonlDest, parquetDest };
 }
 
+function loadExtractDeviceTimestampsNs(extractDir) {
+  const dtPath = path.join(extractDir, "streams", "device_timestamps.json");
+  if (!fs.existsSync(dtPath)) return [];
+  try {
+    const body = readJson(dtPath);
+    if (!Array.isArray(body?.timestamps_ns)) return [];
+    return body.timestamps_ns.map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function remuxUnitH264Stream(h264Path, destPath, { timestampsNs, skipFrames }) {
+  return remuxH264AnnexBToMp4DevicePts(h264Path, destPath, {
+    timestampsNs,
+    skipFrames,
+    fpsFallback: DEFAULT_FPS,
+  });
+}
+
 /** After H.264 remux, ffprobe frame count can trail MCAP NAL count — trim table to min MP4. */
 function reconcileUnitTableToRemuxedMp4(tmpRoot, stationId, stationRoot, probeOptions = {}) {
   const videoKeys = videoKeysForStation(stationId);
@@ -301,7 +321,7 @@ function reconcileUnitTableToRemuxedMp4(tmpRoot, stationId, stationRoot, probeOp
 export function runUnitReadyGate(unitRoot, stationId, expectedFrames, options = {}) {
   // Unit layout runs G1–G3 inline (G4–G6 apply at publish / legacy staging layout).
   // P1b commercial: G2b decode probe + G7 browser_playable (four-way parity + parquet=mp4).
-  const remux = options.muxMode === "remux";
+  const remux = options.muxMode === "remux" || options.muxMode === "remux_device_pts";
   const commercial = options.commercial ?? commercialGateEnabled();
   const fastPath = Boolean(options.fastPath);
   const probeOptions =
@@ -510,6 +530,7 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   let imuReplace = true;
   let mcapVideoCodec = "jpeg";
   let h264TrimMeta = null;
+  const unitDeviceTimestampsNs = [];
   const h264StreamsDir = path.join(tmpRoot, "_h264_streams");
 
   for (const seg of segments) {
@@ -533,6 +554,7 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
             const dest = path.join(h264StreamsDir, `${camKey}.h264`);
             appendH264AnnexBStream(dest, src);
           }
+          unitDeviceTimestampsNs.push(...loadExtractDeviceTimestampsNs(extractDir));
         } else {
           materializeMcapUnitFrames(tmpRoot, extractDir, stationId);
         }
@@ -568,6 +590,19 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   }
   const videoKeys = videoKeysForStation(stationId);
   const muxResults = [];
+  if (unitDeviceTimestampsNs.length >= 2) {
+    fs.writeFileSync(
+      path.join(tmpRoot, "device_timestamps.json"),
+      `${JSON.stringify(
+        {
+          frame_count: unitDeviceTimestampsNs.length,
+          timestamps_ns: unitDeviceTimestampsNs,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  }
   if (mcapVideoCodec === "h264" && fastPath) {
     writeDeriveProgress(root, sessionId, {
       stationId,
@@ -582,18 +617,12 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
         const started = Date.now();
         const camKey = Object.entries(CAMERA_KEY_TO_VIDEO).find(([, vk]) => vk === videoKey)?.[0];
         const h264Path = path.join(h264StreamsDir, `${camKey}.h264`);
-        const enc = await remuxH264AnnexBToMp4(h264Path, dest, { fps: DEFAULT_FPS });
         const skip = Number(h264TrimMeta?.decode_warmup_packets?.[camKey] || 0);
-        if (enc.ok && skip > 0) {
-          const trim = await trimMp4LeadingFrames(dest, dest, {
-            skipFrames: skip,
-            fps: DEFAULT_FPS,
-          });
-          if (!trim.ok) {
-            return { videoKey, mode: "remux", ok: false, error: trim.error || "warmup_trim_failed" };
-          }
-        }
-        return { videoKey, mode: "remux", ...enc, elapsedMs: Date.now() - started };
+        const enc = await remuxUnitH264Stream(h264Path, dest, {
+          timestampsNs: unitDeviceTimestampsNs,
+          skipFrames: skip,
+        });
+        return { videoKey, ...enc, elapsedMs: Date.now() - started };
       }),
     );
     for (const enc of parallel) {
@@ -617,20 +646,13 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
           total: videoKeys.length,
         });
         // eslint-disable-next-line no-await-in-loop
-        const enc = await remuxH264AnnexBToMp4(h264Path, dest, { fps: DEFAULT_FPS });
-        let muxOk = enc.ok;
         const skip = Number(h264TrimMeta?.decode_warmup_packets?.[camKey] || 0);
-        if (muxOk && skip > 0) {
-          const trim = await trimMp4LeadingFrames(dest, dest, {
-            skipFrames: skip,
-            fps: DEFAULT_FPS,
-          });
-          muxOk = trim.ok;
-          if (!muxOk) {
-            throw new Error(`unit warmup trim failed ${videoKey}: ${trim.error || "warmup_trim_failed"}`);
-          }
-        }
-        muxResults.push({ videoKey, mode: "remux", ...enc, elapsedMs: Date.now() - started });
+        const enc = await remuxUnitH264Stream(h264Path, dest, {
+          timestampsNs: unitDeviceTimestampsNs,
+          skipFrames: skip,
+        });
+        const muxOk = enc.ok;
+        muxResults.push({ videoKey, ...enc, elapsedMs: Date.now() - started });
         if (!muxOk) {
           throw new Error(`unit remux failed ${videoKey}: ${enc.error || enc.stderr || "remux_failed"}`);
         }
@@ -670,13 +692,13 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     /* ignore */
   }
 
-  const muxMode = mcapVideoCodec === "h264" ? "remux" : "encode";
+  const muxMode = mcapVideoCodec === "h264" ? "remux_device_pts" : "encode";
   const probeOptions = fastPath
     ? fastMp4FrameProbeOptions({ muxMode })
     : mp4FrameProbeOptions({ muxMode });
   let effectiveFrames = frameMap.length;
   let reconcileWarning = null;
-  if (muxMode === "remux") {
+  if (muxMode === "remux" || muxMode === "remux_device_pts") {
     const remuxSlack = Math.max(5, Math.ceil(frameMap.length * 0.1));
     const reconciled = reconcileUnitTableToRemuxedMp4(tmpRoot, stationId, root, probeOptions);
     if (reconciled !== null) {
@@ -720,7 +742,9 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     started_at: startedAt,
     elapsed_ms: Date.now() - new Date(startedAt).getTime(),
     video_codec: mcapVideoCodec,
-    mux_mode: mcapVideoCodec === "h264" ? "remux" : "encode",
+    mux_mode: mcapVideoCodec === "h264" ? "remux_device_pts" : "encode",
+    device_pts_mux: unitDeviceTimestampsNs.length >= 2,
+    device_timeline_frames: unitDeviceTimestampsNs.length,
     mcap_single_fast: fastPath,
     encode: {
       preset: process.env.DERIVE_MUX_X264_PRESET || "veryfast",

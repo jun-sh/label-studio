@@ -34,7 +34,7 @@ export function commercialGateEnabled() {
 }
 
 export function remuxUsesExactFrameCount(muxMode = null) {
-  if (muxMode === "remux") return true;
+  if (muxMode === "remux" || muxMode === "remux_device_pts") return true;
   return String(process.env.DERIVE_FFPROBE_COUNT_FRAMES || "").trim() === "1";
 }
 

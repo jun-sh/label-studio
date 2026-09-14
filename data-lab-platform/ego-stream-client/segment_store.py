@@ -265,6 +265,15 @@ def write_session_seal(root: Path, session_id: str, *, complete: bool) -> Path:
     return path
 
 
+def clear_session_seal(root: Path, session_id: str) -> None:
+    """Remove session seal so warm-resume can append more segments to the same session."""
+    path = session_seal_path(root, session_id)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"session_seal_clear_failed session={session_id} err={exc}", flush=True)
+
+
 def read_session_seal(root: Path, session_id: str) -> dict[str, Any] | None:
     path = session_seal_path(root, session_id)
     if not path.is_file():
@@ -1540,6 +1549,17 @@ class SegmentCaptureWriter:
                 self._touch_registry_session(last_segment_id=closed_id)
         self._persist_queue.join()
         self._persist_checkpoint()
+
+    def pause_for_warm_idle(self) -> None:
+        """Close the open segment but keep the session alive for OAK warm resume."""
+        self.flush()
+        clear_session_seal(self.root, self.session_id)
+        self._pending_count = -1
+        print(
+            f"capture_warm_idle_paused session={self.session_id} "
+            f"frames={self._next_frame_index} segments={self._segment_seq}",
+            flush=True,
+        )
 
     def close(self) -> None:
         self.flush()

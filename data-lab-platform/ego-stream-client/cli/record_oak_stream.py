@@ -317,6 +317,32 @@ def _finish_recording_session(
     writer.close()
 
 
+def _flush_async_capture_queue() -> None:
+    """No-op unless capture_h264_production installs an async flush hook."""
+    return None
+
+
+def _pause_for_warm_idle(
+    writer: SegmentCaptureWriter,
+    recorder: Oak4pEgoRecorder,
+    checkpoint_path: Path,
+) -> None:
+    remaining_imu = recorder.flush_remaining_imu_raw()
+    if remaining_imu:
+        writer.append_imu_raw(remaining_imu)
+    writer.note_open_segment_health(**recorder.ingest_health())
+    if recorder.use_hw_h264:
+        recorder.prepare_h264_segment_boundary()
+    _flush_async_capture_queue()
+    writer.pause_for_warm_idle()
+    _write_capture_live_stats(
+        checkpoint_path,
+        frame_count=writer.next_frame_index,
+        beep_epoch=None,
+        capture_fps=0.0,
+    )
+
+
 def _start_preview_feeder(
     recorder: Oak4pEgoRecorder, preview_hub
 ) -> threading.Event:
@@ -450,6 +476,7 @@ def main() -> None:
     )
     preview_feed_stop: threading.Event | None = None
     heartbeat: FrameStreamUploader | None = None
+    writer: SegmentCaptureWriter | None = None
     warm_resume = False
     total_frame_count = 0
     t0 = time.monotonic()
@@ -465,26 +492,25 @@ def main() -> None:
                 preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
 
             ck_session, ck_task = _load_checkpoint_session(checkpoint_path)
-            session_id = new_session_id() if warm_resume else (
-                ck_session or os.environ.get("EGO_CAPTURE_SESSION_ID") or new_session_id()
-            )
             task = ck_task or default_task
-            os.environ.setdefault("EGO_SEGMENT_ROOT", args.segment_root)
-            os.environ["EGO_CAPTURE_SESSION_ID"] = session_id
 
-            writer = SegmentCaptureWriter.from_env(task=task, checkpoint_path=checkpoint_path)
-            if recorder.use_hw_h264:
-                def _pre_segment_rotate(w=writer, rec=recorder) -> None:
-                    w.note_open_segment_health(**rec.ingest_health())
-                    rec.prepare_h264_segment_boundary()
+            if writer is None:
+                session_id = ck_session or os.environ.get("EGO_CAPTURE_SESSION_ID") or new_session_id()
+                os.environ.setdefault("EGO_SEGMENT_ROOT", args.segment_root)
+                os.environ["EGO_CAPTURE_SESSION_ID"] = session_id
 
-                def _post_segment_rotate(rec=recorder) -> None:
-                    rec.begin_segment_health_window()
+                writer = SegmentCaptureWriter.from_env(task=task, checkpoint_path=checkpoint_path)
+                if recorder.use_hw_h264:
+                    def _pre_segment_rotate(w=writer, rec=recorder) -> None:
+                        w.note_open_segment_health(**rec.ingest_health())
+                        rec.prepare_h264_segment_boundary()
 
-                writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
-                writer.register_post_segment_rotate_hook(_post_segment_rotate)
+                    def _post_segment_rotate(rec=recorder) -> None:
+                        rec.begin_segment_health_window()
 
-            if not warm_resume:
+                    writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
+                    writer.register_post_segment_rotate_hook(_post_segment_rotate)
+
                 resumed_emit: int | None = None
                 if not _env_flag("EGO_STRICT_EMIT_RESUME", "0"):
                     try:
@@ -545,11 +571,15 @@ def main() -> None:
                 if heartbeat is not None:
                     heartbeat.session_id = session_id
                     _kick_heartbeat(heartbeat)
-            elif heartbeat is not None:
-                heartbeat.session_id = session_id
-                _kick_heartbeat(heartbeat)
+            else:
+                from ego_capture_studio.capture.segment_store import clear_session_seal
 
-            if warm_resume:
+                session_id = writer.session_id
+                os.environ["EGO_CAPTURE_SESSION_ID"] = session_id
+                clear_session_seal(writer.root, session_id)
+                if heartbeat is not None:
+                    heartbeat.session_id = session_id
+                    _kick_heartbeat(heartbeat)
                 print(f"capture_warm_resume session={session_id}", flush=True)
 
             _clear_capture_live_stats(checkpoint_path)
@@ -654,14 +684,21 @@ def main() -> None:
                         capture_fps=capture_fps,
                     )
 
-            _finish_recording_session(writer, recorder, checkpoint_path)
-
-            if _SHUTDOWN or not (_oak_warm_idle_enabled() and _WARM_IDLE_REQUEST):
+            entering_warm = (
+                not _SHUTDOWN
+                and _oak_warm_idle_enabled()
+                and _WARM_IDLE_REQUEST
+            )
+            if entering_warm:
+                _pause_for_warm_idle(writer, recorder, checkpoint_path)
+            else:
+                _finish_recording_session(writer, recorder, checkpoint_path)
                 break
 
             if not _run_warm_idle_loop(
                 recorder, preview_hub, preview_feed_stop, checkpoint_path
             ):
+                _finish_recording_session(writer, recorder, checkpoint_path)
                 break
             warm_resume = True
 

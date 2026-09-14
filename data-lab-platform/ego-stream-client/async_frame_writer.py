@@ -118,8 +118,26 @@ class AsyncFrameWriter:
         if self._thread is None:
             return
         deadline = time.monotonic() + float(timeout_s)
+        last_log = time.monotonic()
+        pending = max(0, self._enqueued - self._written - self._drops)
         while self._queue.unfinished_tasks > 0 and time.monotonic() < deadline:
+            now = time.monotonic()
+            if now - last_log >= 5.0:
+                pending = max(0, self._enqueued - self._written - self._drops)
+                print(
+                    f"async_frame_writer_flush pending={pending} "
+                    f"qsize={self._queue.qsize()} written={self._written}",
+                    flush=True,
+                )
+                last_log = now
             time.sleep(0.002)
+        pending = max(0, self._enqueued - self._written - self._drops)
+        if self._queue.unfinished_tasks > 0 or pending > 0:
+            print(
+                f"async_frame_writer_flush_timeout pending={pending} "
+                f"qsize={self._queue.qsize()} drops={self._drops}",
+                flush=True,
+            )
         self._stop.set()
         try:
             self._queue.put_nowait(None)
@@ -144,18 +162,26 @@ class AsyncFrameWriter:
             if packet is None:
                 self._queue.task_done()
                 return
-            self._append_fn(
-                packet.writer,
-                packet.preview_hub,
-                packet.recorder,
-                timestamp_ns=packet.timestamp_ns,
-                capture_out=packet.capture_out,
-                preview_out=packet.preview_out,
-                imu6=packet.imu6,
-                camera_ts_offset_ns=packet.camera_ts_offset_ns,
-                primary_device_timestamp_ns=packet.primary_device_timestamp_ns,
-                imu_raw_batch=packet.imu_raw_batch,
-            )
+            try:
+                self._append_fn(
+                    packet.writer,
+                    packet.preview_hub,
+                    packet.recorder,
+                    timestamp_ns=packet.timestamp_ns,
+                    capture_out=packet.capture_out,
+                    preview_out=packet.preview_out,
+                    imu6=packet.imu6,
+                    camera_ts_offset_ns=packet.camera_ts_offset_ns,
+                    primary_device_timestamp_ns=packet.primary_device_timestamp_ns,
+                    imu_raw_batch=packet.imu_raw_batch,
+                )
+            except Exception as exc:
+                print(
+                    f"async_frame_writer_append_error written={self._written} "
+                    f"enqueued={self._enqueued} err={exc}",
+                    flush=True,
+                )
+                raise
             self._written += 1
             if self._on_written is not None:
                 self._on_written()

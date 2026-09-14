@@ -2,8 +2,8 @@
 # Single source of truth — EgoDome production image & compose overlays (v0.1.3+).
 # Usage: source "$(dirname "$0")/ego-production-defaults.sh"
 
-: "${EGO_PRODUCTION_TAG:=v0.2.0-rectified-720p-l2}"
-: "${EGO_COMPOSE_OVERLAY:=data-lab-platform/docker-compose.v0.2.0-rectified-720p-l2.yml}"
+: "${EGO_PRODUCTION_TAG:=v0.2.2-sensor-raw-imu}"
+: "${EGO_COMPOSE_OVERLAY:=data-lab-platform/docker-compose.v0.2.2-sensor-raw-imu.yml}"
 : "${EGO_COMPOSE_OVERLAY_ASYNC:=data-lab-platform/docker-compose.v0.1.3-async.yml}"
 : "${LEROBOT_IMAGE_TAG:=${EGO_PRODUCTION_TAG}}"
 : "${LEROBOT_IMAGE:=data-lab-lerobot-studio:${EGO_PRODUCTION_TAG}}"

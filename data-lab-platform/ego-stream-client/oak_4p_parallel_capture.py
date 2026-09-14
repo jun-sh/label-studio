@@ -456,6 +456,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         t_end = time.monotonic() + float(duration_s)
         last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
+        if last_emit_ts_ns is None:
+            self.arm_segment_imu_gate()
 
         from ego_capture_studio.capture.capture_frame_profile import FrameProfiler
         from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
@@ -537,6 +539,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             }
             last_emit_ts_ns = int(t_emit_ns)
             self._strict_last_emit_ts_ns = last_emit_ts_ns
+            self._release_segment_imu_gate()
             if prof is not None:
                 prof.add("commit_pop_imu", time.perf_counter() - t_commit)
             return int(t_emit_ns), capture_out, preview_out, imu6, offsets, primary_dev_ns
@@ -561,6 +564,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
             burst = 0
             while burst < _DEVICE_TICK_BURST_MAX and all(cam_rings[oak] for oak in self._cam_list):
+                if self._awaiting_segment_imu(buf):
+                    break
                 row = _commit_one()
                 if row is None:
                     break
@@ -635,6 +640,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         t_end = time.monotonic() + float(duration_s)
         last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
+        if last_emit_ts_ns is None:
+            self.arm_segment_imu_gate()
 
         from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
 
@@ -697,6 +704,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             }
             last_emit_ts_ns = int(t_emit_ns)
             self._strict_last_emit_ts_ns = last_emit_ts_ns
+            self._release_segment_imu_gate()
             return int(t_emit_ns), capture_out, preview_out, imu6, offsets, primary_dev_ns
 
         def _try_commit_tick() -> tuple[int, dict, dict, Any, dict, int] | None:
@@ -740,6 +748,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             while burst < _DEVICE_TICK_BURST_MAX:
                 primary_ring = cam_rings.get(PRIMARY_OAK_SOCKET)
                 if not primary_ring:
+                    break
+                if self._awaiting_segment_imu(buf):
                     break
 
                 committed = False

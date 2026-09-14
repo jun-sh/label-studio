@@ -505,6 +505,7 @@ def main() -> None:
                     remaining = rec.flush_remaining_imu_raw()
                     if remaining:
                         w.append_imu_raw(remaining)
+                    rec.arm_segment_imu_gate()
                     if rec.use_hw_h264:
                         w.note_open_segment_health(**rec.ingest_health())
                         rec.prepare_h264_segment_boundary()

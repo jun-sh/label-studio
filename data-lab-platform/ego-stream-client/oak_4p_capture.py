@@ -580,6 +580,7 @@ class Oak4pEgoRecorder:
         self._calibration_source: str | None = None
         self._imu_flush_gyro_idx = 0
         self._imu_flush_accel_idx = 0
+        self._segment_imu_gate = False
         self._pending_imu_raw: list[dict[str, Any]] = []
         self._strict_imu_buf: Any = None
         self._h264_enc_ctrl_queues: dict[str, Any] = {}
@@ -1281,6 +1282,7 @@ class Oak4pEgoRecorder:
 
     def begin_segment_health_window(self) -> None:
         """Reset per-segment health counters at segment boundary."""
+        self.arm_segment_imu_gate()
         self._health_window_baseline = {
             "ring_ovf": {k: int(v) for k, v in self._ingest_ring_overflow.items()},
             "xlink_lost": {k: int(v) for k, v in self._ingest_seq_lost.items()},
@@ -1419,6 +1421,18 @@ class Oak4pEgoRecorder:
         del first_commit
         self._drain_imu(buf)
         self._flush_imu_raw_from_buf(buf)
+
+    def arm_segment_imu_gate(self) -> None:
+        """Hold frame commits until high-rate IMU samples exist (segment/session head)."""
+        self._segment_imu_gate = True
+
+    def _release_segment_imu_gate(self) -> None:
+        self._segment_imu_gate = False
+
+    def _awaiting_segment_imu(self, buf: EpisodeBuffers) -> bool:
+        if not self._segment_imu_gate:
+            return False
+        return not (buf.gyro_ts_ns or buf.accel_ts_ns)
 
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
         if self._hw_jpeg or (self._hw_h264 and oak_hw_preview_h264_enabled()):

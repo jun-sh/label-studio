@@ -79,3 +79,27 @@ def test_per_commit_drain_flush_exports_incremental_imu() -> None:
         )
         per_commit_counts.append(len(batch))
     assert per_commit_counts == [1, 1, 1]
+
+
+def test_segment_imu_gate_blocks_until_samples_exist() -> None:
+    from types import SimpleNamespace
+
+    class _GateProbe:
+        def __init__(self) -> None:
+            self._segment_imu_gate = True
+
+        def _awaiting_segment_imu(self, buf: SimpleNamespace) -> bool:
+            if not self._segment_imu_gate:
+                return False
+            return not (buf.gyro_ts_ns or buf.accel_ts_ns)
+
+        def _release_segment_imu_gate(self) -> None:
+            self._segment_imu_gate = False
+
+    rec = _GateProbe()
+    empty = SimpleNamespace(gyro_ts_ns=[], accel_ts_ns=[])
+    ready = SimpleNamespace(gyro_ts_ns=[100], accel_ts_ns=[])
+    assert rec._awaiting_segment_imu(empty) is True
+    assert rec._awaiting_segment_imu(ready) is False
+    rec._release_segment_imu_gate()
+    assert rec._awaiting_segment_imu(empty) is False

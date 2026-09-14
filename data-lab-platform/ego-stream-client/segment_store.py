@@ -40,7 +40,9 @@ GC_ELIGIBLE_STATUS = "UPLOADED"
 # Larger segments + batched persist (manufacturer FPS + Scheme A IO).
 SEGMENT_MAX_FRAMES = int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", "300"))
 SEGMENT_MAX_SECONDS = float(os.environ.get("EGO_SEGMENT_MAX_SECONDS", "45"))
-# Backpressure sleep threshold only — never triggers deletion of unuploaded segments.
+# Backpressure on closed-unuploaded segment count (lab inline-upload only).
+# Production field capture sets SEGMENT_BACKPRESSURE_PENDING=0 (record-then-upload).
+# Never triggers deletion of unuploaded segments.
 SEGMENT_BACKPRESSURE_PENDING_MAX = int(
     os.environ.get("EGO_SEGMENT_BACKPRESSURE_PENDING_MAX")
     or os.environ.get("EGO_SEGMENT_MAX_PENDING", "24")

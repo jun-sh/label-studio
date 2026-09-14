@@ -21,6 +21,7 @@ EGO_WEB_SRC="${ROOT}/ego-local-web"
 REMOTE_STUDIO="/home/server/workspace/ego-studio"
 REMOTE_CAPTURE="${REMOTE_STUDIO}/src/ego_capture_studio/capture"
 REMOTE_CLI="${REMOTE_STUDIO}/src/ego_capture_studio/cli"
+REMOTE_TOOLS="${REMOTE_STUDIO}/src/ego_capture_studio/tools"
 REMOTE_CONFIG="${REMOTE_STUDIO}/config"
 CACHE_ROOT="/home/server/cache/${STATION_ID}"
 CAPTURE_HOST="${TARGET#*@}"
@@ -103,13 +104,14 @@ c.close()
 PY
 }
 
-_run_remote "mkdir -p ${REMOTE_CAPTURE} ${REMOTE_CLI} ${REMOTE_CONFIG} ${CACHE_ROOT}/segments ${CACHE_ROOT}/logs"
+_run_remote "mkdir -p ${REMOTE_CAPTURE} ${REMOTE_CLI} ${REMOTE_TOOLS} ${REMOTE_CONFIG} ${CACHE_ROOT}/segments ${CACHE_ROOT}/logs"
 
 echo "==> Sync capture Python"
 if rsync -av --delete --exclude '__pycache__' --exclude '*.pyc' "${CAPTURE_SRC}/" "${TARGET}:${REMOTE_CAPTURE}/" 2>/dev/null; then
   rsync -av "${CAPTURE_SRC}/cli/record_oak_stream.py" "${TARGET}:${REMOTE_CLI}/record_oak_stream.py"
   rsync -av "${CAPTURE_SRC}/cli/upload_segments.py" "${TARGET}:${REMOTE_CLI}/upload_segments.py"
   rsync -av "${CAPTURE_SRC}/cli/ego_upload.py" "${TARGET}:${REMOTE_CLI}/ego_upload.py"
+  rsync -av "${CAPTURE_SRC}/tools/upload_segments_loop.py" "${TARGET}:${REMOTE_TOOLS}/upload_segments_loop.py"
 else
   echo "rsync failed — using paramiko sftp (slower)"
   RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" python3 - <<'PY'
@@ -159,6 +161,8 @@ _scp "${CAPTURE_SRC}/systemd/ecs-oak-standby-stack.target" "/tmp/ecs-oak-standby
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web.service.d/z-mcap-production.conf" "/tmp/z-ego-web-mcap-production.conf"
 _scp "${PROFILE}" "/tmp/ego-mcap-production.env"
 _scp "${REPO_ROOT}/data-lab-platform/scripts/ego-upload-station.sh" "/tmp/ego-upload-station.sh"
+_scp "${CAPTURE_SRC}/systemd/ecs-upload-segments-loop.service.d/production-manual-only.conf" "/tmp/production-manual-only.conf"
+_scp "${REPO_ROOT}/data-lab-platform/scripts/ego-130-upload-mode.sh" "/tmp/ego-130-upload-mode.sh"
 
 _run_remote "$(cat <<REMOTE
 set -euo pipefail
@@ -217,9 +221,19 @@ SEGMENT_MCAP=1
 SEGMENT_FRAME_BIN=0
 EOF
 
+mkdir -p "\$HOME/.config/systemd/user/ecs-upload-segments-loop.service.d"
+cp /tmp/production-manual-only.conf "\$HOME/.config/systemd/user/ecs-upload-segments-loop.service.d/production-manual-only.conf"
+rm -f "\$HOME/.config/systemd/user/ecs-upload-segments-loop.service.d/debug-auto-upload.conf"
+rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-inline-upload.conf"
+LOOP_UNIT=ecs-upload-segments-loop.service
+systemctl --user stop "\$LOOP_UNIT" 2>/dev/null || true
+systemctl --user disable "\$LOOP_UNIT" 2>/dev/null || true
+systemctl --user mask "\$LOOP_UNIT" 2>/dev/null || true
+pkill -f '[u]pload_segments_loop.py' 2>/dev/null || true
 printf 'EGO_UPLOAD_MODE=production\\n' > "\$HOME/.config/ego-station.env.d/upload-mode.conf"
 
 install -m 0755 /tmp/ego-upload-station.sh "\$HOME/.local/bin/ego-upload"
+install -m 0755 /tmp/ego-130-upload-mode.sh "\$HOME/.local/bin/ego-130-upload-mode"
 echo '1' | sudo -S install -m 0755 /tmp/ego-upload-station.sh /usr/local/bin/ego-upload 2>/dev/null \
   || cp /tmp/ego-upload-station.sh /usr/local/bin/ego-upload 2>/dev/null || true
 

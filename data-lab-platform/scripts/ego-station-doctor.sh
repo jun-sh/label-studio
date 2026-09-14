@@ -70,6 +70,33 @@ grep -q "^Environment=EGO_TIMELINE_UPLOAD_QC=1" "$dropin" \
   && ok "QA upload timeline QC on" || die "EGO_TIMELINE_UPLOAD_QC!=1"
 grep -q "^Environment=EGO_TIMELINE_MAX_DEV=0.03" "$dropin" \
   && ok "corpus timeline max_dev=3%" || die "EGO_TIMELINE_MAX_DEV!=0.03"
+grep -q "^Environment=SEGMENT_BACKPRESSURE_PENDING=0" "$dropin" \
+  && ok "record-then-upload (no upload-pending backpressure)" \
+  || die "SEGMENT_BACKPRESSURE_PENDING!=0 (field SOP requires record-then-upload)"
+inline_dropin="$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-inline-upload.conf"
+if [[ -f "$inline_dropin" ]]; then
+  die "z-mcap-inline-upload.conf present — lab debug only (ego-130-upload-mode.sh production)"
+else
+  ok "no inline-upload overlay (production)"
+fi
+upload_mode_file="$HOME/.config/ego-station.env.d/upload-mode.conf"
+if [[ -f "$upload_mode_file" ]] && grep -q "^EGO_UPLOAD_MODE=production" "$upload_mode_file"; then
+  ok "EGO_UPLOAD_MODE=production"
+elif [[ -f "$upload_mode_file" ]] && grep -q "^EGO_UPLOAD_MODE=debug" "$upload_mode_file"; then
+  ok "EGO_UPLOAD_MODE=debug (lab inline-upload)"
+else
+  die "missing EGO_UPLOAD_MODE in upload-mode.conf"
+fi
+loop_unit="ecs-upload-segments-loop.service"
+loop_state="$(systemctl --user is-enabled "$loop_unit" 2>/dev/null || true)"
+if grep -q "^EGO_UPLOAD_MODE=debug" "$upload_mode_file" 2>/dev/null; then
+  systemctl --user is-active "$loop_unit" >/dev/null 2>&1 && ok "upload loop active (debug)" \
+    || die "EGO_UPLOAD_MODE=debug but upload loop inactive"
+else
+  [[ "$loop_state" == "masked" || "$loop_state" == "disabled" ]] \
+    && ok "upload loop masked/disabled (production)" \
+    || die "production requires upload loop masked (run ego-130-upload-mode.sh production)"
+fi
 long_dropin="$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-long-capture.conf"
 if [[ -f "$long_dropin" ]]; then
   die "z-mcap-long-capture.conf present — use only for CAPTURE_PROFILE=long stress"

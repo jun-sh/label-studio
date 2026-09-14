@@ -194,6 +194,15 @@ def _foreground_upload_active() -> bool:
 
 
 def main() -> None:
+    upload_mode = os.environ.get("EGO_UPLOAD_MODE", "production").strip().lower()
+    if upload_mode != "debug":
+        print(
+            f"upload_loop_skip mode={upload_mode} "
+            "(field SOP: record-then-upload; set EGO_UPLOAD_MODE=debug for inline upload)",
+            flush=True,
+        )
+        return
+
     writer = UploadStatusWriter.get_default()
     print(
         f"upload_loop start keep_pending_below={KEEP_PENDING_BELOW} "

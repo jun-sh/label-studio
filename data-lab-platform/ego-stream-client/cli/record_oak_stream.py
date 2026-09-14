@@ -500,15 +500,21 @@ def main() -> None:
                 os.environ["EGO_CAPTURE_SESSION_ID"] = session_id
 
                 writer = SegmentCaptureWriter.from_env(task=task, checkpoint_path=checkpoint_path)
-                if recorder.use_hw_h264:
-                    def _pre_segment_rotate(w=writer, rec=recorder) -> None:
+
+                def _pre_segment_rotate(w=writer, rec=recorder) -> None:
+                    remaining = rec.flush_remaining_imu_raw()
+                    if remaining:
+                        w.append_imu_raw(remaining)
+                    if rec.use_hw_h264:
                         w.note_open_segment_health(**rec.ingest_health())
                         rec.prepare_h264_segment_boundary()
+
+                writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
+                if recorder.use_hw_h264:
 
                     def _post_segment_rotate(rec=recorder) -> None:
                         rec.begin_segment_health_window()
 
-                    writer.register_pre_segment_rotate_hook(_pre_segment_rotate)
                     writer.register_post_segment_rotate_hook(_post_segment_rotate)
 
                 resumed_emit: int | None = None

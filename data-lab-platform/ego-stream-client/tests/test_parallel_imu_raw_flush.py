@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from ego_capture_studio.capture.imu_raw_flush import collect_imu_raw_since
+from imu_raw_flush import collect_imu_raw_since
 
 
 def _sample_buf() -> SimpleNamespace:
@@ -34,3 +34,48 @@ def test_flush_before_reset_exports_imu_raw() -> None:
     assert accel_idx == len(buf.accel_ts_ns)
     tail, _, _ = collect_imu_raw_since(buf, gyro_from=gyro_idx, accel_from=accel_idx)
     assert tail == []
+
+
+def test_throttled_flush_every_third_commit_misses_early_frames() -> None:
+    """Old burst path: flush only on commit % 3 left frames 1-2 without IMU raw."""
+    buf = SimpleNamespace(
+        gyro_ts_ns=[],
+        gyro_xyz=[],
+        accel_ts_ns=[],
+        accel_xyz=[],
+    )
+    gyro_idx = 0
+    accel_idx = 0
+    per_commit_counts: list[int] = []
+    for commit in range(1, 4):
+        buf.gyro_ts_ns.append(100 * commit)
+        buf.gyro_xyz.append((float(commit), 0.0, 0.0))
+        if commit % 3 == 0:
+            batch, gyro_idx, accel_idx = collect_imu_raw_since(
+                buf, gyro_from=gyro_idx, accel_from=accel_idx
+            )
+            per_commit_counts.append(len(batch))
+        else:
+            per_commit_counts.append(0)
+    assert per_commit_counts == [0, 0, 3]
+
+
+def test_per_commit_drain_flush_exports_incremental_imu() -> None:
+    """Burst commits must drain+flush on every frame, not only at loop start."""
+    buf = SimpleNamespace(
+        gyro_ts_ns=[],
+        gyro_xyz=[],
+        accel_ts_ns=[],
+        accel_xyz=[],
+    )
+    gyro_idx = 0
+    accel_idx = 0
+    per_commit_counts: list[int] = []
+    for commit in range(1, 4):
+        buf.gyro_ts_ns.append(100 * commit)
+        buf.gyro_xyz.append((float(commit), 0.0, 0.0))
+        batch, gyro_idx, accel_idx = collect_imu_raw_since(
+            buf, gyro_from=gyro_idx, accel_from=accel_idx
+        )
+        per_commit_counts.append(len(batch))
+    assert per_commit_counts == [1, 1, 1]

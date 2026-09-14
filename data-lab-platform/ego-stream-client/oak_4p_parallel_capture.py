@@ -456,7 +456,6 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         t_end = time.monotonic() + float(duration_s)
         last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
-        imu_flush_tick = 0
 
         from ego_capture_studio.capture.capture_frame_profile import FrameProfiler
         from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
@@ -474,7 +473,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         )
 
         def _commit_one() -> tuple[int, dict, dict, Any, dict] | None:
-            nonlocal last_emit_ts_ns, imu_flush_tick
+            nonlocal last_emit_ts_ns
             t_commit = time.perf_counter()
             pre_depths = {oak: len(cam_rings[oak]) for oak in self._cam_list}
             if self._hw_h264 and OAK_H264_SEQUENTIAL:
@@ -516,9 +515,10 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             if last_emit_ts_ns is None:
                 self._strict_grid_epoch_ns = int(t_emit_ns)
 
-            imu_flush_tick += 1
-            if imu_flush_tick % 3 == 0:
-                self._flush_imu_raw_from_buf(buf)
+            self._drain_flush_imu_raw_for_commit(
+                buf,
+                first_commit=last_emit_ts_ns is None,
+            )
             t_imu = time.perf_counter()
             imu6 = imu6_for_frame(
                 buf,
@@ -635,7 +635,6 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
         last_preview_oak: dict[str, bytes] | dict[str, np.ndarray] = {}
         t_end = time.monotonic() + float(duration_s)
         last_emit_ts_ns: int | None = self._strict_last_emit_ts_ns
-        imu_flush_tick = 0
 
         from ego_capture_studio.capture.ingest_buffer import EGO_POC_RING_LEN
 
@@ -662,7 +661,7 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             primary_ts_ns: int,
             pre_depths: dict[str, int],
         ) -> tuple[int, dict, dict, Any, dict, int]:
-            nonlocal last_emit_ts_ns, imu_flush_tick
+            nonlocal last_emit_ts_ns
             primary_dev_ns = int(primary_ts_ns)
             t_emit_ns = resolve_commit_timestamp_ns(
                 primary_dev_ns,
@@ -674,9 +673,10 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             if last_emit_ts_ns is None:
                 self._strict_grid_epoch_ns = int(t_emit_ns)
 
-            imu_flush_tick += 1
-            if imu_flush_tick % 3 == 0:
-                self._flush_imu_raw_from_buf(buf)
+            self._drain_flush_imu_raw_for_commit(
+                buf,
+                first_commit=last_emit_ts_ns is None,
+            )
             t_imu = time.perf_counter()
             imu6 = imu6_for_frame(
                 buf,

@@ -1409,6 +1409,17 @@ class Oak4pEgoRecorder:
         if batch:
             self._pending_imu_raw.extend(batch)
 
+    def _drain_flush_imu_raw_for_commit(
+        self,
+        buf: EpisodeBuffers,
+        *,
+        first_commit: bool = False,
+    ) -> None:
+        """Merge device IMU and export raw rows for this frame commit."""
+        del first_commit
+        self._drain_imu(buf)
+        self._flush_imu_raw_from_buf(buf)
+
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
         if self._hw_jpeg or (self._hw_h264 and oak_hw_preview_h264_enabled()):
             last_preview: dict[str, bytes] = {}

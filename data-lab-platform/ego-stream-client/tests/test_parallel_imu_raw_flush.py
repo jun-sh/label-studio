@@ -85,21 +85,45 @@ def test_segment_imu_gate_blocks_until_samples_exist() -> None:
     from types import SimpleNamespace
 
     class _GateProbe:
+        _segment_imu_align_margin_ns = staticmethod(lambda: 5_000_000)
+
         def __init__(self) -> None:
             self._segment_imu_gate = True
 
-        def _awaiting_segment_imu(self, buf: SimpleNamespace) -> bool:
+        @staticmethod
+        def _first_imu_device_ts_ns(buf: SimpleNamespace) -> int | None:
+            ts: list[int] = []
+            if buf.gyro_ts_ns:
+                ts.append(int(buf.gyro_ts_ns[0]))
+            if buf.accel_ts_ns:
+                ts.append(int(buf.accel_ts_ns[0]))
+            return min(ts) if ts else None
+
+        def _awaiting_segment_imu(
+            self,
+            buf: SimpleNamespace,
+            *,
+            primary_dev_ns: int | None = None,
+        ) -> bool:
             if not self._segment_imu_gate:
                 return False
-            return not (buf.gyro_ts_ns or buf.accel_ts_ns)
+            first_imu_ns = self._first_imu_device_ts_ns(buf)
+            if first_imu_ns is None:
+                return True
+            if primary_dev_ns is None:
+                return False
+            return int(primary_dev_ns) + self._segment_imu_align_margin_ns() < int(first_imu_ns)
 
         def _release_segment_imu_gate(self) -> None:
             self._segment_imu_gate = False
 
     rec = _GateProbe()
     empty = SimpleNamespace(gyro_ts_ns=[], accel_ts_ns=[])
-    ready = SimpleNamespace(gyro_ts_ns=[100], accel_ts_ns=[])
-    assert rec._awaiting_segment_imu(empty) is True
-    assert rec._awaiting_segment_imu(ready) is False
+    ready = SimpleNamespace(gyro_ts_ns=[4_935_000_000], accel_ts_ns=[])
+    stale_primary_ns = 3_835_000_000
+    aligned_primary_ns = 4_936_500_000
+    assert rec._awaiting_segment_imu(empty, primary_dev_ns=stale_primary_ns) is True
+    assert rec._awaiting_segment_imu(ready, primary_dev_ns=stale_primary_ns) is True
+    assert rec._awaiting_segment_imu(ready, primary_dev_ns=aligned_primary_ns) is False
     rec._release_segment_imu_gate()
-    assert rec._awaiting_segment_imu(empty) is False
+    assert rec._awaiting_segment_imu(empty, primary_dev_ns=stale_primary_ns) is False

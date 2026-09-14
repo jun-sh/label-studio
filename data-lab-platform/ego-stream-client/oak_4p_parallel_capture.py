@@ -556,6 +556,13 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             self._imu_flush_accel_idx = len(buf.accel_ts_ns)
             self._drain_cam_queues_to_rings(cam_rings)
 
+            if self._segment_imu_gate:
+                self._discard_pre_imu_primary_heads(
+                    cam_rings,
+                    buf,
+                    primary_socket=PRIMARY_OAK_SOCKET,
+                )
+
             if not EGO_STRICT_SYNC_PREVIEW_DRAIN:
                 preview = self._drain_preview_queues()
                 if preview:
@@ -564,7 +571,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
 
             burst = 0
             while burst < _DEVICE_TICK_BURST_MAX and all(cam_rings[oak] for oak in self._cam_list):
-                if self._awaiting_segment_imu(buf):
+                primary_dev_ns = self._primary_head_dev_ns(cam_rings, PRIMARY_OAK_SOCKET)
+                if self._awaiting_segment_imu(buf, primary_dev_ns=primary_dev_ns):
                     break
                 row = _commit_one()
                 if row is None:
@@ -738,6 +746,13 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
             self._imu_flush_accel_idx = len(buf.accel_ts_ns)
             self._drain_cam_queues_to_rings(cam_rings)
 
+            if self._segment_imu_gate:
+                self._discard_pre_imu_primary_heads(
+                    cam_rings,
+                    buf,
+                    primary_socket=PRIMARY_OAK_SOCKET,
+                )
+
             if not EGO_STRICT_SYNC_PREVIEW_DRAIN:
                 preview = self._drain_preview_queues()
                 if preview:
@@ -749,7 +764,8 @@ class Oak4pParallelEgoRecorder(Oak4pEgoRecorder):
                 primary_ring = cam_rings.get(PRIMARY_OAK_SOCKET)
                 if not primary_ring:
                     break
-                if self._awaiting_segment_imu(buf):
+                primary_dev_ns = self._primary_head_dev_ns(cam_rings, PRIMARY_OAK_SOCKET)
+                if self._awaiting_segment_imu(buf, primary_dev_ns=primary_dev_ns):
                     break
 
                 committed = False

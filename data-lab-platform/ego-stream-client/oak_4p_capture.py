@@ -1429,10 +1429,68 @@ class Oak4pEgoRecorder:
     def _release_segment_imu_gate(self) -> None:
         self._segment_imu_gate = False
 
-    def _awaiting_segment_imu(self, buf: EpisodeBuffers) -> bool:
+    @staticmethod
+    def _segment_imu_align_margin_ns() -> int:
+        margin_ms = float(os.environ.get("EGO_SEGMENT_IMU_ALIGN_MARGIN_MS", "5.0"))
+        return max(0, int(margin_ms * 1_000_000))
+
+    @staticmethod
+    def _first_imu_device_ts_ns(buf: EpisodeBuffers) -> int | None:
+        ts: list[int] = []
+        if buf.gyro_ts_ns:
+            ts.append(int(buf.gyro_ts_ns[0]))
+        if buf.accel_ts_ns:
+            ts.append(int(buf.accel_ts_ns[0]))
+        return min(ts) if ts else None
+
+    def _awaiting_segment_imu(
+        self,
+        buf: EpisodeBuffers,
+        *,
+        primary_dev_ns: int | None = None,
+    ) -> bool:
         if not self._segment_imu_gate:
             return False
-        return not (buf.gyro_ts_ns or buf.accel_ts_ns)
+        first_imu_ns = self._first_imu_device_ts_ns(buf)
+        if first_imu_ns is None:
+            return True
+        if primary_dev_ns is None:
+            return False
+        return int(primary_dev_ns) + self._segment_imu_align_margin_ns() < int(first_imu_ns)
+
+    def _discard_pre_imu_primary_heads(
+        self,
+        cam_rings: dict[str, deque[_CamRingSample]],
+        buf: EpisodeBuffers,
+        *,
+        primary_socket: str,
+    ) -> int:
+        """Drop primary ring heads that predate the IMU stream (segment/session cold start)."""
+        from ego_capture_studio.capture.fsync_quad_commit import drop_primary_head
+
+        first_imu_ns = self._first_imu_device_ts_ns(buf)
+        if first_imu_ns is None:
+            return 0
+        margin_ns = self._segment_imu_align_margin_ns()
+        dropped = 0
+        primary_ring = cam_rings.get(primary_socket)
+        while primary_ring and int(primary_ring[0].ts_ns) + margin_ns < int(first_imu_ns):
+            drop_primary_head(cam_rings, primary_socket=primary_socket)
+            dropped += 1
+            primary_ring = cam_rings.get(primary_socket)
+            if dropped > 10_000:
+                break
+        return dropped
+
+    @staticmethod
+    def _primary_head_dev_ns(
+        cam_rings: dict[str, deque[_CamRingSample]],
+        primary_socket: str,
+    ) -> int | None:
+        primary_ring = cam_rings.get(primary_socket)
+        if not primary_ring:
+            return None
+        return int(primary_ring[0].ts_ns)
 
     def _drain_preview_queues(self) -> dict[str, bytes] | dict[str, np.ndarray]:
         if self._hw_jpeg or (self._hw_h264 and oak_hw_preview_h264_enabled()):

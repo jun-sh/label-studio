@@ -116,24 +116,10 @@ print("stats_ok", ok)
     return (root / "meta" / "stats.json").is_file()
 
 
-def copy_sensor_raw(src_root: Path, dest_root: Path) -> bool:
-    imu_src = src_root / "sensor_raw" / "imu"
-    if not imu_src.is_dir():
-        return False
-    imu_dest = dest_root / "sensor_raw" / "imu"
-    if imu_dest.exists():
-        shutil.rmtree(imu_dest)
-    shutil.copytree(imu_src, imu_dest)
-    info_path = dest_root / "meta" / "info.json"
-    if info_path.is_file():
-        info = json.loads(info_path.read_text(encoding="utf-8"))
-        stream_info_path = src_root / "meta" / "info.json"
-        if stream_info_path.is_file():
-            stream_info = json.loads(stream_info_path.read_text(encoding="utf-8"))
-            if stream_info.get("sensor_raw"):
-                info["sensor_raw"] = stream_info["sensor_raw"]
-                info_path.write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-    return True
+def rebuild_corpus_sensor_raw(corpus_root: Path, stream_root: Path) -> dict:
+    from ego_platform.lerobot.sensor_raw_imu import rebuild_corpus_sensor_raw_from_history
+
+    return rebuild_corpus_sensor_raw_from_history(corpus_root, stream_root)
 
 
 def bootstrap_qc_sidecar(corpus_root: Path, qc_base: Path) -> Path:
@@ -243,8 +229,8 @@ def main() -> int:
     print(f"  files: {repair_data_parquet(corpus_root)}")
 
     subprocess.run([sys.executable, str(merge_imu), str(stream_root), "--rebuild"], check=True)
-    copy_sensor_raw(stream_root, corpus_root)
-    print(f"sensor_raw rows stream: {(stream_root / 'sensor_raw/imu/chunk-000/file-000.parquet').exists()}")
+    imu_report = rebuild_corpus_sensor_raw(corpus_root, stream_root)
+    print(f"corpus sensor_raw rebuild: {json.dumps(imu_report, ensure_ascii=False)}")
 
     write_stats(stream_root, sync_script)
     write_stats(corpus_root, sync_script)

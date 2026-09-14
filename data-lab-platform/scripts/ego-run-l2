@@ -7,9 +7,11 @@ if [[ -z "$STATION" || "$STATION" == "-h" || "$STATION" == "--help" ]]; then
   cat <<'EOF'
 用法: ego-run-l2 <station>
 
-L2 干净语料路径（产品默认热路径）:
+  L2 干净语料路径（产品默认热路径）:
   derive 已完成 session → rectify convert → corpus/ego_001 (1280×720)
+  append 时自动合并 derived/*/imu.parquet → corpus/sensor_raw/imu (200Hz)
   不跑 WiLoR / MANO；算法 sidecar 不进 corpus（由 ego-viewer-preview 写 samples/）。
+  Viewer publish gate 在 L2 convert 内跳过，仅在 ego-process 的 L3 之后执行一次。
 
 环境变量:
   EGO_L2_PUBLISH=1          默认由本脚本设置

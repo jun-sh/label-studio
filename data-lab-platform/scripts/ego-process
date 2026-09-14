@@ -38,11 +38,11 @@ for arg in "$@"; do
 
 步骤（产品默认 L2/L3 路径）:
   1. derive   manual/async 派生至 READY
-  2. L2       ego-run-l2（rectify 720p append → corpus/ego_001，无 WiLoR）
+  2. L2       ego-run-l2（rectify 720p append → corpus/ego_001 + sensor_raw/imu 200Hz，无 WiLoR）
   3. purity   ego-lerobot-purity-gate
-  4. preview  ego-viewer-preview（MediaPipe + depth → samples/）
+  4. preview  ego-viewer-preview（MediaPipe + depth → samples/；按 corpus 缺口补全）
   5. sync     ingest-bundled-datasets
-  6. gate     ego-viewer-publish-gate（L2 模式，不要求 MANO backend）
+  6. gate     ego-viewer-publish-gate（唯一 SSOT：corpus ↔ depth PNG 全覆盖）
 
 日常 SOP（生产默认）:
   130:  ego-upload ego-001
@@ -132,7 +132,32 @@ _is_async_derive_mode() {
   [[ "$da" == "1" || "$da" == "true" || "$da" == "yes" ]]
 }
 
+_ensure_production_derive_mode() {
+  if [[ "$FORCE_MANUAL_DERIVE" -eq 1 ]]; then
+    log "⚠️  --force-manual-derive：跳过 async-only 保护（仅调试）"
+    return 0
+  fi
+  local worker_up=0
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DERIVE_WORKER_CONTAINER}$"; then
+    worker_up=1
+  fi
+  if [[ "$worker_up" -eq 1 ]]; then
+    if ! _is_async_derive_mode; then
+      die "derive-worker 在运行但 DERIVE_ASYNC≠1（双调度风险）。请先: bash ${SCRIPT_DIR}/ego-derive-mode.sh async"
+    fi
+    return 0
+  fi
+  if [[ "${EGO_DERIVE_MODE_DEFAULT:-async}" == "async" ]]; then
+    log "⚠️  生产默认 async derive，但 derive-worker 未运行。建议: bash ${SCRIPT_DIR}/ego-derive-mode.sh async"
+  fi
+}
+
+_derive_worker_running() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DERIVE_WORKER_CONTAINER}$"
+}
+
 if [[ "$SKIP_DERIVE" -eq 0 ]]; then
+  _ensure_production_derive_mode
   mapfile -t CLEARED < <(_py clear-stale-derive "$STATION" --apply 2>/dev/null || true)
   if [[ ${#CLEARED[@]} -gt 0 ]]; then
     log "cleared stale derive state: ${CLEARED[*]}"
@@ -152,6 +177,9 @@ if [[ "$SKIP_DERIVE" -eq 0 ]]; then
       STATION_ID="$STATION" bash "$WAIT_DERIVE_SH" 2>&1 | tee -a "$RUN_LOG"
       DERIVED=${#DERIVE_PENDING[@]}
     else
+      if _derive_worker_running; then
+        die "derive-worker 运行中，禁止 manual batch derive（会抢 deriver.lock）。请: bash ${SCRIPT_DIR}/ego-derive-mode.sh async 或 docker stop ${DERIVE_WORKER_CONTAINER}"
+      fi
       log "manual 模式：待 derive session (${#DERIVE_PENDING[@]}): ${DERIVE_PENDING[*]}"
       for SID in "${DERIVE_PENDING[@]}"; do
         log ">>> derive ${STATION} / ${SID} (layout=unit)"

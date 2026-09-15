@@ -1,0 +1,13 @@
+[Unit]
+Description=Periodic EGO OAK bootloader precheck (boot + idle)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+Unit=ecs-oak-bootloader-precheck.service
+
+[Install]
+WantedBy=timers.target

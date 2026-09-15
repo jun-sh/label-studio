@@ -93,6 +93,8 @@ MIN_ACTION_INTERVAL_S = float(os.environ.get("EGO_MIN_ACTION_INTERVAL_S", "3"))
 JOURNAL_CACHE_TTL_S = float(os.environ.get("EGO_JOURNAL_CACHE_TTL_S", "0.4"))
 STATUS_POLL_MS = int(os.environ.get("EGO_STATUS_POLL_MS", "300"))
 PREVIEW_POLL_MS = int(os.environ.get("EGO_PREVIEW_POLL_MS", "200"))
+STANDBY_STOP_TIMEOUT_S = float(os.environ.get("EGO_STANDBY_STOP_TIMEOUT_S", "8"))
+PREVIEW_PORT_FREE_TIMEOUT_S = float(os.environ.get("EGO_PREVIEW_PORT_FREE_TIMEOUT_S", "8"))
 
 _lock = threading.Lock()
 _busy = False
@@ -471,12 +473,14 @@ def _preview_port_in_use(port: int = 8765) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() != ""
 
 
-def _wait_preview_port_free(timeout_s: float = 25.0, port: int = 8765) -> bool:
+def _wait_preview_port_free(timeout_s: float | None = None, port: int = 8765) -> bool:
+    if timeout_s is None:
+        timeout_s = PREVIEW_PORT_FREE_TIMEOUT_S
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if not _preview_port_in_use(port):
             return True
-        time.sleep(0.25)
+        time.sleep(0.12)
     return False
 
 
@@ -554,38 +558,67 @@ def _maybe_stop_idle_standby_preview() -> None:
         _standby_preview_touch_mono = 0.0
 
 
+def _wait_unit_inactive(unit: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _capture_unit_state(unit) in ("inactive", "failed", ""):
+            return True
+        time.sleep(0.12)
+    return _capture_unit_state(unit) in ("inactive", "failed", "")
+
+
 def _stop_standby_preview() -> None:
-    """Release :8765 and OAK before capture."""
-    _systemctl("stop", STANDBY_PREVIEW_UNIT, timeout=10)
-    _systemctl("stop", STANDBY_STACK_TARGET, timeout=10)
-    subprocess.run(
-        ["pkill", "-TERM", "-f", "preview_standby"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        check=False,
-    )
+    """Release :8765 and OAK before capture (graceful stop, escalate only if needed)."""
+    global _standby_preview_touch_mono
+    standby_active = _capture_unit_state(STANDBY_PREVIEW_UNIT) == "active"
+    port_busy = _preview_port_in_use()
+    if not standby_active and not port_busy:
+        _standby_preview_touch_mono = 0.0
+        return
+
+    t0 = time.monotonic()
+    if standby_active:
+        _systemctl("stop", STANDBY_PREVIEW_UNIT, timeout=STANDBY_STOP_TIMEOUT_S)
+        _wait_unit_inactive(STANDBY_PREVIEW_UNIT, STANDBY_STOP_TIMEOUT_S)
+    if _capture_unit_state(STANDBY_STACK_TARGET) == "active":
+        _systemctl("stop", STANDBY_STACK_TARGET, timeout=STANDBY_STOP_TIMEOUT_S)
+
+    if _preview_port_in_use():
+        subprocess.run(
+            ["pkill", "-TERM", "-f", "preview_standby"],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+        _wait_preview_port_free(timeout_s=min(3.0, PREVIEW_PORT_FREE_TIMEOUT_S))
+
     if _preview_port_in_use():
         subprocess.run(
             ["fuser", "-k", "-TERM", "8765/tcp"],
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=5,
             check=False,
         )
-        time.sleep(0.5)
+        time.sleep(0.25)
+
     if _preview_port_in_use():
         subprocess.run(
             ["fuser", "-k", "-KILL", "8765/tcp"],
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=5,
             check=False,
         )
-        time.sleep(0.3)
-    if not _wait_preview_port_free(timeout_s=15.0):
+        time.sleep(0.15)
+
+    if not _wait_preview_port_free(timeout_s=PREVIEW_PORT_FREE_TIMEOUT_S):
         print("warning: preview port 8765 still in use after standby stop", flush=True)
-    global _standby_preview_touch_mono
+    else:
+        elapsed = time.monotonic() - t0
+        if elapsed > 1.0:
+            print(f"standby_preview_stopped elapsed_s={elapsed:.2f}", flush=True)
     _standby_preview_touch_mono = 0.0
 
 

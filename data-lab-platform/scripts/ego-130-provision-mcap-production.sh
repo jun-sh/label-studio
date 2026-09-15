@@ -158,6 +158,10 @@ _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/capture-stack.conf" "
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf" "/tmp/z-oak-boot-pre.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-mcap-capture-stack.target" "/tmp/ecs-oak-mcap-capture-stack.target"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-standby-stack.target" "/tmp/ecs-oak-standby-stack.target"
+_scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service" "/tmp/ecs-preview-standby.service"
+_scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-oak-boot-pre.conf" "/tmp/z-preview-standby-oak-boot-pre.conf"
+_scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.service" "/tmp/ecs-oak-bootloader-precheck.service"
+_scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.timer" "/tmp/ecs-oak-bootloader-precheck.timer"
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web.service.d/z-mcap-production.conf" "/tmp/z-ego-web-mcap-production.conf"
 _scp "${PROFILE}" "/tmp/ego-mcap-production.env"
 _scp "${REPO_ROOT}/data-lab-platform/scripts/ego-upload-station.sh" "/tmp/ego-upload-station.sh"
@@ -170,6 +174,7 @@ STATION_ID="${STATION_ID}"
 CACHE_ROOT="${CACHE_ROOT}"
 
 mkdir -p "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d"
+mkdir -p "\$HOME/.config/systemd/user/ecs-preview-standby.service.d"
 mkdir -p "\$HOME/.config/systemd/user/ecs-ego-web.service.d"
 mkdir -p "\$HOME/.config/ego-station.env.d"
 mkdir -p "\$HOME/.local/bin"
@@ -192,6 +197,10 @@ rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-episode-secon
 rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/zz-episode-seconds.conf"
 cp /tmp/ecs-oak-mcap-capture-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-oak-standby-stack.target "\$HOME/.config/systemd/user/"
+cp /tmp/ecs-preview-standby.service "\$HOME/.config/systemd/user/"
+cp /tmp/z-preview-standby-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-oak-boot-pre.conf"
+cp /tmp/ecs-oak-bootloader-precheck.service "\$HOME/.config/systemd/user/"
+cp /tmp/ecs-oak-bootloader-precheck.timer "\$HOME/.config/systemd/user/"
 cp /tmp/z-ego-web-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf"
 
 {
@@ -254,6 +263,9 @@ elif [[ -f "\${CACHE_ROOT}/segments/checkpoint.json" && -f "\${CK}" ]]; then
 fi
 
 systemctl --user daemon-reload
+systemctl --user enable ecs-oak-bootloader-precheck.timer
+systemctl --user start ecs-oak-bootloader-precheck.timer 2>/dev/null || true
+systemctl --user start ecs-oak-bootloader-precheck.service 2>/dev/null || true
 # Capture is manual-only (phone UI). Never enable for boot — avoids post-reboot auto-record + beep.
 systemctl --user stop ecs-oak-mcap-capture-stack.target 2>/dev/null || true
 systemctl --user disable ecs-record-oak-mcap.service 2>/dev/null || true

@@ -436,6 +436,33 @@ def test_full_mcap_segment_frame_mismatch_still_corrupt(
     assert finalize_segment_manifest_after_persist(seg) == "CORRUPT"
 
 
+def test_tail_segment_soft_capture_issue_becomes_qc_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    seg = tmp_path / "seg_tail_soft"
+    _write_valid_segment(seg, frame_count=197, session_id="sess_tail_soft")
+    (seg / "frames" / "00000196.bin").unlink()
+
+    status = finalize_segment_manifest_after_persist(seg)
+    assert status == "CLOSED"
+    updated = read_manifest(seg)
+    assert updated["status"] == "CLOSED"
+    assert updated["integrity"]["ok"] is True
+    assert any("tail_segment:" in i for i in updated["integrity"]["qc_issues"])
+
+
+def test_full_segment_soft_issue_still_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    seg = tmp_path / "seg_full_soft"
+    _write_valid_segment(seg, frame_count=1800, session_id="sess_full_soft")
+    (seg / "frames" / "00001799.bin").unlink()
+
+    assert finalize_segment_manifest_after_persist(seg) == "CORRUPT"
+
+
 def test_capture_close_timeline_qc_warn_not_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

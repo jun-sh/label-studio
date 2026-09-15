@@ -185,8 +185,39 @@ def test_v1_manifest_compat_upload(segment_root: Path) -> None:
     assert manifest.get("manifest_schema_version") == 2
 
 
-def test_corrupt_segment_skipped(segment_root: Path) -> None:
+def test_corrupt_segment_quarantined_and_upload_continues(segment_root: Path) -> None:
     session_id = "sess_skip"
+    seg_good = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    seg_bad = segment_root / "sessions" / session_id / "segments" / "seg_000002"
+    _write_uploadable_segment(seg_good, session_id=session_id, status="CLOSED")
+    _write_uploadable_segment(seg_bad, session_id=session_id, status="CORRUPT")
+    manifest = read_manifest(seg_bad)
+    manifest["integrity"] = {
+        "checked_at": "2026-08-18T00:00:10Z",
+        "ok": False,
+        "issues": ["mcap_camera_count_frame_mismatch:196!=197"],
+        "qc_ok": False,
+        "qc_issues": [],
+    }
+    write_manifest_v2(seg_bad, manifest)
+    write_session_seal(segment_root, session_id, complete=True)
+    uploader = _mock_uploader()
+
+    n = upload_pending_segments(
+        root=segment_root,
+        session_id=session_id,
+        uploader=uploader,
+        finalize_seal=False,
+    )
+    assert n == 1
+    uploader.upload_segment_dir.assert_called_once()
+    assert (seg_bad / ".upload_skip").is_file()
+    assert manifest_status(read_manifest(seg_good)) == "UPLOADED"
+    assert should_upload_session_seal(segment_root, session_id, session_uploaded=n) is True
+
+
+def test_corrupt_segment_skipped(segment_root: Path) -> None:
+    session_id = "sess_skip_only"
     seg = segment_root / "sessions" / session_id / "segments" / "seg_bad"
     _write_uploadable_segment(seg, session_id=session_id, status="CORRUPT")
     uploader = _mock_uploader()
@@ -194,6 +225,7 @@ def test_corrupt_segment_skipped(segment_root: Path) -> None:
     n = upload_pending_segments(root=segment_root, session_id=session_id, uploader=uploader)
     assert n == 0
     uploader.upload_segment_dir.assert_not_called()
+    assert (seg / ".upload_skip").is_file()
 
 
 def test_upload_qc_rejects_timeline_incoherent(

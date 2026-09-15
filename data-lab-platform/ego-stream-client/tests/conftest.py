@@ -52,6 +52,10 @@ def _install_ego_capture_studio_stubs() -> None:
     segment_tar_zst.parse_segment_archive_name = lambda name: ("sess_x", "seg_x")
     segment_tar_zst.sha256_file = lambda path: "0" * 64
 
+    segment_mcap = types.ModuleType("ego_capture_studio.capture.segment_mcap")
+    segment_mcap.pack_segment_mcap_zst = lambda *args, **kwargs: None
+    segment_mcap.parse_mcap_archive_name = lambda name: ("sess_x", "seg_x")
+
     upload_status = types.ModuleType("ego_capture_studio.capture.upload_status")
     upload_status.live_ui_enabled = lambda: False
 
@@ -97,6 +101,7 @@ def _install_ego_capture_studio_stubs() -> None:
     sys.modules["ego_capture_studio.capture.frame_bin_codec"] = frame_bin_codec
     sys.modules["ego_capture_studio.capture.camera_map"] = camera_map
     sys.modules["ego_capture_studio.capture.segment_tar_zst"] = segment_tar_zst
+    sys.modules["ego_capture_studio.capture.segment_mcap"] = segment_mcap
     sys.modules["ego_capture_studio.capture.upload_status"] = upload_status
 
     import importlib

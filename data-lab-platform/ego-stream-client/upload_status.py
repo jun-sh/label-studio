@@ -13,6 +13,7 @@ from typing import Any
 
 REASON_LABELS_ZH: dict[str, str] = {
     "missing_manifest": "缺失清单文件（数据不完整，已隔离）",
+    "corrupt": "段完整性校验失败（已隔离，其余段继续上传）",
     "upload_timeout": "上传超时",
     "upload_fail": "上传失败",
     "pending_cap": "本地队列超限已丢弃",

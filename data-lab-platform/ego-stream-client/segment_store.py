@@ -89,7 +89,37 @@ def _segment_max_frames() -> int:
 
 
 def _is_tail_segment(frame_count: int) -> bool:
+    """True when frame_count < EGO_SEGMENT_MAX_FRAMES (production N=1800)."""
     return int(frame_count) < _segment_max_frames()
+
+
+def segment_is_upload_quarantined(segment_dir: Path) -> bool:
+    return (segment_dir / ".upload_skip").is_file()
+
+
+_TAIL_SEGMENT_HARD_CAPTURE_PREFIXES = (
+    "missing_manifest",
+    "manifest_unparseable",
+    "invalid_frame_count",
+    "missing_segment_mcap",
+    "empty_segment_mcap",
+    "mcap_unreadable",
+    "missing_rows_jsonl",
+    "missing_frames_dir",
+    "missing_imu_raw",
+    "empty_imu_raw",
+    "orphan_active",
+)
+
+
+def _tail_segment_capture_issues_soft_ok(frame_count: int, capture_issues: list[str]) -> bool:
+    """Tail segments (< EGO_SEGMENT_MAX_FRAMES) downgrade soft capture faults to QC warnings."""
+    if not capture_issues or not _is_tail_segment(frame_count):
+        return False
+    for issue in capture_issues:
+        if any(issue == prefix or issue.startswith(f"{prefix}:") for prefix in _TAIL_SEGMENT_HARD_CAPTURE_PREFIXES):
+            return False
+    return True
 
 
 def _shutdown_boundary_camera_mismatch_ok(frame_count: int, cam_counts: list[int]) -> bool:
@@ -324,6 +354,25 @@ def sealed_segment_total(root: Path, session_id: str) -> int | None:
     return int(seal.get("segment_count") or 0)
 
 
+def uploadable_sealed_segment_total(root: Path, session_id: str) -> int | None:
+    """Segments expected to upload after quarantining CORRUPT skips."""
+    if sealed_segment_total(root, session_id) is None:
+        return None
+    total = 0
+    for seg_dir in iter_session_segment_dirs(root, session_id):
+        if segment_is_upload_quarantined(seg_dir):
+            continue
+        try:
+            manifest = read_manifest(seg_dir)
+            status = manifest_status(manifest)
+        except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+            continue
+        if status == "CORRUPT":
+            continue
+        total += 1
+    return total
+
+
 def iter_session_segment_dirs(root: Path, session_id: str) -> list[Path]:
     seg_root = root / "sessions" / session_id / "segments"
     if not seg_root.is_dir():
@@ -335,6 +384,7 @@ def session_segment_status_summary(root: Path, session_id: str) -> dict[str, Any
     """Aggregate on-disk segment manifest states for upload / ops diagnostics."""
     counts: dict[str, int] = {}
     corrupt_issues: list[str] = []
+    quarantined_corrupt: list[str] = []
     qc_issues: list[str] = []
     qc_pending: list[str] = []
     for seg_dir in iter_session_segment_dirs(root, session_id):
@@ -348,6 +398,10 @@ def session_segment_status_summary(root: Path, session_id: str) -> dict[str, Any
         integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else {}
         seg_qc = list(integrity.get("qc_issues") or [])
         if status == "CORRUPT":
+            if segment_is_upload_quarantined(seg_dir):
+                counts["QUARANTINED"] = counts.get("QUARANTINED", 0) + 1
+                quarantined_corrupt.append(seg_dir.name)
+                continue
             issues = list(integrity.get("issues") or [])
             if seg_qc and not issues:
                 qc_issues.append(f"{seg_dir.name}:{seg_qc[0]}")
@@ -361,14 +415,17 @@ def session_segment_status_summary(root: Path, session_id: str) -> dict[str, Any
     pending = list_closed_pending_segments(root, session_id)
     uploaded = counts.get(GC_ELIGIBLE_STATUS, 0)
     expected = int(seal.get("segment_count") or 0) if seal else 0
+    uploadable = uploadable_sealed_segment_total(root, session_id) if seal and seal.get("complete") else None
     return {
         "session_id": session_id,
         "seal_complete": bool(seal and seal.get("complete")),
         "seal_segment_count": expected,
+        "uploadable_segment_count": uploadable,
         "status_counts": counts,
         "pending_closed": len(pending),
         "uploaded_closed": uploaded,
         "corrupt_issues": corrupt_issues,
+        "quarantined_corrupt": quarantined_corrupt,
         "qc_issues": qc_issues,
         "qc_pending": qc_pending,
     }
@@ -665,10 +722,16 @@ def finalize_segment_manifest_after_persist(segment_dir: Path) -> SegmentStatus:
         return reconcile_orphan_active_segment(segment_dir)
     ok, issues = check_segment_integrity(segment_dir, qa_layer="capture")
     _, _, qc_issues = _assess_segment_integrity(segment_dir)
-    status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
     if not manifest_path.is_file():
         return reconcile_orphan_active_segment(segment_dir)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    frame_count = int(manifest.get("frame_count") or 0)
+    if not ok and _tail_segment_capture_issues_soft_ok(frame_count, issues):
+        for issue in issues:
+            qc_issues.append(f"tail_segment:{issue}")
+        issues = []
+        ok = True
+    status: SegmentStatus = "CLOSED" if ok else "CORRUPT"
     payload = {
         **{k: manifest[k] for k in manifest if k not in ("closed", "uploaded", "uploadedAt")},
         "status": status,

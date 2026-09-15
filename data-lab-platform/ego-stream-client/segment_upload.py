@@ -38,7 +38,9 @@ from ego_capture_studio.capture.segment_store import (
     read_session_seal,
     sealed_segment_total,
     segment_file_key,
+    segment_is_upload_quarantined,
     session_segment_status_summary,
+    uploadable_sealed_segment_total,
     iter_session_segment_dirs,
 )
 from ego_capture_studio.capture.segment_tar_zst import pack_segment_tar_zst, parse_segment_archive_name, sha256_file
@@ -505,6 +507,31 @@ class SegmentUploader:
             self._http_session.close()
 
 
+def _write_upload_skip_marker(
+    segment_dir: Path,
+    *,
+    session_id: str,
+    reason: str,
+    detail: str | None = None,
+) -> None:
+    skip_marker = segment_dir / ".upload_skip"
+    if skip_marker.is_file():
+        return
+    payload: dict[str, Any] = {"reason": reason, "at": time.time()}
+    if detail:
+        payload["detail"] = detail[:500]
+    skip_marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    _log("segment_skip", session_id=session_id, segment_id=segment_dir.name, reason=reason)
+    try:
+        UploadStatusWriter.get_default().record_quarantine_skip(
+            session_id=session_id,
+            segment_id=segment_dir.name,
+            reason=reason,
+        )
+    except Exception:
+        pass
+
+
 def _quarantine_orphan_segments(root: Path, session_id: str) -> int:
     """Skip segment dirs without manifest so they never block the upload queue."""
     seg_root = root / "sessions" / session_id / "segments"
@@ -516,22 +543,36 @@ def _quarantine_orphan_segments(root: Path, session_id: str) -> int:
             continue
         if (child / "manifest.json").is_file():
             continue
-        skip_marker = child / ".upload_skip"
-        if skip_marker.is_file():
+        if segment_is_upload_quarantined(child):
             continue
-        skip_marker.write_text(
-            json.dumps({"reason": "missing_manifest", "at": time.time()}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        _log("segment_skip", session_id=session_id, segment_id=child.name, reason="missing_manifest")
+        _write_upload_skip_marker(child, session_id=session_id, reason="missing_manifest")
+        quarantined += 1
+    return quarantined
+
+
+def _quarantine_corrupt_segments(root: Path, session_id: str) -> int:
+    """Isolate CORRUPT segments so the rest of the session can upload and seal."""
+    quarantined = 0
+    for child in iter_session_segment_dirs(root, session_id):
+        if segment_is_upload_quarantined(child):
+            continue
         try:
-            UploadStatusWriter.get_default().record_quarantine_skip(
-                session_id=session_id,
-                segment_id=child.name,
-                reason="missing_manifest",
-            )
-        except Exception:
-            pass
+            manifest = read_manifest(child)
+            status = manifest_status(manifest)
+        except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+            continue
+        if status != "CORRUPT":
+            continue
+        integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else {}
+        issues = list(integrity.get("issues") or [])
+        qc_issues = list(integrity.get("qc_issues") or [])
+        hint = issues[0] if issues else (qc_issues[0] if qc_issues else "corrupt")
+        _write_upload_skip_marker(
+            child,
+            session_id=session_id,
+            reason="corrupt",
+            detail=str(hint),
+        )
         quarantined += 1
     return quarantined
 
@@ -551,6 +592,8 @@ def _segment_upload_skip_reason(segment_dir: Path) -> str | None:
     except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
         return "unreadable_manifest"
     if status == "CORRUPT":
+        if segment_is_upload_quarantined(segment_dir):
+            return "corrupt_quarantined"
         return "corrupt"
     if status == "RECORDING":
         return "still_recording"
@@ -957,7 +1000,9 @@ def upload_session_seal_finalize(
     if not seal or not seal.get("complete"):
         return False
     seal_b64 = base64.b64encode(json.dumps(seal, separators=(",", ":")).encode("utf-8")).decode("ascii")
-    segment_total = sealed_segment_total(root, session_id)
+    segment_total = uploadable_sealed_segment_total(root, session_id)
+    if segment_total is None:
+        segment_total = sealed_segment_total(root, session_id)
     uploader.upload_session_seal(
         session_id=session_id,
         seal_b64=seal_b64,
@@ -980,7 +1025,7 @@ def should_upload_session_seal(
         return False
     if summary["corrupt_issues"]:
         return False
-    expected = int(summary["seal_segment_count"] or 0)
+    expected = int(summary.get("uploadable_segment_count") or summary["seal_segment_count"] or 0)
     if expected <= 0:
         return False
     uploaded = int(summary["uploaded_closed"] or 0)
@@ -993,8 +1038,14 @@ def should_upload_session_seal(
         int((summary["status_counts"] or {}).get(status, 0))
         for status in ("CLOSED", "UPLOAD_FAILED", "RECORDING", "UPLOADING")
     )
-    if blocking == 0 and len(iter_session_segment_dirs(root, session_id)) == 0:
-        return session_uploaded > 0 or uploaded > 0
+    if blocking == 0:
+        remaining = [
+            seg_dir
+            for seg_dir in iter_session_segment_dirs(root, session_id)
+            if not segment_is_upload_quarantined(seg_dir)
+        ]
+        if not remaining:
+            return session_uploaded > 0 or uploaded > 0
     return False
 
 
@@ -1014,16 +1065,12 @@ def upload_session_until_complete(
     last_wait_reason = ""
 
     while time.monotonic() < deadline:
+        _quarantine_corrupt_segments(root, session_id)
         summary = session_segment_status_summary(root, session_id)
-        corrupt_n = int((summary.get("status_counts") or {}).get("CORRUPT", 0))
-        if summary["corrupt_issues"] or corrupt_n > 0:
+        if summary["corrupt_issues"]:
             issues = list(summary.get("corrupt_issues") or [])
-            if not issues:
-                issues = list(summary.get("qc_issues") or [])
-            if not issues and corrupt_n > 0:
-                issues = [f"CORRUPT segments={corrupt_n}"]
             raise RuntimeError(
-                f"session {session_id} has {max(len(issues), corrupt_n)} CORRUPT segment(s): "
+                f"session {session_id} has {len(issues)} unquarantined CORRUPT segment(s): "
                 + "; ".join(issues[:5])
             )
 
@@ -1101,6 +1148,7 @@ def upload_pending_segments(
     finalize_seal: bool = True,
 ) -> int:
     _quarantine_orphan_segments(root, session_id)
+    _quarantine_corrupt_segments(root, session_id)
     pending = list_closed_pending_segments(
         root,
         session_id,

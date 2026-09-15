@@ -10,6 +10,10 @@ SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$DEST" "$SYSTEMD_USER_DIR" "$DEST/templates"
 
 install -m 0644 "$SCRIPT_DIR/ego_web.py" "$DEST/ego_web.py"
+install -m 0644 "$SCRIPT_DIR/ego_tcp_bridge.py" "$DEST/ego_tcp_bridge.py"
+mkdir -p "$DEST/docs" "$DEST/tools"
+install -m 0644 "$SCRIPT_DIR/docs/ego-app-tcp-protocol.md" "$DEST/docs/ego-app-tcp-protocol.md"
+install -m 0755 "$SCRIPT_DIR/tools/ego_tcp_client_test.py" "$DEST/tools/ego_tcp_client_test.py"
 install -m 0644 "$SCRIPT_DIR/templates/capture_ui.html" "$DEST/templates/capture_ui.html"
 if [[ -d "$SCRIPT_DIR/static" ]]; then
   rm -rf "$DEST/static"
@@ -49,13 +53,15 @@ elif [[ -f "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" ]]; then
   install -m 0755 "$SCRIPT_DIR/scripts/ego-hotspot-watchdog.sh" "$DEST/ego-hotspot-watchdog.sh"
 fi
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-web.service" "$SYSTEMD_USER_DIR/ecs-ego-web.service"
+install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-tcp-bridge.service" "$SYSTEMD_USER_DIR/ecs-ego-tcp-bridge.service"
 
 # Remove legacy auto-export module if present.
 rm -f "$DEST/ego_auto_export.py"
 
 systemctl --user daemon-reload
-systemctl --user enable ecs-ego-web.service
+systemctl --user enable ecs-ego-web.service ecs-ego-tcp-bridge.service
 systemctl --user restart ecs-ego-web.service
+systemctl --user restart ecs-ego-tcp-bridge.service
 
 # Ensure user web service starts at boot (no interactive login).
 if command -v loginctl >/dev/null 2>&1; then
@@ -70,4 +76,6 @@ echo "  Export:   ego-export   (或 $DEST/export-offline.sh)"
 echo "  Upload:   ego-upload   (上传到 34，终端实时进度)"
 echo "  Derive:   ego-derive-status   (查 34 派生进度)"
 echo "  Status:   systemctl --user status ecs-ego-web"
+echo "  TCP App:  port 9100 (see docs/ego-app-tcp-protocol.md)"
+echo "  TCP test: python3 $DEST/tools/ego_tcp_client_test.py --host 10.10.10.130 --skip-capture"
 echo "============================================"

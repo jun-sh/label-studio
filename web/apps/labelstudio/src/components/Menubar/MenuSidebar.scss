@@ -2,7 +2,7 @@
   left: 0;
   overflow: auto;
   position: fixed;
-  z-index: 100 !important;
+  z-index: 200 !important;
   top: var(--header-height);
   height: calc(100vh - var(--header-height));
   width: var(--menu-sidebar-width);

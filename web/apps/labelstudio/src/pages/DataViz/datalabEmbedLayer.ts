@@ -76,7 +76,8 @@ export function syncBounds(config: DatalabEmbedConfig) {
 
 function applyLayerChrome(layer: HTMLElement) {
   layer.style.position = "fixed";
-  layer.style.zIndex = "150";
+  // Keep below the shell sidebar (z-index 100+) so the hamburger menu stays visible.
+  layer.style.zIndex = "50";
   layer.style.display = "flex";
   layer.style.flexDirection = "column";
   layer.style.overflow = "hidden";

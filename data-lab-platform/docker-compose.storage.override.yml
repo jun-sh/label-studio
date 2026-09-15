@@ -29,7 +29,10 @@ services:
       - STREAM_ARCHIVE_PURGE_MAX=2
 
   stream-parquet-sync:
+    volumes:
+      - ../ego-platform/src:/ego-platform/src:ro
     environment:
+      - PYTHONPATH=/ego-platform/src
       - STREAM_DATA_ROOT=/srv/stream
       - STREAM_QUOTA_GB=400
       - STREAM_QUOTA_GB_EGO_LAN_214=400

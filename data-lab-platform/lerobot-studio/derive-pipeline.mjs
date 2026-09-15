@@ -338,6 +338,14 @@ export function getDerivePipelineRunning(stationId) {
   return Boolean(pipelineRunning.get(stationId));
 }
 
+/** Core derive entry used by watch-kick / derive-worker (lock + claim handled by caller). */
+export async function runDerivePipelineCore(
+  stationId,
+  { sessionId = null, muxOnly = false } = {},
+) {
+  return runLinearPipeline(stationId, { sessionId, muxOnly, inlineMuxRetry: true });
+}
+
 /**
  * Blocking derive for standalone CLI / derive-worker container.
  * Acquires deriver.lock, writes session markers, runs full pipeline inline.
@@ -430,7 +438,7 @@ export async function runDerivePipelineBlocking(
     };
   } finally {
     pipelineRunning.set(stationId, false);
-    releaseDeriverLock(root);
+    releaseDeriverLock(root, { sessionId, force: true });
   }
 }
 

@@ -11,6 +11,9 @@
 | 文件 | 说明 |
 |------|------|
 | `ego_web.py` | 单文件 Web 服务（标准库）+ 内嵌移动端页面；**仅启停采集** |
+| `ego_tcp_bridge.py` | TCP JSON 控制桥（`:9100`），供原生 App 联调；复用 `ego_web` 采集逻辑 |
+| `docs/ego-app-tcp-protocol.md` | App TCP 协议（修订版，与 130 对齐） |
+| `tools/ego_tcp_client_test.py` | TCP 联调脚本（心跳 / 状态 / 可选启停录制） |
 | `export_offline.py` | 离线打包：读 `segments/` → 写 `export/ready/` |
 | `scripts/export-offline.sh` | 一键导出入口（班次末 SSH 执行） |
 | `field-export-and-import.md` | **数据存哪、从哪打包、成品路径**（必读） |
@@ -82,6 +85,21 @@ bash ~/ego-local-web-src/rollback.sh
 sudo rm -f /etc/polkit-1/rules.d/50-ego-hotspot.rules
 nmcli connection delete EGO-214-COLLECT 2>/dev/null || true
 ```
+
+---
+
+## TCP App 控制（`:9100`）
+
+与网页 **并行**，不影响 `8080`。协议见 [docs/ego-app-tcp-protocol.md](./docs/ego-app-tcp-protocol.md)。
+
+```bash
+# 联调（不启停录制）
+python3 tools/ego_tcp_client_test.py --host 10.10.10.130 --skip-capture
+# 热点
+python3 tools/ego_tcp_client_test.py --host 192.168.8.1 --skip-capture
+```
+
+热点场景在 `~/.config/ego-station.env` 设置 `EGO_TCP_PREVIEW_HOST=192.168.8.1`。
 
 ---
 

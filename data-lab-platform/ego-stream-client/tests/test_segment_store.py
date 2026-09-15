@@ -339,6 +339,103 @@ def test_session_seal_complete_and_total(tmp_path: Path) -> None:
     assert sealed_segment_total(tmp_path, "sess_missing") is None
 
 
+def _write_mcap_tail_manifest(
+    segment_dir: Path,
+    *,
+    frame_count: int,
+    camera_message_counts: dict[str, int],
+    session_id: str = "sess_tail",
+) -> None:
+    segment_dir.mkdir(parents=True, exist_ok=True)
+    (segment_dir / "segment.mcap").write_bytes(b"\x00" * 128)
+    write_manifest_v2(
+        segment_dir,
+        {
+            "segment_id": segment_dir.name,
+            "session_id": session_id,
+            "start_frame_index": 0,
+            "end_frame_index": frame_count - 1,
+            "frame_count": frame_count,
+            "status": "RECORDING",
+            "storage_format": "mcap",
+            "camera_message_counts": camera_message_counts,
+            "timeline": {"source": "writer_spans", "ok": True, "ratio": 1.0},
+            "created_at": "2026-08-18T00:00:00Z",
+            "upload": {
+                "attempts": 0,
+                "last_attempt_at": None,
+                "last_error": None,
+                "remote_ack_at": None,
+            },
+            "integrity": {"checked_at": "2026-08-18T00:00:00Z", "ok": True, "issues": []},
+        },
+    )
+
+
+def test_tail_mcap_shutdown_boundary_tolerance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_STATION_ID", "ego-001")
+    monkeypatch.setenv("SEGMENT_MCAP", "1")
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    monkeypatch.setenv("EGO_SEGMENT_SHUTDOWN_FRAME_TOLERANCE", "1")
+    monkeypatch.setenv("EGO_STRICT_FPS_GATE", "1")
+    monkeypatch.setenv("EGO_STRICT_FPS_GATE_FAST", "1")
+    monkeypatch.setenv("EGO_TIMELINE_GATE", "0")
+
+    seg = tmp_path / "seg_tail"
+    _write_mcap_tail_manifest(
+        seg,
+        frame_count=197,
+        camera_message_counts={
+            "front_left": 196,
+            "front_right": 196,
+            "rear_left": 196,
+            "rear_right": 196,
+        },
+    )
+
+    ok, issues = check_segment_integrity(seg, qa_layer="capture")
+    assert ok, issues
+    assert not any("mcap_camera_count_frame_mismatch" in i for i in issues)
+
+    status = finalize_segment_manifest_after_persist(seg)
+    assert status == "CLOSED"
+    manifest = read_manifest(seg)
+    assert manifest["status"] == "CLOSED"
+    assert manifest["integrity"]["ok"] is True
+    assert any("shutdown_boundary" in i for i in manifest["integrity"]["qc_issues"])
+
+
+def test_full_mcap_segment_frame_mismatch_still_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_STATION_ID", "ego-001")
+    monkeypatch.setenv("SEGMENT_MCAP", "1")
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    monkeypatch.setenv("EGO_SEGMENT_SHUTDOWN_FRAME_TOLERANCE", "1")
+    monkeypatch.setenv("EGO_STRICT_FPS_GATE", "1")
+    monkeypatch.setenv("EGO_STRICT_FPS_GATE_FAST", "1")
+    monkeypatch.setenv("EGO_TIMELINE_GATE", "0")
+
+    seg = tmp_path / "seg_full"
+    _write_mcap_tail_manifest(
+        seg,
+        frame_count=1800,
+        camera_message_counts={
+            "front_left": 1799,
+            "front_right": 1799,
+            "rear_left": 1799,
+            "rear_right": 1799,
+        },
+    )
+
+    ok, issues = check_segment_integrity(seg, qa_layer="capture")
+    assert not ok
+    assert any("mcap_camera_count_frame_mismatch" in i for i in issues)
+    assert finalize_segment_manifest_after_persist(seg) == "CORRUPT"
+
+
 def test_capture_close_timeline_qc_warn_not_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

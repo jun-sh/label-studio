@@ -314,6 +314,7 @@ def _finish_recording_session(
     writer.note_open_segment_health(**recorder.ingest_health())
     if recorder.use_hw_h264:
         recorder.prepare_h264_segment_boundary()
+    _flush_async_capture_queue()
     writer.close()
 
 

@@ -82,14 +82,17 @@ def install_h264_production_backend(record_module: Any) -> bool:
             last_append_end[0] = time.perf_counter()
             prof.tick_frames(1)
 
+    def _shutdown_flush_timeout_s() -> float:
+        return max(30.0, float(os.environ.get("EGO_CAPTURE_SHUTDOWN_FLUSH_S", "180")))
+
     def _patched_writer_close(self: SegmentCaptureWriter) -> None:
         if async_writer is not None:
-            async_writer.flush()
+            async_writer.flush(timeout_s=_shutdown_flush_timeout_s())
         orig_writer_close(self)
 
     def _flush_async_capture_queue() -> None:
         if async_writer is not None:
-            async_writer.flush()
+            async_writer.flush(timeout_s=_shutdown_flush_timeout_s())
 
     record_module._flush_async_capture_queue = _flush_async_capture_queue  # type: ignore[attr-defined]
 

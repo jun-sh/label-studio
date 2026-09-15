@@ -15,6 +15,10 @@ EGO_CAPTURE_WRITER_ASYNC = os.environ.get("EGO_CAPTURE_WRITER_ASYNC", "0").strip
     "yes",
 )
 EGO_CAPTURE_FRAME_QUEUE_MAX = max(16, int(os.environ.get("EGO_CAPTURE_FRAME_QUEUE_MAX", "256")))
+EGO_CAPTURE_SHUTDOWN_FLUSH_S = max(
+    30.0,
+    float(os.environ.get("EGO_CAPTURE_SHUTDOWN_FLUSH_S", "180")),
+)
 
 
 def writer_async_enabled() -> bool:
@@ -114,7 +118,9 @@ class AsyncFrameWriter:
                     return
                 self._drops += 1
 
-    def flush(self, timeout_s: float = 120.0) -> None:
+    def flush(self, timeout_s: float | None = None) -> None:
+        if timeout_s is None:
+            timeout_s = EGO_CAPTURE_SHUTDOWN_FLUSH_S
         if self._thread is None:
             return
         deadline = time.monotonic() + float(timeout_s)

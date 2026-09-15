@@ -77,6 +77,36 @@ SEGMENT_REGISTRY_ON_CLOSE_ONLY = os.environ.get("EGO_SEGMENT_REGISTRY_ON_CLOSE_O
     "yes",
 )
 SEGMENT_PERSIST_BLOCK_S = float(os.environ.get("EGO_SEGMENT_PERSIST_BLOCK_S", "2.0"))
+# Tail segments (stop mid-rotate) may be off by a frame across cameras vs manifest.
+EGO_SEGMENT_SHUTDOWN_FRAME_TOLERANCE = max(
+    0,
+    int(os.environ.get("EGO_SEGMENT_SHUTDOWN_FRAME_TOLERANCE", "1")),
+)
+
+
+def _segment_max_frames() -> int:
+    return max(1, int(os.environ.get("EGO_SEGMENT_MAX_FRAMES", str(SEGMENT_MAX_FRAMES))))
+
+
+def _is_tail_segment(frame_count: int) -> bool:
+    return int(frame_count) < _segment_max_frames()
+
+
+def _shutdown_boundary_camera_mismatch_ok(frame_count: int, cam_counts: list[int]) -> bool:
+    """Allow ±N frame skew on tail segments only (stop/shutdown boundary)."""
+    tol = EGO_SEGMENT_SHUTDOWN_FRAME_TOLERANCE
+    if tol <= 0 or not cam_counts or frame_count <= 0:
+        return False
+    if not _is_tail_segment(frame_count):
+        return False
+    lo, hi = min(cam_counts), max(cam_counts)
+    if lo <= 0:
+        return False
+    if hi - lo > tol:
+        return False
+    if abs(hi - frame_count) > tol and abs(lo - frame_count) > tol:
+        return False
+    return True
 SEGMENT_FRAME_BIN = os.environ.get("SEGMENT_FRAME_BIN", "1").strip().lower() in (
     "1",
     "true",
@@ -475,9 +505,13 @@ def _assess_segment_integrity(
                 cam_topics = [f"/ego/camera/{k}" for k in cam_roles]
                 cam_counts = [int(summary.get("topics", {}).get(t, 0)) for t in cam_topics]
             if cam_counts and (min(cam_counts) <= 0 or len(set(cam_counts)) != 1):
-                issues.append(
-                    f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}",
+                parity_issue = (
+                    f"mcap_camera_parity_mismatch:min={min(cam_counts)},max={max(cam_counts)}"
                 )
+                if _shutdown_boundary_camera_mismatch_ok(frame_count, cam_counts):
+                    qc_issues.append(f"shutdown_boundary:{parity_issue}")
+                else:
+                    issues.append(parity_issue)
             try:
                 from ego_capture_studio.capture.strict_fps_gate import (
                     check_mcap_strict_fps,
@@ -506,9 +540,13 @@ def _assess_segment_integrity(
             )
             if skip_mcap_fps_read:
                 if frame_count > 0 and cam_counts and max(cam_counts) != frame_count:
-                    issues.append(
-                        f"mcap_camera_count_frame_mismatch:{max(cam_counts)}!={frame_count}",
+                    count_issue = (
+                        f"mcap_camera_count_frame_mismatch:{max(cam_counts)}!={frame_count}"
                     )
+                    if _shutdown_boundary_camera_mismatch_ok(frame_count, cam_counts):
+                        qc_issues.append(f"shutdown_boundary:{count_issue}")
+                    else:
+                        issues.append(count_issue)
             elif strict_fps_gate_enabled() or timeline_gate_enabled():
                 _fps_ok, fps_issues = check_mcap_strict_fps(mcap_path, frame_count)
                 for issue in fps_issues:

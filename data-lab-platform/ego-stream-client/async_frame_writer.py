@@ -87,6 +87,9 @@ class AsyncFrameWriter:
         primary_device_timestamp_ns: int | None = None,
         imu_raw_batch: list | tuple | None = None,
     ) -> None:
+        if self._thread is None or not self._thread.is_alive():
+            self._stop.clear()
+            self.start()
         packet = CaptureFramePacket(
             writer=writer,
             preview_hub=preview_hub,
@@ -125,9 +128,23 @@ class AsyncFrameWriter:
             return
         deadline = time.monotonic() + float(timeout_s)
         last_log = time.monotonic()
+        stall_s = float(os.environ.get("EGO_ASYNC_WRITER_STALL_S", "45"))
+        last_written = self._written
+        stall_since = time.monotonic()
         pending = max(0, self._enqueued - self._written - self._drops)
         while self._queue.unfinished_tasks > 0 and time.monotonic() < deadline:
             now = time.monotonic()
+            if self._written != last_written:
+                last_written = self._written
+                stall_since = now
+            elif now - stall_since >= stall_s:
+                pending = max(0, self._enqueued - self._written - self._drops)
+                print(
+                    f"async_frame_writer_stall_timeout pending={pending} "
+                    f"written={self._written} stall_s={stall_s:.0f}",
+                    flush=True,
+                )
+                break
             if now - last_log >= 5.0:
                 pending = max(0, self._enqueued - self._written - self._drops)
                 print(
@@ -150,12 +167,18 @@ class AsyncFrameWriter:
         except queue.Full:
             pass
         self._thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        self._thread = None
+        self._stop.clear()
         print(
             f"async_frame_writer_final enqueued={self._enqueued} written={self._written} "
             f"drops={self._drops} max_depth={self._max_depth} "
             f"pending={max(0, self._enqueued - self._written - self._drops)}",
             flush=True,
         )
+        self._enqueued = 0
+        self._written = 0
+        self._drops = 0
+        self._max_depth = 0
 
     def _run(self) -> None:
         while True:

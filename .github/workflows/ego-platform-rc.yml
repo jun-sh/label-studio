@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "data-lab-platform/lerobot-studio/**"
+      - "data-lab-platform/ego-stream-client/**"
+      - "data-lab-platform/ego-local-web/**"
       - "data-lab-platform/scripts/rc-*.sh"
       - "data-lab-platform/scripts/ci-ego-platform.sh"
       - "data-lab-platform/scripts/ego-export-smoke.sh"
@@ -12,6 +14,8 @@ on:
   pull_request:
     paths:
       - "data-lab-platform/lerobot-studio/**"
+      - "data-lab-platform/ego-stream-client/**"
+      - "data-lab-platform/ego-local-web/**"
       - "data-lab-platform/scripts/rc-*.sh"
       - "data-lab-platform/scripts/ci-ego-platform.sh"
       - "data-lab-platform/scripts/ego-export-smoke.sh"
@@ -27,6 +31,9 @@ jobs:
 
       - name: Export manifest smoke (R1)
         run: bash data-lab-platform/scripts/ego-export-smoke.sh
+
+      - name: Ego capture warm/stop smoke
+        run: bash data-lab-platform/scripts/rc-ego-capture-smoke.sh
 
       - name: Skip — requires self-hosted 34 stack
         run: |

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import signal
+import sys
 import threading
 import time
 from collections import deque
@@ -40,6 +41,27 @@ try:
 except ImportError:
     from oak_warm_session import clear_warm_state, warm_duration_s, write_warm_state  # type: ignore[no-redef]
 
+try:
+    from ego_capture_studio.capture.capture_stop_state import (
+        PHASE_FLUSHING,
+        PHASE_RECORDING,
+        PHASE_SEALED,
+        PHASE_STOPPING,
+        PHASE_WARM_IDLE,
+        clear_stop_state,
+        write_stop_state,
+    )
+except ImportError:
+    from capture_stop_state import (  # type: ignore[no-redef]
+        PHASE_FLUSHING,
+        PHASE_RECORDING,
+        PHASE_SEALED,
+        PHASE_STOPPING,
+        PHASE_WARM_IDLE,
+        clear_stop_state,
+        write_stop_state,
+    )
+
 _SHUTDOWN = False
 _WARM_IDLE_REQUEST = False
 _WARM_RESUME_REQUEST = False
@@ -64,7 +86,15 @@ def _request_warm_resume(signum: int, _frame) -> None:
 
 
 def _oak_warm_idle_enabled() -> bool:
-    return os.environ.get("EGO_OAK_WARM_IDLE", "1").strip().lower() in ("1", "true", "yes")
+    from ego_capture_studio.capture.oak_warm_session import oak_warm_idle_enabled
+
+    return oak_warm_idle_enabled()
+
+
+def _oak_warm_cold_episode_enabled() -> bool:
+    from ego_capture_studio.capture.oak_warm_session import oak_warm_cold_episode_enabled
+
+    return oak_warm_cold_episode_enabled()
 
 try:
     from ego_capture_studio.capture.stream_upload import FrameStreamUploader
@@ -266,6 +296,7 @@ def _run_warm_idle_loop(
     preview_hub,
     preview_feed_stop: threading.Event | None,
     checkpoint_path: Path,
+    session_id: str,
 ) -> bool:
     """Hold OAK connected until resume signal or warm timeout. Returns True to resume capture."""
     global _WARM_IDLE_REQUEST, _WARM_RESUME_REQUEST, _SHUTDOWN
@@ -274,6 +305,7 @@ def _run_warm_idle_loop(
     warm_s = warm_duration_s()
     expires_at = time.time() + warm_s
     write_warm_state(active=True, expires_at=expires_at)
+    write_stop_state(PHASE_WARM_IDLE, session_id)
     print(
         f"oak_warm_idle entered warm_s={warm_s:.0f} expires_at={expires_at:.3f}",
         flush=True,
@@ -306,6 +338,7 @@ def _finish_recording_session(
     writer: SegmentCaptureWriter,
     recorder: Oak4pEgoRecorder,
     checkpoint_path: Path,
+    session_id: str,
 ) -> None:
     remaining_imu = recorder.flush_remaining_imu_raw()
     if remaining_imu:
@@ -313,8 +346,11 @@ def _finish_recording_session(
     writer.note_open_segment_health(**recorder.ingest_health())
     if recorder.use_hw_h264:
         recorder.prepare_h264_segment_boundary()
-    _flush_async_capture_queue()
+    write_stop_state(PHASE_FLUSHING, session_id)
+    # writer.close() (H264 path) flushes async queue once — do not call _flush_async_capture_queue here.
     writer.close()
+    write_stop_state(PHASE_SEALED, session_id)
+    print(f"capture_session_sealed session={session_id}", flush=True)
 
 
 def _flush_async_capture_queue() -> None:
@@ -490,6 +526,8 @@ def main() -> None:
                 recorder.connect()
                 _require_capture_codec(recorder)
                 preview_feed_stop = _start_preview_feeder(recorder, preview_hub)
+            elif recorder.use_hw_h264:
+                recorder.prepare_h264_segment_boundary()
 
             ck_session, ck_task = _load_checkpoint_session(checkpoint_path)
             task = ck_task or default_task
@@ -567,27 +605,34 @@ def main() -> None:
                     print(f"camera_intrinsics warning: {exc}", flush=True)
 
                 if (
-                    not args.no_heartbeat
+                    heartbeat is None
+                    and not args.no_heartbeat
                     and args.heartbeat_url
                     and FrameStreamUploader is not None
                 ):
                     heartbeat = FrameStreamUploader(
                         args.heartbeat_url, checkpoint_path=checkpoint_path
                     )
-                    heartbeat.session_id = session_id
                 if heartbeat is not None:
                     heartbeat.session_id = session_id
                     _kick_heartbeat(heartbeat)
+                if warm_resume:
+                    print(
+                        f"capture_warm_resume cold_episode={int(_oak_warm_cold_episode_enabled())} "
+                        f"session={session_id}",
+                        flush=True,
+                    )
             else:
-                from ego_capture_studio.capture.segment_store import clear_session_seal
-
                 session_id = writer.session_id
                 os.environ["EGO_CAPTURE_SESSION_ID"] = session_id
-                clear_session_seal(writer.root, session_id)
+                if warm_resume and not _oak_warm_cold_episode_enabled():
+                    from ego_capture_studio.capture.segment_store import clear_session_seal
+
+                    clear_session_seal(writer.root, session_id)
+                    print(f"capture_warm_resume session={session_id}", flush=True)
                 if heartbeat is not None:
                     heartbeat.session_id = session_id
                     _kick_heartbeat(heartbeat)
-                print(f"capture_warm_resume session={session_id}", flush=True)
 
             _clear_capture_live_stats(checkpoint_path)
             wall_emit_times: deque[float] = deque(maxlen=120)
@@ -602,6 +647,7 @@ def main() -> None:
             beep_wall_epoch = time.time()
             recorder.begin_segment_health_window()
             play_capture_ready_beep()
+            write_stop_state(PHASE_RECORDING, session_id)
             _write_capture_live_stats(
                 checkpoint_path,
                 frame_count=writer.next_frame_index,
@@ -697,20 +743,28 @@ def main() -> None:
                 and _WARM_IDLE_REQUEST
             )
             if entering_warm:
-                _pause_for_warm_idle(writer, recorder, checkpoint_path)
+                write_stop_state(PHASE_STOPPING, session_id)
+                if _oak_warm_cold_episode_enabled():
+                    _finish_recording_session(writer, recorder, checkpoint_path, session_id)
+                    writer = None
+                else:
+                    _pause_for_warm_idle(writer, recorder, checkpoint_path)
             else:
-                _finish_recording_session(writer, recorder, checkpoint_path)
+                write_stop_state(PHASE_STOPPING, session_id)
+                _finish_recording_session(writer, recorder, checkpoint_path, session_id)
                 break
 
             if not _run_warm_idle_loop(
-                recorder, preview_hub, preview_feed_stop, checkpoint_path
+                recorder, preview_hub, preview_feed_stop, checkpoint_path, session_id
             ):
-                _finish_recording_session(writer, recorder, checkpoint_path)
+                if writer is not None:
+                    _finish_recording_session(writer, recorder, checkpoint_path, session_id)
                 break
             warm_resume = True
 
     finally:
         clear_warm_state()
+        clear_stop_state()
         if preview_feed_stop is not None:
             preview_feed_stop.set()
         try:

@@ -60,6 +60,14 @@ dropin="$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-producti
 grep -q "^Environment=OAK_HW_PREVIEW_H264=1" "$dropin" \
   || die "z-mcap-production.conf missing OAK_HW_PREVIEW_H264=1"
 ok "z-mcap-production preview enabled"
+grep -q "^Environment=EGO_TOPOLOGY_FILE=.*/camera_topology_ego-001.yaml" "$dropin" \
+  && ok "ego-001 physical topology configured" \
+  || die "z-mcap-production.conf missing EGO_TOPOLOGY_FILE=camera_topology_ego-001.yaml"
+topo_yaml="$HOME/workspace/ego-studio/config/camera_topology_ego-001.yaml"
+topo_json="$HOME/workspace/ego-studio/config/camera_topology_ego-001.json"
+[[ -f "$topo_yaml" || -f "$topo_json" ]] \
+  && ok "ego-001 topology manifest on disk" \
+  || die "missing camera_topology_ego-001.{yaml,json} under ego-studio/config"
 grep -q "^Environment=STRICT_DEPTH_RING_LEN=32" "$dropin" \
   && ok "pilot depth ring=32" || die "z-mcap-production not pilot rings (expected DEPTH=32)"
 grep -q "^Environment=OAK_CAM_QUEUE_MAX=32" "$dropin" \

@@ -127,6 +127,106 @@ class CaptureTimerTest(unittest.TestCase):
             ego_web._reconcile_orphan_capture_stack()
         stop.assert_called_once_with("stop", ego_web.CAPTURE_TARGET, timeout=15)
 
+    def test_warm_start_allocates_new_session_before_resume(self) -> None:
+        ego_web._last_action_mono = 0.0
+        ego_web._last_completed_action = ""
+        with (
+            mock.patch.object(ego_web, "_wait_for_stop_release", return_value=True),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=True),
+            mock.patch.object(
+                ego_web, "_begin_new_capture_session", return_value="sess_warm_new"
+            ) as new_sess,
+            mock.patch.object(
+                ego_web, "_start_capture_warm_resume", return_value=(True, "")
+            ) as warm,
+        ):
+            ok, msg = ego_web._run_capture_action("start")
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
+        new_sess.assert_called_once()
+        warm.assert_called_once()
+
+    def test_warm_stop_falls_back_when_unit_activating(self) -> None:
+        with (
+            mock.patch.object(ego_web, "_capture_unit_running", return_value=False),
+            mock.patch.object(ego_web, "_capture_active", return_value=True),
+            mock.patch.object(ego_web, "_stop_capture_hard", return_value=True) as hard,
+            mock.patch.object(ego_web, "_systemctl") as ctl,
+        ):
+            ok = ego_web._stop_capture_to_warm()
+        self.assertTrue(ok)
+        hard.assert_called_once()
+        ctl.assert_not_called()
+
+    def test_warm_stop_falls_back_on_crash_loop(self) -> None:
+        states = iter(["active", "activating", "activating"])
+        with (
+            mock.patch.object(ego_web, "_capture_unit_running", return_value=True),
+            mock.patch.object(
+                ego_web, "_capture_unit_state", side_effect=lambda u=None: next(states)
+            ),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=False),
+            mock.patch.object(ego_web, "_capture_fully_idle", return_value=False),
+            mock.patch.object(ego_web, "_stop_capture_hard", return_value=True) as hard,
+            mock.patch.object(
+                ego_web,
+                "_systemctl",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ),
+        ):
+            ok = ego_web._stop_capture_to_warm()
+        self.assertTrue(ok)
+        hard.assert_called_once()
+
+    def test_warm_stop_falls_back_on_timeout(self) -> None:
+        ego_web.WARM_STOP_WAIT_S = 0.05
+        ego_web.STOP_TIMEOUT_S = 0.05
+        with (
+            mock.patch.object(ego_web, "_capture_unit_running", return_value=True),
+            mock.patch.object(ego_web, "_capture_unit_state", return_value="active"),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", return_value=False),
+            mock.patch.object(ego_web, "_capture_fully_idle", return_value=False),
+            mock.patch.object(ego_web, "_stop_capture_hard", return_value=True) as hard,
+            mock.patch.object(
+                ego_web,
+                "_systemctl",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ),
+        ):
+            ok = ego_web._stop_capture_to_warm()
+        self.assertTrue(ok)
+        hard.assert_called_once()
+
+    def test_warm_start_falls_back_to_cold_when_resume_fails(self) -> None:
+        ego_web._last_action_mono = 0.0
+        ego_web._last_completed_action = ""
+        with (
+            mock.patch.object(ego_web, "_wait_for_stop_release", return_value=True),
+            mock.patch.object(ego_web, "_oak_warm_idle_active", side_effect=[True, False]),
+            mock.patch.object(
+                ego_web, "_begin_new_capture_session", return_value="sess_cold"
+            ),
+            mock.patch.object(
+                ego_web, "_start_capture_warm_resume", return_value=(False, "resume failed")
+            ),
+            mock.patch.object(ego_web, "_capture_unit_running", return_value=False),
+            mock.patch.object(ego_web, "_stop_capture_hard", return_value=True) as hard,
+            mock.patch.object(ego_web, "_capture_active", return_value=False),
+            mock.patch.object(ego_web, "_capture_stopping", return_value=False),
+            mock.patch.object(ego_web, "_ensure_capture_fully_stopped", return_value=True),
+            mock.patch.object(ego_web, "_grab_preview_bytes", return_value=b""),
+            mock.patch.object(ego_web, "_stop_standby_preview"),
+            mock.patch.object(ego_web, "_preview_port_in_use", return_value=False),
+            mock.patch.object(
+                ego_web,
+                "_systemctl",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as ctl,
+        ):
+            ego_web._run_capture_action("start")
+        hard.assert_called_once()
+        ctl.assert_any_call("start", ego_web.CAPTURE_TARGET, timeout=ego_web.START_TIMEOUT_S)
+
 
 if __name__ == "__main__":
     unittest.main()

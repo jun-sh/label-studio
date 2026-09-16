@@ -38,7 +38,7 @@ for arg in "$@"; do
 
 步骤（产品默认 L2/L3 路径）:
   1. derive   manual/async 派生至 READY
-  2. L2       ego-run-l2（rectify 720p append → corpus/ego_001 + sensor_raw/imu 200Hz，无 WiLoR）
+  2. L2       ego-run-l2（rectify 1280×800 append → corpus/ego_001 + sensor_raw/imu 200Hz，无 WiLoR）
   3. purity   ego-lerobot-purity-gate
   4. preview  ego-viewer-preview（MediaPipe + depth → samples/；按 corpus 缺口补全）
   5. sync     ingest-bundled-datasets
@@ -228,7 +228,7 @@ if [[ "$RUN_WILOR" -eq 1 || "${EGO_RUN_WILOR_CONVERT:-0}" == "1" ]]; then
     die "WiLoR 后处理失败 (exit ${pipe_rc})。日志: ${RUN_LOG}"
   fi
 else
-  log "L2 干净语料 append（rectify 720p，无 WiLoR）…"
+  log "L2 干净语料 append（rectify 1280×800，无 WiLoR）…"
   set +e
   bash "$L2_SH" "$STATION" 2>&1 | tee -a "$RUN_LOG"
   l2_rc=${PIPESTATUS[0]}
@@ -267,7 +267,7 @@ if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" ]]; then
   SAMPLES_ZIP="${DATALAB_ROOT}/data-storage/samples/${SLUG}.zip"
   HTTP_DATASET="${DATALAB_ROOT}/data-storage/samples/${SLUG}/dataset"
   if [[ -f "$SAMPLES_ZIP" || -d "$HTTP_DATASET" ]]; then
-    log "Viewer 发布门禁（rectify + 720p + B7）…"
+    log "Viewer 发布门禁（rectify + 1280×800 + B7）…"
     set +e
     EGO_STATION="$STATION" EGO_VIEWER_PUBLISH_L2=1 bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
     gate_rc=${PIPESTATUS[0]}

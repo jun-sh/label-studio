@@ -109,6 +109,9 @@ _TAIL_SEGMENT_HARD_CAPTURE_PREFIXES = (
     "missing_imu_raw",
     "empty_imu_raw",
     "orphan_active",
+    # Full-length segments must not soft-pass ring pressure; tail stops may.
+    "capture_ring_overflow",
+    "capture_quad_skew",
 )
 
 
@@ -517,7 +520,9 @@ def _assess_segment_integrity(
             )
             if total_ovf > ovf_threshold:
                 issues.append(f"capture_ring_overflow:total={total_ovf}")
-            # Below threshold: recorded in capture_health only (stress/soak), not upload-blocking.
+            elif total_ovf > 0:
+                qc_issues.append(f"capture_ring_overflow:total={total_ovf}")
+            # Below threshold: QC note only (82175ba). Above threshold: hard fault at capture close.
         quad_skew = int(capture_health.get("quad_skew_events") or 0)
         # Sequential lockstep can show multi-ms spread at pop time even when FSYNC is
         # healthy; only reject when rings overflowed in the same segment window.
@@ -649,17 +654,44 @@ def _assess_segment_integrity(
 
 
 def check_segment_upload_qc(segment_dir: Path) -> tuple[bool, list[str]]:
-    """Upload/QC gate: hard capture faults + timeline at EGO_TIMELINE_MAX_DEV."""
+    """Upload QC: trust capture close; optionally re-check timeline only.
+
+    Capture finalize (integrity.ok / CORRUPT status) is authoritative for MCAP
+    health, ring overflow, and camera parity. Re-running the full upload-layer
+    integrity check here caused CLOSED segments to flip CORRUPT at upload time
+    and blocked ego-upload (16b49e2 regression vs 3b248b1 baseline).
+
+    When EGO_TIMELINE_UPLOAD_QC=1, only timeline coherence (EGO_TIMELINE_MAX_DEV)
+    is evaluated at upload — matching the commercial A+C QA layering intent.
+    """
     try:
-        from ego_capture_studio.capture.strict_fps_gate import timeline_upload_qc_enabled
+        manifest = read_manifest(segment_dir)
+    except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+        return False, ["unreadable_manifest"]
+
+    integrity = manifest.get("integrity") if isinstance(manifest.get("integrity"), dict) else {}
+    capture_issues = list(integrity.get("issues") or [])
+    if capture_issues or integrity.get("ok") is False:
+        return False, capture_issues or ["capture_integrity_failed"]
+
+    try:
+        from ego_capture_studio.capture.strict_fps_gate import (
+            timeline_integrity_issues,
+            timeline_upload_qc_enabled,
+        )
     except ImportError:
-        from strict_fps_gate import timeline_upload_qc_enabled
+        from strict_fps_gate import timeline_integrity_issues, timeline_upload_qc_enabled
 
     if not timeline_upload_qc_enabled():
-        ok, issues = check_segment_integrity(segment_dir, qa_layer="capture")
-        return ok, issues
-    ok, issues = check_segment_integrity(segment_dir, qa_layer="upload")
-    return ok, issues
+        return True, []
+
+    timeline = manifest.get("timeline")
+    if not isinstance(timeline, dict) or not timeline:
+        return True, []
+
+    frame_count = int(manifest.get("frame_count") or 0)
+    timeline_issues = timeline_integrity_issues(timeline, frame_count=frame_count)
+    return len(timeline_issues) == 0, timeline_issues
 
 
 def mark_segment_qc_failed(segment_dir: Path, qc_issues: list[str]) -> None:

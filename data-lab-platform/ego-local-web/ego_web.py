@@ -64,6 +64,21 @@ OAK_WARM_IDLE_ENABLED = os.environ.get("EGO_OAK_WARM_IDLE", "1").strip().lower()
 OAK_WARM_STATE_PATH = Path(
     os.environ.get("EGO_OAK_WARM_STATE", str(CHECKPOINT_PATH.parent / "oak_warm_state.json"))
 )
+CAPTURE_STOP_STATE_PATH = Path(
+    os.environ.get(
+        "EGO_CAPTURE_STOP_STATE",
+        str(CHECKPOINT_PATH.parent / "capture_stop_state.json"),
+    )
+)
+# Must match ego_capture_studio.capture.capture_stop_state phase strings.
+STOP_PHASE_RECORDING = "recording"
+STOP_PHASE_STOPPING = "stopping"
+STOP_PHASE_FLUSHING = "flushing"
+STOP_PHASE_SEALING = "sealing"
+STOP_PHASE_SEALED = "sealed"
+STOP_PHASE_WARM_IDLE = "warm_idle"
+STOP_PHASE_ERROR = "error"
+STOP_PHASE_COMPLETE = frozenset({STOP_PHASE_SEALED, STOP_PHASE_WARM_IDLE})
 WARM_START_TIMEOUT_S = float(os.environ.get("EGO_WARM_START_TIMEOUT_S", "30"))
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 SEGMENT_STORE_VERSION = 1
@@ -88,6 +103,7 @@ PREVIEW_CAM_IDS = frozenset(cam for cam, _, _ in PREVIEW_CAMERA_SPECS)
 STORAGE_WARN_GB = float(os.environ.get("EGO_STORAGE_WARN_GB", "2"))
 START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "90"))
 STOP_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_STOP_TIMEOUT_S", "120"))
+WARM_STOP_WAIT_S = float(os.environ.get("EGO_WARM_STOP_WAIT_S", "90"))
 STOP_DEACTIVATING_KILL_S = float(os.environ.get("EGO_CAPTURE_DEACTIVATING_KILL_S", "45"))
 MIN_ACTION_INTERVAL_S = float(os.environ.get("EGO_MIN_ACTION_INTERVAL_S", "3"))
 JOURNAL_CACHE_TTL_S = float(os.environ.get("EGO_JOURNAL_CACHE_TTL_S", "0.4"))
@@ -245,6 +261,40 @@ def _read_oak_warm_state() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _read_capture_stop_state() -> dict[str, Any]:
+    if not CAPTURE_STOP_STATE_PATH.is_file():
+        return {}
+    try:
+        raw = json.loads(CAPTURE_STOP_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _capture_stop_phase() -> str:
+    phase = _read_capture_stop_state().get("phase")
+    return phase.strip() if isinstance(phase, str) and phase.strip() else ""
+
+
+def _capture_stop_phase_message(phase: str) -> str:
+    messages = {
+        STOP_PHASE_STOPPING: "正在结束采集…",
+        STOP_PHASE_FLUSHING: "正在写入帧缓冲，请勿断电…",
+        STOP_PHASE_SEALING: "正在封存本段数据，请勿断电…",
+        STOP_PHASE_SEALED: "数据已保存，正在保持相机连接…",
+        STOP_PHASE_WARM_IDLE: "已停止，相机保持连接",
+        STOP_PHASE_ERROR: "停止出错，正在恢复…",
+    }
+    return messages.get(phase, "正在保存数据，请勿断电…")
+
+
+def _capture_stop_complete() -> bool:
+    phase = _capture_stop_phase()
+    if phase in STOP_PHASE_COMPLETE:
+        return True
+    return _oak_warm_idle_active()
+
+
 def _oak_warm_seconds_remaining(now: float | None = None) -> int:
     st = _read_oak_warm_state()
     if not st.get("active"):
@@ -391,6 +441,18 @@ def _read_checkpoint() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _checkpoint_session_id() -> str:
+    sid = _read_checkpoint().get("sessionId")
+    return sid.strip() if isinstance(sid, str) and sid.strip() else ""
+
+
+def _session_is_sealed(session_id: str) -> bool:
+    if not session_id:
+        return False
+    seal = SEGMENT_ROOT / "sessions" / session_id / "session_seal.json"
+    return seal.is_file()
+
+
 def _begin_new_capture_session() -> str:
     """Each start-recording → fresh sessionId (one episode on 34 after upload)."""
     prev = _read_checkpoint()
@@ -486,6 +548,11 @@ def _wait_preview_port_free(timeout_s: float | None = None, port: int = 8765) ->
 
 def _capture_fully_idle() -> bool:
     return _capture_unit_state(CAPTURE_RECORD_UNIT) in ("inactive", "failed", "")
+
+
+def _capture_unit_running() -> bool:
+    """True only when the capture unit is stably active (not crash-loop activating)."""
+    return _capture_unit_state(CAPTURE_RECORD_UNIT) == "active"
 
 
 def _capture_stopping() -> bool:
@@ -844,27 +911,56 @@ def _stop_capture_hard() -> bool:
 
 
 def _stop_capture_to_warm() -> bool:
-    """End recording but keep OAK connected for fast restart within warm window."""
+    """End recording but keep OAK connected. Falls back to hard stop on any failure."""
     global _last_error
-    if not _capture_active():
-        return True
-    _systemctl("kill", "-s", "SIGUSR1", CAPTURE_RECORD_UNIT, timeout=10)
-    deadline = time.monotonic() + STOP_TIMEOUT_S
+    if not _capture_unit_running():
+        if _capture_active():
+            print("warm_stop_fallback reason=unit_not_stable", flush=True)
+        return _stop_capture_hard()
+    stop_session_id = _checkpoint_session_id()
+    proc = _systemctl("kill", "-s", "SIGUSR1", CAPTURE_RECORD_UNIT, timeout=10)
+    if proc.returncode != 0:
+        print("warm_stop_fallback reason=sigusr1_failed", flush=True)
+        return _stop_capture_hard()
+    deadline = time.monotonic() + min(STOP_TIMEOUT_S, WARM_STOP_WAIT_S)
+    sealed_since: float | None = None
     while time.monotonic() < deadline:
-        if _oak_warm_idle_active():
+        phase = _capture_stop_phase()
+        if phase == STOP_PHASE_ERROR:
+            err = _read_capture_stop_state().get("error")
+            if isinstance(err, str) and err.strip():
+                _last_error = err.strip()
+            print("warm_stop_fallback reason=capture_stop_error", flush=True)
+            return _stop_capture_hard()
+        if phase == STOP_PHASE_WARM_IDLE or _oak_warm_idle_active():
             return True
+        if phase == STOP_PHASE_SEALED or (
+            stop_session_id and _session_is_sealed(stop_session_id)
+        ):
+            if sealed_since is None:
+                sealed_since = time.monotonic()
+                print(
+                    f"warm_stop_sealed session_id={stop_session_id} phase={phase}",
+                    flush=True,
+                )
+            if _oak_warm_idle_active() or time.monotonic() - sealed_since >= 5.0:
+                return True
+        unit = _capture_unit_state(CAPTURE_RECORD_UNIT)
+        if unit in ("failed", "activating"):
+            print(f"warm_stop_fallback reason=unit_{unit}", flush=True)
+            return _stop_capture_hard()
         if _capture_fully_idle():
-            _last_error = "采集进程已退出，未能保持相机连接"
-            _start_standby_preview()
-            return False
-        time.sleep(0.3)
-    _last_error = "停止超时，请再次点击结束录制"
-    return False
+            print("warm_stop_fallback reason=exited_without_warm", flush=True)
+            return _stop_capture_hard()
+        time.sleep(0.25)
+    print("warm_stop_fallback reason=timeout", flush=True)
+    _last_error = ""
+    return _stop_capture_hard()
 
 
 def _stop_capture_wait() -> bool:
     """Stop capture; enter warm idle when enabled, else full shutdown + standby preview."""
-    if OAK_WARM_IDLE_ENABLED and _capture_active():
+    if OAK_WARM_IDLE_ENABLED and _capture_unit_running():
         return _stop_capture_to_warm()
     return _stop_capture_hard()
 
@@ -971,13 +1067,17 @@ def _build_status() -> dict[str, Any]:
         msg = "正在放弃录制，请稍候…"
     elif busy and busy_action == "stop":
         state = "stopping"
-        rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
-        if rec == "active" and frames_writing:
-            msg = "正在停止采集，请稍候…"
-        elif rec == "deactivating":
-            msg = "正在写入磁盘，请勿断电"
+        stop_phase = _capture_stop_phase()
+        if stop_phase:
+            msg = _capture_stop_phase_message(stop_phase)
         else:
-            msg = "正在保存数据，请勿断电…"
+            rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+            if rec == "active" and frames_writing:
+                msg = "正在停止采集，请稍候…"
+            elif rec == "deactivating":
+                msg = "正在写入磁盘，请勿断电"
+            else:
+                msg = "正在保存数据，请勿断电…"
     elif active and frames_writing:
         state = "recording"
         if fps_warn:
@@ -1013,7 +1113,25 @@ def _build_status() -> dict[str, Any]:
         "frames_writing": frames_writing,
         "oak_warm_active": warm_idle,
         "oak_warm_seconds_remaining": warm_remaining,
+        "capture_stop_phase": _capture_stop_phase() or None,
     }
+
+
+def _stop_capture_worker() -> None:
+    """Background stop so POST /api/capture/stop returns immediately."""
+    global _busy, _busy_action, _last_error, _last_action_mono, _last_completed_action
+    try:
+        if not _stop_capture_wait():
+            if not _last_error:
+                _last_error = "停止失败，请重试"
+    except Exception as exc:
+        _last_error = f"操作异常：{exc}"
+    finally:
+        with _lock:
+            _busy = False
+            _busy_action = None
+            _last_action_mono = time.monotonic()
+            _last_completed_action = "stop"
 
 
 def _run_capture_action(action: str) -> tuple[bool, str]:
@@ -1045,7 +1163,16 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
     try:
         if action == "start":
             if _oak_warm_idle_active():
-                return _start_capture_warm_resume()
+                _begin_new_capture_session()
+                _journal_cache = None
+                ok, msg = _start_capture_warm_resume()
+                if ok:
+                    return ok, msg
+                if _oak_warm_idle_active() and _capture_unit_running():
+                    return False, msg or _last_error or "快速启动失败"
+                print("warm_start_fallback reason=resume_failed", flush=True)
+                if not _stop_capture_hard():
+                    return False, _last_error or "无法停止采集以重新启动"
 
             if _capture_active():
                 since = _capture_run_since_epoch()
@@ -1110,8 +1237,11 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             )
 
         if action == "stop":
-            if not _stop_capture_wait():
-                return False, _last_error
+            threading.Thread(
+                target=_stop_capture_worker,
+                name="ego-stop-worker",
+                daemon=True,
+            ).start()
             return True, ""
 
         return False, "未知操作"
@@ -1119,14 +1249,15 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
         _last_error = f"操作异常：{exc}"
         return False, _last_error
     finally:
-        with _lock:
-            _busy = False
-            _busy_action = None
-            _last_action_mono = time.monotonic()
-            if action in ("start", "stop", "abandon"):
-                _last_completed_action = action
-            if action == "start":
-                _start_expect_warm = False
+        if action != "stop":
+            with _lock:
+                _busy = False
+                _busy_action = None
+                _last_action_mono = time.monotonic()
+                if action in ("start", "abandon"):
+                    _last_completed_action = action
+                if action == "start":
+                    _start_expect_warm = False
 
 
 def _run_capture_abandon() -> tuple[bool, str]:

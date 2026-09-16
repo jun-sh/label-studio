@@ -87,6 +87,22 @@ export function frameIndexForVideo(video, payload, fpsFallback = 30) {
   return Math.max(0, Math.min(Math.round(t * fps), 1_000_000));
 }
 
+/** Map decoded RGB frame index → sparse depth preview PNG index (stride sampling). */
+export function depthPreviewIndexFromRgbFrame(rgbFrameIdx, entry, rgbFrameCount = null) {
+  const maxDepth = Math.max(0, Number(entry?.frames || 1) - 1);
+  let stride = Number(entry?.stride);
+  if (!Number.isFinite(stride) || stride < 1) {
+    const rgbTotal = Number(rgbFrameCount);
+    if (Number.isFinite(rgbTotal) && rgbTotal > 1 && maxDepth > 0) {
+      stride = Math.max(1, Math.floor((rgbTotal - 1) / maxDepth));
+    } else {
+      stride = 1;
+    }
+  }
+  const idx = Math.floor(Math.max(0, Number(rgbFrameIdx) || 0) / stride);
+  return Math.min(idx, maxDepth);
+}
+
 export function frameUrl(payload, episodeKey, frameIndex) {
   const template = payload?.frame_url_template || "";
   if (!template) return "";

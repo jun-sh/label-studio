@@ -494,7 +494,7 @@ VIEWER_SYNCED=0
 VIEWER_GATE_OK=1
 GATE_SH="${SCRIPT_DIR}/ego-viewer-publish-gate.sh"
 if [[ "$SKIP_GATE" -eq 0 && -x "$GATE_SH" && -f "$SAMPLES_ZIP" ]]; then
-  log "Viewer 发布门禁（内参 + rectify + 720p + B7）…"
+  log "Viewer 发布门禁（内参 + rectify + 1280×800 + B7）…"
   set +e
   EGO_STATION="$STATION" bash "$GATE_SH" "$SLUG" 2>&1 | tee -a "$RUN_LOG"
   gate_rc=${PIPESTATUS[0]}

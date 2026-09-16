@@ -216,6 +216,32 @@ def test_corrupt_segment_quarantined_and_upload_continues(segment_root: Path) ->
     assert should_upload_session_seal(segment_root, session_id, session_uploaded=n) is True
 
 
+def test_should_upload_session_seal_when_all_segments_quarantined(segment_root: Path) -> None:
+    session_id = "sess_all_bad"
+    seg = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    _write_uploadable_segment(seg, session_id=session_id, status="CORRUPT", frame_count=100)
+    manifest = read_manifest(seg)
+    manifest["integrity"] = {
+        "checked_at": "2026-08-18T00:00:10Z",
+        "ok": False,
+        "issues": ["capture_ring_overflow:total=50"],
+        "qc_ok": False,
+        "qc_issues": ["capture_ring_overflow:total=50"],
+    }
+    write_manifest_v2(seg, manifest)
+    write_session_seal(segment_root, session_id, complete=True)
+    uploader = _mock_uploader()
+    n = upload_pending_segments(
+        root=segment_root,
+        session_id=session_id,
+        uploader=uploader,
+        finalize_seal=False,
+    )
+    assert n == 0
+    assert (seg / ".upload_skip").is_file()
+    assert should_upload_session_seal(segment_root, session_id, session_uploaded=0) is True
+
+
 def test_corrupt_segment_skipped(segment_root: Path) -> None:
     session_id = "sess_skip_only"
     seg = segment_root / "sessions" / session_id / "segments" / "seg_bad"

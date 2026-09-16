@@ -1025,7 +1025,11 @@ def should_upload_session_seal(
         return False
     if summary["corrupt_issues"]:
         return False
-    expected = int(summary.get("uploadable_segment_count") or summary["seal_segment_count"] or 0)
+    seal_expected = int(summary["seal_segment_count"] or 0)
+    uploadable = summary.get("uploadable_segment_count")
+    if summary["seal_complete"] and uploadable == 0 and summary.get("quarantined_corrupt"):
+        return True
+    expected = int(uploadable if (uploadable is not None and uploadable > 0) else seal_expected)
     if expected <= 0:
         return False
     uploaded = int(summary["uploaded_closed"] or 0)
@@ -1110,6 +1114,23 @@ def upload_session_until_complete(
             continue
 
         if should_upload_session_seal(root, session_id, session_uploaded=total_uploaded):
+            upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
+            return total_uploaded
+
+        uploadable = summary.get("uploadable_segment_count")
+        if (
+            summary["seal_complete"]
+            and pending_n == 0
+            and uploadable == 0
+            and summary.get("quarantined_corrupt")
+            and not summary["corrupt_issues"]
+        ):
+            _log(
+                "session_complete",
+                session_id=session_id,
+                reason="all_segments_quarantined",
+                quarantined=len(summary.get("quarantined_corrupt") or []),
+            )
             upload_session_seal_finalize(root=root, session_id=session_id, uploader=uploader)
             return total_uploaded
 

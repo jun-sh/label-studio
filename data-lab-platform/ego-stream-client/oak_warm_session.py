@@ -110,3 +110,18 @@ def warm_seconds_remaining(now: float | None = None) -> int:
         return max(0, int(float(expires_at) - ts))
     except (TypeError, ValueError):
         return 0
+
+
+def _env_truthy(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
+def oak_warm_idle_enabled() -> bool:
+    return _env_truthy("EGO_OAK_WARM_IDLE", "1")
+
+
+def oak_warm_cold_episode_enabled() -> bool:
+    """Keep OAK USB up between clips; each resume still uses a fresh session."""
+    if not oak_warm_idle_enabled():
+        return False
+    return _env_truthy("EGO_OAK_WARM_COLD_EPISODE", "1")

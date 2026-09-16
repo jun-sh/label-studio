@@ -463,6 +463,45 @@ def test_full_segment_soft_issue_still_corrupt(
     assert finalize_segment_manifest_after_persist(seg) == "CORRUPT"
 
 
+def test_tail_ring_overflow_above_threshold_corrupt_at_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Match 3b248b1 baseline: serious ring pressure is CORRUPT at capture, not upload."""
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    monkeypatch.setenv("EGO_RING_OVERFLOW_CORRUPT_THRESHOLD", "32")
+    seg = tmp_path / "seg_ring_tail"
+    _write_valid_segment(seg, frame_count=323, session_id="sess_ring")
+    manifest = read_manifest(seg)
+    manifest["capture_health"] = {"ring_ovf": {"CAM_B": 17, "CAM_C": 17, "CAM_D": 16}}
+    write_manifest_v2(seg, manifest)
+    assert finalize_segment_manifest_after_persist(seg) == "CORRUPT"
+
+
+def test_tail_ring_overflow_below_threshold_upload_trusts_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EGO_SEGMENT_MAX_FRAMES", "1800")
+    monkeypatch.setenv("EGO_RING_OVERFLOW_CORRUPT_THRESHOLD", "32")
+    monkeypatch.setenv("EGO_TIMELINE_UPLOAD_QC", "1")
+    seg = tmp_path / "seg_ring_soft"
+    _write_valid_segment(seg, frame_count=323, session_id="sess_ring_soft")
+    manifest = read_manifest(seg)
+    manifest["capture_health"] = {"ring_ovf": {"CAM_B": 5, "CAM_C": 5, "CAM_D": 4}}
+    manifest["timeline"] = {
+        "source": "writer_spans",
+        "ratio": 1.0,
+        "real_fps": 30.0,
+        "claimed_fps": 30.0,
+        "record_span_s": 10.0,
+        "imu_span_s": 10.0,
+        "ok": True,
+    }
+    write_manifest_v2(seg, manifest)
+    assert finalize_segment_manifest_after_persist(seg) == "CLOSED"
+    qc_ok, qc_issues = check_segment_upload_qc(seg)
+    assert qc_ok, qc_issues
+
+
 def test_capture_close_timeline_qc_warn_not_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

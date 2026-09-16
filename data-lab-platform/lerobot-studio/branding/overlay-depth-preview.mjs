@@ -8,6 +8,7 @@ import {
   cameraShortName,
   containedVideoLayout,
   displayPanelLabel,
+  depthPreviewIndexFromRgbFrame,
   displayVideoKeyCandidates,
   episodeKeyCandidates,
   featureMatchesText,
@@ -264,11 +265,29 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     pill.textContent = `${label} · ep ${parseInt(ep, 10)} · ${backend} · ${onOff}`;
   }
 
-  function preloadAround(episodeKey, frameIdx, entry) {
+  function rgbFrameCountEstimate(video, fps) {
+    const rate = Number(fps) || 30;
+    const duration = Number(video?.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return null;
+    return Math.max(1, Math.round(duration * rate));
+  }
+
+  function depthIndexForVideo(video, entry, fps) {
+    const rgbIdx = frameIndexFromVideoTime(video, fps);
+    return depthPreviewIndexFromRgbFrame(rgbIdx, entry, rgbFrameCountEstimate(video, fps));
+  }
+
+  function preloadAround(episodeKey, frameIdx, entry, video, fps) {
     const maxFrame = Math.max(0, Number(entry?.frames || 1) - 1);
     for (let offset = 1; offset <= 5; offset += 1) {
       const next = frameIdx + offset;
       if (next <= maxFrame) loaderForUrl(frameUrl(state.payload, episodeKey, next));
+    }
+    const rgbEstimate = rgbFrameCountEstimate(video, fps);
+    for (let offset = 1; offset <= 2; offset += 1) {
+      const rgbAhead = frameIndexFromVideoTime(video, fps) + offset * (Number(entry?.stride) || 30);
+      const nextDepth = depthPreviewIndexFromRgbFrame(rgbAhead, entry, rgbEstimate);
+      if (nextDepth <= maxFrame) loaderForUrl(frameUrl(state.payload, episodeKey, nextDepth));
     }
   }
 
@@ -340,12 +359,10 @@ if (!g.__DATALAB_DEPTH_PREVIEW__) {
     if (!entry) return;
     syncOverlayToVideo(img, video, wrap);
     const fps = Number(state.payload?.fps) || 30;
-    const frameIdx = frameIndexFromVideoTime(video, fps);
-    const maxFrame = Math.max(0, Number(entry.frames || 1) - 1);
-    const clamped = Math.min(frameIdx, maxFrame);
-    const url = frameUrl(state.payload, state.episodeKey, clamped);
+    const depthIdx = depthIndexForVideo(video, entry, fps);
+    const url = frameUrl(state.payload, state.episodeKey, depthIdx);
     setFrameImage(img, url);
-    preloadAround(state.episodeKey, clamped, entry);
+    preloadAround(state.episodeKey, depthIdx, entry, video, fps);
   }
 
   function detachVideoSync() {

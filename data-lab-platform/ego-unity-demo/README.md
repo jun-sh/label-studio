@@ -2,7 +2,10 @@
 
 模拟手机 App 通过 **TCP JSON（:9100）** 控制 130 采集站，并拉取 **HTTP JPEG 预览**。
 
-与协议文档对齐：`../ego-local-web/docs/ego-app-tcp-protocol.md`
+| 文档 | 说明 |
+|------|------|
+| [Unity 集成指南（推荐）](../ego-local-web/docs/ego-unity-integration-guide.md) | **给 Unity 工程师**：Demo 逻辑、状态判断、断线重连 |
+| [协议速查](../ego-local-web/docs/ego-app-tcp-protocol.md) | 消息字段定义 |
 
 ## 环境要求
 

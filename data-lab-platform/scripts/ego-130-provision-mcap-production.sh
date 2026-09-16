@@ -112,9 +112,15 @@ if rsync -av --delete --exclude '__pycache__' --exclude '*.pyc' "${CAPTURE_SRC}/
   rsync -av "${CAPTURE_SRC}/cli/upload_segments.py" "${TARGET}:${REMOTE_CLI}/upload_segments.py"
   rsync -av "${CAPTURE_SRC}/cli/ego_upload.py" "${TARGET}:${REMOTE_CLI}/ego_upload.py"
   rsync -av "${CAPTURE_SRC}/tools/upload_segments_loop.py" "${TARGET}:${REMOTE_TOOLS}/upload_segments_loop.py"
+  for topo in camera_topology_standard.json camera_topology_standard.yaml \
+    camera_topology_ego-001.json camera_topology_ego-001.yaml; do
+    if [[ -f "${CAPTURE_SRC}/config/${topo}" ]]; then
+      rsync -av "${CAPTURE_SRC}/config/${topo}" "${TARGET}:${REMOTE_CONFIG}/${topo}"
+    fi
+  done
 else
   echo "rsync failed — using paramiko sftp (slower)"
-  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" python3 - <<'PY'
+  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" REMOTE_CONFIG="$REMOTE_CONFIG" python3 - <<'PY'
 import os, paramiko
 from pathlib import Path
 target = os.environ["TARGET"]
@@ -122,6 +128,7 @@ user, _, host = target.partition("@")
 src = Path(os.environ["CAPTURE_SRC"])
 remote_capture = os.environ["REMOTE_CAPTURE"]
 remote_cli = os.environ["REMOTE_CLI"]
+remote_config = os.environ["REMOTE_CONFIG"]
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 c.connect(host, username=user, password=os.environ.get("RC_CAPTURE_PASS", "1"), timeout=20)
@@ -142,6 +149,19 @@ for path in src.rglob("*"):
     sftp.put(str(path), remote)
 for name in ("record_oak_stream.py", "upload_segments.py", "ego_upload.py"):
     sftp.put(str(src / "cli" / name), f"{remote_cli}/{name}")
+for topo in (
+    "camera_topology_standard.json",
+    "camera_topology_standard.yaml",
+    "camera_topology_ego-001.json",
+    "camera_topology_ego-001.yaml",
+):
+    local_topo = src / "config" / topo
+    if local_topo.is_file():
+        try:
+            sftp.mkdir(remote_config)
+        except Exception:
+            pass
+        sftp.put(str(local_topo), f"{remote_config}/{topo}")
 sftp.close()
 c.close()
 print("capture sync ok")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ego-run-l2 — L2 rectified 720p corpus append (no WiLoR / algorithm sidecars).
+# ego-run-l2 — L2 rectified 1280×800 corpus append (no WiLoR / algorithm sidecars).
 set -euo pipefail
 
 STATION="${1:-}"
@@ -8,7 +8,7 @@ if [[ -z "$STATION" || "$STATION" == "-h" || "$STATION" == "--help" ]]; then
 用法: ego-run-l2 <station>
 
   L2 干净语料路径（产品默认热路径）:
-  derive 已完成 session → rectify convert → corpus/ego_001 (1280×720)
+  derive 已完成 session → rectify convert → corpus/ego_001 (1280×800)
   append 时自动合并 derived/*/imu.parquet → corpus/sensor_raw/imu (200Hz)
   不跑 WiLoR / MANO；算法 sidecar 不进 corpus（由 ego-viewer-preview 写 samples/）。
   Viewer publish gate 在 L2 convert 内跳过，仅在 ego-process 的 L3 之后执行一次。

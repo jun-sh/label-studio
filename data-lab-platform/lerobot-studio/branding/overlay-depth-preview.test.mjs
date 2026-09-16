@@ -4,6 +4,7 @@ import {
   DISPLAY_PANEL_LABEL,
   DISPLAY_VIDEO_KEY,
   containedVideoLayout,
+  depthPreviewIndexFromRgbFrame,
   displayVideoKeyCandidates,
   featureMatchesText,
   frameUrl,
@@ -68,5 +69,20 @@ describe("overlay-depth-preview-lib", () => {
     assert.equal(rect.height, 400);
     assert.equal(rect.offsetX, 0);
     assert.equal(rect.offsetY, 0);
+  });
+
+  it("maps RGB frame index to sparse depth preview index", () => {
+    const entry = { frames: 61, stride: 30 };
+    assert.equal(depthPreviewIndexFromRgbFrame(0, entry), 0);
+    assert.equal(depthPreviewIndexFromRgbFrame(29, entry), 0);
+    assert.equal(depthPreviewIndexFromRgbFrame(30, entry), 1);
+    assert.equal(depthPreviewIndexFromRgbFrame(1800, entry), 60);
+    assert.equal(depthPreviewIndexFromRgbFrame(9999, entry), 60);
+  });
+
+  it("infers stride when missing from episode metadata", () => {
+    const entry = { frames: 61 };
+    assert.equal(depthPreviewIndexFromRgbFrame(30, entry, 1819), 1);
+    assert.equal(depthPreviewIndexFromRgbFrame(1800, entry, 1819), 60);
   });
 });

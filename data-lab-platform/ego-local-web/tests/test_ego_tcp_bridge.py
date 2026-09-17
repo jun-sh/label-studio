@@ -49,7 +49,7 @@ class HandlerSmokeTest(unittest.TestCase):
                 thread = threading.Thread(target=handle_client, args=(server_sock, ("127.0.0.1", 1)), daemon=True)
                 thread.start()
                 initial = read_message(client_sock)
-                self.assertEqual(initial.get("type"), "device_info")
+                self.assertEqual(initial.get("type"), "device_info_result")
                 send_message(client_sock, {"type": "heartbeat"})
                 ack = read_message(client_sock)
                 self.assertEqual(ack, {"type": "heartbeat_ack"})

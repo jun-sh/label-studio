@@ -6,10 +6,13 @@ DEST="${EGO_WEB_DEST:-/home/server/ego-web}"
 SYSTEMD_USER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 systemctl --user disable --now ecs-ego-web.service 2>/dev/null || true
+systemctl --user disable --now ecs-ego-web-dev.service 2>/dev/null || true
 rm -f "$SYSTEMD_USER_DIR/ecs-ego-web.service"
+rm -f "$SYSTEMD_USER_DIR/ecs-ego-web-dev.service"
 systemctl --user daemon-reload
 
 rm -rf "$DEST"
+rm -rf "${EGO_WEB_DEV_DEST:-/home/server/ego-web-dev}"
 
 echo "============================================"
 echo "EGO local web removed (user units + $DEST)"

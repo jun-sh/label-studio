@@ -5,10 +5,11 @@
 | 项目 | 值 |
 |------|-----|
 | 控制 TCP 端口 | **9100**（`EGO_TCP_PORT`） |
-| 网页控制 | HTTP **8080**（不变） |
-| 视频预览 | HTTP MJPEG/JPEG **8765**（非 UDP） |
+| 网页采集控制 | HTTP **8080**（启停录制 + 录制中单路预览） |
+| 网页四路预览 | HTTP **8081**（待机四路同屏，**不含**采集控制） |
+| 预览数据面 | HTTP MJPEG/JPEG **8765**（非 UDP；8080/8081/App 共用） |
 | 130 有线地址 | `10.10.10.130` |
-| 130 热点网关 | `192.168.8.1`（连热点后 App 用此地址） |
+| 130 热点网关 | `192.168.8.1`（连热点后 App / 手机网页用此地址） |
 
 实现文件：`ego_tcp_bridge.py`（systemd：`ecs-ego-tcp-bridge.service`）
 
@@ -77,13 +78,15 @@ TCP 为字节流，每条消息格式：
 
 设备立即回复 `heartbeat_ack`（不表示业务成功）。
 
-### 4.2 get_device_status
+### 4.2 device_info（查询设备状态）
+
+连接成功后建议每 **1 秒** 轮询一次（或依赖连接时的主动推送）。
 
 ```json
-{ "type": "get_device_status" }
+{ "type": "device_info" }
 ```
 
-设备回复 `device_info`（见 5.2）。
+设备回复 `device_info_result`（见 5.2）。兼容旧客户端：`get_device_status` 同等处理。
 
 ### 4.3 start_recording
 
@@ -93,22 +96,35 @@ TCP 为字节流，每条消息格式：
 
 设备回复：
 
-1. `capture_result`（是否成功）
-2. 成功时再发 `device_info`
+1. `start_recording_result`（是否成功）
+2. 成功时再推送 `device_info_result`
 
-启动可能耗时 15–90 秒（与网页一致），此期间可继续发 `heartbeat`。
+启动可能耗时 15–90 秒（与网页一致），此期间可继续发 `heartbeat`。App 侧建议超时 **60s**。
 
-### 4.4 stop_and_save_recording
+### 4.4 stop_recording
 
 ```json
-{ "type": "stop_and_save_recording" }
+{
+  "type": "stop_recording",
+  "data": { "is_save": true }
+}
 ```
 
-设备回复 `capture_result`，成功后再发 `device_info`。停止/落盘可能耗时数十秒。
+| `is_save` | 行为 | 等价网页 |
+|-----------|------|----------|
+| `true` | 停止并保存 | `POST /api/capture/stop` |
+| `false` | 停止并放弃 | `POST /api/capture/abandon` |
+
+设备回复 `stop_recording_result`，成功后再推送 `device_info_result`。停止/落盘可能耗时数十秒（建议超时 60s）。
+
+兼容旧客户端：`stop_and_save_recording` 等价于 `is_save: true`。
 
 ### 4.5 change_view
 
-切换 App 当前预览视角（服务端记录 `view_num`，并唤醒 standby 预览）。
+切换 App **当前主预览画面**（客户端改拉哪一路 HTTP URL；**不切换相机硬件**）。
+
+- 待机（`state=idle`）：四路 URL 均有 live 帧（standby 预览，约 8fps）。
+- 采集中（`state=recording`）：**仅主预览路**有 live 帧（生产默认 `front_left`，约 4fps）；切到其他 `view_num` 可能 503 或停在旧帧，**不保证**四路 live。
 
 ```json
 {
@@ -117,7 +133,7 @@ TCP 为字节流，每条消息格式：
 }
 ```
 
-设备回复 `view_changed`。
+设备回复 `view_changed_result`（含新的 `preview_mjpeg_url` / `preview_jpg_url`）。
 
 ---
 
@@ -129,62 +145,62 @@ TCP 为字节流，每条消息格式：
 { "type": "heartbeat_ack" }
 ```
 
-### 5.2 device_info
+### 5.2 device_info_result
 
-**连接建立后设备主动发送一条**；`get_device_status`、录制启停成功后也会发送。
+**连接建立后设备主动发送一条**；收到 `device_info`、录制启停成功后也会推送。
 
 ```json
 {
-  "type": "device_info",
+  "type": "device_info_result",
   "data": {
     "state": "idle",
     "duration": 0,
     "segment_count": 0,
-    "storage_free": "843.5 GB",
     "storage_free_gb": 843.5,
-    "storage_warn": false,
     "frames_writing": false,
     "view_num": 1,
     "view_id": "front_left",
-    "preview_mjpeg_url": "http://10.10.10.130:8765/preview/front_left/mjpeg",
-    "preview_jpg_url": "http://10.10.10.130:8765/preview/front_left/jpg",
-    "msg": ""
+    "preview_mjpeg_url": "http://192.168.8.1:8765/preview/front_left/mjpeg",
+    "preview_jpg_url": "http://192.168.8.1:8765/preview/front_left/jpg"
   }
 }
 ```
 
 `state` 取值：`idle` | `starting` | `warming` | `recording` | `stopping` | `error`（与 `GET /api/status` 一致）。
 
-### 5.3 view_changed
+### 5.3 start_recording_result
 
 ```json
 {
-  "type": "view_changed",
+  "type": "start_recording_result",
+  "data": { "success": true, "msg": "" }
+}
+```
+
+### 5.4 stop_recording_result
+
+```json
+{
+  "type": "stop_recording_result",
+  "data": { "success": true, "is_save": true, "msg": "" }
+}
+```
+
+### 5.5 view_changed_result
+
+```json
+{
+  "type": "view_changed_result",
   "data": {
     "view_num": 2,
     "view_id": "front_right",
-    "preview_mjpeg_url": "http://10.10.10.130:8765/preview/front_right/mjpeg",
-    "preview_jpg_url": "http://10.10.10.130:8765/preview/front_right/jpg"
+    "preview_mjpeg_url": "http://192.168.8.1:8765/preview/front_right/mjpeg",
+    "preview_jpg_url": "http://192.168.8.1:8765/preview/front_right/jpg"
   }
 }
 ```
 
-### 5.4 capture_result
-
-```json
-{
-  "type": "capture_result",
-  "data": {
-    "action": "start_recording",
-    "success": true,
-    "msg": ""
-  }
-}
-```
-
-`action`：`start_recording` | `stop_and_save_recording`。
-
-### 5.5 error
+### 5.6 error
 
 ```json
 {
@@ -204,31 +220,79 @@ TCP 为字节流，每条消息格式：
 | 方向 | type | data | 说明 |
 |------|------|------|------|
 | App→设备 | heartbeat | 无 | 心跳 |
-| App→设备 | get_device_status | 无 | 查询状态 |
+| App→设备 | device_info | 无 | 查询状态（建议 1s 轮询） |
 | App→设备 | start_recording | 无 | 开始录制 |
-| App→设备 | stop_and_save_recording | 无 | 停止并保存 |
-| App→设备 | change_view | view_num | 切换预览视角 |
+| App→设备 | stop_recording | is_save | 停止并保存/放弃 |
+| App→设备 | change_view | view_num | 切换主预览 URL |
 | 设备→App | heartbeat_ack | 无 | 心跳回复 |
-| 设备→App | device_info | 见上 | 连接时主动推送 + 状态查询/录制后 |
-| 设备→App | view_changed | 见上 | 视角切换确认 |
-| 设备→App | capture_result | 见上 | 录制命令结果 |
+| 设备→App | device_info_result | 见上 | 连接推送 + 状态查询/录制后 |
+| 设备→App | start_recording_result | success, msg | 开始录制反馈 |
+| 设备→App | stop_recording_result | success, is_save, msg | 停止录制反馈 |
+| 设备→App | view_changed_result | 见上 | 视角切换确认 |
 | 设备→App | error | 见上 | 协议或参数错误 |
 
 ---
 
 ## 7. 视频预览（HTTP，非 UDP）
 
-设备四路相机通过 **HTTP** 提供预览，与网页相同：
+### 7.1 端口与职责（热点 `192.168.8.1`）
+
+| 端口 | 服务 | 用途 | 与采集关系 |
+|------|------|------|------------|
+| **9100** | `ego_tcp_bridge` | App TCP 控制 + 下发预览 URL | 与 8080 共用采集逻辑 |
+| **8080** | `ecs-ego-web` | 手机网页：**启停录制**；录制中**单路**预览（`main.jpg`） | 生产采集页 |
+| **8081** | `ecs-ego-web-staging`（`EGO_WEB_UI_MODE=quad`） | 手机网页：**待机四路 2×2 预览**；无启停按钮 | 仅预览，不控采集 |
+| **8765** | `preview_server` | 四路 MJPEG/JPEG **数据源**（standby 或采集中继） | OAK 独占，单进程监听 |
+
+**已废弃：** ~~8082 开发页（采集中四按钮切视角）~~，不再部署。
+
+App 与网页**不要**在采集时依赖「四路同时 live」；四路同屏仅用于**待机检查**（8081 或 App 自行拉四路 URL）。
+
+### 7.2 预览 URL（数据面 `:8765`）
+
+四路 `view_id`：`front_left` | `front_right` | `rear_left` | `rear_right`。
 
 | 格式 | URL 模板 |
 |------|----------|
 | MJPEG 流 | `http://{host}:8765/preview/{view_id}/mjpeg` |
 | 单帧 JPEG | `http://{host}:8765/preview/{view_id}/jpg` |
-| 状态 | `GET http://{host}:8765/preview/status` → `{"online":true,"fps":8}` |
+| 状态 | `GET http://{host}:8765/preview/status` → `{"online":true,"fps":…}` |
 
-`{host}` 在热点下为 `192.168.8.1`，实验室有线为 `10.10.10.130`。优先使用 `device_info` 中的 `preview_mjpeg_url`。
+`{host}`：热点 **`192.168.8.1`**；实验室有线 **`10.10.10.130`**。  
+App **优先**使用 `device_info` / `view_changed` 中的 `preview_mjpeg_url`，勿硬编码 IP（除热点固定网关场景）。
 
-**说明：** 初版 Unity 文档中的 UDP 视频尚未在 130 实现；本修订版以现有 `preview_server` 为准。
+8081 网页四路通过代理访问（等价于直连 8765）：
+
+| 接口 | 说明 |
+|------|------|
+| `GET /api/preview/cameras` | `layout: "quad"`，四路元数据 |
+| `GET /api/preview/{view_id}.jpg` | 单路 JPEG（四路独立轮询，**无需帧同步**） |
+
+### 7.3 待机 vs 采集：谁能看到几路 live？
+
+| 设备状态 | 预览生产者 | 四路 live？ | 典型帧率 / 分辨率 |
+|----------|------------|------------|-------------------|
+| **idle**（未录制） | `preview_standby` | **是**（四路） | ~8fps；边长 ≤640 |
+| **warming / recording** | 采集栈 `record_oak_mcap` | **否**（仅主预览路） | 主路 ~4fps；边长 384（生产默认 `front_left`） |
+
+生产环境（ego-001）采集侧配置要点：
+
+- `OAK_HW_PREVIEW_H264_CAMS=front_left` — 采集中**只开一路**低分辨率 MJPEG 旁路，避免拖慢 30fps H.264 主采集。
+- `PREVIEW_FPS=4`、`PREVIEW_MAX_EDGE=384` — 预览与写盘解耦。
+
+因此：
+
+- **8081 四路页**：适合连接热点后**开始录制前**检查四相机；采集中可能仅一路更新、其余冻结或 503。
+- **App `change_view`**：采集中仅保证切换到**已配置旁路**的视角（默认前左）；**不承诺**四路任意切换均有 live 画面。
+
+### 7.4 生命周期与冲突（工程约束）
+
+1. **OAK 与 :8765 互斥**：同一时刻只有 standby **或** 采集栈之一占用相机并监听 8765。
+2. **开始录制**：8080 / TCP `start_recording` 会先停 standby，再启采集；8081 四路预览可能有 1–3s 断帧。
+3. **预览只读**：8080、8081、App 可同时 GET JPEG，不干扰写盘。
+4. **采集中勿重复 start**：以 `device_info.state` 为准；`recording` / `warming` 时禁止再发 `start_recording`。
+
+**说明：** 初版 Unity 文档中的 UDP 视频未实现；以 `preview_server` HTTP 为准。
 
 ---
 
@@ -275,3 +339,5 @@ python3 tools/ego_tcp_client_test.py --host 192.168.8.1
 | 无录制结果回包 | 增加 `capture_result` |
 | 无错误格式 | 增加 `error` |
 | `get_device_status` 未列入汇总 | 已列入 |
+| 采集中四路切换预览 | **不支持**；待机四路见 **8081** / 8765；采集仅主预览路 live |
+| 网页仅 8080 | 增加 **8081** 四路待机预览页 |

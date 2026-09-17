@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#f4f7f9" />
+  <title>EGO 四路预览</title>
+  <style>
+    :root {
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #8c8c8c;
+      --primary-soft: #e8f1fc;
+      --radius: 20px;
+      --shadow: 0 6px 24px rgba(15, 35, 70, 0.07);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px 16px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+    .header p {
+      margin: 6px 0 0;
+      font-size: .8rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .preview-wrap {
+      background: #c8d6ea;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 1 / 1;
+      position: relative;
+      box-shadow: var(--shadow);
+    }
+    .preview-quad {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 2px;
+    }
+    .preview-quad[hidden] { display: none !important; }
+    .preview-cell {
+      position: relative;
+      overflow: hidden;
+      background: var(--primary-soft);
+    }
+    .preview-cell img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: var(--primary-soft);
+    }
+    .preview-cell-label {
+      position: absolute;
+      left: 6px;
+      bottom: 6px;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.9);
+      font-size: .62rem;
+      font-weight: 700;
+      color: #475569;
+      pointer-events: none;
+    }
+    .preview-placeholder {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 20px;
+      text-align: center;
+      color: #7a8ba3;
+      font-size: .85rem;
+      background: var(--primary-soft);
+    }
+    .preview-placeholder[hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>EGO 四路预览</h1>
+      <p id="statusText">正在启动相机预览…</p>
+    </header>
+    <section class="preview-wrap" aria-label="四路实时预览">
+      <div class="preview-quad" id="previewQuad" hidden></div>
+      <div class="preview-placeholder" id="previewPh">
+        <span>四路预览启动中…</span>
+      </div>
+    </section>
+  </div>
+  <script>
+(function () {
+  var previewQuad = document.getElementById("previewQuad");
+  var previewPh = document.getElementById("previewPh");
+  var statusText = document.getElementById("statusText");
+  var previewPollTimer = null;
+  var previewPollMs = __PREVIEW_POLL_MS__;
+  var previewWantLive = true;
+  var previewHasFrame = false;
+  var previewCameras = [
+    { id: "front_left", label: "前左" },
+    { id: "front_right", label: "前右" },
+    { id: "rear_left", label: "后左" },
+    { id: "rear_right", label: "后右" }
+  ];
+  var previewQuadReady = false;
+
+  function buildPreviewQuad() {
+    if (previewQuadReady) return;
+    previewQuad.innerHTML = "";
+    previewCameras.forEach(function (cam) {
+      var cell = document.createElement("div");
+      cell.className = "preview-cell";
+      cell.setAttribute("data-cam", cam.id);
+      var img = document.createElement("img");
+      img.alt = cam.label || cam.id;
+      img.addEventListener("load", function () {
+        if (!previewHasFrame) {
+          previewHasFrame = true;
+          previewQuad.hidden = false;
+          previewPh.hidden = true;
+          statusText.textContent = "四路预览已就绪（无需同步）";
+        }
+      });
+      img.addEventListener("error", function () {
+        if (!previewHasFrame) {
+          previewPh.querySelector("span").textContent = "预览连接中…";
+        }
+      });
+      var label = document.createElement("span");
+      label.className = "preview-cell-label";
+      label.textContent = cam.label || cam.id;
+      cell.appendChild(img);
+      cell.appendChild(label);
+      previewQuad.appendChild(cell);
+    });
+    previewQuadReady = true;
+  }
+
+  function loadPreviewCameras() {
+    return fetch("/api/preview/cameras", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.cameras && data.cameras.length) {
+          previewCameras = data.cameras.map(function (cam) {
+            return { id: cam.id, label: cam.label || cam.id };
+          });
+        }
+        if (data.poll_ms) previewPollMs = data.poll_ms;
+        previewQuadReady = false;
+        buildPreviewQuad();
+        if (!data.online) {
+          statusText.textContent = "预览服务启动中，请稍候…";
+        }
+      })
+      .catch(function () {
+        statusText.textContent = "无法连接预览服务";
+        buildPreviewQuad();
+      });
+  }
+
+  function tickPreview() {
+    var ts = Date.now();
+    previewQuad.querySelectorAll(".preview-cell").forEach(function (cell) {
+      var camId = cell.getAttribute("data-cam");
+      var img = cell.querySelector("img");
+      if (!camId || !img) return;
+      img.src = "/api/preview/" + camId + ".jpg?t=" + ts + "&c=" + camId;
+    });
+  }
+
+  function startPreview() {
+    if (!previewQuadReady) buildPreviewQuad();
+    if (!previewPollTimer) {
+      tickPreview();
+      previewPollTimer = setInterval(tickPreview, previewPollMs);
+    }
+  }
+
+  loadPreviewCameras().finally(startPreview);
+})();
+  </script>
+</body>
+</html>

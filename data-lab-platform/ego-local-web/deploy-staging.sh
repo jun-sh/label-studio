@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy ego-local-web to staging directory (8081) on edge host.
+# Deploy ego quad-preview web to staging directory (8081) on edge host.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +11,7 @@ mkdir -p "$DEST" "$SYSTEMD_USER_DIR" "$DEST/templates"
 
 install -m 0644 "$SCRIPT_DIR/ego_web.py" "$DEST/ego_web.py"
 install -m 0644 "$SCRIPT_DIR/templates/capture_ui.html" "$DEST/templates/capture_ui.html"
+install -m 0644 "$SCRIPT_DIR/templates/quad_preview.html" "$DEST/templates/quad_preview.html"
 if [[ -d "$SCRIPT_DIR/static" ]]; then
   rm -rf "$DEST/static"
   cp -a "$SCRIPT_DIR/static" "$DEST/static"
@@ -24,7 +25,7 @@ systemctl --user enable "${SERVICE_NAME}"
 systemctl --user restart "${SERVICE_NAME}"
 
 echo "============================================"
-echo "EGO local web STAGING deployed to $DEST"
-echo "  Staging:  http://<host>:8081"
+echo "EGO quad preview deployed to $DEST"
+echo "  Quad UI:  http://<host>:8081"
 echo "  Status:   systemctl --user status ${SERVICE_NAME}"
 echo "============================================"

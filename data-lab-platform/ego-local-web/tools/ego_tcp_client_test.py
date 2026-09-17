@@ -10,7 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-# Allow `python3 tools/ego_tcp_client_test.py` from ego-local-web/
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -54,8 +53,8 @@ def main() -> int:
     sock.settimeout(30)
 
     try:
-        print("\n[1] Expect initial device_info on connect")
-        info = recv_until_type(sock, "device_info", 5)
+        print("\n[1] Expect initial device_info_result on connect")
+        info = recv_until_type(sock, "device_info_result", 5)
         state = (info.get("data") or {}).get("state")
         print(f"    state={state}")
 
@@ -64,13 +63,13 @@ def main() -> int:
         ack = recv_until_type(sock, "heartbeat_ack", 5)
         assert ack.get("type") == "heartbeat_ack"
 
-        print("\n[3] get_device_status → device_info")
-        send_message(sock, {"type": "get_device_status"})
-        recv_until_type(sock, "device_info", 5)
+        print("\n[3] device_info → device_info_result")
+        send_message(sock, {"type": "device_info"})
+        recv_until_type(sock, "device_info_result", 5)
 
-        print("\n[4] change_view view_num=2 → view_changed")
+        print("\n[4] change_view view_num=2 → view_changed_result")
         send_message(sock, {"type": "change_view", "data": {"view_num": 2}})
-        changed = recv_until_type(sock, "view_changed", 5)
+        changed = recv_until_type(sock, "view_changed_result", 5)
         assert (changed.get("data") or {}).get("view_id") == "front_right"
 
         if args.heartbeat_only:
@@ -81,19 +80,19 @@ def main() -> int:
             print("\n[done] skipped capture commands (--skip-capture)")
             return 0
 
-        print("\n[5] start_recording → capture_result (+ device_info if ok)")
+        print("\n[5] start_recording → start_recording_result (+ device_info_result if ok)")
         send_message(sock, {"type": "start_recording"})
-        result = recv_until_type(sock, "capture_result", 120)
+        result = recv_until_type(sock, "start_recording_result", 120)
         success = (result.get("data") or {}).get("success")
         print(f"    success={success}")
         if success:
-            recv_until_type(sock, "device_info", 10)
+            recv_until_type(sock, "device_info_result", 10)
             time.sleep(2)
-            print("\n[6] stop_and_save_recording → capture_result")
-            send_message(sock, {"type": "stop_and_save_recording"})
-            stop = recv_until_type(sock, "capture_result", 180)
+            print("\n[6] stop_recording is_save=true → stop_recording_result")
+            send_message(sock, {"type": "stop_recording", "data": {"is_save": True}})
+            stop = recv_until_type(sock, "stop_recording_result", 180)
             print(f"    success={(stop.get('data') or {}).get('success')}")
-            recv_until_type(sock, "device_info", 10)
+            recv_until_type(sock, "device_info_result", 10)
         else:
             print("    skip stop because start failed")
 

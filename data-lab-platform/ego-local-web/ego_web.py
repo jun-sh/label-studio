@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 # ---------------------------------------------------------------------------
 HOST = os.environ.get("EGO_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("EGO_WEB_PORT", "8080"))
+WEB_UI_MODE = os.environ.get("EGO_WEB_UI_MODE", "capture").strip().lower()
 CAPTURE_TARGET = os.environ.get("EGO_CAPTURE_TARGET", "ecs-oak-capture-stack.target")
 CAPTURE_RECORD_UNIT = os.environ.get("EGO_CAPTURE_RECORD_UNIT", "ecs-record-oak-stream.service")
 STANDBY_STACK_TARGET = os.environ.get("EGO_STANDBY_STACK_TARGET", "ecs-oak-standby-stack.target")
@@ -1349,7 +1350,7 @@ def _build_preview_cameras_payload() -> dict[str, Any]:
         )
     return {
         "online": live,
-        "layout": "switch",
+        "layout": "quad" if WEB_UI_MODE == "quad" else "main",
         "poll_ms": PREVIEW_POLL_MS,
         "cameras": cameras,
     }
@@ -1851,11 +1852,14 @@ INDEX_HTML = """<!DOCTYPE html>
 
 
 def _index_html_body() -> bytes:
-    tpl = Path(__file__).resolve().parent / "templates" / "capture_ui.html"
+    tpl_name = "quad_preview.html" if WEB_UI_MODE == "quad" else "capture_ui.html"
+    tpl = Path(__file__).resolve().parent / "templates" / tpl_name
     if tpl.is_file():
         html = tpl.read_text(encoding="utf-8")
-    else:
+    elif WEB_UI_MODE != "quad":
         html = INDEX_HTML
+    else:
+        html = "<!DOCTYPE html><html><body><p>quad_preview.html missing</p></body></html>"
     html = html.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).replace(
         "__PREVIEW_POLL_MS__", str(PREVIEW_POLL_MS)
     )

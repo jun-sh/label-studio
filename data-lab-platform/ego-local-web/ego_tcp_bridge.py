@@ -26,7 +26,6 @@ VIEW_BY_NUM: dict[int, str] = {
     3: "rear_left",
     4: "rear_right",
 }
-VIEW_NUM_BY_ID = {cam_id: num for num, cam_id in VIEW_BY_NUM.items()}
 
 _server_lock = threading.Lock()
 _selected_view_num = 1
@@ -92,7 +91,7 @@ def _storage_free_gb() -> float | None:
     return round(free_bytes / (1024**3), 2)
 
 
-def _build_device_info() -> dict[str, Any]:
+def _build_device_info_result() -> dict[str, Any]:
     global _selected_view_num
     status = ego_web._build_status()
     view_id = VIEW_BY_NUM.get(_selected_view_num, "front_left")
@@ -100,22 +99,22 @@ def _build_device_info() -> dict[str, Any]:
         "state": status.get("state"),
         "duration": status.get("duration", 0),
         "segment_count": status.get("segment_count", 0),
-        "storage_free": status.get("storage_free"),
         "storage_free_gb": _storage_free_gb(),
-        "storage_warn": status.get("storage_warn", False),
         "frames_writing": status.get("frames_writing", False),
         "view_num": _selected_view_num,
         "view_id": view_id,
-        "msg": status.get("msg", ""),
         **{k: v for k, v in _preview_urls(view_id).items()},
     }
-    return {"type": "device_info", "data": data}
+    msg = status.get("msg")
+    if msg:
+        data["msg"] = msg
+    return {"type": "device_info_result", "data": data}
 
 
-def _build_view_changed(view_num: int) -> dict[str, Any]:
+def _build_view_changed_result(view_num: int) -> dict[str, Any]:
     view_id = VIEW_BY_NUM[view_num]
     return {
-        "type": "view_changed",
+        "type": "view_changed_result",
         "data": {
             "view_num": view_num,
             "view_id": view_id,
@@ -131,28 +130,57 @@ def _error_message(code: str, message: str, *, request_type: str | None = None) 
     return {"type": "error", "data": data}
 
 
-def _capture_result(action: str, success: bool, msg: str) -> dict[str, Any]:
+def _start_recording_result(success: bool, msg: str) -> dict[str, Any]:
     return {
-        "type": "capture_result",
-        "data": {"action": action, "success": success, "msg": msg},
+        "type": "start_recording_result",
+        "data": {"success": success, "msg": msg},
+    }
+
+
+def _stop_recording_result(success: bool, msg: str, is_save: bool) -> dict[str, Any]:
+    return {
+        "type": "stop_recording_result",
+        "data": {"success": success, "is_save": is_save, "msg": msg},
     }
 
 
 def _handle_change_view(data: Any) -> dict[str, Any]:
     global _selected_view_num
     if not isinstance(data, dict):
-        return _error_message("invalid_payload", "change_view requires data.view_num", request_type="change_view")
+        return _error_message(
+            "invalid_payload",
+            "change_view requires data.view_num",
+            request_type="change_view",
+        )
     view_num_raw = data.get("view_num")
     try:
         view_num = int(view_num_raw)
     except (TypeError, ValueError):
-        return _error_message("invalid_view_num", "view_num must be an integer 1-4", request_type="change_view")
+        return _error_message(
+            "invalid_view_num",
+            "view_num must be an integer 1-4",
+            request_type="change_view",
+        )
     if view_num not in VIEW_BY_NUM:
-        return _error_message("invalid_view_num", "view_num must be 1, 2, 3, or 4", request_type="change_view")
+        return _error_message(
+            "invalid_view_num",
+            "view_num must be 1, 2, 3, or 4",
+            request_type="change_view",
+        )
     with _server_lock:
         _selected_view_num = view_num
         ego_web._wake_standby_preview_if_idle()
-    return _build_view_changed(view_num)
+    return _build_view_changed_result(view_num)
+
+
+def _parse_stop_is_save(data: Any) -> bool | None:
+    if data is None:
+        return True
+    if not isinstance(data, dict):
+        return None
+    if "is_save" not in data:
+        return True
+    return bool(data.get("is_save"))
 
 
 def _handle_message(msg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -165,21 +193,31 @@ def _handle_message(msg: dict[str, Any]) -> list[dict[str, Any]]:
     if msg_type == "heartbeat":
         return [{"type": "heartbeat_ack"}]
 
-    if msg_type == "get_device_status":
-        return [_build_device_info()]
+    if msg_type in ("device_info", "get_device_status"):
+        return [_build_device_info_result()]
 
     if msg_type == "start_recording":
         ok, text = ego_web._run_capture_action("start")
-        replies = [_capture_result("start_recording", ok, text)]
+        replies = [_start_recording_result(ok, text)]
         if ok:
-            replies.append(_build_device_info())
+            replies.append(_build_device_info_result())
         return replies
 
-    if msg_type == "stop_and_save_recording":
-        ok, text = ego_web._run_capture_action("stop")
-        replies = [_capture_result("stop_and_save_recording", ok, text)]
+    if msg_type in ("stop_recording", "stop_and_save_recording"):
+        is_save = _parse_stop_is_save(data)
+        if is_save is None:
+            return _error_message(
+                "invalid_payload",
+                "stop_recording requires data.is_save (bool)",
+                request_type="stop_recording",
+            )
+        if is_save:
+            ok, text = ego_web._run_capture_action("stop")
+        else:
+            ok, text = ego_web._run_capture_abandon()
+        replies = [_stop_recording_result(ok, text, is_save)]
         if ok:
-            replies.append(_build_device_info())
+            replies.append(_build_device_info_result())
         return replies
 
     if msg_type == "change_view":
@@ -193,7 +231,7 @@ def handle_client(sock: socket.socket, peer: tuple[str, int]) -> None:
     peer_label = f"{peer[0]}:{peer[1]}"
     print(f"tcp_client_connected peer={peer_label}", flush=True)
     try:
-        send_message(sock, _build_device_info())
+        send_message(sock, _build_device_info_result())
         while True:
             try:
                 msg = read_message(sock)

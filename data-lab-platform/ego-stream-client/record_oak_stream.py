@@ -62,6 +62,11 @@ except ImportError:
         write_stop_state,
     )
 
+try:
+    from ego_capture_studio.capture.capture_abandon_request import abandon_requested_for
+except ImportError:
+    from capture_abandon_request import abandon_requested_for  # type: ignore[no-redef]
+
 _SHUTDOWN = False
 _WARM_IDLE_REQUEST = False
 _WARM_RESUME_REQUEST = False
@@ -358,6 +363,27 @@ def _flush_async_capture_queue() -> None:
     return None
 
 
+def _abandon_session_for_warm_idle(
+    writer: SegmentCaptureWriter,
+    recorder: Oak4pEgoRecorder,
+    checkpoint_path: Path,
+    session_id: str,
+) -> None:
+    recorder.flush_remaining_imu_raw()
+    writer.note_open_segment_health(**recorder.ingest_health())
+    if recorder.use_hw_h264:
+        recorder.prepare_h264_segment_boundary()
+    _flush_async_capture_queue()
+    writer.abandon_for_warm_idle()
+    _write_capture_live_stats(
+        checkpoint_path,
+        frame_count=0,
+        beep_epoch=None,
+        capture_fps=0.0,
+    )
+    print(f"capture_abandon_warm_idle session={session_id}", flush=True)
+
+
 def _pause_for_warm_idle(
     writer: SegmentCaptureWriter,
     recorder: Oak4pEgoRecorder,
@@ -400,7 +426,7 @@ def _start_preview_feeder(
 def _kick_heartbeat(heartbeat: FrameStreamUploader | None) -> None:
     if heartbeat is None:
         return
-    host = os.environ.get("DATALAB_CAPTURE_HOST", "10.10.10.214")
+    host = os.environ.get("DATALAB_CAPTURE_HOST", "10.10.10.130")
     async_hb = os.environ.get("EGO_HEARTBEAT_ASYNC", "1").strip().lower() not in (
         "0",
         "false",
@@ -744,7 +770,12 @@ def main() -> None:
             )
             if entering_warm:
                 write_stop_state(PHASE_STOPPING, session_id)
-                if _oak_warm_cold_episode_enabled():
+                if abandon_requested_for(session_id):
+                    _abandon_session_for_warm_idle(
+                        writer, recorder, checkpoint_path, session_id
+                    )
+                    writer = None
+                elif _oak_warm_cold_episode_enabled():
                     _finish_recording_session(writer, recorder, checkpoint_path, session_id)
                     writer = None
                 else:

@@ -39,7 +39,7 @@ try:
 except ImportError:
     from topology import active_topology  # type: ignore[no-redef]
 
-# AR0234 module: sensor fixed 1200P; ISP scale 2/3 -> 1280x800 passthrough (rectify keeps full frame on 34).
+# AR0234 module: sensor fixed 1200P; ISP scale 2/3 -> 1280x800 passthrough (720p crop on 34 rectify only).
 OAK_SENSOR_RES_KEY = "1200"
 OAK_ISP_SCALE_NUM = int(os.environ.get("OAK_ISP_SCALE_NUM", "2"))
 OAK_ISP_SCALE_DEN = int(os.environ.get("OAK_ISP_SCALE_DEN", "3"))

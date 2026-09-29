@@ -1,6 +1,6 @@
 """EGO capture constants (edge host ego_capture_studio.capture.ego_spec)."""
 
-# 130 passthrough: ISP 1280×800 fisheye MCAP. Rectified 1280×800 corpus is produced on 34 (rectify).
+# 130 passthrough: ISP 1280×800 fisheye MCAP. Rectified 720p corpus is produced on 34 (rectify).
 OAK_ISP_OUTPUT_WIDTH = 1280
 OAK_ISP_OUTPUT_HEIGHT = 800
 OAK_ISP_FRAME_WIDTH = OAK_ISP_OUTPUT_WIDTH

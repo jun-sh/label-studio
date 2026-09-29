@@ -1696,6 +1696,54 @@ class SegmentCaptureWriter:
             flush=True,
         )
 
+    def _discard_persist_queue(self) -> None:
+        while True:
+            try:
+                item = self._persist_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is not None:
+                self._persist_queue.task_done()
+
+    def abandon_for_warm_idle(self) -> None:
+        """Discard episode data and stop async writers; capture process keeps OAK for warm idle."""
+        with self._lock:
+            if self._open_segment_id:
+                self._closed_segment_ids.add(self._open_segment_id)
+            self._closed_segment_ids.update(self._open_writers.keys())
+            self._open_segment_id = None
+            self._open_segment_dir = None
+            self._open_frame_count = 0
+        self._discard_persist_queue()
+        with self._writer_lock:
+            self._open_writers.clear()
+        self._persist_stop.set()
+        for _ in self._persist_threads:
+            try:
+                self._persist_queue.put(None, timeout=5.0)
+            except queue.Full:
+                pass
+        for t in self._persist_threads:
+            if t.is_alive():
+                t.join(timeout=10.0)
+        if self._finalize_queue is not None:
+            try:
+                self._finalize_queue.put(None, timeout=2.0)
+            except queue.Full:
+                pass
+            if self._finalize_thread is not None and self._finalize_thread.is_alive():
+                self._finalize_thread.join(timeout=5.0)
+        clear_session_seal(self.root, self.session_id)
+        disk_session = self._session_dir()
+        active_session = SEGMENT_ACTIVE_ROOT / "sessions" / self.session_id
+        for path in (disk_session, active_session):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+        self._next_frame_index = 0
+        self._segment_seq = 0
+        self._pending_count = 0
+        print(f"capture_warm_abandon session={self.session_id}", flush=True)
+
     def close(self) -> None:
         self.flush()
         self._persist_stop.set()

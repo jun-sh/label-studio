@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import segment_store
 from segment_store import (
     MANIFEST_SCHEMA_VERSION,
     build_session_seal,
@@ -533,6 +534,25 @@ def test_capture_close_timeline_qc_warn_not_corrupt(
     qc_ok, qc_issues = check_segment_upload_qc(seg)
     assert not qc_ok
     assert qc_issues
+
+
+def test_abandon_for_warm_idle_removes_session_dirs(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEGMENT_MCAP", "0")
+    monkeypatch.setenv("SEGMENT_FINALIZE_ASYNC", "0")
+    root = tmp_path / "segments"
+    active_root = tmp_path / "shm"
+    monkeypatch.setattr(segment_store, "SEGMENT_ACTIVE_ROOT", active_root)
+    writer = SegmentCaptureWriter(
+        root,
+        session_id="sess_abandon",
+        task="task",
+        quota_bytes=1024**3,
+    )
+    (root / "sessions" / "sess_abandon" / "segments" / "seg_000001").mkdir(parents=True)
+    (active_root / "sessions" / "sess_abandon" / "meta").mkdir(parents=True)
+    writer.abandon_for_warm_idle()
+    assert not (root / "sessions" / "sess_abandon").exists()
+    assert not (active_root / "sessions" / "sess_abandon").exists()
 
 
 def test_pause_for_warm_idle_clears_complete_seal(tmp_path, monkeypatch):

@@ -11,9 +11,10 @@
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 44px;
-  padding: 6px 12px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-height: 52px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--color-neutral-border, #e1ded5);
   background: var(--color-neutral-background, #fdfdf8);
   color: var(--color-neutral-content, #262522);
@@ -24,14 +25,16 @@
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--color-neutral-content, #262522);
 }
 
 #datalab-station-mode-pill {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
-  padding: 2px;
+  padding: 3px;
   border-radius: 9999px;
   border: 1px solid var(--color-neutral-border, #e1ded5);
   background: var(--color-neutral-surface, #f5f4ed);
@@ -286,4 +289,40 @@
 #datalab-station-shell[data-datalab-station-theme="light"] #datalab-dataset-loading,
 #datalab-station-shell[data-datalab-station-theme="dark"] #datalab-dataset-loading {
   color: var(--datalab-station-text);
+}
+
+#datalab-station-toolbar button:focus-visible {
+  outline: 2px solid var(--datalab-station-active-text, var(--color-primary-content, #4c5fa9));
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  #datalab-station-toolbar {
+    gap: 8px 12px;
+    padding: 10px 12px;
+  }
+
+  #datalab-station-toolbar-title {
+    flex-basis: 100%;
+  }
+
+  #datalab-station-toolbar #datalab-station-preview-hint {
+    margin-left: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  #datalab-station-toolbar #datalab-derive-progress {
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin-left: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #datalab-station-toolbar button {
+    transition: none;
+  }
 }

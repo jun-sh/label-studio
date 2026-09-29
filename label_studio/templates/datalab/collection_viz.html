@@ -15,10 +15,10 @@
 
 {% block app-css %}
 {{ block.super }}
-<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=19" />
-<link rel="stylesheet" href="/_datalab/collection-page.css?v=7" />
+<link rel="stylesheet" href="/_datalab/collection-viz-shell.css?v=20" />
+<link rel="stylesheet" href="/_datalab/collection-page.css?v=8" />
 <link rel="stylesheet" href="/_datalab/import-card.css?v=2" />
-<link rel="stylesheet" href="/_datalab/import-modal.css?v=1" />
+<link rel="stylesheet" href="/_datalab/import-modal.css?v=2" />
 <style nonce="{{ request.csp_nonce }}">
   /*
    * Layers are direct children of body (z-index 50). The React shell (.app-wrapper) has
@@ -221,7 +221,7 @@
     var VIZ_LAYER = "datalab-station-layer";
     var VIZ_FRAME = "datalab-viz-frame";
     var LANG = "{% if user.ui_locale|slice:':2' == 'zh' %}zh{% else %}en{% endif %}";
-    var LIST_SRC = "/_datalab/collection-embed.html?v=11&lang=" + encodeURIComponent(LANG);
+    var LIST_SRC = "/_datalab/collection-embed.html?v=12&lang=" + encodeURIComponent(LANG);
     var DEFAULT_DATASET_URL = "stream://ego-001";
     var LIST_TITLE = "{% if user.ui_locale|slice:':2' == 'zh' %}EGO 采集站{% else %}EGO collection stations{% endif %}";
     var LOADING_LABEL = "{% if user.ui_locale|slice:':2' == 'zh' %}正在连接采集站…{% else %}Connecting to station…{% endif %}";

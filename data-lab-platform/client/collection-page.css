@@ -8,7 +8,10 @@
   --color-neutral-content: rgb(38 37 34);
   --color-primary-content: rgb(76 95 169);
   --color-neutral-border: rgb(225 222 213);
-  --color-success: #16a34a;
+  --color-success: #15803d;
+  --datalab-card-background: #fff;
+  --datalab-page-background: #f7f8fa;
+  --datalab-error: #b45309;
   --color-muted: rgb(107 104 96);
 }
 
@@ -16,7 +19,12 @@ html[data-color-scheme="dark"] {
   --color-neutral-background: rgb(38 37 34);
   --color-neutral-content: rgb(249 248 246);
   --color-neutral-border: rgb(69 67 62);
-  --color-muted: rgb(107 104 96);
+  --color-muted: #b4b1a8;
+  --color-primary-content: #a5b4fc;
+  --color-success: #86efac;
+  --datalab-card-background: #2c2b28;
+  --datalab-page-background: #262522;
+  --datalab-error: #fbbf24;
 }
 
 html,
@@ -28,19 +36,22 @@ body {
 .datalab-collection-page {
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--color-neutral-background);
+  background: var(--datalab-page-background);
   color: var(--color-neutral-content);
+  line-height: 1.5;
   font-family: Figtree, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 .datalab-collection-page__header {
-  padding: 24px 32px 8px;
+  padding: 28px 32px 24px;
   border-bottom: 1px solid var(--color-neutral-border);
 }
 
 .datalab-collection-page__title {
   margin: 0 0 8px;
-  font-size: 22px;
+  font-size: 24px;
+  line-height: 1.35;
+  letter-spacing: -0.025em;
   font-weight: 600;
 }
 
@@ -52,7 +63,9 @@ body {
 
 .datalab-collection-page__main {
   padding: 24px 32px 48px;
-  max-width: 960px;
+  max-width: 1120px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .datalab-collection-page__loading,
@@ -62,7 +75,7 @@ body {
 }
 
 .datalab-collection-page__error {
-  color: #b45309;
+  color: var(--datalab-error);
 }
 
 .datalab-collection-page__retry {
@@ -76,7 +89,7 @@ body {
 }
 
 .datalab-collection-page__retry:hover {
-  border-color: #38bdf8;
+  border-color: var(--color-primary-content);
 }
 
 .datalab-station-card {
@@ -84,25 +97,25 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 18px;
+  padding: 20px 24px;
   margin-bottom: 12px;
   border: 1px solid var(--color-neutral-border);
-  border-radius: 8px;
-  background: var(--color-neutral-background);
+  border-radius: 12px;
+  background: var(--datalab-card-background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 3%);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.datalab-station-card--online {
+.datalab-station-card[role="button"] {
   cursor: pointer;
 }
 
-.datalab-station-card--online:hover {
+.datalab-station-card[role="button"]:hover {
   border-color: var(--color-primary-content);
   box-shadow: 0 2px 8px rgba(76, 95, 169, 0.12);
 }
 
-.datalab-station-card--offline {
-  opacity: 0.72;
+.datalab-station-card[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
@@ -119,8 +132,11 @@ body {
 }
 
 .datalab-station-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
-  padding: 4px 10px;
+  padding: 5px 11px;
   border-radius: 999px;
   font-size: 12px;
   font-weight: 600;
@@ -222,7 +238,6 @@ html.datalab-collection-embed-root body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  max-width: none;
   box-sizing: border-box;
 }
 
@@ -238,4 +253,60 @@ html.datalab-collection-embed-root body {
 
 .datalab-collection-page--embed .datalab-collection-page__intro .datalab-collection-page__subtitle {
   margin: 0;
+}
+
+/* Keep long station names and hostnames readable without widening the iframe. */
+.datalab-station-card__body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.datalab-station-card__badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.datalab-station-card:focus-visible,
+.datalab-collection-page button:focus-visible {
+  outline: 2px solid var(--color-primary-content);
+  outline-offset: 3px;
+}
+
+.datalab-collection-page__loading,
+.datalab-collection-page__error {
+  padding: 20px 24px;
+  border: 1px dashed var(--color-neutral-border);
+  border-radius: 12px;
+  background: var(--datalab-card-background);
+  line-height: 1.6;
+}
+
+@media (max-width: 600px) {
+  .datalab-collection-page__header {
+    padding: 24px 20px 20px;
+  }
+
+  .datalab-collection-page__main {
+    padding: 20px 16px 32px;
+  }
+
+  .datalab-station-card {
+    gap: 12px;
+    padding: 16px;
+    flex-wrap: wrap;
+  }
+
+  .datalab-collection-page__viewer-head {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .datalab-station-card {
+    transition: none;
+  }
 }

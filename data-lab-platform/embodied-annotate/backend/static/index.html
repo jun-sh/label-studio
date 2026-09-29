@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LeRobot Annotate</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260929" />
 </head>
 <body>
   <div id="app" class="ls-app">
@@ -17,12 +17,12 @@
         </div>
       </div>
       <div class="ls-topbar-actions">
-        <span class="ls-status" id="status">Disconnected</span>
+        <span class="ls-status" id="status" role="status" aria-live="polite">Disconnected</span>
       </div>
     </header>
 
     <section class="ls-panel ls-connect" id="connectPanel">
-      <button type="button" class="ls-connect-toggle" id="connectToggle" aria-expanded="true">
+      <button type="button" class="ls-connect-toggle" id="connectToggle" aria-expanded="true" aria-controls="connectForm" aria-controls="connectForm">
         Connect dataset
       </button>
       <form id="connectForm" class="ls-connect-body">

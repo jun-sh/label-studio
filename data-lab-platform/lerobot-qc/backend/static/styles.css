@@ -1,17 +1,17 @@
 /* Label Studio–inspired light editor theme (Path A) */
 
 :root {
-  --ls-bg: #f3f4f8;
+  --ls-bg: #f7f8fa;
   --ls-surface: #ffffff;
   --ls-surface-2: #f8f9fc;
   --ls-border: #d8dee9;
   --ls-border-strong: #c5cdd9;
   --ls-text: rgba(0, 0, 0, 0.85);
-  --ls-muted: rgba(0, 0, 0, 0.45);
+  --ls-muted: #626b7a;
   --ls-primary: #576cc9;
   --ls-primary-hover: #4a5eb5;
   --ls-primary-soft: #eef1fb;
-  --ls-danger: #d4534f;
+  --ls-danger: #b93835;
   --ls-playhead: #ff4d4f;
   --ls-shadow: 0 1px 3px rgb(15 23 42 / 8%);
   --ls-timeline-h: 120px;
@@ -45,13 +45,14 @@ body {
 }
 
 .ls-app {
-  min-height: 200vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   height: auto;
   max-height: none;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px 16px 16px;
+  padding: 20px 24px 24px;
   overflow: visible;
   box-sizing: border-box;
 }
@@ -171,10 +172,6 @@ body {
   cursor: pointer;
   padding: 0 0 8px;
   color: var(--ls-text);
-}
-
-.ls-connect-body.collapsed {
-  display: none;
 }
 
 .ls-connect-body.collapsed {
@@ -535,12 +532,12 @@ select:focus {
 
 .ls-episode-status-complete {
   background: rgb(16 185 129 / 15%);
-  color: #059669;
+  color: #047857;
 }
 
 .ls-episode-status-partial {
   background: rgb(245 158 11 / 15%);
-  color: #d97706;
+  color: #92400e;
 }
 
 .ls-episode-status-none {
@@ -1765,4 +1762,277 @@ body.ls-playhead-seeking .ls-playhead-handle {
 .ls-video-pane--error video {
   background: #fff1f0;
   outline: 2px dashed #ff7875;
+}
+
+/* Data Lab workbench polish: keep dense editing controls readable and responsive. */
+.ls-topbar,
+.ls-panel,
+.ls-sidebar,
+.ls-editor {
+  border-radius: 12px;
+}
+
+.ls-topbar {
+  min-height: 68px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ls-brand,
+.ls-topbar-left,
+.ls-topbar-actions,
+.ls-editor,
+.ls-editor-head > div {
+  min-width: 0;
+}
+
+.ls-brand-mark {
+  flex-shrink: 0;
+}
+
+.ls-brand strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.ls-panel,
+.ls-editor {
+  padding: 20px;
+}
+
+.ls-connect-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0 12px;
+}
+
+.ls-connect-toggle::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-right: 2px solid var(--ls-muted);
+  border-bottom: 2px solid var(--ls-muted);
+  transform: rotate(45deg);
+  flex-shrink: 0;
+}
+
+.ls-connect-toggle[aria-expanded="false"]::after {
+  transform: rotate(-45deg);
+}
+
+.ls-form-row > label {
+  flex: 1 1 160px;
+  min-width: 0;
+  gap: 6px;
+}
+
+.ls-form-row > .ls-grow {
+  flex: 2 1 280px;
+}
+
+.ls-form-row input,
+.ls-form-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+.ls-btn,
+input,
+select {
+  min-height: 36px;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  min-height: 0;
+}
+
+textarea {
+  font: inherit;
+  line-height: 1.6;
+  color: var(--ls-text);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 2px solid var(--ls-primary);
+  outline-offset: 3px;
+}
+
+.ls-editor-head,
+.ls-editor-tools {
+  flex-wrap: wrap;
+}
+
+.ls-editor-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--ls-border);
+}
+
+.ls-status,
+.ls-helper,
+.ls-muted,
+.ls-episode-title {
+  overflow-wrap: anywhere;
+}
+
+.ls-helper,
+.ls-muted {
+  line-height: 1.6;
+}
+
+.ls-frame-readout,
+.ls-episode-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+.ls-sidebar-head {
+  padding: 16px;
+}
+
+.ls-episode-list li.active {
+  box-shadow: inset 3px 0 0 var(--ls-primary);
+}
+
+@media (max-width: 960px) {
+  .ls-sidebar {
+    position: static;
+    max-height: 320px;
+  }
+
+  .ls-episode-filters {
+    flex-direction: row;
+  }
+
+  .ls-episode-filters > * {
+    flex: 1;
+    min-width: 0;
+    width: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .ls-app {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .ls-topbar,
+  .ls-panel,
+  .ls-editor {
+    padding: 16px;
+  }
+
+  .ls-form-row > label,
+  .ls-form-row > .ls-grow {
+    flex-basis: 100%;
+  }
+
+  .ls-form-row > .ls-btn {
+    width: 100%;
+  }
+
+  .ls-editor-tools {
+    gap: 6px;
+  }
+
+  .ls-video-grid.ls-video-grid--2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ls-btn,
+  .ls-btn-primary.dirty-pulse:not(:disabled) {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* QC-specific review controls and delivery feedback. */
+.ls-storage-panel {
+  padding: 16px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+}
+
+.ls-storage-head,
+.ls-storage-volume,
+.ls-qc-review-actions {
+  flex-wrap: wrap;
+}
+
+.ls-storage-volume-meta {
+  flex: 1 1 180px;
+}
+
+.ls-storage-status {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.ls-qc-instruction-panel {
+  padding: 16px;
+  background: var(--ls-surface-2);
+  border: 1px solid var(--ls-border);
+  border-radius: 10px;
+}
+
+.ls-qc-instruction-panel textarea {
+  min-height: 96px;
+}
+
+.ls-qc-chart-block {
+  min-width: 0;
+  padding: 16px;
+  border-radius: 10px;
+}
+
+.ls-qc-chart-block canvas {
+  max-width: 100%;
+}
+
+.ls-qc-modal:not([hidden]) {
+  padding: 16px;
+}
+
+.ls-qc-modal-body {
+  min-width: 0;
+  width: min(480px, 100%);
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 24px;
+  border-radius: 14px;
+  box-shadow: 0 20px 48px rgb(15 23 42 / 20%);
+}
+
+@media (max-width: 600px) {
+  .ls-qc-instruction-panel {
+    padding: 12px;
+  }
+
+  .ls-qc-review-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .ls-qc-review-actions > .ls-btn {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ls-rebuild-progress-fill {
+    transition: none;
+  }
 }

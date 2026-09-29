@@ -4,24 +4,20 @@
 
 平台部署与日常操作入口：[data-lab-platform/README.md](../data-lab-platform/README.md)
 
-## EGO 采集与上传（ego-lan-214）
+## EGO 采集与上传（ego-001）
+
+生产采集站为 **ego-001**（`10.10.10.130`）。日常运维见 [data-lab-platform/docs/gpd-micropc2-capture-station-setup.md](../data-lab-platform/docs/gpd-micropc2-capture-station-setup.md)。
+
+旧版 **ego-lan-214**（`10.10.10.214`）文档已退役，见 [_deprecated/](./_deprecated/README.md)。
+
+## 架构与规划（历史）
 
 | 文档 | 说明 |
 |------|------|
-| [ego-lan-214-agent-upload-operator-guide.md](./ego-lan-214-agent-upload-operator-guide.md) | 214 Agent 上传操作员手册（商用交付） |
-| [ego-lan-214-upload-channel-policy.md](./ego-lan-214-upload-channel-policy.md) | 上传通道策略（Agent vs 浏览器） |
-| [ego-lan-214-pipeline-runbook.md](./ego-lan-214-pipeline-runbook.md) | 全流程操作手册 |
-| [ego-edge-offline-upload-and-deployment.md](./ego-edge-offline-upload-and-deployment.md) | 离线上传与边缘部署 |
-| [ego-lan-214-segment-storage-and-upload.md](./ego-lan-214-segment-storage-and-upload.md) | 段存储与上传数据流 |
-
-## 架构与规划
-
-| 文档 | 说明 |
-|------|------|
-| [ego-lan-214-p1-data-platform-evolution.md](./ego-lan-214-p1-data-platform-evolution.md) | 数据平台架构路线图 |
-| [ego-lan-214-p1-phase1-implementation-plan.md](./ego-lan-214-p1-phase1-implementation-plan.md) | 阶段一实施计划（W1–W2） |
-| [ego-lan-214-agent-upload-commercial-prd.md](./ego-lan-214-agent-upload-commercial-prd.md) | Agent 上传商用体验 PRD |
-| [ego-lan-214-p0p-mux-deploy.md](./ego-lan-214-p0p-mux-deploy.md) | P0+ mux/scaffold 部署与验收（历史） |
+| [data-lab-platform/docs/ego-maxinsights-pipeline.md](../data-lab-platform/docs/ego-maxinsights-pipeline.md) | **MaxInsights 对齐**：9 感知模块 + 生产闭环 + taxonomy |
+| [data-lab-platform/docs/ego-core-pipeline.md](../data-lab-platform/docs/ego-core-pipeline.md) | EGO 采集→上传→派生最简主路径 |
+| [_deprecated/ego-lan-214-p1-data-platform-evolution.md](./_deprecated/ego-lan-214-p1-data-platform-evolution.md) | 数据平台架构路线图（历史） |
+| [_deprecated/ego-lan-214-p1-phase1-implementation-plan.md](./_deprecated/ego-lan-214-p1-phase1-implementation-plan.md) | 阶段一实施计划（历史） |
 
 ## 数据集
 

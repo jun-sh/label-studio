@@ -32,7 +32,7 @@ html.datalab-import-modal-open {
   background: #ffffff;
   color: #18181b;
   border: 1px solid #e4e4e7;
-  border-radius: 10px;
+  border-radius: 14px;
   box-shadow: 0 20px 48px rgba(15, 23, 42, 0.22);
   outline: none;
 }
@@ -42,7 +42,7 @@ html.datalab-import-modal-open {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 20px 20px 8px;
+  padding: 24px 24px 12px;
 }
 
 .datalab-import-modal__title {
@@ -82,13 +82,14 @@ html.datalab-import-modal-open {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 8px 20px 12px;
+  padding: 8px 24px 24px;
+  overscroll-behavior: contain;
 }
 
 .datalab-import-modal__footer {
   display: flex;
   justify-content: flex-end;
-  padding: 12px 20px 20px;
+  padding: 16px 24px;
   border-top: 1px solid #e4e4e7;
 }
 
@@ -110,7 +111,7 @@ html.datalab-import-modal-open {
 .datalab-import-modal .datalab-import-ui__drop {
   width: 100%;
   box-sizing: border-box;
-  padding: 20px 16px;
+  padding: 28px 20px;
   border: 1px dashed #d4d4d8;
   border-radius: 8px;
   text-align: center;
@@ -243,4 +244,50 @@ html.datalab-import-modal-open {
 
 .datalab-import-modal .datalab-import-ui__retry:hover {
   border-color: #4c5fa9;
+}
+
+.datalab-import-modal button:focus-visible,
+.datalab-import-modal [tabindex="0"]:focus-visible {
+  outline: 2px solid #4c5fa9;
+  outline-offset: 3px;
+}
+
+.datalab-import-modal .datalab-import-ui__drop-text {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .datalab-import-modal {
+    padding: 16px;
+  }
+
+  .datalab-import-modal__dialog {
+    width: 100%;
+    max-height: calc(100dvh - 32px);
+  }
+
+  .datalab-import-modal__header,
+  .datalab-import-modal__body,
+  .datalab-import-modal__footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .datalab-import-modal .datalab-import-ui__row-head {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .datalab-import-modal .datalab-import-ui__drop,
+  .datalab-import-modal .datalab-import-ui__bar-fill {
+    transition: none;
+  }
+}
+
+.datalab-import-modal__titles {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

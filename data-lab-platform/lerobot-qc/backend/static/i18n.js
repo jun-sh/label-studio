@@ -6,7 +6,7 @@
 
   const MESSAGES = {
     en: {
-      brand_mark: 'LS',
+      brand_mark: 'DL',
       brand_title: 'Data QC',
       brand_sub: 'Terminal inspection',
       embed_brand_mark: 'DL',
@@ -222,7 +222,7 @@
       qc_local_path_label: 'Dataset path (read-only)',
     },
     'zh-Hans': {
-      brand_mark: 'LS',
+      brand_mark: 'DL',
       brand_title: 'Data QC',
       brand_sub: '终端质检',
       embed_brand_mark: 'DL',
@@ -288,8 +288,8 @@
       connect_loaded: 'Loaded {count} episodes.',
       connect_episode_saved: 'Episode {idx} saved.',
       episodes_title: 'Episodes',
-      episode_search: 'Filter #',
-      episode_filter_all: 'All',
+      episode_search: '搜索 Episode 编号',
+      episode_filter_all: '全部状态',
       episode_filter_complete: 'Complete',
       episode_filter_partial: 'In progress',
       episode_filter_none: 'Not started',

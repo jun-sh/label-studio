@@ -14,7 +14,6 @@ services:
     environment:
       - STREAM_DATA_ROOT=/srv/stream
       - STREAM_QUOTA_GB=400
-      - STREAM_QUOTA_GB_EGO_LAN_214=400
       - DATALAB_STORAGE_QUOTA_GB=512
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
@@ -35,7 +34,6 @@ services:
       - PYTHONPATH=/ego-platform/src
       - STREAM_DATA_ROOT=/srv/stream
       - STREAM_QUOTA_GB=400
-      - STREAM_QUOTA_GB_EGO_LAN_214=400
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
 
@@ -52,7 +50,6 @@ services:
     environment:
       - STREAM_DATA_ROOT=/srv/stream
       - STREAM_QUOTA_GB=400
-      - STREAM_QUOTA_GB_EGO_LAN_214=400
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
       - STREAM_SEGMENT_MINUTES=5

@@ -1,0 +1,11 @@
+[project]
+name = "oak-4p-calib"
+version = "0.1.0"
+description = "OAK-FFC-4P / OAK-4P four-camera fisheye calibration tools (EEPROM read + undistort preview)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "depthai>=3.6.1",
+    "numpy>=2.2.6",
+    "opencv-python-headless>=4.13.0.92",
+]

@@ -9,6 +9,7 @@ import { canonicalDatasetKey } from "./qc-dataset-key.mjs";
 import { readManifest } from "./derive/manifest.mjs";
 import { isPoseReady } from "./derive/provenance.mjs";
 import { stationRoot } from "./ingest/station-context.mjs";
+import { getMaxInsightsPipelineStatus, loadPerceptionModuleConfig } from "./perception-modules.mjs";
 import { hasSessionMarker, readSessionMarker, SESSION_MARKERS } from "./session-markers.mjs";
 
 function datalabRoot() {
@@ -145,6 +146,18 @@ export function episodeDeliveryRow(root, stationId, sessionId, options = {}) {
     }
   }
 
+  const maxinsights = getMaxInsightsPipelineStatus({
+    root,
+    stationId,
+    sessionId,
+    slug,
+    episodeIndex,
+    preview_ready,
+    pose_ready,
+    qc_approved,
+    qcManifest,
+  });
+
   return {
     session_id: sessionId,
     episode_index: episodeIndex,
@@ -158,6 +171,10 @@ export function episodeDeliveryRow(root, stationId, sessionId, options = {}) {
     video_codec: ep.video_codec || ep.provenance?.video_codec || null,
     pose_ready_at: fs.existsSync(finalizePath) ? new Date(fs.statSync(finalizePath).mtimeMs).toISOString() : null,
     preview_ready_at: readyMarker?.at || null,
+    taxonomy: maxinsights.taxonomy,
+    perception_modules: maxinsights.perception_modules,
+    active_module_count: maxinsights.active_module_count,
+    production_loop: maxinsights.production_loop,
   };
 }
 
@@ -168,9 +185,12 @@ export function getEpisodeDeliveryStatus(stationId, options = {}) {
   const episodes = sessions.map((sessionId) =>
     episodeDeliveryRow(root, stationId, sessionId, options),
   );
+  const config = loadPerceptionModuleConfig();
   return {
     stationId,
     contract: "ego_export_contract@1.0",
+    pipeline_model: config.schema_version || "maxinsights_aligned@1.0",
+    pipeline_reference: config.reference || "https://www.maxinsights.ai/#1",
     slo_b_seconds: Number(process.env.EGO_CONVERT_SLO_B_SEC || 600),
     episodes,
     updatedAt: new Date().toISOString(),

@@ -1,0 +1,146 @@
+{
+  "schema_version": "maxinsights_aligned@1.0",
+  "reference": "https://www.maxinsights.ai/#1",
+  "taxonomy": {
+    "environment": "extended_info.scene_id",
+    "task": "task_id",
+    "subtask": "meta/subtasks.parquet",
+    "instruction": "meta/tasks.parquet + qc instruction override"
+  },
+  "modules": [
+    {
+      "id": "video_understanding",
+      "order": 1,
+      "label_en": "Video Understanding",
+      "label_zh": "视频理解",
+      "description": "Actions, activities, temporal structure from egocentric video",
+      "pipeline_layers": ["derive", "annotation"],
+      "backends": ["derive-worker", "embodied-annotate"],
+      "feature_keys": ["observation.images.*"],
+      "probe": "preview_ready"
+    },
+    {
+      "id": "depth",
+      "order": 2,
+      "label_en": "Depth",
+      "label_zh": "深度",
+      "description": "3D structure and geometry",
+      "pipeline_layers": ["L3"],
+      "backends": ["depth_anything_v2", "oak_stereo"],
+      "feature_keys": ["observation.depth"],
+      "probe": "l3_depth_preview"
+    },
+    {
+      "id": "object_tracking",
+      "order": 3,
+      "label_en": "Object Tracking",
+      "label_zh": "物体跟踪",
+      "description": "Object instances and trajectories",
+      "pipeline_layers": ["L4"],
+      "backends": [],
+      "feature_keys": ["observation.object_track"],
+      "probe": "planned"
+    },
+    {
+      "id": "hand_poses",
+      "order": 4,
+      "label_en": "Hand Poses",
+      "label_zh": "手部姿态",
+      "description": "Hand state and manipulation",
+      "pipeline_layers": ["L3", "L4"],
+      "backends": ["mediapipe", "wilor", "hamer"],
+      "feature_keys": [
+        "observation.hand_pose_left",
+        "observation.hand_pose_right"
+      ],
+      "probe": "hand_pose"
+    },
+    {
+      "id": "upper_body_poses",
+      "order": 5,
+      "label_en": "Upper Body Poses",
+      "label_zh": "上半身姿态",
+      "description": "Body kinematics and motion",
+      "pipeline_layers": ["L2", "L4"],
+      "backends": ["head_pose", "smplx"],
+      "feature_keys": ["observation.head_pose"],
+      "probe": "head_pose_feature"
+    },
+    {
+      "id": "tactile_force",
+      "order": 6,
+      "label_en": "Tactile Force",
+      "label_zh": "触觉/力",
+      "description": "Contact, pressure, and force signals",
+      "pipeline_layers": [],
+      "backends": [],
+      "feature_keys": ["observation.tactile", "observation.force"],
+      "probe": "unsupported_hardware"
+    },
+    {
+      "id": "localization",
+      "order": 7,
+      "label_en": "Localization",
+      "label_zh": "定位",
+      "description": "Camera and body pose in the world",
+      "pipeline_layers": ["derive", "L2"],
+      "backends": ["imu_200hz", "vio"],
+      "feature_keys": ["observation.imu", "sensor_raw/imu"],
+      "probe": "imu_derived"
+    },
+    {
+      "id": "segmentation",
+      "order": 8,
+      "label_en": "Segmentation",
+      "label_zh": "分割",
+      "description": "Scene and object labels",
+      "pipeline_layers": ["L4"],
+      "backends": ["sam2"],
+      "feature_keys": ["observation.segmentation"],
+      "probe": "planned"
+    },
+    {
+      "id": "point_cloud",
+      "order": 9,
+      "label_en": "Point Cloud",
+      "label_zh": "点云",
+      "description": "Dense 3D representations",
+      "pipeline_layers": ["L4"],
+      "backends": ["oak_depth", "slam"],
+      "feature_keys": ["observation.point_cloud"],
+      "probe": "planned"
+    }
+  ],
+  "production_loop": [
+    {
+      "id": "task_design",
+      "label_en": "Task Design",
+      "label_zh": "任务设计",
+      "gate": "task_id_present"
+    },
+    {
+      "id": "capture",
+      "label_en": "Capture",
+      "label_zh": "采集",
+      "gate": "done_upload"
+    },
+    {
+      "id": "processing",
+      "label_en": "Processing",
+      "label_zh": "处理",
+      "gate": "preview_ready"
+    },
+    {
+      "id": "qa",
+      "label_en": "QA",
+      "label_zh": "质检",
+      "gate": "qc_approved"
+    },
+    {
+      "id": "structured_outputs",
+      "label_en": "Structured Outputs",
+      "label_zh": "结构化输出",
+      "gate": "exportable"
+    }
+  ]
+}

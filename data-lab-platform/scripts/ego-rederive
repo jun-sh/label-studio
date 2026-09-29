@@ -120,7 +120,7 @@ start_derive_queue() {
   cd "${ROOT}"
   export EGO_DATALAB_ROOT="${ROOT}"
   DERIVE_STANDALONE=1 \
-    DERIVE_ASYNC_EGO_LAN_214=1 \
+    DERIVE_ASYNC_EGO_001=1 \
     DERIVE_EXTRACT_BACKEND="${DERIVE_EXTRACT_BACKEND:-python}" \
     DERIVE_MUX_BACKEND="${DERIVE_MUX_BACKEND:-fluent}" \
     ${COMPOSE} up -d stream-ingest derive-worker >/dev/null

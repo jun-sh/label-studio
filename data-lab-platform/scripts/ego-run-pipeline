@@ -24,8 +24,8 @@ for arg in "$@"; do
   --skip-deploy        跳过 deploy-local-datasets（由 ego-process 做轻量 ingest）
   --skip-gate          跳过 Viewer 发布门禁
   --skip-viewer-sync   跳过 convert 后自动轻量 Viewer sync（P-Ops-3 默认开启）
-  --reset-34           仅清 34（stream/pipeline/corpus/samples），保留 214 可重传
-  --reset-full         清 214 + 34 全链路（须确认）
+  --reset-34           仅清 34（stream/pipeline/corpus/samples），保留边缘段文件可重传
+  --reset-full         清边缘机 + 34 全链路（须确认）
   --reset              同 --reset-full（兼容旧用法）
 
 对外交付请优先使用: ego-deliver <station> 或 ego-process <station>
@@ -281,7 +281,7 @@ _wait_session_parquet_ready() {
 }
 
 if [[ "$RESET_MODE" == "34" ]]; then
-  log "重置模式：仅清 34 平台数据（保留 214 段文件可重传）"
+  log "重置模式：仅清 34 平台数据（保留边缘段文件可重传）"
   if [[ "${EGO_RESET_YES:-}" != "1" ]]; then
     echo "⚠️  将删除 34 上 stream / pipeline / corpus / samples。"
     read -r -p "确认 --reset-34？[y/N] " ans
@@ -290,7 +290,7 @@ if [[ "$RESET_MODE" == "34" ]]; then
   STATION_ID="$STATION" EGO_RESET_YES=1 bash "$RESET_34_SH" 2>&1 | tee -a "$RUN_LOG"
   log "34 清场完成"
 elif [[ "$RESET_MODE" == "full" ]]; then
-  log "重置模式：将清空 214 + 34 全链路数据后重新处理"
+  log "重置模式：将清空边缘机 + 34 全链路数据后重新处理"
   if [[ "${EGO_RESET_YES:-}" != "1" ]]; then
     echo "⚠️  此操作会删除该站所有采集、后处理、Viewer 数据，无法撤销。"
     read -r -p "确认 --reset-full？[y/N] " ans

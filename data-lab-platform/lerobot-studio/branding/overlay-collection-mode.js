@@ -1335,7 +1335,7 @@
       "data-datalab-collection-preview",
       collectionModeUi.mode === "preview" ? "1" : "0",
     );
-    // Poll 214 preview only when remote preview is enabled and station heartbeat is online.
+    // Poll edge preview only when remote preview is enabled and station heartbeat is online.
     if (collectionModeUi.mode === "preview" && previewModeAllowed()) {
       connectCollectionPreviewStreams();
     } else {

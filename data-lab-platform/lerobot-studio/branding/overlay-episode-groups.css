@@ -5,13 +5,13 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 32px;
+  min-height: 36px;
   margin: 0;
   padding: 6px 10px;
   border: none;
   border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
   background: color-mix(in srgb, currentColor 4%, transparent);
-  color: rgb(100, 116, 139);
+  color: hsl(var(--muted-foreground, 215.4 16.3% 46.9%));
   font-family: inherit;
   font-size: 14px;
   font-weight: 400;
@@ -30,11 +30,11 @@
 
 #lerobot-root [data-datalab-episode-date-header]:hover {
   background: color-mix(in srgb, currentColor 7%, transparent);
-  color: rgb(71, 85, 105);
+  color: hsl(var(--foreground, 222.2 84% 4.9%));
 }
 
 #lerobot-root [data-datalab-episode-date-header]:focus-visible {
-  outline: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  outline: 2px solid hsl(var(--primary, 221.2 83.2% 53.3%));
   outline-offset: -2px;
 }
 
@@ -60,6 +60,7 @@
 #lerobot-root [data-datalab-episode-date-header] [data-datalab-episode-date-label] {
   flex: 1 1 auto;
   min-width: 0;
+  overflow-wrap: anywhere;
   pointer-events: none;
   font-size: inherit;
   font-weight: inherit;
@@ -80,4 +81,10 @@
 
 [data-datalab-episode-row][data-datalab-episode-hidden="1"] {
   display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #lerobot-root [data-datalab-episode-date-chevron] {
+    transition: none;
+  }
 }

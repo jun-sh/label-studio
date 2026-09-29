@@ -8,7 +8,7 @@ const PREVIEW_PORT = Number(process.env.PREVIEW_HTTP_PORT || 8765);
 const PREVIEW_PROXY_TIMEOUT_MS = Number(process.env.PREVIEW_PROXY_TIMEOUT_MS || 4000);
 const PREVIEW_MAX_CONCURRENT_PER_STATION = Number(process.env.PREVIEW_PROXY_MAX_CONCURRENT || 4);
 const CANONICAL_CAMS = new Set(["front_left", "front_right", "rear_left", "rear_right"]);
-/** Historical preview URL segments → canonical short names on 214. */
+/** Historical preview URL segments → canonical short camera names. */
 const LEGACY_PREVIEW_CAM_ALIASES = {
   head_left: "front_left",
   head_right: "front_right",

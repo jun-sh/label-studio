@@ -60,7 +60,10 @@ class StopStateWebTest(unittest.TestCase):
             status = ego_web._build_status()
         self.assertEqual(status["state"], "stopping")
         self.assertEqual(status["capture_stop_phase"], "sealed")
-        self.assertIn("已保存", status["msg"])
+        self.assertEqual(status["msg"], "")
+
+    def test_warm_idle_stop_phase_message_is_empty(self) -> None:
+        self.assertEqual(ego_web._capture_stop_phase_message("warm_idle"), "")
 
 
 if __name__ == "__main__":

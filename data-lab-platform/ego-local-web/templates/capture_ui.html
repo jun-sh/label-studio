@@ -676,8 +676,23 @@
     previewImg.removeAttribute("src");
   }
 
+  function postAction(path) {
+    return fetch(path, { method: "POST", cache: "no-store" }).then(function (r) {
+      return r.json();
+    });
+  }
+
+  function shouldRetryStart(res, attempt) {
+    if (!res || res.success) return false;
+    if (attempt >= 3) return false;
+    if (res.code === "preview_port_busy") return true;
+    var msg = String(res.msg || "");
+    return msg.indexOf("8765") >= 0 || msg.indexOf("预览端口") >= 0 || msg.indexOf("操作过快") >= 0;
+  }
+
   function doAction(path, opts) {
     opts = opts || {};
+    var startAttempt = opts.startAttempt || 0;
     if (actionInFlight) return;
     actionInFlight = true;
     mainBtn.disabled = true;
@@ -695,12 +710,24 @@
       stopPreview();
     } else if (path === "/api/capture/start") {
       setStatusLink("busy");
-      setHeader("设备连接中", "正在启动相机…", { spinner: true });
+      if (startAttempt > 0) {
+        setHeader("正在释放预览端口", "准备启动采集…", { spinner: true });
+      } else {
+        setHeader("设备连接中", "正在启动相机…", { spinner: true });
+      }
       setBtnMode("start", "启动中…", true);
     }
-    fetch(path, { method: "POST", cache: "no-store" })
-      .then(function (r) { return r.json(); })
+    return postAction(path)
       .then(function (res) {
+        if (path === "/api/capture/start" && shouldRetryStart(res, startAttempt)) {
+          var waitMs = Math.max(500, (res.retry_after_s || 2) * 1000);
+          return new Promise(function (resolve) {
+            setTimeout(resolve, waitMs);
+          }).then(function () {
+            actionInFlight = false;
+            doAction(path, { startAttempt: startAttempt + 1 });
+          });
+        }
         if (path === "/api/capture/abandon" && !res.success) {
           setStatusLink("error");
           setHeader("放弃失败", res.msg || "请稍后重试", { subClass: "err" });
@@ -711,7 +738,9 @@
         }
         return fetchStatus();
       })
-      .finally(function () { actionInFlight = false; });
+      .finally(function () {
+        actionInFlight = false;
+      });
   }
 
   mainBtn.addEventListener("click", function () {
@@ -734,6 +763,7 @@
     doAction("/api/capture/abandon");
   });
 
+  fetch("/api/preview/activate", { method: "POST", cache: "no-store" }).catch(function () {});
   fetchStatus();
   pollTimer = setInterval(fetchStatus, __STATUS_POLL_MS__);
 })();

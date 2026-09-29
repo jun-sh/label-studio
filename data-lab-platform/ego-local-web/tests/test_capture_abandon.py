@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location("ego_web", _ROOT / "ego_web.py")
@@ -72,6 +73,23 @@ class CaptureAbandonTest(unittest.TestCase):
             seg.mkdir(parents=True)
             self.assertTrue(ego_web._session_has_segment_dirs(sid))
             self.assertFalse(ego_web._session_has_segment_dirs("sess_none"))
+
+    def test_run_capture_abandon_uses_warm_stop_when_enabled(self) -> None:
+        with (
+            mock.patch.object(ego_web, "_capture_active", return_value=True),
+            mock.patch.object(ego_web, "_read_checkpoint", return_value={"sessionId": "sess_w"}),
+            mock.patch.object(ego_web, "_session_has_uploaded_segments", return_value=False),
+            mock.patch.object(ego_web, "_stop_capture_abandon_to_warm", return_value=True) as warm,
+            mock.patch.object(ego_web, "_stop_capture_hard") as hard,
+            mock.patch.object(ego_web, "_delete_session_data") as delete,
+            mock.patch.object(ego_web, "_log_abandon"),
+        ):
+            ok, msg = ego_web._run_capture_abandon()
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
+        warm.assert_called_once()
+        hard.assert_not_called()
+        delete.assert_called_once_with("sess_w")
 
 
 if __name__ == "__main__":

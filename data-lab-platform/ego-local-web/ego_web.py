@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 import urllib.error
 import urllib.request
 import uuid
@@ -71,6 +73,12 @@ CAPTURE_STOP_STATE_PATH = Path(
         str(CHECKPOINT_PATH.parent / "capture_stop_state.json"),
     )
 )
+CAPTURE_ABANDON_REQUEST_PATH = Path(
+    os.environ.get(
+        "EGO_CAPTURE_ABANDON_REQUEST",
+        str(CHECKPOINT_PATH.parent / "capture_abandon_request.json"),
+    )
+)
 # Must match ego_capture_studio.capture.capture_stop_state phase strings.
 STOP_PHASE_RECORDING = "recording"
 STOP_PHASE_STOPPING = "stopping"
@@ -101,6 +109,17 @@ PREVIEW_CAMERA_SPECS: tuple[tuple[str, str, str], ...] = (
     ("rear_right", "后右", "Rear Right"),
 )
 PREVIEW_CAM_IDS = frozenset(cam for cam, _, _ in PREVIEW_CAMERA_SPECS)
+VIEW_BY_NUM: dict[int, str] = {
+    1: "front_left",
+    2: "front_right",
+    3: "rear_left",
+    4: "rear_right",
+}
+PREVIEW_PUBLIC_HOST = os.environ.get(
+    "EGO_TCP_PREVIEW_HOST",
+    os.environ.get("EGO_PREVIEW_PUBLIC_HOST", "127.0.0.1"),
+).strip()
+PREVIEW_PUBLIC_PORT = int(os.environ.get("EGO_TCP_PREVIEW_HTTP_PORT", "8765"))
 STORAGE_WARN_GB = float(os.environ.get("EGO_STORAGE_WARN_GB", "2"))
 START_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_START_TIMEOUT_S", "90"))
 STOP_TIMEOUT_S = float(os.environ.get("EGO_CAPTURE_STOP_TIMEOUT_S", "120"))
@@ -112,8 +131,28 @@ STATUS_POLL_MS = int(os.environ.get("EGO_STATUS_POLL_MS", "300"))
 PREVIEW_POLL_MS = int(os.environ.get("EGO_PREVIEW_POLL_MS", "200"))
 STANDBY_STOP_TIMEOUT_S = float(os.environ.get("EGO_STANDBY_STOP_TIMEOUT_S", "8"))
 PREVIEW_PORT_FREE_TIMEOUT_S = float(os.environ.get("EGO_PREVIEW_PORT_FREE_TIMEOUT_S", "8"))
+START_PREVIEW_HANDOFF_TIMEOUT_S = float(
+    os.environ.get("EGO_START_PREVIEW_HANDOFF_TIMEOUT_S", "15")
+)
+START_PREVIEW_HANDOFF_POLL_S = float(os.environ.get("EGO_START_PREVIEW_HANDOFF_POLL_S", "0.25"))
+STANDBY_WAKE_WAIT_S = float(os.environ.get("EGO_STANDBY_WAKE_WAIT_S", "25"))
+_PREVIEW_HANDOFF_LOCK_PATH = Path(
+    os.environ.get("EGO_PREVIEW_HANDOFF_LOCK", "/tmp/ego-preview-handoff.lock")
+)
+def _env_enabled(name: str, default: str = "1") -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes")
+
+
+PREVIEW_END_WARM_IDLE = _env_enabled(
+    "EGO_PREVIEW_END_WARM_IDLE",
+    os.environ.get("EGO_QUAD_END_WARM_IDLE", "1"),
+)
+QUAD_END_WARM_IDLE = PREVIEW_END_WARM_IDLE
 
 _lock = threading.Lock()
+_QUAD_WARM_END_LOCK = threading.Lock()
+_quad_warm_end_in_progress = False
+_quad_warm_end_requested = False
 _busy = False
 _busy_action: str | None = None
 _last_action_mono = 0.0
@@ -262,6 +301,21 @@ def _read_oak_warm_state() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _write_capture_abandon_request(session_id: str) -> None:
+    CAPTURE_ABANDON_REQUEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"sessionId": session_id, "requested_at": time.time()}
+    tmp = CAPTURE_ABANDON_REQUEST_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+    tmp.replace(CAPTURE_ABANDON_REQUEST_PATH)
+
+
+def _clear_capture_abandon_request() -> None:
+    try:
+        CAPTURE_ABANDON_REQUEST_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _read_capture_stop_state() -> dict[str, Any]:
     if not CAPTURE_STOP_STATE_PATH.is_file():
         return {}
@@ -282,8 +336,9 @@ def _capture_stop_phase_message(phase: str) -> str:
         STOP_PHASE_STOPPING: "正在结束采集…",
         STOP_PHASE_FLUSHING: "正在写入帧缓冲，请勿断电…",
         STOP_PHASE_SEALING: "正在封存本段数据，请勿断电…",
-        STOP_PHASE_SEALED: "数据已保存，正在保持相机连接…",
-        STOP_PHASE_WARM_IDLE: "已停止，相机保持连接",
+        # sealed / warm_idle: keep generic stopping UX; warm idle is internal only.
+        STOP_PHASE_SEALED: "",
+        STOP_PHASE_WARM_IDLE: "",
         STOP_PHASE_ERROR: "停止出错，正在恢复…",
     }
     return messages.get(phase, "正在保存数据，请勿断电…")
@@ -594,18 +649,228 @@ def _touch_standby_preview_activity() -> None:
     _standby_preview_touch_mono = time.monotonic()
 
 
+@contextmanager
+def _file_preview_handoff_lock(blocking: bool = True):
+    """Cross-process lock (8080 + 8081) for standby teardown / capture handoff."""
+    _PREVIEW_HANDOFF_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(_PREVIEW_HANDOFF_LOCK_PATH, "a+")
+    try:
+        flags = fcntl.LOCK_EX
+        if not blocking:
+            flags |= fcntl.LOCK_NB
+        fcntl.flock(fh.fileno(), flags)
+        yield
+    except BlockingIOError:
+        raise
+    finally:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+
+def _wait_unit_active(unit: str, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if _capture_unit_state(unit) == "active":
+            return True
+        time.sleep(0.15)
+    return _capture_unit_state(unit) == "active"
+
+
+def _standby_preview_boot_state() -> str:
+    """Quad UI boot phase: off | activating | active | blocked."""
+    if _capture_active() or _capture_stopping() or _oak_warm_idle_active():
+        return "blocked"
+    state = _capture_unit_state(STANDBY_PREVIEW_UNIT)
+    if state == "active":
+        return "active"
+    if state in ("activating", "reloading"):
+        return "activating"
+    if _preview_port_in_use():
+        return "activating"
+    return "off"
+
+
+def _end_warm_idle_for_quad_preview_worker() -> None:
+    """Background: hard-stop warm-idle capture and hand OAK to standby quad."""
+    global _quad_warm_end_in_progress, _quad_warm_end_requested
+    try:
+        with _file_preview_handoff_lock():
+            if not _oak_warm_idle_active():
+                return
+            with _lock:
+                if _busy and _busy_action in ("start", "stop", "abandon"):
+                    print("quad_end_warm_idle skip busy", flush=True)
+                    _quad_warm_end_requested = False
+                    return
+            print("quad_end_warm_idle begin", flush=True)
+            ok = _stop_capture_hard()
+            if ok:
+                print("quad_end_warm_idle ok", flush=True)
+            else:
+                print("quad_end_warm_idle failed", flush=True)
+                _quad_warm_end_requested = False
+    finally:
+        with _QUAD_WARM_END_LOCK:
+            _quad_warm_end_in_progress = False
+            if not _oak_warm_idle_active():
+                _quad_warm_end_requested = False
+
+
+def _maybe_end_warm_idle_for_multi_preview_async() -> str:
+    """Schedule warm-idle teardown so standby / multi-cam preview can start."""
+    global _quad_warm_end_in_progress, _quad_warm_end_requested
+    if not PREVIEW_END_WARM_IDLE:
+        return "off"
+    capture_state = _preview_capture_state()
+    if capture_state in ("recording", "starting", "warming", "stopping"):
+        return "blocked_capture"
+    if not _oak_warm_idle_active():
+        with _QUAD_WARM_END_LOCK:
+            _quad_warm_end_requested = False
+        return "ready"
+    with _lock:
+        if _busy and _busy_action in ("start", "stop", "abandon"):
+            return "blocked_busy"
+    with _QUAD_WARM_END_LOCK:
+        if _quad_warm_end_in_progress or _quad_warm_end_requested:
+            return "ending_warm_idle"
+        _quad_warm_end_requested = True
+        _quad_warm_end_in_progress = True
+    threading.Thread(
+        target=_end_warm_idle_for_quad_preview_worker,
+        name="quad-end-warm",
+        daemon=True,
+    ).start()
+    return "ending_warm_idle"
+
+
+def _quad_warm_end_active() -> bool:
+    with _QUAD_WARM_END_LOCK:
+        return _quad_warm_end_in_progress or _quad_warm_end_requested
+
+
+def _read_quad_transition_phase() -> str:
+    """Read-only quad/warm transition phase (no lifecycle side effects)."""
+    if not PREVIEW_END_WARM_IDLE:
+        return "off"
+    if _quad_warm_end_active():
+        return "ending_warm_idle"
+    if _oak_warm_idle_active():
+        return "warm_idle"
+    return "ready"
+
+
+def _prepare_view_switch_preview_access() -> str:
+    """Unity/TCP change_view: end warm idle when idle, then wake standby."""
+    return prepare_multi_preview_access()["phase"]
+
+
+def prepare_multi_preview_access() -> dict[str, Any]:
+    """TCP prepare_multi_preview / POST prepare-quad: end warm idle and wake standby."""
+    phase = _maybe_end_warm_idle_for_multi_preview_async()
+    if phase in ("ready", "off"):
+        _wake_standby_preview_if_idle()
+    messages = {
+        "ready": "",
+        "off": "",
+        "ending_warm_idle": "正在结束热待机并启动四路预览，约需 10–15 秒",
+        "blocked_capture": "采集中不可四路预览",
+        "blocked_busy": "设备忙，请稍后再试",
+    }
+    success = phase not in ("blocked_capture", "blocked_busy")
+    return {
+        "success": success,
+        "phase": phase,
+        "msg": messages.get(phase, ""),
+    }
+
+
+_http_selected_view_num = 1
+_change_view_lock = threading.Lock()
+
+
+def _preview_public_urls(view_id: str) -> dict[str, str]:
+    base = f"http://{PREVIEW_PUBLIC_HOST}:{PREVIEW_PUBLIC_PORT}/preview/{view_id}"
+    return {
+        "preview_mjpeg_url": f"{base}/mjpeg",
+        "preview_jpg_url": f"{base}/jpg",
+        "preview_jpg_proxy_url": f"/api/preview/{view_id}.jpg",
+    }
+
+
+def get_change_view_state() -> dict[str, Any]:
+    view_num = _http_selected_view_num
+    view_id = VIEW_BY_NUM.get(view_num, "front_left")
+    return {
+        "view_num": view_num,
+        "view_id": view_id,
+        "phase": _read_quad_transition_phase(),
+        **_preview_public_urls(view_id),
+    }
+
+
+def change_view_access(view_num: int) -> dict[str, Any]:
+    """HTTP/TCP change_view: switch preview URL and optionally end warm idle."""
+    global _http_selected_view_num
+    if view_num not in VIEW_BY_NUM:
+        return {
+            "success": False,
+            "code": "invalid_view_num",
+            "message": "view_num must be 1, 2, 3, or 4",
+        }
+    with _change_view_lock:
+        _http_selected_view_num = view_num
+        phase = _prepare_view_switch_preview_access()
+    view_id = VIEW_BY_NUM[view_num]
+    messages = {
+        "ready": "",
+        "off": "",
+        "ending_warm_idle": "正在结束热待机并启动四路预览，约需 10–15 秒",
+        "blocked_capture": "采集中仅主预览路 live",
+        "blocked_busy": "设备忙，请稍后再试",
+    }
+    return {
+        "success": phase not in ("blocked_capture", "blocked_busy"),
+        "type": "view_changed_result",
+        "phase": phase,
+        "msg": messages.get(phase, ""),
+        "data": {
+            "view_num": view_num,
+            "view_id": view_id,
+            **_preview_public_urls(view_id),
+        },
+    }
+
+
+def activate_preview_access() -> dict[str, Any]:
+    """POST activate: explicit user intent to wake standby preview on capture UI."""
+    if WEB_UI_MODE == "quad":
+        return {"success": False, "msg": "quad mode uses prepare-quad"}
+    _wake_standby_preview_if_idle()
+    return {
+        "success": True,
+        "standby_state": _standby_preview_boot_state(),
+    }
+
+
 def _wake_standby_preview_if_idle() -> None:
     """Start low-FPS standby preview when user browses (OAK off otherwise)."""
     with _lock:
-        if _busy:
+        if _busy and _busy_action == "start":
             return
     if _capture_active() or _capture_stopping():
         return
     if _oak_warm_idle_active():
         return
     _touch_standby_preview_activity()
-    if _capture_unit_state(STANDBY_PREVIEW_UNIT) != "active":
-        _systemctl("start", STANDBY_PREVIEW_UNIT, timeout=20)
+    state = _capture_unit_state(STANDBY_PREVIEW_UNIT)
+    if state == "active":
+        return
+    if state == "activating":
+        return
+    _systemctl("start", STANDBY_PREVIEW_UNIT, timeout=20)
 
 
 def _maybe_stop_idle_standby_preview() -> None:
@@ -635,14 +900,38 @@ def _wait_unit_inactive(unit: str, timeout_s: float) -> bool:
     return _capture_unit_state(unit) in ("inactive", "failed", "")
 
 
-def _stop_standby_preview() -> None:
+def _capture_unit_starting_or_active() -> bool:
+    """True when capture stack owns OAK / :8765 (do not fuser-kill preview port)."""
+    rec = _capture_unit_state(CAPTURE_RECORD_UNIT)
+    tgt = _capture_unit_state(CAPTURE_TARGET)
+    return rec in ("active", "activating", "deactivating") or tgt in (
+        "active",
+        "activating",
+    )
+
+
+def _stop_standby_preview(*, allow_port_kill: bool = True) -> bool:
     """Release :8765 and OAK before capture (graceful stop, escalate only if needed)."""
+    try:
+        with _file_preview_handoff_lock(blocking=True):
+            return _stop_standby_preview_impl(allow_port_kill=allow_port_kill)
+    except BlockingIOError:
+        print("warning: preview handoff lock busy; skip standby stop", flush=True)
+        return _capture_unit_starting_or_active() or not _preview_port_in_use()
+
+
+def _stop_standby_preview_impl(*, allow_port_kill: bool = True) -> bool:
+    """Implementation: must run under _file_preview_handoff_lock."""
     global _standby_preview_touch_mono
+    if _capture_unit_starting_or_active():
+        _standby_preview_touch_mono = 0.0
+        return True
+
     standby_active = _capture_unit_state(STANDBY_PREVIEW_UNIT) == "active"
     port_busy = _preview_port_in_use()
     if not standby_active and not port_busy:
         _standby_preview_touch_mono = 0.0
-        return
+        return True
 
     t0 = time.monotonic()
     if standby_active:
@@ -650,6 +939,10 @@ def _stop_standby_preview() -> None:
         _wait_unit_inactive(STANDBY_PREVIEW_UNIT, STANDBY_STOP_TIMEOUT_S)
     if _capture_unit_state(STANDBY_STACK_TARGET) == "active":
         _systemctl("stop", STANDBY_STACK_TARGET, timeout=STANDBY_STOP_TIMEOUT_S)
+
+    if _capture_unit_starting_or_active():
+        _standby_preview_touch_mono = 0.0
+        return True
 
     if _preview_port_in_use():
         subprocess.run(
@@ -661,7 +954,7 @@ def _stop_standby_preview() -> None:
         )
         _wait_preview_port_free(timeout_s=min(3.0, PREVIEW_PORT_FREE_TIMEOUT_S))
 
-    if _preview_port_in_use():
+    if allow_port_kill and _preview_port_in_use() and not _capture_unit_starting_or_active():
         subprocess.run(
             ["fuser", "-k", "-TERM", "8765/tcp"],
             capture_output=True,
@@ -671,7 +964,7 @@ def _stop_standby_preview() -> None:
         )
         time.sleep(0.25)
 
-    if _preview_port_in_use():
+    if allow_port_kill and _preview_port_in_use() and not _capture_unit_starting_or_active():
         subprocess.run(
             ["fuser", "-k", "-KILL", "8765/tcp"],
             capture_output=True,
@@ -681,13 +974,64 @@ def _stop_standby_preview() -> None:
         )
         time.sleep(0.15)
 
-    if not _wait_preview_port_free(timeout_s=PREVIEW_PORT_FREE_TIMEOUT_S):
+    if _capture_unit_starting_or_active():
+        _standby_preview_touch_mono = 0.0
+        return True
+
+    port_free = _wait_preview_port_free(timeout_s=PREVIEW_PORT_FREE_TIMEOUT_S)
+    if not port_free:
         print("warning: preview port 8765 still in use after standby stop", flush=True)
     else:
         elapsed = time.monotonic() - t0
         if elapsed > 1.0:
             print(f"standby_preview_stopped elapsed_s={elapsed:.2f}", flush=True)
     _standby_preview_touch_mono = 0.0
+    return port_free or _capture_unit_starting_or_active()
+
+
+def _ensure_preview_handoff_for_capture() -> tuple[bool, str]:
+    """Retry standby teardown until :8765 is free (8081 → 8080 start handoff)."""
+    deadline = time.monotonic() + START_PREVIEW_HANDOFF_TIMEOUT_S
+    attempt = 0
+    while time.monotonic() < deadline:
+        attempt += 1
+        _stop_standby_preview_impl(allow_port_kill=True)
+        if not _preview_port_in_use():
+            if attempt > 1:
+                print(f"preview_handoff_ok attempts={attempt}", flush=True)
+            return True, ""
+        if _capture_unit_starting_or_active():
+            print(f"preview_handoff_ok capture_owns_port attempts={attempt}", flush=True)
+            return True, ""
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(START_PREVIEW_HANDOFF_POLL_S, remaining))
+    msg = "预览端口 8765 未释放，请稍后再试"
+    print(
+        f"preview_handoff_failed attempts={attempt} "
+        f"timeout_s={START_PREVIEW_HANDOFF_TIMEOUT_S:.1f}",
+        flush=True,
+    )
+    return False, msg
+
+
+def _release_standby_preview_if_safe() -> tuple[bool, str]:
+    """8081 tab background: keep standby warm; 8080 start performs real handoff."""
+    try:
+        with _file_preview_handoff_lock(blocking=False):
+            with _lock:
+                if _busy and _busy_action == "start":
+                    return False, "start_in_progress"
+            if _capture_active() or _capture_stopping() or _capture_unit_starting_or_active():
+                return False, "capture_active"
+            if _oak_warm_idle_active():
+                return False, "warm_idle"
+            _touch_standby_preview_activity()
+            _wake_standby_preview_if_idle()
+            return True, "standby_kept"
+    except BlockingIOError:
+        return False, "handoff_in_progress"
 
 
 def _start_standby_preview() -> None:
@@ -966,6 +1310,24 @@ def _stop_capture_wait() -> bool:
     return _stop_capture_hard()
 
 
+def _stop_capture_abandon_to_warm() -> bool:
+    """Abandon in-flight episode but keep OAK warm for fast next start."""
+    global _last_error
+    if not (OAK_WARM_IDLE_ENABLED and _capture_unit_running()):
+        return _stop_capture_hard()
+    session_id = _checkpoint_session_id()
+    if not session_id:
+        return _stop_capture_hard()
+    try:
+        _write_capture_abandon_request(session_id)
+        if not _stop_capture_to_warm():
+            print("abandon_warm_fallback reason=warm_stop_failed", flush=True)
+            return _stop_capture_hard()
+        return True
+    finally:
+        _clear_capture_abandon_request()
+
+
 def _start_capture_warm_resume() -> tuple[bool, str]:
     """Resume recording on an warm-idle capture process (SIGUSR2)."""
     global _journal_cache, _last_error
@@ -1009,8 +1371,10 @@ def _build_status() -> dict[str, Any]:
     rec_state = _capture_unit_state(CAPTURE_RECORD_UNIT)
     since = _capture_run_since_epoch() if active else None
     journal_info = _journal_capture_info(since) if active else {}
+    stop_phase = _capture_stop_phase()
+    quad_warm_ending = _quad_warm_end_active()
     warm_remaining = _oak_warm_seconds_remaining()
-    warm_idle = _oak_warm_idle_active()
+    warm_idle = _oak_warm_idle_active() or stop_phase == STOP_PHASE_WARM_IDLE
     live_stats = _read_capture_live_stats()
     beep_epoch: float | None = None
     live_beep_raw = live_stats.get("beep_epoch")
@@ -1068,7 +1432,6 @@ def _build_status() -> dict[str, Any]:
         msg = "正在放弃录制，请稍候…"
     elif busy and busy_action == "stop":
         state = "stopping"
-        stop_phase = _capture_stop_phase()
         if stop_phase:
             msg = _capture_stop_phase_message(stop_phase)
         else:
@@ -1079,6 +1442,9 @@ def _build_status() -> dict[str, Any]:
                 msg = "正在写入磁盘，请勿断电"
             else:
                 msg = "正在保存数据，请勿断电…"
+    elif quad_warm_ending:
+        state = "stopping"
+        msg = "正在结束热待机以启动四路预览…"
     elif active and frames_writing:
         state = "recording"
         if fps_warn:
@@ -1088,6 +1454,13 @@ def _build_status() -> dict[str, Any]:
     elif warm_idle:
         state = "idle"
         msg = ""
+    elif active and rec_state == "deactivating":
+        state = "stopping"
+        msg = (
+            _capture_stop_phase_message(stop_phase)
+            if stop_phase
+            else "正在保存数据，请勿断电…"
+        )
     elif active:
         state = "warming"
         msg = err or "正在准备录制，相机初始化中…"
@@ -1114,7 +1487,8 @@ def _build_status() -> dict[str, Any]:
         "frames_writing": frames_writing,
         "oak_warm_active": warm_idle,
         "oak_warm_seconds_remaining": warm_remaining,
-        "capture_stop_phase": _capture_stop_phase() or None,
+        "capture_stop_phase": stop_phase or None,
+        "quad_transition": _read_quad_transition_phase(),
     }
 
 
@@ -1161,6 +1535,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
         if action == "start":
             _start_expect_warm = _oak_warm_idle_active()
 
+    action_succeeded = False
     try:
         if action == "start":
             if _oak_warm_idle_active():
@@ -1168,6 +1543,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 _journal_cache = None
                 ok, msg = _start_capture_warm_resume()
                 if ok:
+                    action_succeeded = True
                     return ok, msg
                 if _oak_warm_idle_active() and _capture_unit_running():
                     return False, msg or _last_error or "快速启动失败"
@@ -1179,6 +1555,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 since = _capture_run_since_epoch()
                 info = _journal_capture_info(since) if since else {}
                 if info and info.get("beep_epoch"):
+                    action_succeeded = True
                     return True, "采集已在运行"
                 if not _ensure_capture_fully_stopped():
                     _last_error = "采集服务未能完全停止，请稍后再试"
@@ -1195,16 +1572,17 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
             if cached:
                 global _last_preview_jpeg
                 _last_preview_jpeg = cached
-            _stop_standby_preview()
-            if _preview_port_in_use():
-                if not _oak_warm_idle_active():
-                    _last_error = "预览端口 8765 未释放，请等待 10 秒后重试"
-                    _start_standby_preview()
-                    return False, _last_error
             session_id = _begin_new_capture_session()
             _journal_cache = None
             start_wall = time.time()
-            proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
+            with _file_preview_handoff_lock():
+                if not _oak_warm_idle_active():
+                    ok_handoff, handoff_msg = _ensure_preview_handoff_for_capture()
+                    if not ok_handoff:
+                        _last_error = handoff_msg
+                        _start_standby_preview()
+                        return _fail_start_capture(session_id, handoff_msg)
+                proc = _systemctl("start", CAPTURE_TARGET, timeout=START_TIMEOUT_S)
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "启动失败").strip()
                 return _fail_start_capture(session_id, f"无法启动采集：{detail}")
@@ -1216,10 +1594,12 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                     info = _journal_capture_info(since)
                     beep = info.get("beep_epoch") if info else None
                     if beep is not None and float(beep) >= since - 1.0:
+                        action_succeeded = True
                         return True, ""
                     stats = _read_capture_live_stats()
                     stats_beep = stats.get("beep_epoch")
                     if stats_beep is not None and float(stats_beep) >= start_wall - 1.0:
+                        action_succeeded = True
                         return True, ""
                     fail = _journal_capture_start_failure(since)
                     if fail:
@@ -1243,6 +1623,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 name="ego-stop-worker",
                 daemon=True,
             ).start()
+            action_succeeded = True
             return True, ""
 
         return False, "未知操作"
@@ -1255,7 +1636,7 @@ def _run_capture_action(action: str) -> tuple[bool, str]:
                 _busy = False
                 _busy_action = None
                 _last_action_mono = time.monotonic()
-                if action in ("start", "abandon"):
+                if action_succeeded and action == "start":
                     _last_completed_action = action
                 if action == "start":
                     _start_expect_warm = False
@@ -1285,12 +1666,14 @@ def _run_capture_abandon() -> tuple[bool, str]:
         _busy_action = "abandon"
         _last_error = ""
 
+    abandon_succeeded = False
     try:
-        if not _stop_capture_hard():
+        if not _stop_capture_abandon_to_warm():
             return False, _last_error
         if session_id:
             _delete_session_data(session_id)
             _log_abandon(session_id)
+        abandon_succeeded = True
         return True, ""
     except Exception as exc:
         _last_error = f"操作异常：{exc}"
@@ -1300,7 +1683,8 @@ def _run_capture_abandon() -> tuple[bool, str]:
             _busy = False
             _busy_action = None
             _last_action_mono = time.monotonic()
-            _last_completed_action = "abandon"
+            if abandon_succeeded:
+                _last_completed_action = "abandon"
 
 
 def _grab_preview_bytes() -> bytes | None:
@@ -1334,10 +1718,55 @@ def _preview_stream_live() -> bool:
     return _preview_port_in_use(8765)
 
 
+def _preview_capture_state() -> str:
+    status = _build_status()
+    return str(status.get("state") or "idle")
+
+
+def _preview_live_camera_ids() -> frozenset[str]:
+    """Cameras with live JPEG during current capture/standby mode."""
+    if _oak_warm_idle_active() or (
+        _capture_active() and not _capture_stopping()
+    ):
+        return frozenset({"front_left"})
+    if _preview_stream_live():
+        return PREVIEW_CAM_IDS
+    return frozenset()
+
+
 def _build_preview_cameras_payload() -> dict[str, Any]:
+    quad_transition = (
+        _read_quad_transition_phase() if WEB_UI_MODE == "quad" else "off"
+    )
     live = _preview_stream_live()
+    capture_state = _preview_capture_state()
+    live_cams = _preview_live_camera_ids()
+    stop_phase = _capture_stop_phase()
+    warm_idle = _oak_warm_idle_active() or stop_phase == STOP_PHASE_WARM_IDLE
+    quad_allowed = (
+        capture_state == "idle"
+        and not warm_idle
+        and quad_transition not in ("ending_warm_idle", "warm_idle")
+    )
+    standby_state = _standby_preview_boot_state()
+    warm_remain = 0
+    if warm_idle:
+        st = _build_status()
+        warm_remain = int(st.get("oak_warm_seconds_remaining") or 0)
+    boot_hint = ""
+    if quad_transition == "ending_warm_idle":
+        boot_hint = "正在结束热待机并启动四路预览，约需 10–15 秒"
+    elif quad_transition == "warm_idle" or warm_idle:
+        boot_hint = f"录制刚结束，热待机中（约 {warm_remain} 秒）；四路预览将结束热待机"
+    elif quad_allowed and standby_state in ("off", "activating"):
+        boot_hint = "相机启动中，约需 10–15 秒"
+    elif capture_state in ("recording", "starting", "warming"):
+        boot_hint = "采集中，四路仅录制前检查，请使用 8080"
+    elif standby_state == "blocked":
+        boot_hint = "当前不可四路预览，请稍后再试"
     cameras: list[dict[str, Any]] = []
     for cam_id, label_zh, label_en in PREVIEW_CAMERA_SPECS:
+        cam_live = cam_id in live_cams
         cameras.append(
             {
                 "id": cam_id,
@@ -1345,11 +1774,19 @@ def _build_preview_cameras_payload() -> dict[str, Any]:
                 "label_en": label_en,
                 "url": f"/api/preview/{cam_id}.jpg",
                 "backend_url": f"{PREVIEW_HTTP_BASE}/preview/{cam_id}/jpg",
-                "available": live,
+                "available": live and cam_live,
+                "live": cam_live,
             }
         )
     return {
         "online": live,
+        "capture_state": capture_state,
+        "quad_allowed": quad_allowed,
+        "standby_state": standby_state,
+        "boot_hint": boot_hint,
+        "oak_warm_active": warm_idle,
+        "oak_warm_seconds_remaining": warm_remain,
+        "quad_transition": quad_transition,
         "layout": "quad" if WEB_UI_MODE == "quad" else "main",
         "poll_ms": PREVIEW_POLL_MS,
         "cameras": cameras,
@@ -1852,14 +2289,18 @@ INDEX_HTML = """<!DOCTYPE html>
 
 
 def _index_html_body() -> bytes:
-    tpl_name = "quad_preview.html" if WEB_UI_MODE == "quad" else "capture_ui.html"
+    tpl_by_mode = {
+        "quad": "quad_preview.html",
+        "change_view": "change_view_test.html",
+    }
+    tpl_name = tpl_by_mode.get(WEB_UI_MODE, "capture_ui.html")
     tpl = Path(__file__).resolve().parent / "templates" / tpl_name
     if tpl.is_file():
         html = tpl.read_text(encoding="utf-8")
-    elif WEB_UI_MODE != "quad":
+    elif WEB_UI_MODE not in tpl_by_mode:
         html = INDEX_HTML
     else:
-        html = "<!DOCTYPE html><html><body><p>quad_preview.html missing</p></body></html>"
+        html = f"<!DOCTYPE html><html><body><p>{tpl_name} missing</p></body></html>"
     html = html.replace("__STATUS_POLL_MS__", str(STATUS_POLL_MS)).replace(
         "__PREVIEW_POLL_MS__", str(PREVIEW_POLL_MS)
     )
@@ -1893,6 +2334,16 @@ def _serve_static_file(handler: BaseHTTPRequestHandler, rel_path: str) -> bool:
     return True
 
 
+def _read_post_json(handler: BaseHTTPRequestHandler) -> Any:
+    length = int(handler.headers.get("Content-Length", 0))
+    if length <= 0:
+        return None
+    raw = handler.rfile.read(length)
+    if not raw:
+        return None
+    return json.loads(raw.decode("utf-8"))
+
+
 class EgoWebHandler(BaseHTTPRequestHandler):
     server_version = "ego-web/2.0"
 
@@ -1902,7 +2353,6 @@ class EgoWebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
-            _wake_standby_preview_if_idle()
             body = _index_html_body()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1919,13 +2369,15 @@ class EgoWebHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/status":
-            _wake_standby_preview_if_idle()
             _json_response(self, HTTPStatus.OK, _build_status())
             return
 
         if path == "/api/preview/cameras":
-            _wake_standby_preview_if_idle()
             _json_response(self, HTTPStatus.OK, _build_preview_cameras_payload())
+            return
+
+        if path == "/api/change_view":
+            _json_response(self, HTTPStatus.OK, get_change_view_state())
             return
 
         if path == "/api/preview/main.jpg":
@@ -1961,16 +2413,54 @@ class EgoWebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        body: Any = None
+        if path in ("/api/change_view",):
+            try:
+                body = _read_post_json(self)
+            except json.JSONDecodeError:
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"success": False, "code": "invalid_json", "message": "invalid JSON body"},
+                )
+                return
+
+        if path == "/api/change_view":
+            view_num_raw = body.get("view_num") if isinstance(body, dict) else None
+            try:
+                view_num = int(view_num_raw)
+            except (TypeError, ValueError):
+                _json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "success": False,
+                        "code": "invalid_view_num",
+                        "message": "view_num must be an integer 1-4",
+                    },
+                )
+                return
+            result = change_view_access(view_num)
+            code = HTTPStatus.OK if result.get("success") else HTTPStatus.CONFLICT
+            if result.get("code") == "invalid_view_num":
+                code = HTTPStatus.BAD_REQUEST
+            _json_response(self, code, result)
+            return
+
         length = int(self.headers.get("Content-Length", 0))
         if length:
             _ = self.rfile.read(length)
 
         if path == "/api/capture/start":
             ok, msg = _run_capture_action("start")
+            payload: dict[str, Any] = {"success": ok, "msg": msg}
+            if not ok and ("8765" in msg or "预览端口" in msg):
+                payload["code"] = "preview_port_busy"
+                payload["retry_after_s"] = 2
             _json_response(
                 self,
                 HTTPStatus.OK if ok else HTTPStatus.CONFLICT,
-                {"success": ok, "msg": msg},
+                payload,
             )
             return
 
@@ -1990,6 +2480,23 @@ class EgoWebHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK if ok else HTTPStatus.CONFLICT,
                 {"success": ok, "msg": msg},
             )
+            return
+
+        if path == "/api/preview/release":
+            ok, msg = _release_standby_preview_if_safe()
+            _json_response(
+                self,
+                HTTPStatus.OK,
+                {"success": ok, "msg": msg},
+            )
+            return
+
+        if path == "/api/preview/activate":
+            _json_response(self, HTTPStatus.OK, activate_preview_access())
+            return
+
+        if path == "/api/preview/prepare-quad":
+            _json_response(self, HTTPStatus.OK, prepare_multi_preview_access())
             return
 
         self.send_error(HTTPStatus.NOT_FOUND)

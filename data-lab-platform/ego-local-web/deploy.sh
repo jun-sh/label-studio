@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy EGO local web control to 214 (run on edge host as user server).
+# Deploy EGO local web control to edge host (run as user server, e.g. 10.10.10.130).
 # Polkit + hotspot steps need one-time sudo — see README.md.
 set -euo pipefail
 
@@ -70,7 +70,7 @@ fi
 
 echo "============================================"
 echo "EGO local web deployed to $DEST"
-echo "  Lab LAN:  http://10.10.10.214:8080"
+echo "  Lab LAN:  http://10.10.10.130:8080"
 echo "  Hotspot:  http://192.168.4.1:8080 (after hotspot up)"
 echo "  Export:   ego-export   (或 $DEST/export-offline.sh)"
 echo "  Upload:   ego-upload   (上传到 34，终端实时进度)"

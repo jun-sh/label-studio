@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f7f9" />
+  <title>EGO change_view 测试</title>
+  <style>
+    :root {
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #8c8c8c;
+      --primary: #1677ff;
+      --primary-soft: #e8f1fc;
+      --ok: #52c41a;
+      --warn: #faad14;
+      --radius: 16px;
+      --shadow: 0 6px 24px rgba(15, 35, 70, 0.07);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px 16px;
+    }
+    .card h1 { margin: 0; font-size: 1.05rem; }
+    .card p { margin: 6px 0 0; font-size: .82rem; color: var(--muted); line-height: 1.45; }
+    .preview-wrap {
+      background: #c8d6ea;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 4 / 3;
+      position: relative;
+      box-shadow: var(--shadow);
+    }
+    .preview-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: var(--primary-soft);
+    }
+    .preview-ph {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      text-align: center;
+      color: #7a8ba3;
+      font-size: .85rem;
+      background: var(--primary-soft);
+    }
+    .preview-ph[hidden] { display: none !important; }
+    .view-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .view-btn {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 10px;
+      font-size: .95rem;
+      font-weight: 700;
+      background: var(--primary-soft);
+      color: #1d4ed8;
+      cursor: pointer;
+    }
+    .view-btn:active { transform: scale(0.98); }
+    .view-btn.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    .view-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .meta {
+      font-size: .78rem;
+      color: var(--muted);
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .meta strong { color: var(--text); }
+    .log {
+      max-height: 140px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .68rem;
+      line-height: 1.45;
+      color: #475569;
+      white-space: pre-wrap;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: .72rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="card">
+      <h1>change_view 测试页 <span class="badge">:8082</span></h1>
+      <p id="statusLine">等价 TCP <code>change_view</code> → HTTP <code>POST /api/change_view</code></p>
+    </header>
+
+    <section class="preview-wrap" aria-label="单路预览">
+      <img id="previewImg" alt="预览" hidden />
+      <div class="preview-ph" id="previewPh">点击下方视角按钮切换预览</div>
+    </section>
+
+    <section class="card view-grid" aria-label="切换视角">
+      <button type="button" class="view-btn" data-view-num="1">1 前左</button>
+      <button type="button" class="view-btn" data-view-num="2">2 前右</button>
+      <button type="button" class="view-btn" data-view-num="3">3 后左</button>
+      <button type="button" class="view-btn" data-view-num="4">4 后右</button>
+    </section>
+
+    <section class="card meta" id="metaBox">
+      <div><strong>当前</strong> view_num=<span id="curNum">—</span> view_id=<span id="curId">—</span></div>
+      <div><strong>设备</strong> state=<span id="devState">—</span> warm=<span id="devWarm">—</span></div>
+      <div><strong>proxy</strong> <span id="proxyUrl">—</span></div>
+    </section>
+
+    <section class="card">
+      <div class="meta" style="margin-bottom:8px"><strong>请求日志</strong></div>
+      <div class="log" id="logBox"></div>
+    </section>
+  </div>
+  <script>
+(function () {
+  var previewImg = document.getElementById("previewImg");
+  var previewPh = document.getElementById("previewPh");
+  var statusLine = document.getElementById("statusLine");
+  var curNum = document.getElementById("curNum");
+  var curId = document.getElementById("curId");
+  var devState = document.getElementById("devState");
+  var devWarm = document.getElementById("devWarm");
+  var proxyUrl = document.getElementById("proxyUrl");
+  var logBox = document.getElementById("logBox");
+  var viewBtns = document.querySelectorAll(".view-btn");
+  var pollTimer = null;
+  var currentViewId = "";
+  var busy = false;
+
+  function log(msg) {
+    var line = new Date().toLocaleTimeString() + " " + msg;
+    logBox.textContent = (logBox.textContent ? logBox.textContent + "\n" : "") + line;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  function setActiveBtn(viewNum) {
+    viewBtns.forEach(function (btn) {
+      btn.classList.toggle("active", String(btn.getAttribute("data-view-num")) === String(viewNum));
+    });
+  }
+
+  function refreshPreviewImg() {
+    if (!currentViewId) return;
+    previewImg.src = "/api/preview/" + currentViewId + ".jpg?t=" + Date.now();
+    previewImg.hidden = false;
+    previewPh.hidden = true;
+  }
+
+  function applyChangeResult(payload) {
+    var data = payload && payload.data ? payload.data : payload;
+    if (!data || !data.view_id) return;
+    currentViewId = data.view_id;
+    curNum.textContent = data.view_num;
+    curId.textContent = data.view_id;
+    proxyUrl.textContent = data.preview_jpg_proxy_url || (" /api/preview/" + data.view_id + ".jpg");
+    setActiveBtn(data.view_num);
+    if (payload.phase === "ending_warm_idle") {
+      statusLine.textContent = payload.msg || "正在结束热待机，约 10–15 秒后预览就绪";
+    } else if (payload.success === false) {
+      statusLine.textContent = payload.msg || payload.message || "切换失败";
+    } else {
+      statusLine.textContent = "已切换至 " + data.view_id + "（等价 view_changed_result）";
+    }
+    log("change_view → " + JSON.stringify({ view_num: data.view_num, phase: payload.phase, success: payload.success }));
+    refreshPreviewImg();
+    if (payload.phase === "ending_warm_idle") {
+      setTimeout(refreshPreviewImg, 3000);
+      setTimeout(refreshPreviewImg, 8000);
+      setTimeout(refreshPreviewImg, 15000);
+    }
+  }
+
+  function fetchDeviceStatus() {
+    return fetch("/api/status", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        devState.textContent = d.state || "—";
+        devWarm.textContent = d.oak_warm_active ? "yes" : "no";
+      })
+      .catch(function () { /* ignore */ });
+  }
+
+  function loadCurrentView() {
+    return fetch("/api/change_view", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        applyChangeResult({ success: true, data: d, phase: d.phase });
+      })
+      .catch(function () { log("GET /api/change_view failed"); });
+  }
+
+  function changeView(viewNum) {
+    if (busy) return;
+    busy = true;
+    viewBtns.forEach(function (b) { b.disabled = true; });
+    fetch("/api/change_view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ view_num: viewNum })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        applyChangeResult(res.body);
+        if (!res.ok) log("HTTP " + (res.body.code || "error"));
+      })
+      .catch(function (e) { log("POST failed: " + e); })
+      .finally(function () {
+        busy = false;
+        viewBtns.forEach(function (b) { b.disabled = false; });
+        fetchDeviceStatus();
+      });
+  }
+
+  viewBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      changeView(parseInt(btn.getAttribute("data-view-num"), 10));
+    });
+  });
+
+  previewImg.addEventListener("error", function () {
+    previewPh.hidden = false;
+    previewPh.textContent = "预览暂不可用（采集中可能仅 front_left live）";
+  });
+
+  loadCurrentView();
+  fetchDeviceStatus();
+  pollTimer = setInterval(function () {
+    fetchDeviceStatus();
+    if (currentViewId) refreshPreviewImg();
+  }, __PREVIEW_POLL_MS__);
+})();
+  </script>
+</body>
+</html>

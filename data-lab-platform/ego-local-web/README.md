@@ -1,6 +1,6 @@
 # EGO 边缘站 · 极简本地采集控制页
 
-为 **ego-001** 边缘采集站（如 `10.10.10.130`）提供手机端网页，一键启停采集栈，对标 [DAS Ego](https://docs.genrobot.ai/zh/products/das-ego) 近场控制范式。**不修改**现有采集栈代码与 systemd 单元。
+为 **10.10.10.214**（`ego-lan-214`）提供手机端网页，一键启停 `ecs-oak-capture-stack.target`，对标 [DAS Ego](https://docs.genrobot.ai/zh/products/das-ego) 近场控制范式。**不修改**现有采集栈代码与 systemd 单元。
 
 源码目录：`data-lab-platform/ego-local-web/`
 
@@ -11,9 +11,6 @@
 | 文件 | 说明 |
 |------|------|
 | `ego_web.py` | 单文件 Web 服务（标准库）+ 内嵌移动端页面；**仅启停采集** |
-| `ego_tcp_bridge.py` | TCP JSON 控制桥（`:9100`），供原生 App 联调；复用 `ego_web` 采集逻辑 |
-| `docs/ego-app-tcp-protocol.md` | App TCP 协议（修订版，与 130 对齐） |
-| `tools/ego_tcp_client_test.py` | TCP 联调脚本（心跳 / 状态 / 可选启停录制） |
 | `export_offline.py` | 离线打包：读 `segments/` → 写 `export/ready/` |
 | `scripts/export-offline.sh` | 一键导出入口（班次末 SSH 执行） |
 | `field-export-and-import.md` | **数据存哪、从哪打包、成品路径**（必读） |
@@ -28,11 +25,11 @@
 
 手机 **开始/结束录制** 只控制采集栈，**不打包**。完整说明见 [field-export-and-import.md](./field-export-and-import.md)。
 
-| 阶段 | 边缘机路径 | 内容 |
+| 阶段 | 214 路径 | 内容 |
 |------|----------|------|
 | 录制中（内存） | `/dev/shm/ego-capture-active/.../seg_*` | 正在写；**短录未收尾时数据可能只在这里** |
-| 结束录制后（原始） | `/home/server/cache/ego-001/segments/.../seg_*` | 须 `closed=true` 才算落盘成功 |
-| 班次末 `export-offline.sh` 后（成品） | `/home/server/export/ego-001/ready/YYYYMMDD/*.tar.zst` | 可拷 U 盘、34 导入 |
+| 结束录制后（原始） | `/home/server/cache/ego-lan-214/segments/.../seg_*` | 须 `closed=true` 才算落盘成功 |
+| 班次末 `export-offline.sh` 后（成品） | `/home/server/export/ego-lan-214/ready/YYYYMMDD/*.tar.zst` | 可拷 U 盘、34 导入 |
 
 不足 45 秒的录制**不需要等满 45 秒**；结束录制应收尾落盘。若硬盘无新段，先查 `/dev/shm/`（详见 [field-export-and-import.md](./field-export-and-import.md) 第 2.6 节）。
 
@@ -42,13 +39,13 @@ bash /home/server/ego-web/export-offline.sh
 ```
 
 
-## 快速部署（边缘机上）
+## 快速部署（214 上）
 
 ### 1. 拷贝仓库文件到边缘机
 
 ```bash
 # 在开发机（有 data-lab 仓库）
-rsync -av data-lab-platform/ego-local-web/ server@10.10.10.130:~/ego-local-web-src/
+rsync -av data-lab-platform/ego-local-web/ server@10.10.10.214:~/ego-local-web-src/
 ```
 
 ### 2. 一次性：热点 + Polkit（需 sudo）
@@ -88,21 +85,6 @@ nmcli connection delete EGO-214-COLLECT 2>/dev/null || true
 
 ---
 
-## TCP App 控制（`:9100`）
-
-与网页 **并行**，不影响 `8080`。协议见 [docs/ego-app-tcp-protocol.md](./docs/ego-app-tcp-protocol.md)。
-
-```bash
-# 联调（不启停录制）
-python3 tools/ego_tcp_client_test.py --host 10.10.10.130 --skip-capture
-# 热点
-python3 tools/ego_tcp_client_test.py --host 192.168.8.1 --skip-capture
-```
-
-热点场景在 `~/.config/ego-station.env` 设置 `EGO_TCP_PREVIEW_HOST=192.168.8.1`。
-
----
-
 ## API 契约
 
 | 路径 | 方法 | 说明 |
@@ -138,7 +120,7 @@ python3 tools/ego_tcp_client_test.py --host 192.168.8.1 --skip-capture
 
 ```bash
 systemctl --user is-active ecs-oak-capture-stack.target
-ls /home/server/cache/ego-001/segments/sessions/*/segments/
+ls /home/server/cache/ego-lan-214/segments/sessions/*/segments/
 journalctl --user -u ecs-ego-web -n 30
 curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
 ```
@@ -238,7 +220,7 @@ curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
 |------|------|
 | `EGO_WEB_HOST` | `0.0.0.0` |
 | `EGO_WEB_PORT` | `8080` |
-| `EGO_SEGMENT_ROOT` | `/home/server/cache/ego-001/segments` |
+| `EGO_SEGMENT_ROOT` | `/home/server/cache/ego-lan-214/segments` |
 | `EGO_CAPTURE_TARGET` | `ecs-oak-capture-stack.target` |
 | `EGO_PREVIEW_URL` | `http://127.0.0.1:8765/preview/front_left/jpg` |
 | `EGO_STORAGE_WARN_GB` | `2` |
@@ -249,7 +231,7 @@ curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
 
 ## 与 34 采集页的关系
 
-| | 边缘本地页 | 34 `/collection?station=ego-001` |
+| | 214 本地页 | 34 `/collection?station=ego-lan-214` |
 |--|-----------|--------------------------------------|
 | 用户 | 现场采集员 | 办公室质检 / 导入 |
 | 网络 | 热点 / 局域网直连 214 | 需访问 34 |
@@ -262,4 +244,4 @@ curl -s http://127.0.0.1:8080/api/status | python3 -m json.tool
 
 - **[数据存哪、从哪打包、成品路径、U 盘与 34 导入](./field-export-and-import.md)**（操作必读）
 - [ego-edge-offline-upload-and-deployment.md](../../docs/ego-edge-offline-upload-and-deployment.md)
-- [ego-001 使用手册](../docs/ego-001-使用手册.md)
+- [ego-lan-214-segment-storage-and-upload.md](../../docs/ego-lan-214-segment-storage-and-upload.md)

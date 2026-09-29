@@ -59,5 +59,44 @@ class HandlerSmokeTest(unittest.TestCase):
             server_sock.close()
 
 
+    def test_stop_recording_invalid_payload_returns_error(self) -> None:
+        from ego_tcp_bridge import _handle_message
+
+        replies = _handle_message({"type": "stop_recording", "data": "bad"})
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].get("type"), "error")
+        self.assertEqual((replies[0].get("data") or {}).get("code"), "invalid_payload")
+
+    def test_change_view_triggers_view_switch_preview_prep(self) -> None:
+        from ego_tcp_bridge import _handle_change_view
+
+        with mock.patch(
+            "ego_tcp_bridge.ego_web.prepare_multi_preview_access",
+            return_value={"success": True, "phase": "ready", "msg": ""},
+        ) as prep:
+            reply = _handle_change_view({"view_num": 2})
+        prep.assert_called_once()
+        self.assertEqual(reply.get("type"), "view_changed_result")
+        self.assertEqual((reply.get("data") or {}).get("view_num"), 2)
+
+    def test_prepare_multi_preview_returns_result(self) -> None:
+        from ego_tcp_bridge import _handle_message
+
+        with mock.patch(
+            "ego_tcp_bridge.ego_web.prepare_multi_preview_access",
+            return_value={
+                "success": True,
+                "phase": "ending_warm_idle",
+                "msg": "正在结束热待机并启动四路预览，约需 10–15 秒",
+            },
+        ):
+            replies = _handle_message({"type": "prepare_multi_preview"})
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0].get("type"), "prepare_multi_preview_result")
+        data = replies[0].get("data") or {}
+        self.assertTrue(data.get("success"))
+        self.assertEqual(data.get("phase"), "ending_warm_idle")
+
+
 if __name__ == "__main__":
     unittest.main()

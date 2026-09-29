@@ -144,6 +144,13 @@ def _stop_recording_result(success: bool, msg: str, is_save: bool) -> dict[str, 
     }
 
 
+def _prepare_multi_preview_result() -> dict[str, Any]:
+    return {
+        "type": "prepare_multi_preview_result",
+        "data": ego_web.prepare_multi_preview_access(),
+    }
+
+
 def _handle_change_view(data: Any) -> dict[str, Any]:
     global _selected_view_num
     if not isinstance(data, dict):
@@ -169,7 +176,7 @@ def _handle_change_view(data: Any) -> dict[str, Any]:
         )
     with _server_lock:
         _selected_view_num = view_num
-        ego_web._wake_standby_preview_if_idle()
+        ego_web._prepare_view_switch_preview_access()
     return _build_view_changed_result(view_num)
 
 
@@ -206,11 +213,13 @@ def _handle_message(msg: dict[str, Any]) -> list[dict[str, Any]]:
     if msg_type in ("stop_recording", "stop_and_save_recording"):
         is_save = _parse_stop_is_save(data)
         if is_save is None:
-            return _error_message(
-                "invalid_payload",
-                "stop_recording requires data.is_save (bool)",
-                request_type="stop_recording",
-            )
+            return [
+                _error_message(
+                    "invalid_payload",
+                    "stop_recording requires data.is_save (bool)",
+                    request_type="stop_recording",
+                )
+            ]
         if is_save:
             ok, text = ego_web._run_capture_action("stop")
         else:
@@ -222,6 +231,9 @@ def _handle_message(msg: dict[str, Any]) -> list[dict[str, Any]]:
 
     if msg_type == "change_view":
         return [_handle_change_view(data)]
+
+    if msg_type == "prepare_multi_preview":
+        return [_prepare_multi_preview_result()]
 
     return [_error_message("unknown_type", f"unsupported message type: {msg_type}", request_type=msg_type)]
 

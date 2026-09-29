@@ -202,7 +202,11 @@ class CaptureTimerTest(unittest.TestCase):
         ego_web._last_completed_action = ""
         with (
             mock.patch.object(ego_web, "_wait_for_stop_release", return_value=True),
-            mock.patch.object(ego_web, "_oak_warm_idle_active", side_effect=[True, False]),
+            mock.patch.object(
+                ego_web,
+                "_oak_warm_idle_active",
+                side_effect=[True, True, False, False],
+            ),
             mock.patch.object(
                 ego_web, "_begin_new_capture_session", return_value="sess_cold"
             ),
@@ -214,6 +218,9 @@ class CaptureTimerTest(unittest.TestCase):
             mock.patch.object(ego_web, "_capture_active", return_value=False),
             mock.patch.object(ego_web, "_capture_stopping", return_value=False),
             mock.patch.object(ego_web, "_ensure_capture_fully_stopped", return_value=True),
+            mock.patch.object(
+                ego_web, "_ensure_preview_handoff_for_capture", return_value=(True, "")
+            ),
             mock.patch.object(ego_web, "_grab_preview_bytes", return_value=b""),
             mock.patch.object(ego_web, "_stop_standby_preview"),
             mock.patch.object(ego_web, "_preview_port_in_use", return_value=False),

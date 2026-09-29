@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# ego-upload — 边缘站一键上传到 34；终端内实时刷新进度面板（无需另开 --status）
+# ego-upload — 班次一键上传到 34（自动停采集；成功段本机自动删除）
 set -euo pipefail
+
+set -a
+source "${HOME}/.config/ego-station.env" 2>/dev/null || true
+set +a
 
 STATUS_ONLY=0
 EXTRA=()
@@ -11,15 +15,11 @@ for arg in "$@"; do
       cat <<'EOF'
 用法: ego-upload [选项]
 
-  ego-upload          上传并在当前终端实时显示进度（会话/段数/速度/ETA）
-  ego-upload --status 仅查看进度（未在传输时）
+  ego-upload          停采集 → 上传当天数据到 34 → 成功段本机自动删除
+  ego-upload --status 仅查看上传进度
 
-  --source ready|segments|auto
-  --ready-dir export/ready/YYYYMMDD
-  --no-live-ui        关闭实时面板（调试）
-
-默认：segments/ 有待传段则传 segments，否则传 export/ready/ 最新日期。
-详细日志：~/cache/<station>/logs/ego-upload-*.log
+默认上传 segments/ 待传段；无待传段时尝试 export/ready/ 最新日期。
+日志：~/cache/ego-001/logs/ego-upload-*.log
 EOF
       exit 0
       ;;
@@ -48,6 +48,9 @@ PY="$(_resolve_venv_python)" || {
 if [[ "$STATUS_ONLY" -eq 1 ]]; then
   exec "$PY" -m ego_capture_studio.cli.upload_status "${EXTRA[@]}"
 fi
+
+systemctl --user stop ecs-oak-capture-stack.target 2>/dev/null || true
+sleep 1
 
 LOG_DIR="${EGO_UPLOAD_LOG_DIR:-/home/server/cache/ego-001/logs}"
 mkdir -p "$LOG_DIR"

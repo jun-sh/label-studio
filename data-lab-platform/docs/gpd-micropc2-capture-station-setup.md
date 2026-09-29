@@ -395,6 +395,42 @@ sudo systemctl restart ecs-ego-hotspot.service
 /home/server/ego-web/ego-hotspot-up.sh
 ```
 
+### 5.5 Android / 鸿蒙 Pad 连热点（130 现场结论）
+
+**真正让手机连上的，是「AP 参数 + 现场连法」，不是监控脚本。**
+
+| 类别 | 做了什么 | 是否修复连不上 |
+|------|-----------|----------------|
+| **AP 安全** | `802-11-wireless-security`: **WPA2-PSK only**（`proto rsn` + CCMP，`pmf disable`） | **是**（华为/部分 Android 对默认混合 beacon 易卡在「正在连接」） |
+| **信道** | 2.4G **信道 11**（实验室 `SRI-*` 常在 **6**，同信道干扰大） | **常是** |
+| **双 Wi‑Fi 架构** | **USB dongle 只发 AP**；**`wlo1` 只连实验室 Wi‑Fi**（勿用 AX201 兼热点） | **是**（稳定 + 避免 iwlwifi 微码问题） |
+| **换 USB 网卡** | `udev` 固定 `wlp_usb_ap` + `ego-usb-ap-bind.sh` 绑 `EGO-001-COLLECT` | **换硬件时必须**（否则 NM 仍指向旧接口/MAC） |
+| **现场操作** | Pad **先断 SRI-WIFI** → **忘记** EGO → **DHCP + 设备 MAC** → 密码与 130 一致 | **是** |
+| **watch 脚本** | 修正 tcpdump 过滤器（USB AP 是 EN10MB，不能用 `wlan type mgt`） | **否**（仅排障） |
+| **开 5G 热点** | 8821CU 单射频，生产仍 **2.4G only** | **否**（与本次无关） |
+
+**新机 / 迁移部署（推荐顺序）：**
+
+```bash
+# 在开发机，按站点改 SSID/密码/MAC 后：
+bash data-lab-platform/scripts/ego-130-provision-usb-hotspot.sh server@<采集站IP>
+# 换过 USB 网卡后重跑同上，或：
+bash data-lab-platform/scripts/ego-130-usb-ap-resync.sh server@<采集站IP>
+```
+
+**验收（Android 一台）：**
+
+1. 只连 `EGO-xxx-COLLECT`，拿到 `192.168.8.x`，网关 `192.168.8.1`  
+2. 浏览器 `http://192.168.8.1:8080` 返回控制页  
+3. 可选：`sudo bash /home/server/ego-web/ego-hotspot-client-watch.sh 30` 连接时应出现 **DHCP** 行
+
+**勿再踩坑：**
+
+- 换 dongle 后只改密码不改 **interface-name / udev** → 热点假启动、手机连不上  
+- Pad 同时连着 **SRI-WIFI** 再连 EGO → 长时间「正在连接」  
+- 用手机 **静态 IP / 旧网关 192.168.4.1** → 连上也无法开 8080  
+- 实验室信道与热点同为 **6** 且干扰强 → 优先 **1 或 11**（`EGO_HOTSPOT_CHANNEL`）
+
 ---
 
 ## 6. EGO 采集栈部署
@@ -459,6 +495,7 @@ bash data-lab-platform/scripts/ego-130-verify-production.sh server@10.10.10.130
 | 重启后搜不到热点 | iwlwifi 固件崩溃窗口 | 等 10min 或重启热点服务；长期考虑 USB AP |
 | 系统自动升级内核 | 未 mask apt 定时器 | 重做第 4 节 |
 | 手机 UI 打不开 | `ecs-ego-web` 未运行 | `systemctl --user status ecs-ego-web` |
+| Android 一直「正在连接」 | 实验室 Wi‑Fi 未断 / WPA 混合 beacon / 信道 6 干扰 / 换 USB 后 NM 未绑接口 | 见 **§5.5**；重跑 `ego-130-provision-usb-hotspot.sh` |
 
 ---
 

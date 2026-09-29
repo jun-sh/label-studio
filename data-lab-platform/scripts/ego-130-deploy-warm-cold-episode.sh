@@ -17,6 +17,7 @@ python3 -m py_compile \
   "${CAPTURE_SRC}/record_oak_stream.py" \
   "${CAPTURE_SRC}/oak_warm_session.py" \
   "${CAPTURE_SRC}/capture_stop_state.py" \
+  "${CAPTURE_SRC}/capture_abandon_request.py" \
   "${CAPTURE_SRC}/async_frame_writer.py" \
   "${CAPTURE_SRC}/cli/record_oak_stream.py" \
   "${EGO_WEB_SRC}/ego_web.py"
@@ -74,11 +75,14 @@ echo "==> Sync capture modules"
 _scp "${CAPTURE_SRC}/record_oak_stream.py" "/tmp/record_oak_stream.py"
 _scp "${CAPTURE_SRC}/oak_warm_session.py" "/tmp/oak_warm_session.py"
 _scp "${CAPTURE_SRC}/capture_stop_state.py" "/tmp/capture_stop_state.py"
+_scp "${CAPTURE_SRC}/capture_abandon_request.py" "/tmp/capture_abandon_request.py"
+_scp "${CAPTURE_SRC}/segment_store.py" "/tmp/segment_store.py"
 _scp "${CAPTURE_SRC}/async_frame_writer.py" "/tmp/async_frame_writer.py"
 _scp "${CAPTURE_SRC}/cli/record_oak_stream.py" "/tmp/cli_record_oak_stream.py"
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-mcap-production.conf" "/tmp/z-mcap-production.conf"
 _scp "${EGO_WEB_SRC}/ego_web.py" "/tmp/ego_web.py"
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web.service.d/z-mcap-production.conf" "/tmp/z-ego-web-mcap-production.conf"
+_scp "${EGO_WEB_SRC}/systemd/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf" "/tmp/z-ego-tcp-mcap-production.conf"
 
 _run_remote "$(cat <<'REMOTE'
 set -euo pipefail
@@ -88,18 +92,24 @@ REMOTE_WEB="/home/server/ego-web"
 install -m 0644 /tmp/record_oak_stream.py "${REMOTE_CAPTURE}/record_oak_stream.py"
 install -m 0644 /tmp/oak_warm_session.py "${REMOTE_CAPTURE}/oak_warm_session.py"
 install -m 0644 /tmp/capture_stop_state.py "${REMOTE_CAPTURE}/capture_stop_state.py"
+install -m 0644 /tmp/capture_abandon_request.py "${REMOTE_CAPTURE}/capture_abandon_request.py"
+install -m 0644 /tmp/segment_store.py "${REMOTE_CAPTURE}/segment_store.py"
 install -m 0644 /tmp/async_frame_writer.py "${REMOTE_CAPTURE}/async_frame_writer.py"
 install -m 0644 /tmp/cli_record_oak_stream.py "${REMOTE_CLI}/record_oak_stream.py"
 mkdir -p "${HOME}/.config/systemd/user/ecs-record-oak-mcap.service.d"
 mkdir -p "${HOME}/.config/systemd/user/ecs-ego-web.service.d"
+mkdir -p "${HOME}/.config/systemd/user/ecs-ego-tcp-bridge.service.d"
 install -m 0644 /tmp/z-mcap-production.conf "${HOME}/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-production.conf"
 install -m 0644 /tmp/z-ego-web-mcap-production.conf "${HOME}/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf"
+install -m 0644 /tmp/z-ego-tcp-mcap-production.conf "${HOME}/.config/systemd/user/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf"
 install -m 0644 /tmp/ego_web.py "${REMOTE_WEB}/ego_web.py"
 
 /home/server/workspace/ego-studio/.venv/bin/python -m py_compile \
   "${REMOTE_CAPTURE}/record_oak_stream.py" \
   "${REMOTE_CAPTURE}/oak_warm_session.py" \
   "${REMOTE_CAPTURE}/capture_stop_state.py" \
+  "${REMOTE_CAPTURE}/capture_abandon_request.py" \
+  "${REMOTE_CAPTURE}/segment_store.py" \
   "${REMOTE_CAPTURE}/async_frame_writer.py" \
   "${REMOTE_CLI}/record_oak_stream.py" \
   "${REMOTE_WEB}/ego_web.py"

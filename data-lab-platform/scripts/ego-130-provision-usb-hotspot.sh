@@ -55,12 +55,14 @@ raise SystemExit(o.channel.recv_exit_status())
 PY
 }
 
-for f in ego-wifi-radio-on.sh ego-wlo1-wifi-up.sh ego-hotspot-up.sh ego-hotspot-down.sh \
-  ego-hotspot-boot-wait.sh ego-hotspot-watchdog.sh; do
+for f in ego-wifi-radio-on.sh ego-wlo1-wifi-up.sh ego-wlo1-wifi-watchdog.sh ego-hotspot-up.sh \
+  ego-hotspot-down.sh ego-hotspot-boot-wait.sh ego-hotspot-watchdog.sh \
+  ego-usb-ap-resolve.sh ego-usb-ap-bind.sh; do
   _scp "${EGO_WEB}/scripts/${f}" "/tmp/${f}"
 done
-for f in ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-hotspot.service \
-  ecs-ego-hotspot-watchdog.service ecs-ego-hotspot-watchdog.timer; do
+for f in ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-wlo1-wifi-watchdog.service \
+  ecs-ego-wlo1-wifi-watchdog.timer ecs-ego-hotspot.service ecs-ego-hotspot-watchdog.service \
+  ecs-ego-hotspot-watchdog.timer; do
   _scp "${EGO_WEB}/systemd/${f}" "/tmp/${f}"
 done
 _scp "${EGO_WEB}/udev/70-ego-usb-wifi.rules" "/tmp/70-ego-usb-wifi.rules"
@@ -78,8 +80,9 @@ BOOT_DELAY="${BOOT_DELAY}"
 sudo_pw() { echo "\$PW" | sudo -S "\$@"; }
 
 install -d -m 0755 /home/server/ego-web
-for f in ego-wifi-radio-on.sh ego-wlo1-wifi-up.sh ego-hotspot-up.sh ego-hotspot-down.sh \
-  ego-hotspot-boot-wait.sh ego-hotspot-watchdog.sh; do
+for f in ego-wifi-radio-on.sh ego-wlo1-wifi-up.sh ego-wlo1-wifi-watchdog.sh ego-hotspot-up.sh \
+  ego-hotspot-down.sh ego-hotspot-boot-wait.sh ego-hotspot-watchdog.sh \
+  ego-usb-ap-resolve.sh ego-usb-ap-bind.sh; do
   install -m 0755 "/tmp/\$f" "/home/server/ego-web/\$f"
 done
 chown server:server /home/server/ego-web/ego-*.sh /home/server/ego-web/ego-hotspot-*.sh 2>/dev/null || true
@@ -102,31 +105,43 @@ printf '%s\n' \
 sudo_pw install -m 0644 /tmp/ego-hotspot.default /etc/default/ego-hotspot
 rm -f /tmp/ego-hotspot.default
 
-for f in ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-hotspot.service \
-  ecs-ego-hotspot-watchdog.service ecs-ego-hotspot-watchdog.timer; do
+for f in ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-wlo1-wifi-watchdog.service \
+  ecs-ego-wlo1-wifi-watchdog.timer ecs-ego-hotspot.service ecs-ego-hotspot-watchdog.service \
+  ecs-ego-hotspot-watchdog.timer; do
   sudo_pw install -m 0644 "/tmp/\$f" "/etc/systemd/system/\$f"
 done
 sudo_pw systemctl daemon-reload
 
-# Resolve current USB iface (before udev rename takes effect on next boot).
-if ! ip link show "\$USB_IFACE" &>/dev/null; then
-  cand="\$(nmcli -t -f DEVICE,TYPE device status | awk -F: '\$2==\"wifi\" && \$1 ~ /^wlx/ {print \$1; exit}')"
-  [[ -n "\$cand" ]] && USB_IFACE="\$cand"
-fi
-echo "USB AP iface: \$USB_IFACE"
+sudo_pw udevadm control --reload-rules
+sudo_pw udevadm trigger --subsystem-match=net --action=add || true
+sleep 2
+
+sudo_pw /home/server/ego-web/ego-wifi-radio-on.sh
 
 if ! nmcli connection show "\$CONN" &>/dev/null; then
   echo "ERROR: NM connection \$CONN not found" >&2
   exit 1
 fi
 
-sudo_pw /home/server/ego-web/ego-wifi-radio-on.sh
+sudo_pw /home/server/ego-web/ego-usb-ap-bind.sh
+USB_IFACE="\$(cat /run/ego-hotspot/iface)"
+detected_mac="\$(cat /sys/class/net/\${USB_IFACE}/address 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+if [[ -n "\$detected_mac" ]]; then
+  sudo_pw sed -i "s/^EGO_USB_WIFI_MAC=.*/EGO_USB_WIFI_MAC=\${detected_mac}/" /etc/default/ego-hotspot
+fi
+echo "USB AP iface: \$USB_IFACE mac: \${detected_mac:-unknown}"
 
-sudo_pw nmcli connection modify "\$CONN" connection.interface-name "\$USB_IFACE"
 sudo_pw nmcli connection modify "\$CONN" connection.autoconnect yes
 sudo_pw nmcli connection modify "\$CONN" connection.autoconnect-priority 100
 sudo_pw nmcli connection modify "\$CONN" 802-11-wireless.band bg
-sudo_pw nmcli connection modify "\$CONN" 802-11-wireless.channel 6
+HOTSPOT_CHANNEL="${EGO_HOTSPOT_CHANNEL:-11}"
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless.channel "\$HOTSPOT_CHANNEL"
+# Android / HarmonyOS: explicit WPA2 (avoid WPA3 transition quirks on USB AP)
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless-security.key-mgmt wpa-psk
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless-security.proto rsn
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless-security.pairwise ccmp
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless-security.group ccmp
+sudo_pw nmcli connection modify "\$CONN" 802-11-wireless-security.pmf disable
 
 if nmcli connection show "\$WLO1_CONN" &>/dev/null; then
   sudo_pw nmcli connection modify "\$WLO1_CONN" connection.interface-name wlo1
@@ -137,12 +152,14 @@ fi
 
 sudo_pw systemctl enable ecs-ego-wifi-radio.service
 sudo_pw systemctl enable ecs-ego-wlo1-wifi.service
+sudo_pw systemctl enable ecs-ego-wlo1-wifi-watchdog.timer
 sudo_pw systemctl enable ecs-ego-hotspot.service
 sudo_pw systemctl enable ecs-ego-hotspot-watchdog.timer
 
 sudo_pw systemctl restart ecs-ego-wifi-radio.service
 sleep 2
 sudo_pw systemctl restart ecs-ego-wlo1-wifi.service || true
+sudo_pw systemctl restart ecs-ego-wlo1-wifi-watchdog.timer
 sleep 2
 sudo_pw systemctl restart ecs-ego-hotspot.service
 sudo_pw systemctl restart ecs-ego-hotspot-watchdog.timer
@@ -153,7 +170,7 @@ rfkill list | head -6 || true
 nmcli dev status | grep -E 'wlo1|wlp_usb|wlx502' || true
 nmcli connection show --active
 iwconfig "\$USB_IFACE" 2>/dev/null | grep -E 'Mode|ESSID' || iwconfig wlx502b73e8460c 2>/dev/null | grep -E 'Mode|ESSID' || true
-systemctl is-active ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-hotspot.service ecs-ego-hotspot-watchdog.timer
+systemctl is-active ecs-ego-wifi-radio.service ecs-ego-wlo1-wifi.service ecs-ego-wlo1-wifi-watchdog.timer ecs-ego-hotspot.service ecs-ego-hotspot-watchdog.timer
 echo "OK: dual WiFi layout provisioned"
 REMOTE
 )"

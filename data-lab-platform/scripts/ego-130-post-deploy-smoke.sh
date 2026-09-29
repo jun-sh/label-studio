@@ -33,9 +33,12 @@ systemctl --user reset-failed ecs-record-oak-mcap.service 2>/dev/null || true
 sleep 1
 curl -sf http://127.0.0.1:8080/api/status | python3 -c "import sys,json; s=json.load(sys.stdin); assert s.get('state')=='idle', s; print('idle_ok')"
 test -f ~/workspace/ego-studio/src/ego_capture_studio/capture/capture_stop_state.py
+test -f ~/workspace/ego-studio/src/ego_capture_studio/capture/capture_abandon_request.py
 grep -q 'PHASE_WARM_IDLE' ~/workspace/ego-studio/src/ego_capture_studio/capture/capture_stop_state.py
+grep -q 'abandon_for_warm_idle' ~/workspace/ego-studio/src/ego_capture_studio/capture/segment_store.py
 PYTHONPATH=~/workspace/ego-studio/src ~/workspace/ego-studio/.venv/bin/python -c \
-  "from ego_capture_studio.capture.capture_stop_state import stop_is_complete; print('import_ok')"
+  "from ego_capture_studio.capture.capture_stop_state import stop_is_complete; \
+from ego_capture_studio.capture.capture_abandon_request import abandon_requested_for; print('import_ok')"
 echo "post_deploy_smoke_ok"
 REMOTE
 )"

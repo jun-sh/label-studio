@@ -149,6 +149,20 @@ web_env="$(systemctl --user show ecs-ego-web.service -p Environment --no-pager 2
 echo "$web_env" | tr " " "\n" | grep -q "EGO_CAPTURE_TARGET=ecs-oak-mcap-capture-stack.target" \
   || die "ecs-ego-web not using MCAP capture target (daemon-reload + restart?)"
 ok "ecs-ego-web MCAP capture target"
+tcp_dropin="$HOME/.config/systemd/user/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf"
+if systemctl --user is-enabled ecs-ego-tcp-bridge.service >/dev/null 2>&1; then
+  if [[ -f "$tcp_dropin" ]]; then
+    grep -q "ecs-oak-mcap-capture-stack.target" "$tcp_dropin" || die "ego-tcp-bridge drop-in wrong capture target"
+    grep -q "ecs-record-oak-mcap.service" "$tcp_dropin" || die "ego-tcp-bridge drop-in wrong record unit"
+    ok "ego-tcp-bridge MCAP capture drop-in"
+  else
+    die "missing ego-tcp-bridge z-mcap-production.conf"
+  fi
+  tcp_env="$(systemctl --user show ecs-ego-tcp-bridge.service -p Environment --no-pager 2>/dev/null || true)"
+  echo "$tcp_env" | tr " " "\n" | grep -q "EGO_CAPTURE_TARGET=ecs-oak-mcap-capture-stack.target" \
+    || die "ecs-ego-tcp-bridge not using MCAP capture target (daemon-reload + restart?)"
+  ok "ecs-ego-tcp-bridge MCAP capture target"
+fi
 ck="$HOME/.config/ego-station.env"
 grep -q "^EGO_CAPTURE_CHECKPOINT=.*/checkpoint.json" "$ck" 2>/dev/null \
   || die "ego-station.env checkpoint not unified"

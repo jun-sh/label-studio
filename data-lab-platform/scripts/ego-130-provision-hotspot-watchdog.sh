@@ -8,7 +8,7 @@ TARGET="${1:-server@10.10.10.130}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EGO_WEB="${ROOT}/ego-local-web"
 
-IFACE="${EGO_WIFI_IFACE:-wlo1}"
+IFACE="${EGO_WIFI_IFACE:-wlp_usb_ap}"
 CONN="${EGO_HOTSPOT_CONN:-EGO-001-COLLECT}"
 GATEWAY="${EGO_HOTSPOT_GATEWAY:-192.168.8.1}"
 BOOT_DELAY="${EGO_HOTSPOT_BOOT_DELAY_SEC:-720}"

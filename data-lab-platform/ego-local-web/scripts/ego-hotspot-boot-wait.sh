@@ -3,9 +3,9 @@
 set -euo pipefail
 
 IFACE="${EGO_WIFI_IFACE:-wlp_usb_ap}"
-USB_MAC="${EGO_USB_WIFI_MAC:-50:2b:73:e8:46:0c}"
 BOOT_DELAY="${EGO_HOTSPOT_BOOT_DELAY_SEC:-45}"
 READY_TIMEOUT="${EGO_HOTSPOT_READY_TIMEOUT_SEC:-120}"
+WEB_DIR="${EGO_WEB_DIR:-/home/server/ego-web}"
 
 log() { logger -t ego-hotspot "$*"; }
 
@@ -24,29 +24,13 @@ wait_until() {
 }
 
 resolve_usb_iface() {
-  local mac norm_mac dev
-  if ip link show "$IFACE" &>/dev/null; then
-    echo "$IFACE"
-    return 0
-  fi
-  norm_mac="$(echo "$USB_MAC" | tr '[:upper:]' '[:lower:]')"
-  for dev in /sys/class/net/*; do
-    [[ -d "$dev" ]] || continue
-    local name="${dev##*/}"
-    [[ "$name" == wlo1 || "$name" == lo ]] && continue
-    [[ "$name" == wlx* || "$name" == wlp_usb_ap ]] || continue
-    local dev_mac
-    dev_mac="$(cat "$dev/address" 2>/dev/null | tr '[:upper:]' '[:lower:]')" || continue
-    if [[ "$dev_mac" == "$norm_mac" ]]; then
-      echo "$name"
+  local script="${WEB_DIR}/ego-usb-ap-resolve.sh"
+  if [[ -x "$script" ]]; then
+    if "$script"; then
       return 0
     fi
-  done
-  for name in /sys/class/net/wlx*; do
-    [[ -e "$name" ]] || continue
-    echo "${name##*/}"
-    return 0
-  done
+  fi
+  ip link show "$IFACE" &>/dev/null && echo "$IFACE" && return 0
   return 1
 }
 
@@ -60,12 +44,16 @@ if [[ -x /home/server/ego-web/ego-wifi-radio-on.sh ]]; then
   /home/server/ego-web/ego-wifi-radio-on.sh || true
 fi
 
-if resolved="$(resolve_usb_iface)"; then
-  IFACE="$resolved"
-  export EGO_WIFI_IFACE="$IFACE"
+wait_until "USB AP iface present" resolve_usb_iface
+
+if [[ -x "${WEB_DIR}/ego-usb-ap-bind.sh" ]]; then
+  IFACE="$("${WEB_DIR}/ego-usb-ap-bind.sh")"
+else
+  IFACE="$(resolve_usb_iface)"
   mkdir -p /run/ego-hotspot
   echo "$IFACE" > /run/ego-hotspot/iface
 fi
+export EGO_WIFI_IFACE="$IFACE"
 
 wait_until "iface ${IFACE} present" ip link show "$IFACE" &>/dev/null
 wait_until "NM device ${IFACE} available" nm_iface_available

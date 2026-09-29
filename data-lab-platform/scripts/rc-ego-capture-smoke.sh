@@ -12,6 +12,7 @@ log() { echo "[capture-smoke] $*"; }
 log "=== ego-stream-client (warm/stop contract) ==="
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest \
   "${STREAM}/tests/test_capture_stop_state.py" \
+  "${STREAM}/tests/test_capture_abandon_request.py" \
   "${STREAM}/tests/test_warm_cold_episode.py" \
   "${STREAM}/tests/test_async_frame_writer_warm_cycle.py" \
   "${STREAM}/tests/test_cli_record_oak_stream_smoke.py" \

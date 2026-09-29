@@ -7,8 +7,11 @@ IFACE="${EGO_WIFI_IFACE:-wlp_usb_ap}"
 MAX_ATTEMPTS="${EGO_HOTSPOT_MAX_ATTEMPTS:-8}"
 RETRY_SLEEP="${EGO_HOTSPOT_RETRY_SLEEP:-5}"
 
+WEB_DIR="${EGO_WEB_DIR:-/home/server/ego-web}"
 if [[ -f /run/ego-hotspot/iface ]]; then
   IFACE="$(cat /run/ego-hotspot/iface)"
+elif [[ -x "${WEB_DIR}/ego-usb-ap-bind.sh" ]]; then
+  IFACE="$("${WEB_DIR}/ego-usb-ap-bind.sh")"
 fi
 
 _nmcli() {

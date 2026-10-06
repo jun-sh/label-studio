@@ -41,6 +41,27 @@
       "observation.images.camera_rear_right": "后右"
     }
   },
+  "ego-002-physical": {
+    "topology_file": "config/topologies/camera_topology_ego-002.json",
+    "video_keys": [
+      "observation.images.camera_front_left",
+      "observation.images.camera_front_right",
+      "observation.images.camera_rear_left",
+      "observation.images.camera_rear_right"
+    ],
+    "viewer_display_order": [
+      "observation.images.camera_front_left",
+      "observation.images.camera_front_right",
+      "observation.images.camera_rear_left",
+      "observation.images.camera_rear_right"
+    ],
+    "viewer_labels_zh": {
+      "observation.images.camera_front_left": "前左",
+      "observation.images.camera_front_right": "前右",
+      "observation.images.camera_rear_left": "后左",
+      "observation.images.camera_rear_right": "后右"
+    }
+  },
   "ego-001-physical": {
     "topology_file": "config/topologies/camera_topology_ego-001.json",
     "video_keys": [
@@ -64,6 +85,7 @@
   },
   "stations": {
     "ego-001": { "topology_id": "ego-001-physical" },
+    "ego-002": { "topology_id": "ego-002-physical" },
     "ego-mcap-pilot": { "topology_id": "ego-standard" },
     "ego-mcap-track2": { "topology_id": "ego-standard" }
   }

@@ -23,7 +23,6 @@ import { Breadcrumbs } from "../Breadcrumbs/Breadcrumbs";
 import { Dropdown } from "@humansignal/ui";
 import { Hamburger } from "../Hamburger/Hamburger";
 import { Menu } from "../Menu/Menu";
-import { VersionNotifier, VersionProvider } from "../VersionNotifier/VersionNotifier";
 import "./Menubar.scss";
 import "./MenuContent.scss";
 import "./MenuSidebar.scss";
@@ -225,11 +224,11 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
         </div>
       )}
 
-      <VersionProvider>
-        <div className={contentClass.elem("body").toClassName()}>
+      <div className={contentClass.elem("body").toClassName()}>
           {enabled && (
             <Dropdown
               ref={menuDropdownRef}
+              dataTestId="shell-sidebar-menu"
               onToggle={sidebarToggle}
               onVisibilityChanged={() => window.dispatchEvent(new Event("resize"))}
               visible={sidebarOpened}
@@ -264,8 +263,6 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
 
                 <Menu.Spacer />
 
-                <VersionNotifier showNewVersion />
-
                 {dataLabLinks.apiDocs ? (
                   <Menu.Item
                     label={t("shell.menubar.api")}
@@ -282,8 +279,6 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
                     target="_blank"
                   />
                 ) : null}
-
-                <VersionNotifier showCurrentVersion />
 
                 <Menu.Divider />
 
@@ -310,7 +305,6 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
             </div>
           </MenubarContext.Provider>
         </div>
-      </VersionProvider>
     </div>
   );
 };

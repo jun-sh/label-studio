@@ -447,15 +447,21 @@ def collect_versions(force=False):
         return settings.VERSIONS
 
     # main pypi package
+    os_package = {
+        'version': label_studio.__version__,
+        'short_version': '.'.join(label_studio.__version__.split('.')[:2]),
+        'latest_version_from_pypi': label_studio.__latest_version__,
+        'latest_version_upload_time': label_studio.__latest_version_upload_time__,
+        'current_version_is_outdated': label_studio.__current_version_is_outdated__,
+    }
+    if not settings.LATEST_VERSION_CHECK:
+        os_package['latest_version_from_pypi'] = None
+        os_package['latest_version_upload_time'] = None
+        os_package['current_version_is_outdated'] = False
+
     result = {
         'release': label_studio.__version__,
-        'label-studio-os-package': {
-            'version': label_studio.__version__,
-            'short_version': '.'.join(label_studio.__version__.split('.')[:2]),
-            'latest_version_from_pypi': label_studio.__latest_version__,
-            'latest_version_upload_time': label_studio.__latest_version_upload_time__,
-            'current_version_is_outdated': label_studio.__current_version_is_outdated__,
-        },
+        'label-studio-os-package': os_package,
         # backend full git info
         'label-studio-os-backend': version.get_git_commit_info(ls=True),
     }

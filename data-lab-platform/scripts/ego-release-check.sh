@@ -41,8 +41,21 @@ fi
 
 # --- P0 L2/L3 product path (34 daily hot path) ---
 if [[ -f "$PROFILE" ]]; then
-  grep -q '^EGO_OAK_MODE=rectify' "$PROFILE" && ok "profile EGO_OAK_MODE=rectify (L2 1280×800)" \
-    || die "profile missing EGO_OAK_MODE=rectify"
+  if grep -q '^EGO_CAMERA_OPTICS=pinhole' "$PROFILE"; then
+    grep -q '^EGO_OAK_MODE=passthrough' "$PROFILE" \
+      && ok "profile pinhole: EGO_OAK_MODE=passthrough (no 34 undistort)" \
+      || die "pinhole profile must set EGO_OAK_MODE=passthrough"
+    grep -q '^EGO_PREVIEW_REQUIRE_RECTIFIED=0' "$PROFILE" \
+      && ok "profile EGO_PREVIEW_REQUIRE_RECTIFIED=0" \
+      || die "pinhole profile missing EGO_PREVIEW_REQUIRE_RECTIFIED=0"
+  else
+    grep -q '^EGO_CAMERA_OPTICS=fisheye' "$PROFILE" \
+      && ok "profile EGO_CAMERA_OPTICS=fisheye" \
+      || die "profile missing EGO_CAMERA_OPTICS=fisheye (or pinhole)"
+    grep -q '^EGO_OAK_MODE=rectify' "$PROFILE" \
+      && ok "profile fisheye: EGO_OAK_MODE=rectify (L2 1280×800)" \
+      || die "fisheye profile missing EGO_OAK_MODE=rectify"
+  fi
   grep -q '^EGO_USE_CONVERT_WORKER=0' "$PROFILE" && ok "profile EGO_USE_CONVERT_WORKER=0 (WiLoR off daily path)" \
     || die "profile missing EGO_USE_CONVERT_WORKER=0"
   grep -q '^EGO_NOTIFY_PROCESS=1' "$PROFILE" && ok "profile EGO_NOTIFY_PROCESS=1" \

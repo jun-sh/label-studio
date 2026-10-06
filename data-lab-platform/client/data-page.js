@@ -50,6 +50,8 @@
     "ego-001": "/lerobot/api/sample/ego_001/dataset/",
     ego_001: "/lerobot/api/sample/ego_001/dataset/",
     egodome: "/lerobot/api/sample/ego_001/dataset/",
+    "ego-002": "/lerobot/api/sample/ego_002/dataset/",
+    ego_002: "/lerobot/api/sample/ego_002/dataset/",
   };
 
   function loadDatasetUrlOverrides() {

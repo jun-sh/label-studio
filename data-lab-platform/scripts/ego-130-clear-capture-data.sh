@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clear ego-001 edge capture cache on 130 (segments, checkpoint, tmpfs active). Does NOT touch export/.
+# Clear edge capture cache (segments, checkpoint, tmpfs/tmp active, logs). Does NOT touch export/.
 # Usage: RC_CAPTURE_PASS=1 bash ego-130-clear-capture-data.sh [server@10.10.10.130] [station_id]
 set -euo pipefail
 
@@ -33,9 +33,9 @@ set -euo pipefail
 STATION_ID="${STATION_ID}"
 CACHE_ROOT="${CACHE_ROOT}"
 ACTIVE_ROOTS=(
-  "\${CACHE_ROOT}/../ego-001-mcap-active"
-  "/dev/shm/ego-001-mcap-active"
-  "/tmp/ego-001-mcap-active"
+  "/home/server/cache/\${STATION_ID}-mcap-active"
+  "/dev/shm/\${STATION_ID}-mcap-active"
+  "/tmp/\${STATION_ID}-mcap-active"
 )
 
 systemctl --user stop ecs-oak-mcap-capture-stack.target 2>/dev/null || true
@@ -44,6 +44,9 @@ systemctl --user reset-failed ecs-record-oak-mcap.service 2>/dev/null || true
 
 if [[ -d "\${CACHE_ROOT}/segments/sessions" ]]; then
   rm -rf "\${CACHE_ROOT}/segments/sessions/"*
+fi
+if [[ -d "\${CACHE_ROOT}/logs" ]]; then
+  rm -rf "\${CACHE_ROOT}/logs/"*
 fi
 rm -f "\${CACHE_ROOT}/checkpoint.json" "\${CACHE_ROOT}/capture_live_stats.json" \
   "\${CACHE_ROOT}/oak_warm_state.json" "\${CACHE_ROOT}/capture_stop_state.json" \

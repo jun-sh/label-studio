@@ -29,9 +29,19 @@ stations:
     title: Ego-001
     dataset_slug: ego_001
     upload_protocol: mcap
+    camera_optics: fisheye
     aggregate_dir_name: EgoDome
     manifest_id: ego-001
     cover_webp: ego_001.webp
+
+  ego-002:
+    title: Ego-002
+    dataset_slug: ego_002
+    upload_protocol: mcap
+    camera_optics: pinhole
+    aggregate_dir_name: Ego-002
+    manifest_id: ego-002
+    cover_webp: ego_002.webp
 
   ego-lab-01:
     title: Ego-Lab-01-Hand-Pose

@@ -12,8 +12,9 @@ export DERIVE_FFPROBE_HEARTBEAT="${DERIVE_FFPROBE_HEARTBEAT:-1}"
 export DERIVE_MCAP_SINGLE_FAST="${DERIVE_MCAP_SINGLE_FAST:-1}"
 
 # --- convert (34 host ego-process) ---
-# Daily hot path: L2 rectified 1280×800 (ego-run-l2). WiLoR only via ego-delivery-run.
+# Daily hot path: L2 1280×800 (ego-run-l2; mode from station profile EGO_CAMERA_OPTICS).
 export EGO_OAK_MODE="${EGO_OAK_MODE:-rectify}"
+export EGO_CAMERA_OPTICS="${EGO_CAMERA_OPTICS:-fisheye}"
 export EGO_L2_PUBLISH="${EGO_L2_PUBLISH:-1}"
 export EGO_VIEWER_PUBLISH_L2="${EGO_VIEWER_PUBLISH_L2:-1}"
 export EGO_USE_CONVERT_WORKER="${EGO_USE_CONVERT_WORKER:-0}"

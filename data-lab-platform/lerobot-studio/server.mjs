@@ -193,8 +193,10 @@ function serveFileWithRange(req, res, filePath) {
 /** Viewer manifest id → on-disk bundled sample directory (corpus slug may differ). */
 const SAMPLE_STORAGE_ALIASES = {
   "ego-001": "ego_001",
+  "ego-002": "ego_002",
   egodome: "ego_001",
   ego_001: "ego_001",
+  ego_002: "ego_002",
 };
 
 function resolveSampleStorageId(datasetId) {
@@ -425,6 +427,9 @@ function findDataset(id) {
   let entry = datasets.find((d) => d.id === id);
   if (!entry && (id === "egodome" || id === "ego-001")) {
     entry = datasets.find((d) => d.id === "ego_001");
+  }
+  if (!entry && id === "ego-002") {
+    entry = datasets.find((d) => d.id === "ego_002");
   }
   if (!entry) return null;
   if (!entry.httpDatasetUrl && resolveSampleDatasetFile(id, "meta/info.json")) {

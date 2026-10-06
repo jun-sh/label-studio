@@ -779,6 +779,7 @@ def station_slug(pipe_root: Path, station: str) -> str:
     """Corpus / samples filesystem slug (dataset_slug), not viewer manifest id."""
     defaults = {
         "ego-001": "ego_001",
+        "ego-002": "ego_002",
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
         "ego-mcap-pilot": "ego_mcap_pilot",
@@ -797,6 +798,7 @@ def station_manifest_id(pipe_root: Path, station: str) -> str:
     """Viewer /data/:id manifest entry id."""
     defaults = {
         "ego-001": "ego-001",
+        "ego-002": "ego-002",
         "ego-lab-01": "ego_lab_01_hand_pose",
         "ego-field-02": "ego_field_02_hand_pose",
         "ego-mcap-pilot": "ego_mcap_pilot",

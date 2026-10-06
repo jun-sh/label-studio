@@ -113,14 +113,15 @@ if rsync -av --delete --exclude '__pycache__' --exclude '*.pyc' "${CAPTURE_SRC}/
   rsync -av "${CAPTURE_SRC}/cli/ego_upload.py" "${TARGET}:${REMOTE_CLI}/ego_upload.py"
   rsync -av "${CAPTURE_SRC}/tools/upload_segments_loop.py" "${TARGET}:${REMOTE_TOOLS}/upload_segments_loop.py"
   for topo in camera_topology_standard.json camera_topology_standard.yaml \
-    camera_topology_ego-001.json camera_topology_ego-001.yaml; do
+    camera_topology_ego-001.json camera_topology_ego-001.yaml \
+    "camera_topology_${STATION_ID}.json" "camera_topology_${STATION_ID}.yaml"; do
     if [[ -f "${CAPTURE_SRC}/config/${topo}" ]]; then
       rsync -av "${CAPTURE_SRC}/config/${topo}" "${TARGET}:${REMOTE_CONFIG}/${topo}"
     fi
   done
 else
   echo "rsync failed — using paramiko sftp (slower)"
-  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" REMOTE_CONFIG="$REMOTE_CONFIG" python3 - <<'PY'
+  RC_CAPTURE_PASS="${RC_CAPTURE_PASS:-1}" PROVISION_STATION="$STATION_ID" TARGET="$TARGET" CAPTURE_SRC="$CAPTURE_SRC" REMOTE_CAPTURE="$REMOTE_CAPTURE" REMOTE_CLI="$REMOTE_CLI" REMOTE_CONFIG="$REMOTE_CONFIG" python3 - <<'PY'
 import os, paramiko
 from pathlib import Path
 target = os.environ["TARGET"]
@@ -149,11 +150,14 @@ for path in src.rglob("*"):
     sftp.put(str(path), remote)
 for name in ("record_oak_stream.py", "upload_segments.py", "ego_upload.py"):
     sftp.put(str(src / "cli" / name), f"{remote_cli}/{name}")
+station_id = os.environ.get("PROVISION_STATION", "ego-001")
 for topo in (
     "camera_topology_standard.json",
     "camera_topology_standard.yaml",
     "camera_topology_ego-001.json",
     "camera_topology_ego-001.yaml",
+    f"camera_topology_{station_id}.json",
+    f"camera_topology_{station_id}.yaml",
 ):
     local_topo = src / "config" / topo
     if local_topo.is_file():
@@ -180,10 +184,18 @@ _scp "${CAPTURE_SRC}/systemd/ecs-oak-mcap-capture-stack.target" "/tmp/ecs-oak-mc
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-standby-stack.target" "/tmp/ecs-oak-standby-stack.target"
 _scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service" "/tmp/ecs-preview-standby.service"
 _scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-oak-boot-pre.conf" "/tmp/z-preview-standby-oak-boot-pre.conf"
+_scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-pythonpath.conf" "/tmp/z-preview-standby-pythonpath.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.service" "/tmp/ecs-oak-bootloader-precheck.service"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.timer" "/tmp/ecs-oak-bootloader-precheck.timer"
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web.service.d/z-mcap-production.conf" "/tmp/z-ego-web-mcap-production.conf"
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf" "/tmp/z-ego-tcp-mcap-production.conf"
+_scp "${EGO_WEB_SRC}/systemd/ecs-ego-web-staging.service" "/tmp/ecs-ego-web-staging.service"
+_scp "${EGO_WEB_SRC}/ego_web.py" "/tmp/ego_web_staging.py"
+_scp "${EGO_WEB_SRC}/templates/quad_preview.html" "/tmp/quad_preview.html"
+_scp "${EGO_WEB_SRC}/templates/capture_ui.html" "/tmp/capture_ui_staging.html"
+if [[ -f "${EGO_WEB_SRC}/systemd/ecs-ego-web-staging.service.d/z-mcap-production.conf" ]]; then
+  _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web-staging.service.d/z-mcap-production.conf" "/tmp/z-ego-web-staging-mcap-production.conf"
+fi
 _scp "${PROFILE}" "/tmp/ego-mcap-production.env"
 _scp "${REPO_ROOT}/data-lab-platform/scripts/ego-upload-station.sh" "/tmp/ego-upload-station.sh"
 _scp "${CAPTURE_SRC}/systemd/ecs-upload-segments-loop.service.d/production-manual-only.conf" "/tmp/production-manual-only.conf"
@@ -221,10 +233,22 @@ cp /tmp/ecs-oak-mcap-capture-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-oak-standby-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-preview-standby.service "\$HOME/.config/systemd/user/"
 cp /tmp/z-preview-standby-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-oak-boot-pre.conf"
+cp /tmp/z-preview-standby-pythonpath.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-pythonpath.conf"
 cp /tmp/ecs-oak-bootloader-precheck.service "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-oak-bootloader-precheck.timer "\$HOME/.config/systemd/user/"
 cp /tmp/z-ego-web-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf"
 cp /tmp/z-ego-tcp-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf"
+
+if [[ "\${STATION_ID}" != "ego-001" ]]; then
+  for df in \
+    "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-mcap-production.conf" \
+    "\$HOME/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf" \
+    "\$HOME/.config/systemd/user/ecs-ego-tcp-bridge.service.d/z-mcap-production.conf"; do
+    if [[ -f "\$df" ]]; then
+      sed -i "s/ego-001/\${STATION_ID}/g" "\$df"
+    fi
+  done
+fi
 
 {
   echo "# generated by ego-130-provision-mcap-production.sh — do not hand-edit"
@@ -295,6 +319,19 @@ systemctl --user disable ecs-record-oak-mcap.service 2>/dev/null || true
 systemctl --user disable ecs-oak-mcap-capture-stack.target 2>/dev/null || true
 systemctl --user restart ecs-ego-web.service
 
+STAGING_DIR="/home/server/ego-web-staging"
+mkdir -p "\${STAGING_DIR}/templates"
+install -m 0644 /tmp/ego_web_staging.py "\${STAGING_DIR}/ego_web.py"
+install -m 0644 /tmp/quad_preview.html "\${STAGING_DIR}/templates/quad_preview.html"
+install -m 0644 /tmp/capture_ui_staging.html "\${STAGING_DIR}/templates/capture_ui.html"
+cp /tmp/ecs-ego-web-staging.service "\$HOME/.config/systemd/user/"
+if [[ -f /tmp/z-ego-web-staging-mcap-production.conf ]]; then
+  mkdir -p "\$HOME/.config/systemd/user/ecs-ego-web-staging.service.d"
+  cp /tmp/z-ego-web-staging-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-web-staging.service.d/z-mcap-production.conf"
+fi
+systemctl --user enable ecs-ego-web-staging.service
+systemctl --user restart ecs-ego-web-staging.service
+
 echo "OK: MCAP stack aligned"
 echo "  capture target: ecs-oak-mcap-capture-stack.target (disabled at boot)"
 echo "  record unit:    ecs-record-oak-mcap.service (disabled at boot)"
@@ -310,3 +347,4 @@ bash "${ROOT}/scripts/ego-130-provision-hotspot-watchdog.sh" "${TARGET}" || \
 echo "Verify: bash data-lab-platform/scripts/ego-station-doctor.sh ${STATION_ID} ${TARGET}"
 echo "Release: bash data-lab-platform/scripts/ego-release-check.sh ${STATION_ID} ${TARGET}"
 echo "Record: phone UI :8080 (capture disabled at boot; manual start only)"
+echo "Quad preview: phone :8081 (ecs-ego-web-staging); standby JPEG :8765 (ecs-preview-standby on demand)"

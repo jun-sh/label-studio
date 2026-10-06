@@ -31,11 +31,16 @@
     );
   }
 
+  function isDataVizChromePage() {
+    if (!document.body) return false;
+    return document.body.dataset.datalabDataPage === "1";
+  }
+
   function shouldLockParentTheme() {
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "27";
+  var SHELL_VERSION = "28";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -708,10 +713,13 @@
     document.addEventListener(
       "click",
       function (e) {
-        if (!isCollectionChromePage()) return;
+        if (!isCollectionChromePage() && !isDataVizChromePage()) return;
         var trigger = e.target && e.target.closest ? e.target.closest(SEL.trigger) : null;
         if (!trigger) return;
-        var layer = document.getElementById("datalab-station-layer") || document.getElementById("datalab-collection-layer");
+        var layer =
+          document.getElementById("datalab-station-layer") ||
+          document.getElementById("datalab-collection-layer") ||
+          document.getElementById("datalab-viz-layer");
         if (layer && layer.style.pointerEvents !== "none") {
           layer.style.pointerEvents = "none";
         }

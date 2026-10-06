@@ -12,7 +12,7 @@ import { parseExtendedInfo } from "./lerobot-converter.mjs";
 import { hasSessionMarker, SESSION_MARKERS } from "./session-markers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.resolve(__dirname, "../config/ego-perception-modules.json");
+const CONFIG_PATH = path.resolve(__dirname, "config/ego-perception-modules.json");
 
 let cachedConfig = null;
 

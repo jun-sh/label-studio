@@ -4,6 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=ego-station-profile-env.sh
+source "${SCRIPT_DIR}/ego-station-profile-env.sh"
+ego_apply_station_profile_exports "${EGO_STATION:-ego-001}" "$DATALAB_ROOT" || true
 SESSIONS_PY="${SCRIPT_DIR}/ego-pipeline-sessions.py"
 SLUG="${1:-}"
 STATION="${EGO_STATION:-ego-001}"

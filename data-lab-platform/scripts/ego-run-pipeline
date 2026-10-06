@@ -60,11 +60,14 @@ done
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-station-profile-env.sh
+source "${SCRIPT_DIR}/ego-station-profile-env.sh"
 # shellcheck source=ego-pipeline-performance.env.sh
 source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
 # shellcheck source=ego-convert-coord.sh
 source "${SCRIPT_DIR}/ego-convert-coord.sh"
 DATALAB_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ego_apply_station_profile_exports "$STATION" "$DATALAB_ROOT" || true
 PIPE_ROOT="${EGO_HAND_PIPELINE_ROOT:-$(dirname "$DATALAB_ROOT")/ego-hand-pipeline}"
 PLATFORM_ROOT="${EGO_PLATFORM_ROOT:-$(dirname "$DATALAB_ROOT")/ego-platform}"
 WILOR_ROOT="${WILOR_ROOT:-$PIPE_ROOT/third_party/wilor}"

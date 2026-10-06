@@ -54,6 +54,9 @@ elif [[ -f "$SCRIPT_DIR/scripts/ego-hotspot-up.sh" ]]; then
 fi
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-web.service" "$SYSTEMD_USER_DIR/ecs-ego-web.service"
 install -m 0644 "$SCRIPT_DIR/systemd/ecs-ego-tcp-bridge.service" "$SYSTEMD_USER_DIR/ecs-ego-tcp-bridge.service"
+if [[ -x "$SCRIPT_DIR/deploy-staging.sh" ]]; then
+  bash "$SCRIPT_DIR/deploy-staging.sh"
+fi
 
 # Remove legacy auto-export module if present.
 rm -f "$DEST/ego_auto_export.py"

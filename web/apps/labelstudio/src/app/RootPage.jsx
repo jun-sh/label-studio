@@ -13,11 +13,11 @@ export const RootPage = ({ content }) => {
       defaultOpened={opened}
       defaultPinned={pinned}
       onSidebarToggle={(visible) => {
-        localStorage.setItem("sidebar-opened", visible);
+        localStorage.setItem("sidebar-opened", visible ? "true" : "false");
         window.dispatchEvent(new Event("datalab:layout"));
       }}
       onSidebarPin={(pinned) => {
-        localStorage.setItem("sidebar-pinned", pinned);
+        localStorage.setItem("sidebar-pinned", pinned ? "true" : "false");
         window.dispatchEvent(new Event("datalab:layout"));
       }}
     >

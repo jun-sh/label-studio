@@ -10,7 +10,7 @@
   };
   var CATALOG_API = "/lerobot/api/collection/stations/catalog";
   var STATIC_CATALOG = "/_datalab/collection-stations.catalog.json";
-  var CACHE_KEY = "datalab:collection:stations:v1";
+  var CACHE_KEY = "datalab:collection:stations:v2";
   var listEl = document.getElementById("datalab-station-list");
   var MAX_RETRIES = 3;
   var RETRY_BASE_MS = 800;

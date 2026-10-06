@@ -2,13 +2,15 @@
   left: 0;
   overflow: auto;
   position: fixed;
-  z-index: 200 !important;
+  z-index: 100 !important;
   top: var(--header-height);
   height: calc(100vh - var(--header-height));
   width: var(--menu-sidebar-width);
   background: none;
   transition: all 150ms ease-out;
   border-radius: 0;
+  // Portaled shell menu is position:fixed without a stable anchor on /data; keep visible (OSS uses inline DOM).
+  position-visibility: always;
 
   .icon {
     transition: transform 0.1s ease;

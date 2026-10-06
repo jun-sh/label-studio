@@ -60,6 +60,8 @@ services:
       - ./data-storage/ego-delivery:/datalab/data-storage/ego-delivery:ro
       - ./data-storage/lerobot-qc:/datalab/data-storage/lerobot-qc:ro
       - ./data-lab-platform/lerobot-studio/delivery-status.mjs:/app/delivery-status.mjs:ro
+      - ./data-lab-platform/lerobot-studio/perception-modules.mjs:/app/perception-modules.mjs:ro
+      - ./data-lab-platform/config/ego-perception-modules.json:/app/config/ego-perception-modules.json:ro
       - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
       - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
@@ -162,6 +164,55 @@ services:
       retries: 3
       start_period: 15s
 
+  derive-worker-ego-002:
+    build:
+      context: ./data-lab-platform/lerobot-studio
+    image: ${LEROBOT_IMAGE:-data-lab-lerobot-studio:local}
+    restart: unless-stopped
+    entrypoint: ["node"]
+    command: ["/app/ego-derive-watch.mjs"]
+    volumes:
+      - ./data-storage/stream:/srv/stream
+      - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
+      - ./data-lab-platform/lerobot-studio/derive-lock.mjs:/app/derive-lock.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-pipeline.mjs:/app/derive-pipeline.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ego-derive-watch.mjs:/app/ego-derive-watch.mjs:ro
+      - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/session-markers.mjs:/app/session-markers.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ingest:/app/ingest:ro
+      - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
+      - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
+      - ./data-lab-platform/lerobot-studio/scripts/merge-station-imu.py:/app/scripts/merge-station-imu.py:ro
+      - ../ego-platform/src:/ego-platform/src:ro
+    user: "1000:1000"
+    environment:
+      - STREAM_DATA_ROOT=/srv/stream
+      - STATION_ID=ego-002
+      - PYTHONPATH=/ego-platform/src
+      - DERIVE_WATCH_POLL_MS=${DERIVE_WATCH_POLL_MS:-10000}
+      - DERIVE_EXTRACT_BACKEND=${DERIVE_EXTRACT_BACKEND:-python}
+      - DERIVE_MUX_BACKEND=${DERIVE_MUX_BACKEND:-fluent}
+      - DERIVE_MUX_MODE=${DERIVE_MUX_MODE:-full}
+      - DERIVE_VIDEO_EXPORT_BACKEND=auto
+      - DERIVE_PARQUET_BACKEND=lerobot
+      - DERIVE_DEFER_PUBLISH=${DERIVE_DEFER_PUBLISH:-1}
+      - DERIVE_EXTRACT_CONCURRENCY=${DERIVE_EXTRACT_CONCURRENCY:-4}
+      - DERIVE_EXTRACT_ENABLED=${DERIVE_EXTRACT_ENABLED:-1}
+      - DERIVE_FFPROBE_HEARTBEAT=${DERIVE_FFPROBE_HEARTBEAT:-1}
+      - DERIVE_PROGRESS_HEARTBEAT_MS=${DERIVE_PROGRESS_HEARTBEAT_MS:-30000}
+      - STREAM_SESSION_SINGLE_EPISODE=${STREAM_SESSION_SINGLE_EPISODE:-1}
+      - EGO_DERIVE_COMMERCIAL_GATE=${EGO_DERIVE_COMMERCIAL_GATE:-0}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "tr '\\0' ' ' < /proc/1/cmdline | grep -q ego-derive-watch.mjs",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   stream-parquet-sync:
     build:
       context: ./data-lab-platform/lerobot-studio
@@ -193,6 +244,8 @@ services:
       - ./data-storage/samples:/datalab-samples:ro
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/perception-modules.mjs:/app/perception-modules.mjs:ro
+      - ./data-lab-platform/config/ego-perception-modules.json:/app/config/ego-perception-modules.json:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
       - ./data-lab-platform/lerobot-studio/session-markers.mjs:/app/session-markers.mjs:ro
       - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
@@ -205,6 +258,8 @@ services:
       - ./data-lab-platform/lerobot-studio/ingest-bundled-datasets.sh:/app/ingest-bundled-datasets.sh:ro
       - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
       - ./data-lab-platform/lerobot-studio/config/collection-stations.json:/app/config/collection-stations.json:ro
+      - ./data-lab-platform/lerobot-studio/config/datasets.json:/app/config/datasets.json:ro
+      - ./data-lab-platform/lerobot-studio/config/sample-datasets.manifest.json:/app/config/sample-datasets.manifest.json:ro
       - ./data-lab-platform/lerobot-studio/config/station-topology.json:/app/config/station-topology.json:ro
     environment:
       - PORT=7860

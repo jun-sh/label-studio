@@ -44,5 +44,15 @@
     "archiveUrl": "/lerobot/bundled/ego_001.zip",
     "previewVideoUrl": "",
     "coverImageUrl": "/lerobot/bundled/covers/ego_001.webp"
+  },
+  {
+    "id": "ego_002",
+    "name": "Ego-002",
+    "description": "LeRobot v3.0 · ego-002 native pinhole, depth, and hand pose",
+    "url": "/lerobot/api/sample/ego_002/dataset/",
+    "httpDatasetUrl": "/lerobot/api/sample/ego_002/dataset/",
+    "archiveUrl": "/lerobot/bundled/ego_002.zip",
+    "previewVideoUrl": "",
+    "coverImageUrl": "/lerobot/bundled/covers/ego_002.webp"
   }
 ]

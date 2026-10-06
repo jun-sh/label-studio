@@ -445,14 +445,17 @@ bash data-lab-platform/scripts/ego-130-provision.sh server@10.10.10.130 ego-001
 RC_CAPTURE_PASS=1 python3 data-lab-platform/scripts/ego-130-provision-paramiko.py
 ```
 
-部署 **手机控制 Web**（在采集站上）：
+部署 **手机控制 Web**（在采集站上；**含 8080 采集 + 8081 四路待机预览**）：
 
 ```bash
 cd data-lab-platform/ego-local-web
-bash deploy.sh
+bash deploy.sh    # 内部会执行 deploy-staging.sh（ecs-ego-web-staging :8081）
 loginctl enable-linger server
-systemctl --user enable --now ecs-ego-web.service
+systemctl --user enable --now ecs-ego-web.service ecs-ego-web-staging.service
 ```
+
+MCAP 生产站还需 `ego-130-provision.sh --profile mcap-production`（安装 `ecs-preview-standby` 与 `:8765` 预览源）。  
+手机：**录前** `http://192.168.8.1:8081/` 看四路；**录制** `http://192.168.8.1:8080/`。详见 [ego-gpd-station-migration-checklist.md](./ego-gpd-station-migration-checklist.md) §2.11 与 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md)。
 
 生产上传模式：
 
@@ -470,6 +473,34 @@ bash data-lab-platform/scripts/ego-130-verify-production.sh server@10.10.10.130
 
 ---
 
+## 6.1 Tenda USB 热点（ego-002 / 003 / 004）
+
+若采集站 USB 热点为 **Tenda AIC8800DC**（`lsusb` 2604:0013，`aic8800_fdrv`），在 §5 热点部署之外 **必须** 执行（001 的 Realtek 路径不需要）：
+
+```bash
+EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.sh server@<采集站IP>
+```
+
+完整分支说明与 001/002 差异表见 **[ego-gpd-station-migration-checklist.md](./ego-gpd-station-migration-checklist.md)**。
+
+---
+
+## 6.2 相机拓扑（每站独立，与光学分开）
+
+四路 **前左/前右/后左/后右** 与 OAK 插座 `CAM_A..D` 的对应关系写在 **`camera_topology_<station>.yaml`**（运行时读同名 `.json`），由 `EGO_TOPOLOGY_FILE` 指定。  
+**不要**默认复制 `ego-001`：`camera_topology_standard`（fleet 金标）与 `camera_topology_ego-001`（130 头盔）本身也不同；**ego-002 已为 v2 单独标定**。
+
+新机流程：
+
+1. 从 `camera_topology_standard.yaml` 复制为 `camera_topology_ego-00N.yaml`，改 `topology_id`  
+2. 录前用 **8081** 遮镜头标定 `socket_to_role`（见迁移清单 §2.13）  
+3. 生成/同步 `.json`；34 侧更新 `lerobot-studio/config/topologies/camera_topology_ego-00N.json`  
+4. `ego-130-provision.sh --profile mcap-production ... ego-00N` 同步到边缘 `~/workspace/ego-studio/config/`  
+
+**ego-002 当前映射表**：见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §3。
+
+---
+
 ## 7. 新机完整检查清单
 
 | # | 检查项 | 命令 / 期望 |
@@ -481,6 +512,8 @@ bash data-lab-platform/scripts/ego-130-verify-production.sh server@10.10.10.130
 | 5 | 合盖恢复 | 合盖→开盖后 1–2s 内横屏 |
 | 6 | 热点 | 手机可搜到 `EGO-001-COLLECT`，网关 `192.168.8.1` |
 | 7 | 采集 Web | `http://192.168.8.1:8080` 或 `http://10.10.10.130:8080` |
+| 7b | 四路预览 Web | `http://192.168.8.1:8081` 四格有图；`curl -s localhost:8765/preview/status` → `online:true` |
+| 7c | 四路朝向 | 8081 各格画面与头盔物理朝向一致（`camera_topology_<station>` 已标定，见 §6.2） |
 | 8 | 采集路径 | `ego-130-verify-production.sh` 通过 |
 | 9 | WiFi 微码 | 重启 12 分钟后 `Microcode SW error` 是否可接受；热点是否仍可用 |
 
@@ -495,6 +528,9 @@ bash data-lab-platform/scripts/ego-130-verify-production.sh server@10.10.10.130
 | 重启后搜不到热点 | iwlwifi 固件崩溃窗口 | 等 10min 或重启热点服务；长期考虑 USB AP |
 | 系统自动升级内核 | 未 mask apt 定时器 | 重做第 4 节 |
 | 手机 UI 打不开 | `ecs-ego-web` 未运行 | `systemctl --user status ecs-ego-web` |
+| **8081 打不开** | 未部署 `ecs-ego-web-staging` | 在采集站跑 `ego-local-web/deploy.sh`；`systemctl --user status ecs-ego-web-staging` |
+| 8081 有页无四路图 | `ecs-preview-standby` 失败 | `journalctl --user -u ecs-preview-standby`；确认 `z-pythonpath.conf` |
+| 四路标签与实物不符 | 误用他站 `socket_to_role` | 按 §6.2 标定并同步 `camera_topology_<station>`；重启 `ecs-preview-standby` |
 | Android 一直「正在连接」 | 实验室 Wi‑Fi 未断 / WPA 混合 beacon / 信道 6 干扰 / 换 USB 后 NM 未绑接口 | 见 **§5.5**；重跑 `ego-130-provision-usb-hotspot.sh` |
 
 ---

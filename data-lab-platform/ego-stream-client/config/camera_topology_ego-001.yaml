@@ -1,6 +1,7 @@
 # ego-001 station-specific camera topology (physical socket layout).
 # Helmet CAM_B/C/D were wired for legacy 3RGB+depth; remap sockets to ego-standard roles.
 # Deploy on 130: EGO_TOPOLOGY_FILE=/home/server/workspace/ego-studio/config/camera_topology_ego-001.yaml
+# Other stations (ego-002, 003, …) need their own camera_topology_<station>.* — do not copy this file.
 
 topology_id: ego-001-physical
 version: 1

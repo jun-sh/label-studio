@@ -21,6 +21,25 @@ COMPOSE_OVERLAY="${EGO_COMPOSE_OVERLAY}"
 # shellcheck source=ego-reset-34-wipe-stream.sh
 source "${SCRIPT_DIR}/ego-reset-34-wipe-stream.sh"
 
+LEROBOT_CONTAINER="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
+
+ego_reset_wipe_bundled_viewer() {
+  local slug="$1"
+  local container="${LEROBOT_CONTAINER}"
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${container}"; then
+    log "bundled viewer: skip (${container} not running) slug=${slug}"
+    return 0
+  fi
+  docker exec "${container}" sh -eu -c "
+    rm -rf '/srv/bundled/${slug}'
+    rm -f '/srv/bundled/${slug}.zip'
+    rm -f '/srv/bundled/overlays/${slug}_hand_kp2d.json'
+    rm -f '/srv/bundled/overlays/${slug}_depth_preview.json'
+    rm -rf '/srv/bundled/overlays/${slug}_depth_preview_frames'
+  " 2>/dev/null || log "bundled viewer wipe partial for ${slug}"
+  log "bundled viewer cleared slug=${slug} (lerobot /data/${slug} HTTP sample + zip)"
+}
+
 log() { echo "[reset-34] $*"; }
 die() { echo "[reset-34] ERROR: $*" >&2; exit 1; }
 
@@ -62,6 +81,9 @@ rm -f "${ROOT}/data-storage/samples/${SAMPLES_SLUG}.zip"*
 rm -f "${ROOT}/data-storage/samples/${SAMPLES_SLUG}_hand_kp2d.json"
 rm -f "${ROOT}/data-storage/samples/${SAMPLES_SLUG}_depth_preview.json"
 rm -rf "${ROOT}/data-storage/samples/${SAMPLES_SLUG}_depth_preview_frames"
+
+log "=== 34: wipe lerobot bundled viewer (${SAMPLES_SLUG}) ==="
+ego_reset_wipe_bundled_viewer "${SAMPLES_SLUG}"
 
 if [[ -d "${PIPE_ROOT}/outputs" ]]; then
   rm -rf "${PIPE_ROOT}/outputs/${STATION}"

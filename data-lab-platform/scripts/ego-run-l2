@@ -8,24 +8,28 @@ if [[ -z "$STATION" || "$STATION" == "-h" || "$STATION" == "--help" ]]; then
 用法: ego-run-l2 <station>
 
   L2 干净语料路径（产品默认热路径）:
-  derive 已完成 session → rectify convert → corpus/ego_001 (1280×800)
+  derive 已完成 session → L2 convert → corpus (1280×800; fisheye=rectify, pinhole=passthrough)
   append 时自动合并 derived/*/imu.parquet → corpus/sensor_raw/imu (200Hz)
   不跑 WiLoR / MANO；算法 sidecar 不进 corpus（由 ego-viewer-preview 写 samples/）。
   Viewer publish gate 在 L2 convert 内跳过，仅在 ego-process 的 L3 之后执行一次。
 
 环境变量:
   EGO_L2_PUBLISH=1          默认由本脚本设置
-  EGO_OAK_MODE=rectify        默认由本脚本设置
+  EGO_CAMERA_OPTICS           station profile SSOT (fisheye|pinhole)
+  EGO_OAK_MODE                profile 或按 optics 推导（pinhole→passthrough）
   EGO_USE_CONVERT_WORKER=0  默认由本脚本设置
 EOF
   exit 0
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# shellcheck source=ego-station-profile-env.sh
+source "${SCRIPT_DIR}/ego-station-profile-env.sh"
 # shellcheck source=ego-pipeline-performance.env.sh
 source "${SCRIPT_DIR}/ego-pipeline-performance.env.sh"
 
-export EGO_OAK_MODE=rectify
+ego_apply_station_profile_exports "$STATION" || true
+export EGO_OAK_MODE="$(ego_l2_oak_mode)"
 export EGO_L2_PUBLISH=1
 export EGO_USE_CONVERT_WORKER=0
 export EGO_VIEWER_PUBLISH_L2=1

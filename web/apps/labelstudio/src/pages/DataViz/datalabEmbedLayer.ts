@@ -13,6 +13,32 @@ function hideDuplicateIframes(frameId: string) {
   });
 }
 
+function isShellSidebarOpenInDom() {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar) return false;
+  const cls = sidebar.className;
+  return (
+    cls.includes("visible") ||
+    cls.includes("appear") ||
+    cls.includes("before-appear") ||
+    cls.includes("before-disappear")
+  );
+}
+
+function isShellSidebarOpen() {
+  if (localStorage.getItem("sidebar-opened") === "true") return true;
+  return isShellSidebarOpenInDom();
+}
+
+function syncEmbedPointerEvents(layer: HTMLElement) {
+  // Let the floating shell menu receive clicks above the full-screen viz iframe.
+  layer.style.pointerEvents = isShellSidebarOpen() ? "none" : "";
+}
+
+function getEmbedMountParent(): HTMLElement {
+  return document.querySelector(".content-wrapper__content") ?? document.body;
+}
+
 function readSidebarInset() {
   const pinned = localStorage.getItem("sidebar-pinned") === "true";
   const opened = localStorage.getItem("sidebar-opened") === "true";
@@ -26,7 +52,13 @@ export function syncBounds(config: DatalabEmbedConfig) {
   const layer = document.getElementById(config.layerId);
   if (!layer) return;
 
+  const mountParent = getEmbedMountParent();
+  if (layer.parentElement !== mountParent) {
+    mountParent.appendChild(layer);
+  }
+
   applyLayerChrome(layer);
+  syncEmbedPointerEvents(layer);
 
   const content = document.querySelector(".content-wrapper__content");
   const headerHeight =
@@ -103,9 +135,13 @@ export function mountEmbedLayer(config: DatalabEmbedConfig, src: string, title: 
     iframe.style.border = "0";
     iframe.style.display = "block";
     layer.appendChild(iframe);
-    document.body.appendChild(layer);
+    getEmbedMountParent().appendChild(layer);
   } else {
     applyLayerChrome(layer);
+    const parent = getEmbedMountParent();
+    if (layer.parentElement !== parent) {
+      parent.appendChild(layer);
+    }
     const frame = document.getElementById(config.frameId) as HTMLIFrameElement | null;
     if (frame) {
       const resolvedSrc = new URL(src, window.location.origin).href;
@@ -129,9 +165,19 @@ export function attachEmbedLayoutListeners(config: DatalabEmbedConfig): () => vo
       syncBounds(config);
     }
   };
-  const onLayoutEvent = () => syncBounds(config);
+  const onLayoutEvent = () => {
+    syncBounds(config);
+    const layer = document.getElementById(config.layerId);
+    if (layer) syncEmbedPointerEvents(layer);
+  };
   const onPinClick = (e: MouseEvent) => {
     if ((e.target as Element | null)?.closest(".sidebar__pin")) {
+      requestAnimationFrame(() => syncBounds(config));
+      setTimeout(() => syncBounds(config), 160);
+    }
+  };
+  const onMenubarTriggerClick = (e: MouseEvent) => {
+    if ((e.target as Element | null)?.closest(".main-menu-trigger")) {
       requestAnimationFrame(() => syncBounds(config));
       setTimeout(() => syncBounds(config), 160);
     }
@@ -141,8 +187,18 @@ export function attachEmbedLayoutListeners(config: DatalabEmbedConfig): () => vo
   window.addEventListener("storage", onStorage);
   window.addEventListener(LAYOUT_EVENT, onLayoutEvent);
   document.addEventListener("click", onPinClick, true);
+  document.addEventListener("click", onMenubarTriggerClick, true);
 
-  const observer = new MutationObserver(() => syncBounds(config));
+  let syncScheduled: number | null = null;
+  const scheduleSyncBounds = () => {
+    if (syncScheduled !== null) window.clearTimeout(syncScheduled);
+    syncScheduled = window.setTimeout(() => {
+      syncScheduled = null;
+      syncBounds(config);
+    }, 32);
+  };
+
+  const observer = new MutationObserver(() => scheduleSyncBounds());
   const root = document.querySelector(".content-wrapper__body") ?? document.body;
 
   observer.observe(root, {
@@ -164,16 +220,16 @@ export function attachEmbedLayoutListeners(config: DatalabEmbedConfig): () => vo
   }
 
   const timers = [0, 50, 160, 300, 500, 800].map((ms) => window.setTimeout(() => syncBounds(config), ms));
-  const interval = window.setInterval(() => syncBounds(config), 500);
 
   return () => {
     window.removeEventListener("resize", onResize);
     window.removeEventListener("storage", onStorage);
     window.removeEventListener(LAYOUT_EVENT, onLayoutEvent);
     document.removeEventListener("click", onPinClick, true);
+    document.removeEventListener("click", onMenubarTriggerClick, true);
     observer.disconnect();
     content?.removeEventListener("transitionend", onTransitionEnd as EventListener);
     timers.forEach(clearTimeout);
-    clearInterval(interval);
+    if (syncScheduled !== null) window.clearTimeout(syncScheduled);
   };
 }

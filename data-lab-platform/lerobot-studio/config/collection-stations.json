@@ -20,6 +20,26 @@
     }
   },
   {
+    "id": "ego-002",
+    "name": "EGO 采集站 · ego-002",
+    "name_en": "EGO MCAP production station (VPU H.264)",
+    "scope": "lan",
+    "host": "10.10.11.52",
+    "online": false,
+    "stream": true,
+    "datasetUrl": "stream://ego-002",
+    "streamUrl": "/lerobot/api/collection/stations/ego-002/stream",
+    "uploadUrl": "/lerobot/api/collection/stations/ego-002/upload",
+    "deliveryStatusUrl": "/lerobot/api/collection/stations/ego-002/delivery-status",
+    "uploadProtocol": "mcap",
+    "viewerUrl": "/collection?station=ego-002",
+    "collectionUi": {
+      "remotePreview": true,
+      "previewPolicy": "idle_only",
+      "previewSnapshotMs": 500
+    }
+  },
+  {
     "id": "ego-lan-02",
     "name": "EGO 采集站 · 实验室 B",
     "name_en": "EGO station · Lab B",

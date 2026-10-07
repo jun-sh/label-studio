@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "28";
+  var SHELL_VERSION = "29";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -708,6 +708,35 @@
     state.menuObserver.observe(menu, { childList: true, subtree: false });
   }
 
+  var LAYER_IDS = [
+    "datalab-viz-layer",
+    "datalab-collection-layer",
+    "datalab-station-layer",
+    "datalab-stream-loading-layer",
+  ];
+
+  function isShellSidebarOpen() {
+    if (localStorage.getItem("sidebar-opened") === "true") return true;
+    var sidebar = document.querySelector(".sidebar");
+    if (!sidebar) return false;
+    var cls = sidebar.className || "";
+    return (
+      cls.indexOf("visible") >= 0 ||
+      cls.indexOf("appear") >= 0 ||
+      cls.indexOf("before-appear") >= 0 ||
+      cls.indexOf("before-disappear") >= 0
+    );
+  }
+
+  function syncDatalabLayerPointerEvents() {
+    var open = isShellSidebarOpen();
+    LAYER_IDS.forEach(function (id) {
+      var layer = document.getElementById(id);
+      if (!layer) return;
+      layer.style.pointerEvents = open ? "none" : "";
+    });
+  }
+
   /** Django collection layers sit on body above .app-wrapper; ensure trigger receives clicks. */
   function bindMenubarTriggerPassthrough() {
     document.addEventListener(
@@ -716,16 +745,13 @@
         if (!isCollectionChromePage() && !isDataVizChromePage()) return;
         var trigger = e.target && e.target.closest ? e.target.closest(SEL.trigger) : null;
         if (!trigger) return;
-        var layer =
-          document.getElementById("datalab-station-layer") ||
-          document.getElementById("datalab-collection-layer") ||
-          document.getElementById("datalab-viz-layer");
-        if (layer && layer.style.pointerEvents !== "none") {
-          layer.style.pointerEvents = "none";
-        }
+        syncDatalabLayerPointerEvents();
+        global.setTimeout(syncDatalabLayerPointerEvents, 0);
+        global.setTimeout(syncDatalabLayerPointerEvents, 160);
       },
       true,
     );
+    global.addEventListener("datalab:layout", syncDatalabLayerPointerEvents);
   }
 
   function bindMenuOpen() {

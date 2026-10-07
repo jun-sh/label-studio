@@ -5,16 +5,24 @@ export type DatalabEmbedConfig = {
 };
 
 const LAYOUT_EVENT = "datalab:layout";
+const SHELL_CONTENT_SELECTOR = ".lsf-content-wrapper__content, .content-wrapper__content";
+
+/** Avoid re-enabling embed pointer-events while React toggles the shell sidebar. */
+let embedInteractionLockUntil = 0;
+
+function queryShellContent(): HTMLElement | null {
+  return document.querySelector(SHELL_CONTENT_SELECTOR);
+}
 
 function hideDuplicateIframes(frameId: string) {
-  document.querySelectorAll(".content-wrapper__content iframe").forEach((node) => {
+  document.querySelectorAll(`${SHELL_CONTENT_SELECTOR} iframe`).forEach((node) => {
     if (node.id === frameId) return;
     (node as HTMLIFrameElement).style.display = "none";
   });
 }
 
 function isShellSidebarOpenInDom() {
-  const sidebar = document.querySelector(".sidebar");
+  const sidebar = document.querySelector(".lsf-sidebar, .sidebar");
   if (!sidebar) return false;
   const cls = sidebar.className;
   return (
@@ -31,21 +39,31 @@ function isShellSidebarOpen() {
 }
 
 function syncEmbedPointerEvents(layer: HTMLElement) {
+  const sidebarOpen = isShellSidebarOpen() || Date.now() < embedInteractionLockUntil;
   // Let the floating shell menu receive clicks above the full-screen viz iframe.
-  layer.style.pointerEvents = isShellSidebarOpen() ? "none" : "";
+  layer.style.pointerEvents = sidebarOpen ? "none" : "";
+}
+
+function lockEmbedForShellMenu(ms = 500) {
+  embedInteractionLockUntil = Date.now() + ms;
+  document.querySelectorAll("#datalab-viz-layer, #datalab-collection-layer, #datalab-station-layer").forEach((node) => {
+    (node as HTMLElement).style.pointerEvents = "none";
+  });
 }
 
 function getEmbedMountParent(): HTMLElement {
-  return document.querySelector(".content-wrapper__content") ?? document.body;
+  return queryShellContent() ?? document.body;
+}
+
+function sidebarWidthPx() {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--menu-sidebar-width")) || 240;
 }
 
 function readSidebarInset() {
   const pinned = localStorage.getItem("sidebar-pinned") === "true";
   const opened = localStorage.getItem("sidebar-opened") === "true";
-  const sidebarWidth =
-    parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--menu-sidebar-width")) || 240;
-
-  return pinned && opened ? sidebarWidth : 0;
+  // Only pinned shell shifts content; floating menu overlays embed (z-index + pointer-events).
+  return pinned && opened ? sidebarWidthPx() : 0;
 }
 
 export function syncBounds(config: DatalabEmbedConfig) {
@@ -60,7 +78,7 @@ export function syncBounds(config: DatalabEmbedConfig) {
   applyLayerChrome(layer);
   syncEmbedPointerEvents(layer);
 
-  const content = document.querySelector(".content-wrapper__content");
+  const content = queryShellContent();
   const headerHeight =
     parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
   const insetFromStorage = readSidebarInset();
@@ -178,8 +196,14 @@ export function attachEmbedLayoutListeners(config: DatalabEmbedConfig): () => vo
   };
   const onMenubarTriggerClick = (e: MouseEvent) => {
     if ((e.target as Element | null)?.closest(".main-menu-trigger")) {
-      requestAnimationFrame(() => syncBounds(config));
+      lockEmbedForShellMenu();
+      requestAnimationFrame(() => {
+        syncBounds(config);
+        const layer = document.getElementById(config.layerId);
+        if (layer) syncEmbedPointerEvents(layer);
+      });
       setTimeout(() => syncBounds(config), 160);
+      setTimeout(() => syncBounds(config), 320);
     }
   };
 
@@ -213,7 +237,7 @@ export function attachEmbedLayoutListeners(config: DatalabEmbedConfig): () => vo
     observer.observe(sidebar, { attributes: true, attributeFilter: ["class"] });
   }
 
-  const content = document.querySelector(".content-wrapper__content");
+  const content = queryShellContent();
   if (content) {
     observer.observe(content, { attributes: true, attributeFilter: ["class", "style"] });
     content.addEventListener("transitionend", onTransitionEnd as EventListener);

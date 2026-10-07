@@ -14,73 +14,81 @@ async function login(page: import("@playwright/test").Page) {
   await page.waitForURL((url) => !url.pathname.includes("/user/login"), { timeout: 30_000 });
 }
 
-async function openShellSidebar(page: import("@playwright/test").Page) {
-  await page.evaluate(() => {
-    document.querySelector(".main-menu-trigger")?.dispatchEvent(
-      new MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
-  });
+type SidebarProbe = {
+  ok: boolean;
+  reason?: string;
+  z?: number;
+  opacity?: number;
+  linkCount?: number;
+  layerPointerEvents?: string | null;
+  sidebarTransform?: string;
+};
 
-  for (let attempt = 0; attempt < 25; attempt++) {
-    const result = await page
-      .evaluate(() => {
-        const sidebar = document.querySelector('[data-testid="shell-sidebar-menu"]');
-        if (!sidebar) return { ok: false, reason: "no-sidebar" };
-        const cs = getComputedStyle(sidebar);
-        const links = [...sidebar.querySelectorAll('ul[class*="main-menu"] a')].map((a) =>
-          (a.textContent ?? "").trim(),
-        );
-        const layer = document.getElementById("datalab-viz-layer");
-        return {
-          ok: true,
-          z: Number(cs.zIndex),
-          opacity: Number(cs.opacity),
-          linkCount: links.length,
-          layerPointerEvents: layer ? getComputedStyle(layer).pointerEvents : null,
-          layerInContent: Boolean(layer?.parentElement?.closest('[class*="content-wrapper__content"]')),
-        };
-      })
-      .catch(() => ({ ok: false, reason: "navigation" }));
+async function probeSidebar(page: import("@playwright/test").Page): Promise<SidebarProbe> {
+  return page.evaluate(() => {
+    const sidebar =
+      document.querySelector('[data-testid="shell-sidebar-menu"]') ?? document.querySelector(".sidebar.dropdown");
+    if (!sidebar) return { ok: false, reason: "no-sidebar" };
+    const cs = getComputedStyle(sidebar);
+    const links = [...sidebar.querySelectorAll('ul[class*="main-menu"] a, .main-menu a')].map((a) =>
+      (a.textContent ?? "").trim(),
+    );
+    const layer =
+      document.getElementById("datalab-viz-layer") ||
+      document.getElementById("datalab-collection-layer") ||
+      document.getElementById("datalab-station-layer");
+    return {
+      ok: true,
+      z: Number(cs.zIndex),
+      opacity: Number(cs.opacity),
+      linkCount: links.filter(Boolean).length,
+      layerPointerEvents: layer ? getComputedStyle(layer).pointerEvents : null,
+      sidebarTransform: cs.transform,
+    };
+  });
+}
+
+async function openShellSidebar(page: import("@playwright/test").Page) {
+  await page.locator(".main-menu-trigger").click({ timeout: 10_000 });
+
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const result = await probeSidebar(page).catch(() => ({ ok: false, reason: "navigation" } as SidebarProbe));
 
     if (
       result.ok &&
-      result.opacity >= 0.99 &&
-      result.linkCount >= 3 &&
+      (result.opacity ?? 0) >= 0.99 &&
+      (result.linkCount ?? 0) >= 3 &&
       (result.layerPointerEvents === null || result.layerPointerEvents === "none")
     ) {
       return result;
     }
     await page.waitForTimeout(200);
   }
-  throw new Error("Shell sidebar did not open with visible menu items");
+  const last = await probeSidebar(page);
+  throw new Error(`Shell sidebar did not open: ${JSON.stringify(last)}`);
 }
 
-test.describe("shell sidebar on /data", () => {
+const routes = [
+  { path: "/", name: "home" },
+  { path: "/data", name: "data", waitMs: 3000 },
+  { path: "/collection", name: "collection", waitMs: 2000 },
+] as const;
+
+test.describe("shell sidebar across routes", () => {
   test.beforeEach(async ({ page }) => {
     await login(page);
   });
 
-  test("floating menu opens above data viz embed", async ({ page }) => {
-    await page.goto("/data", { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.waitForTimeout(3000);
+  for (const route of routes) {
+    test(`floating menu on ${route.name} (${route.path})`, async ({ page }) => {
+      await page.goto(route.path, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      if (route.waitMs) await page.waitForTimeout(route.waitMs);
 
-    const opened = await openShellSidebar(page);
+      const opened = await openShellSidebar(page);
 
-    // OSS self-hosted shell sidebar uses z-index 100; must stay above #datalab-viz-layer (50).
-    expect(opened.z).toBeGreaterThanOrEqual(100);
-    expect(opened.linkCount).toBeGreaterThanOrEqual(3);
-
-    const layer = page.locator("#datalab-viz-layer");
-    if (await layer.count()) {
-      const layerInfo = await layer.evaluate((el) => {
-        const parent = el.parentElement;
-        return {
-          pointerEvents: getComputedStyle(el).pointerEvents,
-          parentClass: parent?.className ?? "",
-        };
-      });
-      expect(layerInfo.pointerEvents).toBe("none");
-      expect(layerInfo.parentClass).toMatch(/content-wrapper__content/);
-    }
-  });
+      expect(opened.z ?? 0).toBeGreaterThanOrEqual(100);
+      expect(opened.linkCount ?? 0).toBeGreaterThanOrEqual(3);
+      expect(opened.sidebarTransform).not.toBe("matrix(1, 0, 0, 1, -240, 0)");
+    });
+  }
 });

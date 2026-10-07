@@ -100,9 +100,11 @@
     border: 0;
     display: block;
   }
+  body[data-datalab-collection-page="1"] .lsf-content-wrapper__content iframe:not(#datalab-collection-frame):not(#datalab-viz-frame),
   body[data-datalab-collection-page="1"] .content-wrapper__content iframe:not(#datalab-collection-frame):not(#datalab-viz-frame) {
     display: none !important;
   }
+  body[data-datalab-collection-viz="1"] .lsf-content-wrapper__content iframe:not(#datalab-viz-frame),
   body[data-datalab-collection-viz="1"] .content-wrapper__content iframe:not(#datalab-viz-frame) {
     display: none !important;
   }
@@ -546,6 +548,32 @@
       return "/lerobot/?" + params.toString();
     }
 
+    function queryShellContentEl() {
+      return (
+        document.querySelector(".lsf-content-wrapper__content") ||
+        document.querySelector(".content-wrapper__content")
+      );
+    }
+
+    function queryShellContentBody() {
+      return (
+        document.querySelector(".lsf-content-wrapper__body") ||
+        document.querySelector(".content-wrapper__body")
+      );
+    }
+
+    function isShellSidebarOpen() {
+      var sidebar = document.querySelector(".lsf-sidebar, .sidebar");
+      if (!sidebar) return false;
+      var cls = sidebar.className || "";
+      return (
+        cls.indexOf("visible") >= 0 ||
+        cls.indexOf("appear") >= 0 ||
+        cls.indexOf("before-appear") >= 0 ||
+        cls.indexOf("before-disappear") >= 0
+      );
+    }
+
     function readSidebarInset() {
       var pinned = localStorage.getItem("sidebar-pinned") === "true";
       var opened = localStorage.getItem("sidebar-opened") === "true";
@@ -554,11 +582,20 @@
       return pinned && opened ? sidebarWidth : 0;
     }
 
+    function syncLayerPointerEvents() {
+      var open = isShellSidebarOpen();
+      [COLLECTION_LAYER, VIZ_LAYER, LOADING_LAYER, "datalab-viz-layer"].forEach(function (id) {
+        var layer = document.getElementById(id);
+        if (!layer) return;
+        layer.style.pointerEvents = open ? "none" : "";
+      });
+    }
+
     function syncBounds(layerId, frameId) {
       var layer = document.getElementById(layerId);
       if (!layer) return;
 
-      var content = document.querySelector(".content-wrapper__content");
+      var content = queryShellContentEl();
       var headerHeight =
         parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
 
@@ -593,7 +630,9 @@
         layer.style.height = window.innerHeight - headerHeight + "px";
       }
 
-      document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
+      document
+        .querySelectorAll(".lsf-content-wrapper__content iframe, .content-wrapper__content iframe")
+        .forEach(function (node) {
         if (node.id === frameId) return;
         node.style.display = "none";
       });
@@ -668,6 +707,7 @@
         layoutRaf = requestAnimationFrame(function () {
           layoutRaf = 0;
           syncBounds(activeLayerId, activeFrameId);
+          syncLayerPointerEvents();
         });
       }
 
@@ -693,18 +733,18 @@
 
       if (typeof MutationObserver !== "undefined") {
         var layoutObserver = new MutationObserver(tick);
-        var root = document.querySelector(".content-wrapper__body") || document.body;
+        var root = queryShellContentBody() || document.body;
         layoutObserver.observe(root, {
           attributes: true,
           childList: true,
           subtree: true,
           attributeFilter: ["class", "style"],
         });
-        var sidebar = document.querySelector(".sidebar");
+        var sidebar = document.querySelector(".lsf-sidebar, .sidebar");
         if (sidebar) {
           layoutObserver.observe(sidebar, { attributes: true, attributeFilter: ["class"] });
         }
-        var content = document.querySelector(".content-wrapper__content");
+        var content = queryShellContentEl();
         if (content) {
           layoutObserver.observe(content, { attributes: true, attributeFilter: ["class", "style"] });
           content.addEventListener("transitionend", onTransitionEnd);

@@ -19,6 +19,41 @@
 
   &_floating {
     box-shadow: 0 0 0 9999px rgb(0 0 0 / 20%);
+    background: var(--color-neutral-background);
+
+    &.before-appear,
+    &.appear,
+    &.before-disappear,
+    &.disappear {
+      transition-property: opacity, transform;
+      transition-duration: 150ms;
+      transition-timing-function: ease-out;
+    }
+
+    &.before-appear {
+      opacity: 1;
+      display: flex;
+      transform: translate3d(-100%, 0, 0);
+    }
+
+    &.appear,
+    &.visible {
+      opacity: 1;
+      display: flex;
+      transform: translate3d(0, 0, 0);
+    }
+
+    &.before-disappear {
+      opacity: 1;
+      display: flex;
+      transform: translate3d(0, 0, 0);
+    }
+
+    &.disappear {
+      opacity: 1;
+      display: flex;
+      transform: translate3d(-100%, 0, 0);
+    }
   }
 
   &_floating .unpin-menu {

@@ -228,6 +228,7 @@ export const Menubar = ({ enabled, defaultOpened, defaultPinned, children, onSid
           {enabled && (
             <Dropdown
               ref={menuDropdownRef}
+              inline={true}
               dataTestId="shell-sidebar-menu"
               onToggle={sidebarToggle}
               onVisibilityChanged={() => window.dispatchEvent(new Event("resize"))}

@@ -171,10 +171,19 @@
     attachDataVizParentUrlSync();
 
     function hideDuplicateIframes() {
-      document.querySelectorAll(".content-wrapper__content iframe").forEach(function (node) {
+      document
+        .querySelectorAll(".lsf-content-wrapper__content iframe, .content-wrapper__content iframe")
+        .forEach(function (node) {
         if (node.id === FRAME_ID) return;
         node.style.display = "none";
       });
+    }
+
+    function queryShellContentEl() {
+      return (
+        document.querySelector(".lsf-content-wrapper__content") ||
+        document.querySelector(".content-wrapper__content")
+      );
     }
 
     function readSidebarInset() {
@@ -189,7 +198,7 @@
       var layer = document.getElementById(LAYER_ID);
       if (!layer) return;
 
-      var content = document.querySelector(".content-wrapper__content");
+      var content = queryShellContentEl();
       var headerHeight =
         parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
 
@@ -278,7 +287,10 @@
       document.addEventListener("click", onPinClick, true);
 
       var observer = new MutationObserver(syncBounds);
-      var root = document.querySelector(".content-wrapper__body") || document.body;
+      var root =
+        document.querySelector(".lsf-content-wrapper__body") ||
+        document.querySelector(".content-wrapper__body") ||
+        document.body;
       observer.observe(root, {
         attributes: true,
         childList: true,
@@ -286,12 +298,12 @@
         attributeFilter: ["class", "style"],
       });
 
-      var sidebar = document.querySelector(".sidebar");
+      var sidebar = document.querySelector(".lsf-sidebar, .sidebar");
       if (sidebar) {
         observer.observe(sidebar, { attributes: true, attributeFilter: ["class"] });
       }
 
-      var content = document.querySelector(".content-wrapper__content");
+      var content = queryShellContentEl();
       if (content) {
         observer.observe(content, { attributes: true, attributeFilter: ["class", "style"] });
         content.addEventListener("transitionend", onTransitionEnd);

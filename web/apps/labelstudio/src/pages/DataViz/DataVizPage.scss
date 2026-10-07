@@ -19,6 +19,13 @@
 
 body[data-datalab-data-page="1"] .content-wrapper__content .datalab-data-viz-embed,
 body[data-datalab-data-page="1"] .content-wrapper__content .data-viz-page,
-body[data-datalab-data-page="1"] .content-wrapper__content iframe:not(#datalab-viz-frame) {
+body[data-datalab-data-page="1"] .lsf-content-wrapper__content .datalab-data-viz-embed,
+body[data-datalab-data-page="1"] .lsf-content-wrapper__content .data-viz-page {
+  display: none !important;
+}
+
+/* IDs must stay global — CSS modules would rewrite #datalab-viz-frame and hide the embed. */
+body[data-datalab-data-page="1"] :global(.content-wrapper__content) iframe:not(:global(#datalab-viz-frame)),
+body[data-datalab-data-page="1"] :global(.lsf-content-wrapper__content) iframe:not(:global(#datalab-viz-frame)) {
   display: none !important;
 }

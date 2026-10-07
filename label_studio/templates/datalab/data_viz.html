@@ -17,6 +17,12 @@
     overflow: hidden;
     background: #0b1220;
     box-sizing: border-box;
+    left: 0;
+    right: 0;
+    top: var(--header-height, 48px);
+    bottom: 0;
+    width: auto !important;
+    height: auto !important;
   }
   #datalab-viz-layer iframe {
     flex: 1 1 auto;
@@ -26,8 +32,15 @@
     border: 0;
     display: block;
   }
+  /* Overrides bundled main.css (CSS modules hashed #datalab-viz-frame → wrong :not() id). */
+  body[data-datalab-data-page="1"] #datalab-viz-layer iframe#datalab-viz-frame {
+    display: block !important;
+  }
+  body[data-datalab-data-page="1"] .lsf-content-wrapper__content .datalab-data-viz-embed,
+  body[data-datalab-data-page="1"] .lsf-content-wrapper__content .data-viz-page,
   body[data-datalab-data-page="1"] .content-wrapper__content .datalab-data-viz-embed,
   body[data-datalab-data-page="1"] .content-wrapper__content .data-viz-page,
+  body[data-datalab-data-page="1"] .lsf-content-wrapper__content iframe:not(#datalab-viz-frame),
   body[data-datalab-data-page="1"] .content-wrapper__content iframe:not(#datalab-viz-frame) {
     display: none !important;
   }
@@ -220,10 +233,19 @@
           width = rect.width;
         }
 
-        layer.style.top = rect.top + "px";
+        var top = rect.top > 0 ? rect.top : headerHeight;
+        var height = rect.height > 0 ? rect.height : window.innerHeight - top;
+        if (width < 1 || height < 1) {
+          left = insetFromStorage > 0 ? insetFromStorage : 0;
+          width = Math.max(0, window.innerWidth - left);
+          top = headerHeight;
+          height = Math.max(0, window.innerHeight - headerHeight);
+        }
+
+        layer.style.top = top + "px";
         layer.style.left = left + "px";
         layer.style.width = width + "px";
-        layer.style.height = (rect.height > 0 ? rect.height : window.innerHeight - rect.top) + "px";
+        layer.style.height = height + "px";
         layer.style.right = "";
         layer.style.bottom = "";
       } else {

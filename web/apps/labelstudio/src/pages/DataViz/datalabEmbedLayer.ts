@@ -101,8 +101,14 @@ export function syncBounds(config: DatalabEmbedConfig) {
       width = rect.width;
     }
 
-    const top = rect.top > 0 ? rect.top : headerHeight;
-    const height = Math.max(0, window.innerHeight - top);
+    let top = rect.top > 0 ? rect.top : headerHeight;
+    let height = Math.max(0, window.innerHeight - top);
+    if (width < 1 || height < 1) {
+      left = insetFromStorage > 0 ? insetFromStorage : 0;
+      width = Math.max(0, window.innerWidth - left);
+      height = Math.max(0, window.innerHeight - headerHeight);
+      top = headerHeight;
+    }
 
     layer.style.top = `${top}px`;
     layer.style.left = `${left}px`;

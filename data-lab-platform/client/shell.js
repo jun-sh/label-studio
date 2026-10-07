@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "29";
+  var SHELL_VERSION = "30";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -405,7 +405,7 @@
       if (layer) layer.remove();
     }
     var legacy = document.getElementById("datalab-viz-layer");
-    if (legacy && !legacy.querySelector("#datalab-station-shell")) {
+    if (legacy && !legacy.querySelector("#datalab-station-shell") && !isDataVizChromePage()) {
       legacy.remove();
     }
     if (document.body) {

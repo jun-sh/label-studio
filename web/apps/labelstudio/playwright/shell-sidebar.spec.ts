@@ -22,21 +22,28 @@ type SidebarProbe = {
   linkCount?: number;
   layerPointerEvents?: string | null;
   sidebarTransform?: string;
+  sidebarReceivesPointer?: boolean;
 };
 
 async function probeSidebar(page: import("@playwright/test").Page): Promise<SidebarProbe> {
   return page.evaluate(() => {
     const sidebar =
-      document.querySelector('[data-testid="shell-sidebar-menu"]') ?? document.querySelector(".sidebar.dropdown");
+      document.querySelector('[data-testid="shell-sidebar-menu"]') ??
+      document.querySelector(".lsf-sidebar, .sidebar.dropdown");
     if (!sidebar) return { ok: false, reason: "no-sidebar" };
     const cs = getComputedStyle(sidebar);
-    const links = [...sidebar.querySelectorAll('ul[class*="main-menu"] a, .main-menu a')].map((a) =>
+    const links = [...sidebar.querySelectorAll('ul[class*="main-menu"] a, .main-menu a, .lsf-main-menu a')].map((a) =>
       (a.textContent ?? "").trim(),
     );
     const layer =
       document.getElementById("datalab-viz-layer") ||
       document.getElementById("datalab-collection-layer") ||
       document.getElementById("datalab-station-layer");
+    const sidebarRect = sidebar.getBoundingClientRect();
+    const target = document.elementFromPoint(
+      Math.min(sidebarRect.right - 8, sidebarRect.left + 24),
+      Math.min(sidebarRect.bottom - 8, sidebarRect.top + 24),
+    );
     return {
       ok: true,
       z: Number(cs.zIndex),
@@ -44,6 +51,9 @@ async function probeSidebar(page: import("@playwright/test").Page): Promise<Side
       linkCount: links.filter(Boolean).length,
       layerPointerEvents: layer ? getComputedStyle(layer).pointerEvents : null,
       sidebarTransform: cs.transform,
+      sidebarReceivesPointer: target
+        ? target.closest('[data-testid="shell-sidebar-menu"], .lsf-sidebar, .sidebar.dropdown') === sidebar
+        : false,
     };
   });
 }
@@ -52,7 +62,7 @@ async function openShellSidebar(page: import("@playwright/test").Page) {
   await page.locator(".main-menu-trigger").click({ timeout: 10_000 });
 
   for (let attempt = 0; attempt < 30; attempt++) {
-    const result = await probeSidebar(page).catch(() => ({ ok: false, reason: "navigation" } as SidebarProbe));
+    const result = await probeSidebar(page).catch(() => ({ ok: false, reason: "navigation" }) as SidebarProbe);
 
     if (
       result.ok &&
@@ -89,6 +99,7 @@ test.describe("shell sidebar across routes", () => {
       expect(opened.z ?? 0).toBeGreaterThanOrEqual(100);
       expect(opened.linkCount ?? 0).toBeGreaterThanOrEqual(3);
       expect(opened.sidebarTransform).not.toBe("matrix(1, 0, 0, 1, -240, 0)");
+      expect(opened.sidebarReceivesPointer).toBe(true);
     });
   }
 });

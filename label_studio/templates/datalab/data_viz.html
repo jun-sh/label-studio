@@ -207,11 +207,23 @@
       return pinned && opened ? sidebarWidth : 0;
     }
 
+    function ensureVizLayerOnBody() {
+      var layer = document.getElementById(LAYER_ID);
+      if (layer && layer.parentElement !== document.body) {
+        document.body.appendChild(layer);
+      }
+    }
+
     function syncBounds() {
       var layer = document.getElementById(LAYER_ID);
       if (!layer) return;
 
+      ensureVizLayerOnBody();
+
       var content = queryShellContentEl();
+      if (content && content.style.display === "none") {
+        content.style.display = "";
+      }
       var headerHeight =
         parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-height")) || 48;
 
@@ -276,6 +288,7 @@
       iframe.allow = "fullscreen";
       layer.appendChild(iframe);
       document.body.appendChild(layer);
+      ensureVizLayerOnBody();
       syncBounds();
     }
 

@@ -51,8 +51,10 @@ function lockEmbedForShellMenu(ms = 500) {
   });
 }
 
-function getEmbedMountParent(): HTMLElement {
-  return queryShellContent() ?? document.body;
+function ensureEmbedLayerOnBody(layer: HTMLElement) {
+  if (layer.parentElement !== document.body) {
+    document.body.appendChild(layer);
+  }
 }
 
 function sidebarWidthPx() {
@@ -70,10 +72,7 @@ export function syncBounds(config: DatalabEmbedConfig) {
   const layer = document.getElementById(config.layerId);
   if (!layer) return;
 
-  const mountParent = getEmbedMountParent();
-  if (layer.parentElement !== mountParent) {
-    mountParent.appendChild(layer);
-  }
+  ensureEmbedLayerOnBody(layer);
 
   applyLayerChrome(layer);
   syncEmbedPointerEvents(layer);
@@ -159,13 +158,10 @@ export function mountEmbedLayer(config: DatalabEmbedConfig, src: string, title: 
     iframe.style.border = "0";
     iframe.style.display = "block";
     layer.appendChild(iframe);
-    getEmbedMountParent().appendChild(layer);
+    document.body.appendChild(layer);
   } else {
     applyLayerChrome(layer);
-    const parent = getEmbedMountParent();
-    if (layer.parentElement !== parent) {
-      parent.appendChild(layer);
-    }
+    ensureEmbedLayerOnBody(layer);
     const frame = document.getElementById(config.frameId) as HTMLIFrameElement | null;
     if (frame) {
       const resolvedSrc = new URL(src, window.location.origin).href;

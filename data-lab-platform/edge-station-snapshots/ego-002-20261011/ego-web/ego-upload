@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# ego-upload — 班次一键上传到 34（自动停采集；成功段本机自动删除）
+set -euo pipefail
+
+set -a
+source "${HOME}/.config/ego-station.env" 2>/dev/null || true
+set +a
+
+STATUS_ONLY=0
+EXTRA=()
+for arg in "$@"; do
+  case "$arg" in
+    --status) STATUS_ONLY=1 ;;
+    -h|--help)
+      cat <<'EOF'
+用法: ego-upload [选项]
+
+  ego-upload          停采集 → 上传当天数据到 34 → 成功段本机自动删除
+  ego-upload --status 仅查看上传进度
+
+默认上传 segments/ 待传段；无待传段时尝试 export/ready/ 最新日期。
+日志：~/cache/ego-001/logs/ego-upload-*.log
+EOF
+      exit 0
+      ;;
+    *) EXTRA+=("$arg") ;;
+  esac
+done
+
+_resolve_venv_python() {
+  local candidates=(
+    "/home/server/workspace/ego-studio/.venv/bin/python"
+    "${EGO_PYTHON:-}"
+    "$(command -v python3 2>/dev/null || true)"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    [[ -n "$c" && -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+PY="$(_resolve_venv_python)" || {
+  echo "❌ 未找到 Python venv（ego-studio）" >&2
+  exit 2
+}
+
+if [[ "$STATUS_ONLY" -eq 1 ]]; then
+  exec "$PY" -m ego_capture_studio.cli.upload_status "${EXTRA[@]}"
+fi
+
+systemctl --user stop ecs-oak-capture-stack.target 2>/dev/null || true
+sleep 1
+
+LOG_DIR="${EGO_UPLOAD_LOG_DIR:-/home/server/cache/ego-001/logs}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/ego-upload-$(date +%Y%m%d-%H%M%S).log"
+
+set +e
+"$PY" -m ego_capture_studio.cli.ego_upload "${EXTRA[@]}" 2>>"$LOG_FILE"
+rc=$?
+set -e
+
+if [[ "$rc" -ne 0 ]]; then
+  echo "❌ 上传未完成，详见: ${LOG_FILE}" >&2
+  exit "$rc"
+fi
+
+UPLOADED="$(grep -E '^uploaded_segments=' "$LOG_FILE" | tail -1 | cut -d= -f2 || echo 0)"
+echo "✅ 上传完成（${UPLOADED} 段），查询派生进度：ego-derive-status" >&2

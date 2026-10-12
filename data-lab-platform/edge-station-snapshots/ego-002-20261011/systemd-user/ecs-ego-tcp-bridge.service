@@ -1,0 +1,24 @@
+[Unit]
+Description=EGO TCP JSON control bridge for mobile apps
+Documentation=file:///home/server/ego-web/docs/ego-app-tcp-protocol.md
+After=network-online.target ecs-ego-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/ego-web
+EnvironmentFile=-%h/.config/ego-station.env
+Environment=PYTHONUNBUFFERED=1
+Environment=EGO_TCP_HOST=0.0.0.0
+Environment=EGO_TCP_PORT=9100
+Environment=EGO_TCP_PREVIEW_HTTP_PORT=8765
+ExecStart=/usr/bin/python3 /home/server/ego-web/ego_tcp_bridge.py
+Restart=on-failure
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-ego-tcp-bridge
+
+[Install]
+WantedBy=default.target

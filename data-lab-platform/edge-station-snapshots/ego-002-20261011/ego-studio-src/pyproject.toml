@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ego-capture-studio"
+version = "0.1.0"
+description = "Egocentric capture, annotation, QC, and export pipeline with operator web UI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.109.0",
+  "uvicorn[standard]>=0.27.0",
+  "pydantic>=2.5.0",
+  "pydantic-settings>=2.1.0",
+  "pyyaml>=6.0.1",
+  "numpy>=1.26.0",
+  "jinja2>=3.1.3",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+av = ["opencv-python-headless>=4.9.0"]
+asr = ["openai-whisper>=20231117"]
+# Offline tools (undistort, mano sidecar, optional YOLO)
+offline = ["opencv-python-headless>=4.9.0", "pyarrow>=14.0.0"]
+# LeRobot v3 local recording (large deps: torch, etc.)
+ego_capture = [
+  "lerobot>=0.4.0",
+  "depthai>=2.26.0,<3.0.0",
+  "opencv-python-headless>=4.9.0",
+  "pyarrow>=14.0.0",
+]
+dev = [
+  "ruff>=0.2.0",
+  "pytest>=7.4.0",
+]
+
+[tool.uv.extra-build-dependencies]
+chumpy = ["pip"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ego_capture_studio = ["web/templates/*.html", "web/static/*.css", "web/static/*.js"]
+
+[project.scripts]
+ecs-pipeline = "ego_capture_studio.cli.pipeline:main"
+ecs-record-oak = "ego_capture_studio.cli.record_oak:main"
+ecs-record-oak-stream = "ego_capture_studio.cli.record_oak_stream:main"
+ecs-web = "ego_capture_studio.cli.serve_web:main"
+ecs-undistort-episode = "ego_capture_studio.cli.undistort_episode:main"
+ecs-test = "ego_capture_studio.cli.run_tests:main"

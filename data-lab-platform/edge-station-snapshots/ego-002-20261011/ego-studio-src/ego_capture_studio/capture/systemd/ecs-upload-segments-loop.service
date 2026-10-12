@@ -1,0 +1,40 @@
+[Unit]
+Description=Continuous EGO segment upload dequeue (keep pending below target)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/home/server/workspace/ego-studio
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=STATION_UPLOAD_TOKEN=dl-upload-ego-001-v1
+Environment=EGO_SEGMENT_ROOT=/home/server/cache/ego-001/segments
+Environment=EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
+Environment=EGO_SEGMENT_QUOTA_GB=256
+Environment=DATALAB_UPLOAD_TIMEOUT_S=300
+Environment=UPLOAD_PROTOCOL=tarzst
+Environment=EGO_UPLOAD_MAX_RETRIES=3
+Environment=EGO_UPLOAD_CONCURRENCY=2
+Environment=EGO_UPLOAD_KEEP_PENDING_BELOW=12
+Environment=EGO_UPLOAD_TRIM_BATCH=3
+Environment=EGO_UPLOAD_BATCH=1
+Environment=EGO_SEGMENT_ASYNC_DELETE=1
+Environment=EGO_PENDING_FAST_RESCAN_S=30
+Environment=EGO_UPLOAD_POLL_INTERVAL_S=4
+Environment=EGO_UPLOAD_SUBPROC_TIMEOUT_S=360
+Environment=EGO_UPLOAD_FAIL_DEQUEUE=0
+Environment=EGO_UPLOAD_URL=http://10.10.10.34:8080/lerobot/api/collection/stations/ego-001/upload
+# Optional: override upload-status.json path (default: $XDG_RUNTIME_DIR/ego-upload-status.json)
+# Environment=EGO_UPLOAD_STATUS_PATH=/run/user/%U/ego-upload-status.json
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python /home/server/workspace/ego-studio/src/ego_capture_studio/tools/upload_segments_loop.py
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-upload-loop
+
+[Install]
+WantedBy=ecs-oak-upload-stack.target

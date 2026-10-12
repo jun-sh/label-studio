@@ -1,0 +1,28 @@
+{
+  "board_config": {
+    "name": "OAK-FFC-4P-Ego",
+    "revision": "R7M1E7",
+    "cameras": {
+      "CAM_A": {
+        "name": "front_left",
+        "hfov": 180,
+        "type": "color"
+      },
+      "CAM_B": {
+        "name": "front_right",
+        "hfov": 180,
+        "type": "color"
+      },
+      "CAM_C": {
+        "name": "rear_left",
+        "hfov": 180,
+        "type": "color"
+      },
+      "CAM_D": {
+        "name": "rear_right",
+        "hfov": 180,
+        "type": "color"
+      }
+    }
+  }
+}

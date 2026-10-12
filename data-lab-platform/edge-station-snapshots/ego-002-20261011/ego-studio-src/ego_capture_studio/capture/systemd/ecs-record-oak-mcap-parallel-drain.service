@@ -1,0 +1,31 @@
+[Unit]
+Description=EGO OAK MCAP parallel-drain POC (ego-parallel-drain-poc, isolated from production)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Conflicts=ecs-record-oak-stream.service ecs-record-oak-mcap.service ecs-record-oak-mcap-pilot.service ecs-record-oak-mcap-track2.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream_parallel \
+  --fps 30 --imu-hz 200 --no-heartbeat \
+  --segment-root /home/server/cache/ego-parallel-drain-poc/segments \
+  --checkpoint-path /home/server/cache/ego-parallel-drain-poc/checkpoint.json
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=120
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-record-oak-mcap-parallel-drain
+
+[Install]
+WantedBy=default.target

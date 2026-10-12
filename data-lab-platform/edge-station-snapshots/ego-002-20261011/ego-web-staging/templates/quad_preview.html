@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#f4f7f9" />
+  <title>EGO 四路预览</title>
+  <style>
+    :root {
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #8c8c8c;
+      --primary-soft: #e8f1fc;
+      --ok: #52c41a;
+      --radius: 20px;
+      --shadow: 0 6px 24px rgba(15, 35, 70, 0.07);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+    }
+    .app {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header {
+      background: var(--card);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 14px 16px;
+    }
+    .header h1 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+    .header p {
+      margin: 6px 0 0;
+      font-size: .8rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .header p.ready { color: #237804; }
+    .preview-wrap {
+      background: #c8d6ea;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 1 / 1;
+      position: relative;
+      box-shadow: var(--shadow);
+    }
+    .preview-quad {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 2px;
+    }
+    .preview-quad[hidden] { display: none !important; }
+    .preview-cell {
+      position: relative;
+      overflow: hidden;
+      background: var(--primary-soft);
+    }
+    .preview-cell[data-state="ok"] { outline: 2px solid var(--ok); outline-offset: -2px; }
+    .preview-cell img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: var(--primary-soft);
+    }
+    .preview-cell-label {
+      position: absolute;
+      left: 6px;
+      bottom: 6px;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.9);
+      font-size: .62rem;
+      font-weight: 700;
+      color: #475569;
+      pointer-events: none;
+    }
+    .preview-cell-badge {
+      position: absolute;
+      right: 6px;
+      top: 6px;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.55);
+      color: #fff;
+      font-size: .58rem;
+      font-weight: 600;
+      pointer-events: none;
+    }
+    .preview-placeholder {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 20px;
+      text-align: center;
+      color: #7a8ba3;
+      font-size: .85rem;
+      background: var(--primary-soft);
+    }
+    .preview-placeholder[hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>EGO 四路预览</h1>
+      <p id="statusText">正在唤醒相机预览…</p>
+    </header>
+    <section class="preview-wrap" aria-label="四路实时预览">
+      <div class="preview-quad" id="previewQuad" hidden></div>
+      <div class="preview-placeholder" id="previewPh">
+        <span id="previewPhText">四路预览启动中…</span>
+      </div>
+    </section>
+  </div>
+  <script>
+(function () {
+  var previewQuad = document.getElementById("previewQuad");
+  var previewPh = document.getElementById("previewPh");
+  var previewPhText = document.getElementById("previewPhText");
+  var statusText = document.getElementById("statusText");
+  var previewPollTimer = null;
+  var metaPollTimer = null;
+  var previewPollMs = __PREVIEW_POLL_MS__;
+  var previewWantLive = false;
+  var quadAllowed = true;
+  var standbyState = "off";
+  var bootHint = "";
+  var oakWarmActive = false;
+  var oakWarmRemain = 0;
+  var quadTransition = "off";
+  var statusPollTimer = null;
+  var CAM_BURST_RETRIES = 3;
+  var CAM_BURST_GAP_MS = 400;
+  var previewCameras = [
+    { id: "front_left", label: "前左" },
+    { id: "front_right", label: "前右" },
+    { id: "rear_left", label: "后左" },
+    { id: "rear_right", label: "后右" }
+  ];
+  var camState = {};
+  var previewQuadReady = false;
+  var BLOCKED_STATES = { starting: 1, warming: 1, recording: 1, stopping: 1 };
+
+  function camOkCount() {
+    var n = 0;
+    previewCameras.forEach(function (cam) {
+      if (camState[cam.id] && camState[cam.id].ok) n += 1;
+    });
+    return n;
+  }
+
+  function updateStatusLine() {
+    var ok = camOkCount();
+    var total = previewCameras.length;
+    if (!quadAllowed || standbyState === "blocked") {
+      statusText.className = "";
+      return;
+    }
+    if (ok >= total) {
+      statusText.textContent = "四路就绪，可去 8080 开始录制";
+      statusText.className = "ready";
+      previewPh.hidden = true;
+      previewQuad.hidden = false;
+      return;
+    }
+    statusText.className = "";
+    if (standbyState === "activating" || standbyState === "off") {
+      statusText.textContent = bootHint || "相机启动中，约需 10–15 秒";
+    } else {
+      statusText.textContent = ok + "/" + total + " 路已出图";
+    }
+    previewPhText.textContent = ok + "/" + total + " 路已出图，正在连接…";
+    if (ok > 0) {
+      previewQuad.hidden = false;
+      previewPh.hidden = true;
+    }
+  }
+
+  function buildPreviewQuad() {
+    if (previewQuadReady) return;
+    previewQuad.innerHTML = "";
+    camState = {};
+    previewCameras.forEach(function (cam) {
+      camState[cam.id] = { ok: false, burst: 0, inflight: false };
+      var cell = document.createElement("div");
+      cell.className = "preview-cell";
+      cell.setAttribute("data-cam", cam.id);
+      cell.setAttribute("data-state", "pending");
+      var img = document.createElement("img");
+      img.alt = cam.label || cam.id;
+      var badge = document.createElement("span");
+      badge.className = "preview-cell-badge";
+      badge.textContent = "…";
+      var label = document.createElement("span");
+      label.className = "preview-cell-label";
+      label.textContent = cam.label || cam.id;
+      cell.appendChild(img);
+      cell.appendChild(badge);
+      cell.appendChild(label);
+      previewQuad.appendChild(cell);
+    });
+    previewQuadReady = true;
+  }
+
+  function markCamOk(camId) {
+    var st = camState[camId];
+    if (!st) return;
+    st.ok = true;
+    st.inflight = false;
+    var cell = previewQuad.querySelector('[data-cam="' + camId + '"]');
+    if (!cell) return;
+    cell.setAttribute("data-state", "ok");
+    var badge = cell.querySelector(".preview-cell-badge");
+    if (badge) badge.textContent = "OK";
+    updateStatusLine();
+  }
+
+  function markCamRetry(camId) {
+    var st = camState[camId];
+    if (!st || st.ok) return;
+    st.inflight = false;
+    st.burst += 1;
+    var cell = previewQuad.querySelector('[data-cam="' + camId + '"]');
+    if (cell) {
+      var badge = cell.querySelector(".preview-cell-badge");
+      if (badge) badge.textContent = st.burst < CAM_BURST_RETRIES ? "重试" : "—";
+    }
+    if (st.burst < CAM_BURST_RETRIES && previewWantLive && quadAllowed) {
+      setTimeout(function () { loadCamJpeg(camId); }, CAM_BURST_GAP_MS);
+    }
+    updateStatusLine();
+  }
+
+  function loadCamJpeg(camId) {
+    if (!previewWantLive || !quadAllowed) return;
+    var st = camState[camId];
+    if (!st || st.ok || st.inflight) return;
+    st.inflight = true;
+    var url = "/api/preview/" + camId + ".jpg?t=" + Date.now() + "&c=" + camId;
+    fetch(url, { cache: "no-store" })
+      .then(function (res) {
+        if (!res.ok) throw new Error("http_" + res.status);
+        return res.blob();
+      })
+      .then(function (blob) {
+        if (!blob || blob.size < 100) throw new Error("empty");
+        var cell = previewQuad.querySelector('[data-cam="' + camId + '"]');
+        if (!cell) return;
+        var img = cell.querySelector("img");
+        if (!img) return;
+        img.src = URL.createObjectURL(blob);
+        markCamOk(camId);
+      })
+      .catch(function () {
+        markCamRetry(camId);
+      });
+  }
+
+  function stopPreviewPoll() {
+    previewWantLive = false;
+    if (previewPollTimer) {
+      clearInterval(previewPollTimer);
+      previewPollTimer = null;
+    }
+  }
+
+  function showEndingWarm() {
+    stopPreviewPoll();
+    previewQuad.hidden = true;
+    previewPh.hidden = false;
+    previewQuadReady = false;
+    camState = {};
+    statusText.textContent = bootHint || "正在结束热待机并启动四路预览…";
+    previewPhText.textContent = "下一段 8080 录制将变为冷启动（约 10–15 秒）";
+    statusText.className = "";
+  }
+
+  function showBlocked(state) {
+    stopPreviewPoll();
+    previewQuad.hidden = true;
+    previewPh.hidden = false;
+    previewQuadReady = false;
+    camState = {};
+    if (state === "ending_warm") {
+      showEndingWarm();
+      return;
+    } else if (state === "recording" || state === "starting" || state === "warming") {
+      statusText.textContent = "采集中，请使用 8080 采集页（四路仅录制前检查）";
+      previewPhText.textContent = "采集中四路预览不可用";
+    } else if (state === "stopping") {
+      statusText.textContent = "正在保存数据，请稍候…";
+      previewPhText.textContent = "保存中，请勿切换页面";
+    } else {
+      statusText.textContent = bootHint || "当前不可四路预览";
+      previewPhText.textContent = "页面已连接，请稍候或刷新";
+    }
+    statusText.className = "";
+  }
+
+  function applyMeta(data) {
+    if (data.cameras && data.cameras.length) {
+      previewCameras = data.cameras.map(function (cam) {
+        return { id: cam.id, label: cam.label || cam.id };
+      });
+    }
+    if (data.poll_ms) previewPollMs = data.poll_ms;
+    standbyState = data.standby_state || "off";
+    bootHint = data.boot_hint || "";
+    oakWarmActive = !!data.oak_warm_active;
+    oakWarmRemain = parseInt(data.oak_warm_seconds_remaining, 10) || 0;
+    quadTransition = data.quad_transition || "off";
+    quadAllowed = data.quad_allowed !== false && !BLOCKED_STATES[data.capture_state];
+    if (quadTransition === "ending_warm_idle") {
+      showBlocked("ending_warm");
+      return false;
+    }
+    if (quadTransition === "warm_idle" || (oakWarmActive && !quadAllowed)) {
+      stopPreviewPoll();
+      previewQuad.hidden = true;
+      previewPh.hidden = false;
+      statusText.textContent = bootHint || ("热待机中，约 " + oakWarmRemain + " 秒后可四路预览");
+      previewPhText.textContent = "热待机保护快速二次录制；四路预览需结束热待机（约 10–15 秒冷启动）";
+      statusText.className = "";
+      return false;
+    }
+    if (BLOCKED_STATES[data.capture_state]) {
+      showBlocked(data.capture_state);
+      return false;
+    }
+    if (standbyState === "blocked") {
+      showBlocked("idle");
+      return false;
+    }
+    previewQuadReady = false;
+    buildPreviewQuad();
+    updateStatusLine();
+    return true;
+  }
+
+  function loadPreviewCameras() {
+    return fetch("/api/preview/cameras", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!applyMeta(data)) return;
+        if (standbyState === "off") {
+          statusText.textContent = bootHint || "正在唤醒相机…";
+        }
+      })
+      .catch(function () {
+        statusText.textContent = "无法连接预览服务";
+        previewPhText.textContent = "请检查网络后刷新";
+        buildPreviewQuad();
+      });
+  }
+
+  function pollCaptureStatus() {
+    fetch("/api/status", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var st = data.state || "idle";
+        oakWarmActive = !!data.oak_warm_active;
+        oakWarmRemain = parseInt(data.oak_warm_seconds_remaining, 10) || 0;
+        quadTransition = data.quad_transition || quadTransition;
+        if (quadTransition === "ending_warm_idle") {
+          showBlocked("ending_warm");
+          return;
+        }
+        if (BLOCKED_STATES[st]) {
+          showBlocked(st);
+          return;
+        }
+        loadPreviewCameras().finally(startPreviewPoll);
+      })
+      .catch(function () { /* ignore */ });
+  }
+
+  function tickPreview() {
+    if (!previewWantLive || !quadAllowed) return;
+    previewCameras.forEach(function (cam) {
+      loadCamJpeg(cam.id);
+    });
+  }
+
+  function startPreviewPoll() {
+    if (!quadAllowed) return;
+    previewWantLive = true;
+    if (!previewQuadReady) buildPreviewQuad();
+    if (!previewPollTimer) {
+      tickPreview();
+      previewPollTimer = setInterval(tickPreview, previewPollMs);
+    }
+  }
+
+  function onVisibilityChange() {
+    if (document.visibilityState === "hidden") {
+      stopPreviewPoll();
+      return;
+    }
+    loadPreviewCameras().finally(startPreviewPoll);
+  }
+
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
+  function bootQuadPreview() {
+    fetch("/api/preview/prepare-quad", { method: "POST", cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (prep) {
+        if (prep && prep.phase === "ending_warm_idle") {
+          showEndingWarm();
+        }
+        pollCaptureStatus();
+      })
+      .catch(function () { pollCaptureStatus(); });
+  }
+
+  bootQuadPreview();
+  statusPollTimer = setInterval(pollCaptureStatus, 2000);
+  metaPollTimer = setInterval(function () {
+    if (!previewWantLive) return;
+    fetch("/api/preview/cameras", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        standbyState = data.standby_state || standbyState;
+        bootHint = data.boot_hint || bootHint;
+        updateStatusLine();
+      })
+      .catch(function () { /* ignore */ });
+  }, 2000);
+})();
+  </script>
+</body>
+</html>

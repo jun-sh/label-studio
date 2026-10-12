@@ -1,0 +1,49 @@
+# EgoVerse fleet golden camera topology (ego-standard).
+# Four RGB streams: front_left, front_right, rear_left, rear_right.
+# Plan B: edge writes streams/*.h264; platform muxes to MP4 on ingest.
+#
+# Deploy: set EGO_TOPOLOGY_FILE to this file or sibling camera_topology_standard.json
+
+topology_id: ego-standard
+version: 1
+board_profile: OAK-FFC-4P-Ego
+description: EgoVerse 4x RGB helmet — front_left, front_right, rear_left, rear_right
+
+primary_socket: CAM_A
+depth_socket: CAM_C
+head_right_socket: CAM_D
+
+socket_to_role:
+  CAM_A: front_left
+  CAM_B: front_right
+  CAM_C: rear_left
+  CAM_D: rear_right
+
+role_to_lerobot_key:
+  front_left: observation.images.camera_front_left
+  front_right: observation.images.camera_front_right
+  rear_left: observation.images.camera_rear_left
+  rear_right: observation.images.camera_rear_right
+
+viewer_display_order:
+  - front_left
+  - front_right
+  - rear_left
+  - rear_right
+
+viewer_labels:
+  zh:
+    front_left: 前左
+    front_right: 前右
+    rear_left: 后左
+    rear_right: 后右
+  en:
+    front_left: Front Left
+    front_right: Front Right
+    rear_left: Rear Left
+    rear_right: Rear Right
+
+strict_sync:
+  causal_sockets:
+    - CAM_B
+    - CAM_C

@@ -1,0 +1,6 @@
+[Unit]
+Description=EGO segment upload stack (manual: dequeue closed segments to Data Lab)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+Wants=ecs-upload-segments-loop.service

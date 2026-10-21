@@ -11,6 +11,9 @@ Environment=PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SAM_FOREGROUND=1
 ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/ml-services/start-sam-backend.sh
 ExecStop=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/ml-services/stop-sam-backend.sh
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=120
 Restart=on-failure
 RestartSec=30
 TimeoutStartSec=300

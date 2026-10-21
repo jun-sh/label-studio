@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Literal, TextIO
 
@@ -174,6 +175,24 @@ def new_session_id() -> str:
 
 def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _parse_utc_iso_timestamp(ts: str | None) -> float | None:
+    if not ts or not str(ts).strip():
+        return None
+    raw = str(ts).strip()
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return None
+
+
+STALE_UPLOADING_AFTER_S = max(
+    60.0,
+    float(os.environ.get("EGO_UPLOAD_STALE_UPLOADING_S", "600")),
+)
 
 
 def _default_upload_meta() -> dict[str, Any]:
@@ -2016,6 +2035,43 @@ def mark_segment_upload_failed(segment_dir: Path, error: str) -> None:
     upload["last_error"] = str(error)[:500]
     upload["last_attempt_at"] = _utc_now_iso()
     _update_manifest_status(segment_dir, "UPLOAD_FAILED", upload_patch=upload)
+
+
+def reconcile_stale_uploading_segments(
+    root: Path,
+    session_id: str,
+    *,
+    stale_after_s: float | None = None,
+) -> list[str]:
+    """Reset UPLOADING segments stuck past stale_after_s to CLOSED so upload can retry."""
+    threshold = stale_after_s if stale_after_s is not None else STALE_UPLOADING_AFTER_S
+    now = time.time()
+    recovered: list[str] = []
+    for seg_dir in iter_session_segment_dirs(root, session_id):
+        try:
+            manifest = read_manifest(seg_dir)
+            status = manifest_status(manifest)
+        except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+            continue
+        if status != "UPLOADING":
+            continue
+        upload = dict(
+            manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+        )
+        last_ts = _parse_utc_iso_timestamp(upload.get("last_attempt_at"))
+        if last_ts is None:
+            try:
+                last_ts = (seg_dir / "manifest.json").stat().st_mtime
+            except OSError:
+                last_ts = now
+        age_s = now - last_ts
+        if age_s < threshold:
+            continue
+        upload["last_error"] = f"stale_uploading_recovered_after_{int(age_s)}s"
+        upload["stale_recovered_at"] = _utc_now_iso()
+        _update_manifest_status(seg_dir, "CLOSED", upload_patch=upload)
+        recovered.append(seg_dir.name)
+    return recovered
 
 
 def clear_segment_uploaded(segment_dir: Path) -> None:

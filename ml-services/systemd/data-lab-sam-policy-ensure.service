@@ -1,0 +1,17 @@
+[Unit]
+Description=Data Lab — enforce SAM opt-in policy after boot (no GPU unless started)
+Documentation=file:///media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/data-lab-platform/SERVICE-MAINTENANCE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
+ExecStart=/media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab/ml-services/ensure-sam-policy.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=data-lab-sam-policy
+
+[Install]
+WantedBy=default.target

@@ -231,6 +231,8 @@ OAK_FSYNC_FIX = _env_bool("OAK_FSYNC_FIX", "1")
 OAK_FSYNC_SENSOR_HEADROOM_FPS = max(0, int(os.environ.get("OAK_FSYNC_SENSOR_HEADROOM_FPS", "3")))
 # Cap auto-exposure so readout always finishes inside one pulse period. 0 disables.
 OAK_AE_MAX_EXPOSURE_US = max(0, int(os.environ.get("OAK_AE_MAX_EXPOSURE_US", "20000")))
+# Luxonis AE compensation (-9..9). 0 leaves device default; +N brightens without raising max exposure.
+OAK_AE_COMPENSATION = max(-9, min(9, int(os.environ.get("OAK_AE_COMPENSATION", "0"))))
 # Pulse rate override in Hz; 0 derives it from the emitter's grid interval. Deriving is
 # the point: EGO_FRAME_INTERVAL_MS=33 is a 30.303fps grid, so pulsing at a rounded
 # 30.000Hz leaves the recorded timeline 1.01% short of real time no matter how few
@@ -1115,6 +1117,12 @@ class Oak4pEgoRecorder:
                 except Exception as exc:  # older depthai lacks the setter
                     print(f"[oak] setAutoExposureLimit unavailable: {exc}", flush=True)
 
+            if cam_props.get("color") and OAK_AE_COMPENSATION != 0:
+                try:
+                    cam.initialControl.setAutoExposureCompensation(OAK_AE_COMPENSATION)
+                except Exception as exc:
+                    print(f"[oak] setAutoExposureCompensation unavailable: {exc}", flush=True)
+
         revision = parse_board_revision(board_rev)
         if OAK_GPIO_FSYNC and (self._use_gpio_fsync or revision >= 6):
             script = pipeline.create(dai.node.Script)
@@ -1128,7 +1136,8 @@ class Oak4pEgoRecorder:
                 f"pulse_hz={self._pulse_hz:.4f} grid_ms={EGO_FRAME_INTERVAL_MS} "
                 f"sensor_fps={sensor_fps:.4f} min_gap_ms={min_gap_s * 1000:.2f} "
                 f"catchup_room_ms={(1000.0 / self._pulse_hz - min_gap_s * 1000):.2f} "
-                f"ae_max_us={OAK_AE_MAX_EXPOSURE_US if OAK_FSYNC_FIX else 0}",
+                f"ae_max_us={OAK_AE_MAX_EXPOSURE_US if OAK_FSYNC_FIX else 0} "
+                f"ae_comp={OAK_AE_COMPENSATION}",
                 flush=True,
             )
 

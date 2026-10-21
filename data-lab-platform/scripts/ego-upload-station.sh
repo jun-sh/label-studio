@@ -75,11 +75,30 @@ _apply_station_upload_profile() {
       export DATALAB_UPLOAD_TIMEOUT_S="${DATALAB_UPLOAD_TIMEOUT_S:-900}"
       export EGO_UPLOAD_MAX_FRAMES="${EGO_UPLOAD_MAX_FRAMES:-2000}"
       export EGO_UPLOAD_MAX_FRAMES_MODE="${EGO_UPLOAD_MAX_FRAMES_MODE:-warn}"
+      export EGO_UPLOAD_CONCURRENCY="${EGO_UPLOAD_CONCURRENCY:-1}"
+      ;;
+    ego-002)
+      export EGO_STATION_ID=ego-002
+      export EGO_SEGMENT_ROOT="${HOME}/cache/ego-002/segments"
+      export EGO_CAPTURE_CHECKPOINT="${HOME}/cache/ego-002/checkpoint.json"
+      export EGO_UPLOAD_LOG_DIR="${HOME}/cache/ego-002/logs"
+      export EGO_UPLOAD_URL="http://10.10.10.34:8080/lerobot/api/collection/stations/ego-002/upload"
+      export DATALAB_HEARTBEAT_URL="${EGO_UPLOAD_URL}"
+      export STATION_UPLOAD_TOKEN=dl-upload-ego-002-v1
+      export UPLOAD_PROTOCOL=mcap
+      export SEGMENT_MCAP=1
+      export SEGMENT_FRAME_BIN=0
+      export DATALAB_UPLOAD_TIMEOUT_S="${DATALAB_UPLOAD_TIMEOUT_S:-900}"
+      export EGO_UPLOAD_MAX_FRAMES="${EGO_UPLOAD_MAX_FRAMES:-2000}"
+      export EGO_UPLOAD_MAX_FRAMES_MODE="${EGO_UPLOAD_MAX_FRAMES_MODE:-warn}"
+      export EGO_UPLOAD_CONCURRENCY="${EGO_UPLOAD_CONCURRENCY:-1}"
       ;;
   esac
 }
 
 _apply_station_upload_profile
+# Fleet default when station profile / ego-station.env omit it (MCAP production).
+export EGO_UPLOAD_CONCURRENCY="${EGO_UPLOAD_CONCURRENCY:-1}"
 
 if [[ -n "$NOTIFY_FLAG" ]]; then
   NOTIFY_PROCESS="$NOTIFY_FLAG"

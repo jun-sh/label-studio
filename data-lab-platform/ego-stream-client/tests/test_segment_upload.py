@@ -10,7 +10,13 @@ from unittest.mock import MagicMock
 import pytest
 
 import segment_upload as su
-from segment_store import manifest_status, read_manifest, write_manifest_v2, write_session_seal
+from segment_store import (
+    manifest_status,
+    read_manifest,
+    reconcile_stale_uploading_segments,
+    write_manifest_v2,
+    write_session_seal,
+)
 from segment_upload import (
     SegmentUploader,
     should_upload_session_seal,
@@ -240,6 +246,42 @@ def test_should_upload_session_seal_when_all_segments_quarantined(segment_root: 
     assert n == 0
     assert (seg / ".upload_skip").is_file()
     assert should_upload_session_seal(segment_root, session_id, session_uploaded=0) is True
+
+
+def test_stale_uploading_recovered_before_upload(segment_root: Path) -> None:
+    session_id = "sess_stale"
+    seg = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    _write_uploadable_segment(seg, session_id=session_id, status="UPLOADING")
+    manifest = read_manifest(seg)
+    manifest["upload"]["last_attempt_at"] = "2020-01-01T00:00:00Z"
+    write_manifest_v2(seg, manifest)
+    recovered = reconcile_stale_uploading_segments(
+        segment_root,
+        session_id,
+        stale_after_s=60.0,
+    )
+    assert recovered == ["seg_000001"]
+    assert manifest_status(read_manifest(seg)) == "CLOSED"
+    uploader = _mock_uploader()
+    n = upload_pending_segments(root=segment_root, session_id=session_id, uploader=uploader)
+    assert n == 1
+    assert manifest_status(read_manifest(seg)) == "UPLOADED"
+
+
+def test_fresh_uploading_not_recovered(segment_root: Path) -> None:
+    session_id = "sess_fresh"
+    seg = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    _write_uploadable_segment(seg, session_id=session_id, status="UPLOADING")
+    manifest = read_manifest(seg)
+    manifest["upload"]["last_attempt_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    write_manifest_v2(seg, manifest)
+    recovered = reconcile_stale_uploading_segments(
+        segment_root,
+        session_id,
+        stale_after_s=600.0,
+    )
+    assert recovered == []
+    assert manifest_status(read_manifest(seg)) == "UPLOADING"
 
 
 def test_corrupt_segment_skipped(segment_root: Path) -> None:

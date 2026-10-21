@@ -53,6 +53,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const STREAM_ROOT = process.env.STREAM_DATA_ROOT || "/srv/stream";
 
+/** OAK MCAP passthrough on edge + stream L2 preview (same as ego-stream-client/ego_spec.py). */
+export const EGO_CAPTURE_VIDEO_SHAPE = { height: 800, width: 1280 };
+
 const VIDEO_KEYS_V0 = [
   "observation.images.camera_front_left",
   "observation.images.camera_front_right",
@@ -1336,6 +1339,7 @@ function syncInfoFramesFromDataset(root) {
 
 function shouldRepairViewerScaffold(root) {
   if (!fs.existsSync(path.join(root, "meta", "info.json"))) return false;
+  if (hasPublishedUnitManifest(root)) return false;
   const index = loadEpisodesIndex(root);
   const realSegments = index.episodes.filter((ep) => ep.segment_id !== "legacy");
   if (realSegments.length > 0) return false;
@@ -2663,10 +2667,30 @@ export function isRemotePreviewAllowed(stationId) {
   return getStationCaptureState(stationId) === "idle";
 }
 
+function resolveCaptureShape(shapes, videoKey) {
+  const raw = shapes?.[videoKey];
+  let h = EGO_CAPTURE_VIDEO_SHAPE.height;
+  let w = EGO_CAPTURE_VIDEO_SHAPE.width;
+  if (Array.isArray(raw) && raw.length >= 2) {
+    h = Number(raw[0]) || h;
+    w = Number(raw[1]) || w;
+  } else if (raw && typeof raw === "object") {
+    h = Number(raw.height) || h;
+    w = Number(raw.width) || w;
+  }
+  return [h, w];
+}
+
+function hasPublishedUnitManifest(root) {
+  const manifest = readJson(path.join(root, "manifest", "manifest.json"), {});
+  const episodes = manifest?.episodes;
+  return Array.isArray(episodes) && episodes.length > 0;
+}
+
 function defaultInfo(stationId, shapes, episodeMeta = null) {
   const features = {};
   for (const key of defaultVideoKeysForStation(stationId)) {
-    const [h, w] = shapes[key] || [1200, 1920];
+    const [h, w] = resolveCaptureShape(shapes, key);
     features[key] = {
       dtype: "video",
       shape: [h, w, 3],

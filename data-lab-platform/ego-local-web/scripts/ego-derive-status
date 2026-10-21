@@ -3,6 +3,14 @@
 # 用法: ego-derive-status [--watch] [--json]
 set -euo pipefail
 
+# Match ego-upload: export station profile so Python sees EGO_STATION_ID (not ego-001 default).
+set -a
+# shellcheck disable=SC1090
+source "${HOME}/.config/ego-station.env" 2>/dev/null || true
+# shellcheck disable=SC1090
+source "${HOME}/.config/ego-station.env.d/station.conf" 2>/dev/null || true
+set +a
+
 export EGO_DATALAB_BASE_URL="${EGO_DATALAB_BASE_URL:-http://10.10.10.34:8080}"
 
 _resolve_venv_python() {

@@ -30,11 +30,11 @@ const features = {};
 for (const key of videoKeysForStation(stationId)) {
   features[key] = {
     dtype: 'video',
-    shape: [1200, 1920, 3],
+    shape: [800, 1280, 3],
     names: ['height', 'width', 'channels'],
     info: {
-      'video.height': 1200,
-      'video.width': 1920,
+      'video.height': 800,
+      'video.width': 1280,
       'video.codec': 'h264',
       'video.pix_fmt': 'yuv420p',
       'video.is_depth_map': false,

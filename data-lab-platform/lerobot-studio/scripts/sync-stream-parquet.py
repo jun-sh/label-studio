@@ -560,13 +560,71 @@ OPTIONAL_META_SPECS = {
     key: {"dtype": "int64", "shape": [1], "names": None} for key in OPTIONAL_META_INT_KEYS
 }
 
+# OAK MCAP passthrough (ego-stream-client/ego_spec.py); not 1920×1200 GPD panel size.
+EGO_CAPTURE_HEIGHT = 800
+EGO_CAPTURE_WIDTH = 1280
+PLACEHOLDER_MP4_MAX_BYTES = 8192
+
 
 def ensure_system_features(info: dict) -> dict:
     features = info.get("features") if isinstance(info.get("features"), dict) else {}
     for key, spec in SYSTEM_FEATURE_SPECS.items():
         features.setdefault(key, spec)
     info["features"] = features
+    return normalize_capture_video_features(info)
+
+
+def normalize_capture_video_features(info: dict) -> dict:
+    """Force stream L2 video feature shape to 1280×800 (LeRobot [H,W,C])."""
+    features = info.get("features") if isinstance(info.get("features"), dict) else {}
+    for key in video_keys_from_info(info):
+        feat = features.setdefault(key, {})
+        feat["dtype"] = feat.get("dtype") or "video"
+        feat["shape"] = [EGO_CAPTURE_HEIGHT, EGO_CAPTURE_WIDTH, 3]
+        feat["names"] = feat.get("names") or ["height", "width", "channels"]
+        vinfo = feat.setdefault("info", {})
+        vinfo["video.height"] = EGO_CAPTURE_HEIGHT
+        vinfo["video.width"] = EGO_CAPTURE_WIDTH
+        vinfo.setdefault("video.codec", "h264")
+        vinfo.setdefault("video.pix_fmt", "yuv420p")
+        vinfo.setdefault("video.is_depth_map", False)
+        vinfo.setdefault("video.fps", float(info.get("fps") or 30))
+        vinfo.setdefault("video.channels", 3)
+        vinfo.setdefault("has_audio", False)
+    info["features"] = features
     return info
+
+
+def is_placeholder_mp4(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.stat().st_size <= PLACEHOLDER_MP4_MAX_BYTES:
+        return True
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-count_frames",
+                "-show_entries",
+                "stream=nb_read_frames",
+                "-of",
+                "default=nokey=1:noprint_wrappers=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            frames = int((proc.stdout or "0").strip() or "0")
+            return frames <= 1
+    except (ValueError, OSError):
+        pass
+    return False
 
 
 def finalize_data_table(table: pa.Table, features: dict) -> pa.Table:
@@ -852,10 +910,10 @@ def write_placeholder_videos(root: Path, info: dict) -> None:
     features = info.get("features") or {}
     for key in video_keys_from_info(info):
         feat = features.get(key, {})
-        shape = feat.get("shape") or [800, 1280, 3]
+        shape = feat.get("shape") or [EGO_CAPTURE_HEIGHT, EGO_CAPTURE_WIDTH, 3]
         h, w = int(shape[0]), int(shape[1])
         out = root / "videos" / key / "chunk-000" / "file-000.mp4"
-        if out.is_file() and out.stat().st_size > 0:
+        if out.is_file() and out.stat().st_size > 0 and not is_placeholder_mp4(out):
             continue
         out.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -883,10 +941,17 @@ def write_placeholder_videos(root: Path, info: dict) -> None:
 
 def write_viewer_scaffold(root: Path) -> int:
     """Minimal v3 dataset so LeRobot opens dockview panes before first real ingest."""
+    manifest = unit_manifest_published(root)
+    if manifest:
+        print(
+            f"skip viewer scaffold: manifest has {len(manifest.get('episodes') or [])} published episode(s)",
+            file=sys.stderr,
+        )
+        return 0
     info_path = root / "meta" / "info.json"
     if not info_path.is_file():
         return 1
-    info = read_json(info_path, {})
+    info = normalize_capture_video_features(read_json(info_path, {}))
     station_id = root.name
     live = read_json(root / "live" / "session.json", {})
     task = resolve_live_task(root, live)
@@ -1208,12 +1273,10 @@ def republish_unit_data_shards(root: Path) -> int:
         count += 1
     if count:
         sync_unit_manifest_info(root, manifest)
-        write_episodes_parquet(
-            root,
-            episodes,
-            fps,
-            resolve_live_task(root, read_json(root / "live" / "session.json", {})),
-        )
+        task = resolve_live_task(root, read_json(root / "live" / "session.json", {}))
+        write_episodes_parquet(root, episodes, fps, task)
+        write_station_tasks(root, episodes, task)
+        info = read_json(root / "meta" / "info.json", {})
         (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
         errors = validate_unit_manifest_data_shards(root)
         if errors:

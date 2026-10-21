@@ -12,7 +12,8 @@ from datetime import datetime
 
 import paramiko
 
-HOST, USER = "10.10.10.130", "server"
+HOST = os.environ.get("EGO_E2E_HOST", "10.10.10.130")
+USER = "server"
 PASS = os.environ.get("RC_CAPTURE_PASS", "1")
 STATION = os.environ.get("STATION_ID", "ego-001")
 EPISODES = int(os.environ.get("EPISODES", "20"))
@@ -51,14 +52,15 @@ DURATIONS_CSV = os.environ.get("DURATIONS_CSV", "").strip()
 MCAP_UNIT = "ecs-record-oak-mcap.service"
 SEG = f"/home/server/cache/{STATION}/segments"
 CKPT = f"/home/server/cache/{STATION}/checkpoint.json"
-ACTIVE = f"/tmp/{STATION}-mcap-active"
+ACTIVE = os.environ.get(
+    "EGO_SEGMENT_ACTIVE_ROOT",
+    f"/dev/shm/{STATION}-mcap-active",
+)
 
 CAPTURED_RE = re.compile(
     r"captured=(\d+) capture_fps=([\d.]+).*session=(sess_[a-f0-9]+)"
 )
-DONE_RE = re.compile(
-    r"Done\. (\d+) frames in ([\d.]+)s \(([\d.]+) fps\) session=(sess_[a-f0-9]+)"
-)
+DONE_RE = re.compile(r"Done\. (\d+) frames in ([\d.]+)s \(([\d.]+) fps\)")
 
 
 def log(msg: str) -> None:
@@ -124,11 +126,10 @@ def latest_captured_for_session(journal: str, session_id: str) -> tuple[int, flo
 
 
 def parse_done_line(journal: str, session_id: str) -> tuple[int, float, float] | None:
+    """MCAP recorder logs Done without session=; one episode per journal window."""
     for line in reversed(journal.splitlines()):
-        if session_id not in line:
-            continue
         m = DONE_RE.search(line)
-        if m and m.group(4) == session_id:
+        if m:
             return int(m.group(1)), float(m.group(2)), float(m.group(3))
     return None
 

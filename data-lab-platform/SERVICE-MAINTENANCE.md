@@ -28,7 +28,7 @@ COMPOSE="docker compose \
 | 组件 | 地址 | 说明 |
 |------|------|------|
 | Data Lab Web | http://10.10.10.34:8080 | nginx + app + db（Docker） |
-| SAM ML Backend | http://10.10.10.34:9090 | 宿主机 GPU 进程；**systemd 开机自启**（见下文） |
+| SAM ML Backend | http://10.10.10.34:9090 | 宿主机 GPU 进程；**默认不启动**（按需 `sam-backendctl start`） |
 | LeRobot Annotate | http://10.10.10.34:8080/lerobot-annotate/ | Docker `embodied-annotate`；nginx 反代；`restart: unless-stopped` |
 | LeRobot / Stream | Docker 侧车 | stream-ingest、lerobot、stream-parquet-sync |
 
@@ -54,7 +54,7 @@ curl -s -H "Authorization: Token <YOUR_TOKEN>" http://127.0.0.1:8080/api/ml/1 \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state'), d.get('url'))"
 ```
 
-**典型现象：** Docker 栈靠 `restart: unless-stopped` 随 `docker.service` 自启（含 `embodied-annotate`）；SAM 靠 **systemd `data-lab-sam-backend.service`** 在 Docker / GPU 就绪后自启。若 ML Backend 仍 `Disconnected`，见下方排错。
+**典型现象：** Docker 栈靠 `restart: unless-stopped` 随 `docker.service` 自启（含 `embodied-annotate`）；**SAM 默认不占 GPU**，标注前需手工启动（见「SAM 按需启停」）。若 ML Backend 仍 `Disconnected`，见下方排错。
 
 ---
 
@@ -99,50 +99,72 @@ journalctl -u data-lab-ego-process-watcher.service -n 20 --no-pager
 
 ---
 
-## 一次性：启用 SAM 开机自启
+## SAM 按需启停（默认不占 GPU）
 
-**推荐（系统级，重启后无需登录）：**
+生产策略：**重启后不自动加载 SAM 模型**；需要智能标注时再启动，用完可停止以释放显存（与 vLLM 等同卡共存时尤其重要）。
 
 ```bash
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
-chmod +x ml-services/install-sam-systemd.sh
-sudo bash ml-services/install-sam-systemd.sh
+chmod +x ml-services/sam-backendctl.sh
+
+# 查看状态 / 健康 / GPU
+bash ml-services/sam-backendctl.sh status
+
+# 需要标注时启动（优先 systemd；无单元时用 start-sam-backend.sh）
+bash ml-services/sam-backendctl.sh start
+curl -s http://127.0.0.1:9090/health
+
+# 标注结束，释放 GPU
+bash ml-services/sam-backendctl.sh stop
+
+# 关闭开机自启并停止（推荐长期与训练/推理共用 GPU 的机器）
+bash ml-services/sam-backendctl.sh disable-boot
 ```
 
-**备选（用户级，无需 sudo 安装单元）：**
+安装 / 同步 systemd 单元（**仅注册服务，默认不 enable、不 start**）：
+
+```bash
+sudo bash ml-services/apply-sam-systemd-policy.sh
+# 或首次安装：
+sudo bash ml-services/install-sam-systemd.sh
+# 若确需开机自启（少见）：
+sudo bash ml-services/install-sam-systemd.sh --enable-boot --start
+```
+
+用户级单元（无 sudo 写 `/etc`）：
 
 ```bash
 bash ml-services/install-sam-systemd.sh --user
-sudo loginctl enable-linger $(whoami)   # 开机未登录时也启动 user systemd
+bash ml-services/sam-backendctl.sh start
 ```
 
-验证：
+日志：
 
 ```bash
-# 系统级
-systemctl is-enabled data-lab-sam-backend
-systemctl status data-lab-sam-backend
-
-# 用户级
-systemctl --user is-enabled data-lab-sam-backend
-systemctl --user status data-lab-sam-backend
-
-curl -s http://127.0.0.1:9090/health
 journalctl -u data-lab-sam-backend -n 30 --no-pager
-# 用户级日志: journalctl --user -u data-lab-sam-backend -f
+tail -f ml-services/sam-backend.log
 ```
 
-卸载自启：
+重启后仍保持「不占 GPU」（推荐一次性安装用户级开机钩子，无需 sudo）：
 
 ```bash
-sudo systemctl disable --now data-lab-sam-backend
+bash ml-services/install-sam-policy-boot-hook.sh
+# 若机器重启后无人登录也要生效：
+sudo loginctl enable-linger $(whoami)
+```
+
+同步 `/etc` 下 SAM 单元（优雅停止参数等，需 sudo 一次）：
+
+```bash
+sudo bash ml-services/apply-sam-systemd-policy.sh
+```
+
+完全移除 systemd 单元：
+
+```bash
+bash ml-services/sam-backendctl.sh disable-boot
 sudo rm -f /etc/systemd/system/data-lab-sam-backend.service
 sudo systemctl daemon-reload
-
-# 或用户级
-systemctl --user disable --now data-lab-sam-backend
-rm -f ~/.config/systemd/user/data-lab-sam-backend.service
-systemctl --user daemon-reload
 ```
 
 ---
@@ -160,9 +182,8 @@ bash data-lab-platform/scripts/deploy-stream-ingest-v0.1.1-async.sh
 # 或仅确认已在跑：
 bash data-lab-platform/scripts/rc-ego-001-v0.1.1-preflight.sh
 
-# 2) SAM（已 enable systemd 时自动启动；否则手动）
-sudo systemctl start data-lab-sam-backend
-# 或: bash ml-services/start-sam-backend.sh
+# 2) SAM（仅在做标注时需要）
+bash ml-services/sam-backendctl.sh start
 
 # 3) 验证（见上一节）
 ```
@@ -174,9 +195,8 @@ sudo systemctl start data-lab-sam-backend
 ```bash
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 
-# 停止 SAM（宿主机进程）
-sudo systemctl stop data-lab-sam-backend
-# 或: bash ml-services/stop-sam-backend.sh
+# 停止 SAM（释放 GPU）
+bash ml-services/sam-backendctl.sh stop
 
 # 停止 Data Lab Docker 栈（保留数据卷）
 $COMPOSE down
@@ -193,8 +213,7 @@ docker stop data-lab-app-1
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 
 # --- SAM：进程挂了但 pid 文件还在时，先停再启 ---
-sudo systemctl restart data-lab-sam-backend
-# 或: bash ml-services/stop-sam-backend.sh && bash ml-services/start-sam-backend.sh
+bash ml-services/sam-backendctl.sh restart
 tail -f ml-services/sam-backend.log   # 排错
 journalctl -u data-lab-sam-backend -f
 
@@ -242,10 +261,14 @@ docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
 
 | 用途 | 路径 |
 |------|------|
-| SAM 启动 | `ml-services/start-sam-backend.sh` |
-| SAM 停止 | `ml-services/stop-sam-backend.sh` |
+| SAM 运维入口 | `ml-services/sam-backendctl.sh` |
+| SAM 启动（底层） | `ml-services/start-sam-backend.sh` |
+| SAM 停止（底层） | `ml-services/stop-sam-backend.sh` |
 | SAM systemd 单元 | `ml-services/systemd/data-lab-sam-backend.service` |
-| SAM 自启安装 | `sudo bash ml-services/install-sam-systemd.sh` |
+| SAM 安装单元 | `sudo bash ml-services/install-sam-systemd.sh` |
+| SAM 同步策略到 systemd | `sudo bash ml-services/apply-sam-systemd-policy.sh` |
+| SAM 开机策略（preflight） | `ml-services/ensure-sam-policy.sh`（`SAM_BOOT_AUTOSTART≠1` 时 disable+stop） |
+| SAM 重启后策略钩子 | `bash ml-services/install-sam-policy-boot-hook.sh`（用户 systemd，已含 disable 双单元） |
 | embodied-annotate Dockerfile | `data-lab-platform/embodied-annotate/Dockerfile` |
 | SAM 环境变量 | `ml-services/.env.sam`（从 `.env.sam.example` 复制） |
 | SAM 日志 / pid | `ml-services/sam-backend.log`、`ml-services/sam-backend.pid` |

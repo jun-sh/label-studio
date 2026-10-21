@@ -136,7 +136,12 @@ DISPLAY=:0 XAUTHORITY=/home/server/.Xauthority xrandr --query | head -4
 ```bash
 sudo systemctl stop iio-sensor-proxy
 sudo systemctl mask iio-sensor-proxy
+# GNOME 层同时锁定方向（server 用户）
+gsettings set org.gnome.settings-daemon.peripherals.touchscreen orientation-lock true
 ```
+
+验收：`systemctl is-enabled iio-sensor-proxy` → `masked`，`systemctl is-active iio-sensor-proxy` → `inactive`。  
+> ego-002（52）曾漏做此步（2026-10-08 补 mask），新机务必检查。
 
 ### 2.6 合盖不休眠（采集站必须）
 
@@ -215,10 +220,12 @@ WantedBy=multi-user.target
 启用：
 
 ```bash
+sudo apt-get install -y acpid   # 合盖事件；ego-002 初装曾缺此包
 sudo chmod +x /etc/acpi/gpd-lid-fix.sh /etc/systemd/system-sleep/99-gpd-fix-display-rotate.sh /etc/X11/Xsession.d/99-gpd-fix-display-rotate
-sudo systemctl restart acpid
+sudo systemctl enable --now acpid
 sudo systemctl daemon-reload
 sudo udevadm control --reload-rules
+sudo systemctl enable gpd-fix-display-rotate.service
 ```
 
 ### 2.8 验收（显示）
@@ -226,6 +233,33 @@ sudo udevadm control --reload-rules
 1. 开盖：桌面为 **1280×800 横屏**。
 2. 合上盖子再打开：约 1–2 秒内恢复横屏。
 3. 应急：`/usr/local/bin/gpd-fix-display-rotate.sh`
+
+### 2.9 一键安装（ego-002 / 003 / 004 与 001 对齐）
+
+**勿只做 §2.5**（mask `iio-sensor-proxy`）：002 曾因此桌面仍乱跳；须 **§2.2–§2.7 全套**（GRUB、logind、acpi/udev/systemd）才与 001 一致。
+
+在边缘机本机：
+
+```bash
+sudo bash data-lab-platform/scripts/ego-gpd-display-stack.sh
+```
+
+从开发机推送到新机（示例 52）：
+
+```bash
+bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@10.10.11.52
+# 或 sshpass：RC_CAPTURE_PASS=1 bash …（按现场改）
+```
+
+安装后 **必须 reboot 一次** 使 GRUB `panel_orientation` 生效。验收：
+
+```bash
+grep panel_orientation /etc/default/grub
+systemctl is-enabled iio-sensor-proxy   # masked
+test -f /etc/systemd/logind.conf.d/ego-capture.conf
+systemctl is-enabled gpd-fix-display-rotate.service acpid
+DISPLAY=:0 XAUTHORITY=/home/server/.Xauthority xrandr --query | head -3
+```
 
 ---
 
@@ -454,7 +488,8 @@ loginctl enable-linger server
 systemctl --user enable --now ecs-ego-web.service ecs-ego-web-staging.service
 ```
 
-MCAP 生产站还需 `ego-130-provision.sh --profile mcap-production`（安装 `ecs-preview-standby` 与 `:8765` 预览源）。  
+MCAP 生产站还需 `ego-130-provision.sh --profile mcap-production`（安装 `ecs-preview-standby`、`ego-topology.env`、`z-pythonpath.conf` 与 `:8765` 预览源）。  
+Standby **仅**通过 `ego-topology.env` 注入 `EGO_TOPOLOGY_FILE`（与 MCAP 的 `station.conf` 分离，保证四路 MJPEG）。  
 手机：**录前** `http://192.168.8.1:8081/` 看四路；**录制** `http://192.168.8.1:8080/`。详见 [ego-gpd-station-migration-checklist.md](./ego-gpd-station-migration-checklist.md) §2.11 与 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md)。
 
 生产上传模式：
@@ -488,7 +523,7 @@ EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.s
 ## 6.2 相机拓扑（每站独立，与光学分开）
 
 四路 **前左/前右/后左/后右** 与 OAK 插座 `CAM_A..D` 的对应关系写在 **`camera_topology_<station>.yaml`**（运行时读同名 `.json`），由 `EGO_TOPOLOGY_FILE` 指定。  
-**不要**默认复制 `ego-001`：`camera_topology_standard`（fleet 金标）与 `camera_topology_ego-001`（130 头盔）本身也不同；**ego-002 已为 v2 单独标定**。
+**不要**默认复制 `ego-001`：`camera_topology_standard`（fleet 金标）与 `camera_topology_ego-001`（130 头盔）本身也不同；**ego-002 已为 v3 单独标定**（见 ego-002-edge-deploy §3）。
 
 新机流程：
 
@@ -498,6 +533,64 @@ EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.s
 4. `ego-130-provision.sh --profile mcap-production ... ego-00N` 同步到边缘 `~/workspace/ego-studio/config/`  
 
 **ego-002 当前映射表**：见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §3。
+
+**画面亮度（与拓扑/光学分开）**：每站可在 **8081 + MCAP** 配置 `OAK_AE_COMPENSATION`（保持 `OAK_AE_MAX_EXPOSURE_US=20000`）；002 定稿 **+1**，003/004 按 [ego-oak-isp-tuning.md](./ego-oak-isp-tuning.md) 执行，勿复制 001 的「仅改 AE_MAX」试验值。
+
+---
+
+## 6.3 采集分辨率 vs 34 回放（必读）
+
+| 概念 | 分辨率 | 说明 |
+|------|--------|------|
+| GPD **内屏** | 1080×1920 竖屏 → 脚本 scale 为 **1280×800 横屏** | 仅本地 UI，**不是** MCAP 视频尺寸 |
+| **OAK / MCAP / 34 stream L2** | **1280×800** | `ego-stream-client/ego_spec.py`、边缘 H.264、LeRobot `meta/info.json` features |
+
+新机在 34 打开 `http://10.10.10.34:8080/collection?station=ego-00N` 时，若四路全黑但折线图在动，优先查：
+
+1. `data-storage/stream/<station>/videos/.../file-000.mp4` 是否仍是 **~2KB 黑场占位**（viewer scaffold），而非 MB 级真实段。  
+2. 是否在 **已有 manifest episodes** 之后又执行了 viewer scaffold（会盖掉 `file-000`）。  
+3. `meta/tasks.parquet` 是否只有一条 task，导致侧栏 session 名全部相同。
+
+**修复（与 ego-001 相同）**：在 34 对应该站执行  
+`node data-lab-platform/lerobot-studio/ego-derive-run.mjs rebuild-view --station <ego-00N>`  
+（`STREAM_DATA_ROOT` 指向 `data-storage/stream`）。细节与验收命令见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §6。
+
+003/004 部署后 **第一次上传成功 derive 后** 建议固定跑一遍 `rebuild-view`，再交付质检看 `collection` 回放。
+
+---
+
+## 6.4 关闭 Ubuntu 崩溃弹窗（Apport）
+
+采集站桌面若反复出现 **“System program problem detected / Do you want to report the problem now?”**，来自 Ubuntu **Apport**（与采集业务无关，但会挡住 8080/8081 操作）。**所有 GPD 新机（含 ego-002）建议一次性关闭**，重启后仍生效。
+
+在采集机本机（`server` 用户）执行：
+
+```bash
+PW="${RC_CAPTURE_PASS:-1}"   # 或本机 sudo 密码
+sudo_pw() { echo "$PW" | sudo -S "$@"; }
+
+sudo_pw sed -i 's/^enabled=.*/enabled=0/' /etc/default/apport
+grep -q '^enabled=0' /etc/default/apport || echo 'enabled=0' | sudo_pw tee -a /etc/default/apport
+sudo_pw systemctl disable --now apport.service
+sudo_pw systemctl mask apport.service
+sudo_pw systemctl disable --now whoopsie.service 2>/dev/null || true
+sudo_pw systemctl mask whoopsie.service 2>/dev/null || true
+sudo_pw rm -f /var/crash/*.crash
+
+gsettings set com.ubuntu.update-notifier show-apport-crashes false
+```
+
+验收：
+
+```bash
+grep enabled /etc/default/apport          # enabled=0
+systemctl is-enabled apport.service       # masked
+systemctl is-active apport.service        # inactive
+```
+
+从开发机：SSH 到采集站（如 `server@10.10.11.52`）后执行上一段命令（需 `server` 的 sudo 密码，常与 `RC_CAPTURE_PASS` 相同）。
+
+说明：关闭弹窗**不会修复**进程崩溃本身；若 MCAP/预览仍异常，查 `journalctl --user -u ecs-record-oak-mcap` 与 `~/cache/<station>/logs/`。
 
 ---
 
@@ -515,6 +608,8 @@ EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.s
 | 7b | 四路预览 Web | `http://192.168.8.1:8081` 四格有图；`curl -s localhost:8765/preview/status` → `online:true` |
 | 7c | 四路朝向 | 8081 各格画面与头盔物理朝向一致（`camera_topology_<station>` 已标定，见 §6.2） |
 | 8 | 采集路径 | `ego-130-verify-production.sh` 通过 |
+| 8b | 34 回放 | `collection?station=ego-00N` 四路有画面；`file-000.mp4` 非黑场占位（§6.3） |
+| 8c | 无 Apport 弹窗 | `apport.service` → `masked`；`/etc/default/apport` → `enabled=0`（§6.4） |
 | 9 | WiFi 微码 | 重启 12 分钟后 `Microcode SW error` 是否可接受；热点是否仍可用 |
 
 ---
@@ -528,10 +623,15 @@ EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.s
 | 重启后搜不到热点 | iwlwifi 固件崩溃窗口 | 等 10min 或重启热点服务；长期考虑 USB AP |
 | 系统自动升级内核 | 未 mask apt 定时器 | 重做第 4 节 |
 | 手机 UI 打不开 | `ecs-ego-web` 未运行 | `systemctl --user status ecs-ego-web` |
+| **8080 点录制失败** / OAK 一直 bootloader | `ecs-record-oak-mcap`：`ModuleNotFoundError: ego_capture_studio` | 安装 `ecs-record-oak-mcap.service.d/z-pythonpath.conf`；重跑 mcap-production provision；见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §8.1 |
+| 钉扎 **7.0.0-29** 后 USB 热点死 | Tenda **DKMS** 未编入新内核 | `linux-headers-7.0.0-29-generic` + `dkms install aic8800dc/… -k 7.0.0-29-generic`；见迁移清单 §4.1 |
+| 热点报 **EGO-001-COLLECT** 不存在 | watchdog/hotspot 脚本默认 001 连接名 | `EGO_HOTSPOT_CONN=EGO-002-COLLECT` 重跑 hotspot provision（002） |
 | **8081 打不开** | 未部署 `ecs-ego-web-staging` | 在采集站跑 `ego-local-web/deploy.sh`；`systemctl --user status ecs-ego-web-staging` |
 | 8081 有页无四路图 | `ecs-preview-standby` 失败 | `journalctl --user -u ecs-preview-standby`；确认 `z-pythonpath.conf` |
+| 8081 只有一路前左 | standby 误载 `station.conf`（`OAK_HW_JPEG=0`） | 仅用 `ego-topology.env`；journal 应为 `hw_jpeg=1`；重跑 mcap provision 或同步 unit drop-in |
 | 四路标签与实物不符 | 误用他站 `socket_to_role` | 按 §6.2 标定并同步 `camera_topology_<station>`；重启 `ecs-preview-standby` |
 | Android 一直「正在连接」 | 实验室 Wi‑Fi 未断 / WPA 混合 beacon / 信道 6 干扰 / 换 USB 后 NM 未绑接口 | 见 **§5.5**；重跑 `ego-130-provision-usb-hotspot.sh` |
+| **System program problem detected** | Ubuntu Apport 崩溃上报 UI | 按 **§6.4** 关闭 apport/whoopsie；清空 `/var/crash/*.crash` |
 
 ---
 

@@ -64,4 +64,9 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 install_units "/etc/systemd/system" "systemctl" ""
+if [[ -x "${ROOT}/ml-services/apply-sam-systemd-policy.sh" ]]; then
+  echo ""
+  echo "Applying SAM opt-in systemd policy (no GPU at boot by default)..."
+  bash "${ROOT}/ml-services/apply-sam-systemd-policy.sh"
+fi
 echo "Done."

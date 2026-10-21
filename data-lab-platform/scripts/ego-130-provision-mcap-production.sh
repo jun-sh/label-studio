@@ -180,11 +180,13 @@ if [[ "${CAPTURE_PROFILE}" == "long" ]]; then
 fi
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/capture-stack.conf" "/tmp/z-mcap-capture-stack.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf" "/tmp/z-oak-boot-pre.conf"
+_scp "${CAPTURE_SRC}/systemd/ecs-record-oak-mcap.service.d/z-pythonpath.conf" "/tmp/z-mcap-pythonpath.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-mcap-capture-stack.target" "/tmp/ecs-oak-mcap-capture-stack.target"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-standby-stack.target" "/tmp/ecs-oak-standby-stack.target"
 _scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service" "/tmp/ecs-preview-standby.service"
 _scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-oak-boot-pre.conf" "/tmp/z-preview-standby-oak-boot-pre.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-pythonpath.conf" "/tmp/z-preview-standby-pythonpath.conf"
+_scp "${CAPTURE_SRC}/systemd/ecs-preview-standby.service.d/z-ego-topology-env.conf" "/tmp/z-preview-standby-topology-env.conf"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.service" "/tmp/ecs-oak-bootloader-precheck.service"
 _scp "${CAPTURE_SRC}/systemd/ecs-oak-bootloader-precheck.timer" "/tmp/ecs-oak-bootloader-precheck.timer"
 _scp "${EGO_WEB_SRC}/systemd/ecs-ego-web.service.d/z-mcap-production.conf" "/tmp/z-ego-web-mcap-production.conf"
@@ -226,6 +228,7 @@ else
 fi
 cp /tmp/z-mcap-capture-stack.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/capture-stack.conf"
 cp /tmp/z-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-oak-boot-pre.conf"
+cp /tmp/z-mcap-pythonpath.conf "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-pythonpath.conf"
 # Legacy pilot drop-ins override z-mcap-production (zz-* wins alphabetically → 80s cap).
 rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/z-episode-seconds.conf"
 rm -f "\$HOME/.config/systemd/user/ecs-record-oak-mcap.service.d/zz-episode-seconds.conf"
@@ -234,6 +237,7 @@ cp /tmp/ecs-oak-standby-stack.target "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-preview-standby.service "\$HOME/.config/systemd/user/"
 cp /tmp/z-preview-standby-oak-boot-pre.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-oak-boot-pre.conf"
 cp /tmp/z-preview-standby-pythonpath.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-pythonpath.conf"
+cp /tmp/z-preview-standby-topology-env.conf "\$HOME/.config/systemd/user/ecs-preview-standby.service.d/z-ego-topology-env.conf"
 cp /tmp/ecs-oak-bootloader-precheck.service "\$HOME/.config/systemd/user/"
 cp /tmp/ecs-oak-bootloader-precheck.timer "\$HOME/.config/systemd/user/"
 cp /tmp/z-ego-web-mcap-production.conf "\$HOME/.config/systemd/user/ecs-ego-web.service.d/z-mcap-production.conf"
@@ -257,6 +261,8 @@ fi
 # Capture-only preview vars belong in z-mcap-production.conf (EnvironmentFile overrides drop-ins).
 sed -i '/^OAK_HW_PREVIEW_H264=/d; /^PREVIEW_MAX_EDGE=/d; /^PREVIEW_FPS=/d' \
   "\$HOME/.config/ego-station.env.d/station.conf"
+grep '^EGO_TOPOLOGY_FILE=' "\$HOME/.config/ego-station.env.d/station.conf" \
+  > "\$HOME/.config/ego-station.env.d/ego-topology.env" 2>/dev/null || true
 
 CK="\${CACHE_ROOT}/checkpoint.json"
 cat > "\$HOME/.config/ego-station.env" <<EOF

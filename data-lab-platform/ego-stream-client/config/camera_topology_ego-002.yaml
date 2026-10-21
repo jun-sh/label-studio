@@ -1,21 +1,22 @@
 # ego-002 station-specific camera topology (physical socket layout on 52 helmet).
 # Calibrated 2026-10-06: differs from ego-001 — do not copy socket_to_role from ego-001.
+# v4: swap front_right / rear_right sockets (CAM_C <-> CAM_D roles).
 # Deploy: EGO_TOPOLOGY_FILE=/home/server/workspace/ego-studio/config/camera_topology_ego-002.yaml
 
 topology_id: ego-002-physical
-version: 2
+version: 4
 board_profile: OAK-FFC-4P-Ego
 camera_optics: pinhole
-description: ego-002 helmet — CAM_A rear_left, CAM_B front_right, CAM_C rear_right, CAM_D front_left
+description: ego-002 helmet — CAM_A rear_left, CAM_B front_left, CAM_C front_right, CAM_D rear_right
 
-primary_socket: CAM_D
-head_right_socket: CAM_B
+primary_socket: CAM_B
+head_right_socket: CAM_C
 
 socket_to_role:
   CAM_A: rear_left
-  CAM_B: front_right
-  CAM_C: rear_right
-  CAM_D: front_left
+  CAM_B: front_left
+  CAM_C: front_right
+  CAM_D: rear_right
 
 role_to_lerobot_key:
   front_left: observation.images.camera_front_left

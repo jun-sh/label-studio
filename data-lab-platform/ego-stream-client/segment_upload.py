@@ -34,6 +34,7 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
     mark_segment_uploading,
     purge_uploaded_segments,
+    reconcile_stale_uploading_segments,
     read_manifest,
     read_session_seal,
     sealed_segment_total,
@@ -1070,6 +1071,12 @@ def upload_session_until_complete(
 
     while time.monotonic() < deadline:
         _quarantine_corrupt_segments(root, session_id)
+        for seg_name in reconcile_stale_uploading_segments(root, session_id):
+            _log(
+                "segment_stale_uploading_recovered",
+                session_id=session_id,
+                segment_id=seg_name,
+            )
         summary = session_segment_status_summary(root, session_id)
         if summary["corrupt_issues"]:
             issues = list(summary.get("corrupt_issues") or [])
@@ -1170,6 +1177,12 @@ def upload_pending_segments(
 ) -> int:
     _quarantine_orphan_segments(root, session_id)
     _quarantine_corrupt_segments(root, session_id)
+    for seg_name in reconcile_stale_uploading_segments(root, session_id):
+        _log(
+            "segment_stale_uploading_recovered",
+            session_id=session_id,
+            segment_id=seg_name,
+        )
     pending = list_closed_pending_segments(
         root,
         session_id,

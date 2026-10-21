@@ -268,8 +268,6 @@ App **优先**使用 `device_info` / `view_changed` 中的 `preview_mjpeg_url`�
 | `GET /api/preview/cameras` | `layout: "quad"`，四路元数据 |
 | `GET /api/preview/{view_id}.jpg` | 单路 JPEG（四路独立轮询，**无需帧同步**） |
 
-**`view_id` 与物理朝向：** URL/格子名（`front_left` 等）固定；画面来自哪颗 OAK 插座由边缘 **`EGO_TOPOLOGY_FILE`**（`camera_topology_<station>.yaml` 的 `socket_to_role`）决定。每站头盔布线不同（ego-001 ≠ ego-002 v2）；新机须标定拓扑，见 `data-lab-platform/docs/ego-gpd-station-migration-checklist.md` §2.13 与 `ego-002-edge-deploy.md` §3。
-
 ### 7.3 待机 vs 采集：谁能看到几路 live？
 
 | 设备状态 | 预览生产者 | 四路 live？ | 典型帧率 / 分辨率 |

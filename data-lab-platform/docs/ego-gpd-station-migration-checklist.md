@@ -19,7 +19,7 @@
 | `/etc/default/ego-hotspot` | MAC/SSID 与现场 dongle 一致 | MAC 已改为 Tenda | 需与 udev + `ego-130-provision-usb-hotspot.sh` 一并重跑 |
 | 双 WiFi | USB AP + **`wlo1` → SRI-WIFI**（实验室上行） | 仅 USB AP（可接受） | 002 不连 SRI 不是 CORRUPT 主因 |
 | 站点光学 profile | fisheye + rectify（001） | 仓库 `ego-002-mcap-production.env` 为 **pinhole + passthrough**；机上 `station.conf` 仍可能为 **rectify**（影响 34 L2，不直接导致 ring overflow） | 002 需 **re-provision profile** |
-| 相机拓扑 `socket_to_role` | `camera_topology_ego-001` v1 | 曾复制 001 → 8081 四路标签错位；已改为 **`camera_topology_ego-002` v2**（见 §2.13） | 与光学无关；**每顶头盔单独标定** |
+| 相机拓扑 `socket_to_role` | `camera_topology_ego-001` v1 | **`camera_topology_ego-002` v4**（见 §2.13 / ego-002-edge-deploy §3） | 与光学无关；**每顶头盔单独标定** |
 
 **失败段特征（002）**：`integrity.issues` 含 `capture_ring_overflow`（四路 `ring_ovf`），journal 有 `ingest_overflow_final parallel_ring=[CAM_* …]` → **采集环在停录/高负载时来不及 drain**，与 001 在 USB 稳定栈下少见。
 
@@ -29,9 +29,10 @@
 
 按 [gpd-micropc2-capture-station-setup.md](./gpd-micropc2-capture-station-setup.md) **全文**执行，至少包括：
 
-1. **Xorg**、显示旋转、`gpd-fix-display-rotate.sh`、合盖不休眠、`iio-sensor-proxy` mask  
+1. **显示 §2 全套**（与 001 一致，**非**仅 mask 加速度计）：GRUB `panel_orientation`、Xorg、`gpd-fix-display-rotate.sh`、logind 合盖不休眠、acpi/udev/`gpd-fix-display-rotate.service`、`iio-sensor-proxy` mask + GNOME `orientation-lock`。**一键**：`bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@<IP>` → **reboot** → 按 [gpd §2.8–§2.9](./gpd-micropc2-capture-station-setup.md) 验收  
 2. **内核钉扎** `PINNED_KERNEL=7.0.0-29-generic`（或现场新验证版本）+ `apt-mark hold` 七个包  
 3. **mask** `apt-daily.timer`、`apt-daily-upgrade.timer`、`unattended-upgrades`；`/root/NO-AUTO-UPGRADE.txt`  
+3b. **关闭 Apport 崩溃弹窗**（002 现场曾反复弹出 “System program problem detected”）：见 [gpd-micropc2-capture-station-setup.md](./gpd-micropc2-capture-station-setup.md) **§6.4**（`apport`/`whoopsie` mask + `enabled=0`）  
 4. **Luxonis udev**：`81-luxonis-usb-power.rules`（`power/control=on`，`autosuspend=-1`）  
 5. **OAK 口位**：确认 `lsusb -t` 上 OAK 为 **Bus 3 Port 4**（与 001 一致）；记录 `EGO_OAK_USB_DEV=3-4`  
 6. **用户 MCAP 栈**：`bash data-lab-platform/scripts/ego-130-provision.sh --profile mcap-production server@<IP> <station-id>`  
@@ -53,6 +54,7 @@
     - `station-profiles/<station>-mcap-production.env` 中 `EGO_TOPOLOGY_FILE` 指向边缘 `~/workspace/ego-studio/config/...`  
     - provision：`ego-130-provision.sh --profile mcap-production` 会 rsync 上述文件到边缘机  
     - **机制**：`CAM_A..D`（板上固定）→ `socket_to_role`（前左/前右/后左/后右）→ `observation.images.camera_*`；8081/App 的 `front_left` 等 URL 按 LeRobot 字段取帧，UI 文案不读拓扑  
+    - **`ecs-preview-standby` 只读** `~/.config/ego-station.env.d/ego-topology.env`（仅 `EGO_TOPOLOGY_FILE`）；**禁止**加载完整 `station.conf`（`OAK_HW_JPEG=0` 会导致 8081 只剩单路）。未设则退回 **`ego-standard`**。MCAP 仍从 `z-mcap-production.conf` + `station.conf` 读拓扑。provision 会生成 `ego-topology.env`  
     - **参考布局**（勿混用）：`camera_topology_standard.yaml`（fleet 金标）与 `camera_topology_ego-001.yaml`（001 头盔实测）**不同**；002 v2 又与 001 不同，见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §3  
     - **标定 SOP**：待机开 `http://<网关>:8081/` → 依次遮住一颗镜头，记录哪一格变黑 → 填写 `socket_to_role` → 同步边缘 + 34 json → `systemctl --user restart ecs-preview-standby` → 四格与头盔朝向一致再录  
     - **7b 扩展**：检查清单 §7 增加「四路预览朝向与头盔一致」  
@@ -108,14 +110,50 @@ bash data-lab-platform/scripts/ego-130-provision-usb-hotspot.sh server@10.10.11.
 
 ## 4. ego-002 专项修复顺序（建议）
 
-1. 按 §2 补齐 **内核 hold + apt mask**（与 001 一致）  
-2. `ego-130-provision-tenda-usb.sh server@10.10.11.52`  
-3. 用 **正确 MAC** 重跑 `ego-130-provision-usb-hotspot.sh`  
+1. 按 §2 补齐 **内核 hold + apt mask**（与 001 一致）；boot **`7.0.0-29-generic`** 后执行 **§4.1**（Tenda DKMS）  
+2. `EGO_OAK_USB_DEV=3-4 bash ego-130-provision-tenda-usb.sh server@10.10.11.52`  
+3. 用 **正确 MAC** 重跑 `ego-130-provision-usb-hotspot.sh`（`EGO-002-COLLECT` + Tenda MAC）  
 4. Re-provision MCAP + 合并 profile：  
    `bash data-lab-platform/scripts/ego-130-provision.sh --profile mcap-production server@10.10.11.52 ego-002`  
-   （使 `EGO_CAMERA_OPTICS=pinhole`、`EGO_OAK_MODE=passthrough` 写入 `station.conf`）  
-5. 确认 **`camera_topology_ego-002` v2** 已同步（§2.13）；8081 四路朝向验收  
-6. 重启 → 等热点稳定 → **单次**短录（避免连续三段压测）→ 查 manifest → upload  
+   （使 `EGO_CAMERA_OPTICS=pinhole`、`EGO_OAK_MODE=passthrough` 写入 `station.conf`；并下发 **mcap + preview 的 `z-pythonpath.conf`**，见 §4.2）  
+5. **`EGO_HOTSPOT_CONN=EGO-002-COLLECT`** 重跑 `ego-130-provision-hotspot-watchdog.sh`（勿用默认 `EGO-001-COLLECT`）  
+6. 确认 **`camera_topology_ego-002` v4** 已同步（§2.13）；8081 四路朝向验收  
+7. **（003/004+ 可选 · 002 已定稿）** 按站调节 OAK 亮度：`OAK_AE_COMPENSATION` drop-in（MCAP + `ecs-preview-standby` 各一份），勿盲目复制 002 的 `+1`；见 [ego-oak-isp-tuning.md](./ego-oak-isp-tuning.md)  
+8. 重启 → 等热点稳定 → **单次**短录（避免连续三段压测）→ 查 manifest **无** `capture_ring_overflow` → upload  
+9. **34 回放验收**（与 ego-001 同流程）：上传 derive 完成后在 34 执行  
+   `node data-lab-platform/lerobot-studio/ego-derive-run.mjs rebuild-view --station ego-002`  
+   再打开 `collection?station=ego-002` 确认四路非黑、侧栏 session 标签与时长正确（详见 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) §7）。
+
+### 4.1 内核 7.0.0-29 + Tenda（002 必做）
+
+钉扎内核后 **AIC8800 仅编过旧内核** 会导致 `aic_load_fw` 找不到、热点 `activating` 失败：
+
+```bash
+sudo apt-get install -y linux-image-7.0.0-29-generic linux-headers-7.0.0-29-generic
+# apt-mark hold …（见 gpd §3–§4）
+sudo reboot
+# 上线后
+sudo dkms status    # 应含 aic8800dc … 7.0.0-29-generic
+sudo /usr/local/bin/ego-tenda-wifi-init.sh
+```
+
+`/etc/default/ego-tenda`：**`EGO_OAK_USB_DEV=3-4`**。
+
+### 4.2 手机开录失败（`ego_capture_studio` import）
+
+| 检查 | 期望 |
+|------|------|
+| `~/.config/systemd/user/ecs-record-oak-mcap.service.d/z-pythonpath.conf` | `PYTHONPATH=…/ego-studio/src` |
+| `journalctl --user -u ecs-record-oak-mcap` | 无 `ModuleNotFoundError` |
+| `curl -s -X POST http://127.0.0.1:8080/api/capture/start` | `"success": true` |
+
+provision 脚本：`ego-130-provision-mcap-production.sh` 会同步 **preview + mcap** 两份 `z-pythonpath.conf`。边缘 **不必**强依赖 `pip install -e .`（SSH 易超时）。
+
+### 4.3 本地 CORRUPT 段与 upload 告警
+
+- `integrity.issues` 含 **`capture_ring_overflow`** → 性能/USB，不是 timeline；可 `rm -rf ~/cache/ego-002/segments/sessions/<bad_sess>` 避免 upload 反复隔离 `seg_000001`。  
+- **`ego-upload` 显示 `4/3 段`**：进度计数噪音，以 34 raw 段数与 manifest 为准。  
+- 详情：[ego-002-edge-deploy.md](./ego-002-edge-deploy.md) **§8.4**。
 
 ---
 
@@ -124,6 +162,8 @@ bash data-lab-platform/scripts/ego-130-provision-usb-hotspot.sh server@10.10.11.
 | 路径 | 用途 |
 |------|------|
 | `docs/gpd-micropc2-capture-station-setup.md` | 001 系统基线 SSOT |
+| `scripts/ego-gpd-display-stack.sh` | GPD 显示 §2 一键（GRUB/logind/acpi/udev；003/004 必跑 + reboot） |
+| `scripts/ego-pull-edge-snapshot.sh` | 边缘机代码/配置镜像到 `edge-station-snapshots/<station>-<date>/`（git 备份） |
 | `docs/ego-gpd-station-migration-checklist.md` | 本文（003/004 必做） |
 | `scripts/ego-130-provision-mcap-production.sh` | MCAP + `station.conf` |
 | `scripts/ego-130-provision-usb-hotspot.sh` | 双 WiFi + udev + NM 热点 |
@@ -131,6 +171,9 @@ bash data-lab-platform/scripts/ego-130-provision-usb-hotspot.sh server@10.10.11.
 | `scripts/ego-tenda-wifi-init.sh` | Hub 复位 + OAK gate + AIC 驱动 |
 | `config/station-profiles/ego-*-mcap-production.env` | 光学/上传/L2 站点差异 |
 | `ego-stream-client/systemd/.../z-mcap-production.conf` | MCAP 环与 parallel drain |
+| `ego-stream-client/systemd/.../ecs-record-oak-mcap.service.d/z-pythonpath.conf` | 8080 开录 import 路径 |
+| `docs/ego-oak-isp-tuning.md` | **按站 OAK 亮度**（`OAK_AE_COMPENSATION` · 002 定稿 +1） |
+| `ego-stream-client/systemd/.../zz-ego-002-isp.conf.example` | 002 ISP drop-in 示例（003 复制为 `zz-ego-00N-isp.conf`） |
 | `ego-local-web/deploy.sh` + `deploy-staging.sh` | 8080 采集页 + **8081 四路预览** |
 | `ego-local-web/docs/ego-app-tcp-protocol.md` | 8080/8081/8765/9100 分工 |
 | `docs/ego-002-edge-deploy.md` | **002 边缘一站式部署**（003/004 改表即用） |
@@ -141,6 +184,6 @@ bash data-lab-platform/scripts/ego-130-provision-usb-hotspot.sh server@10.10.11.
 
 ## 6. 记录（2026-10-06）
 
-- **001**：内核 29、apt masked、RTL USB AP、MCAP drop-in 完整、热点/预检 timer 正常；拓扑 `camera_topology_ego-001` v1。  
-- **002**：MCAP drop-in 已与 001 对齐；**缺 Tenda / 8081 / udev MAC / 内核钉扎** 等见上文；CORRUPT 段为 `capture_ring_overflow`；**四路预览曾复制 001 拓扑导致标签错位**，已标定 `camera_topology_ego-002` **v2**（CAM_A→后左, B→前右, C→后右, D→前左；`primary_socket=CAM_D`）。  
+- **001**：内核 29、apt masked、RTL USB AP、MCAP drop-in 完整、热点/预检 timer 正常；拓扑 `camera_topology_ego-001` v1；**2026-10-07** 130 已部署 `ego-topology.env` + standby unit（8081 四路 MJPEG 与 MCAP 拓扑一致）。  
+- **002**：MCAP drop-in 已与 001 对齐；**2026-10-07** 已钉扎内核 29、Tenda init、mcap **`z-pythonpath.conf`**、热点 `EGO-002-COLLECT`；拓扑 **`camera_topology_ego-002` v4**；**OAK 亮度** `OAK_AE_COMPENSATION=+1`；故障表 [ego-002-edge-deploy.md](./ego-002-edge-deploy.md) **§8**。  
 - **003/004**：复制本清单 + `station-profiles` + **新建并标定** `camera_topology_ego-00N`（勿复制 001/002）；硬件与 002 同则用 **§3B**，与 001 同则用 **§3A**。

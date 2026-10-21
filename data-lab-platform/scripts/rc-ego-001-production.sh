@@ -45,6 +45,10 @@ run_step "v0.1.1-preflight" bash "${SCRIPT_DIR}/rc-ego-001-v0.1.1-preflight.sh" 
 run_step "phase-d" bash "${SCRIPT_DIR}/rc-ego-001-p2-phase-d.sh" || FAIL=$((FAIL + 1))
 run_step "ops-async" bash "${SCRIPT_DIR}/rc-ego-001-p2-ops-async-preflight.sh" || FAIL=$((FAIL + 1))
 
+if [[ -x "${ROOT}/ml-services/ensure-sam-policy.sh" ]]; then
+  run_step "sam-opt-in-policy" bash "${ROOT}/ml-services/ensure-sam-policy.sh" || true
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
   if systemctl is-active data-lab-ego-process-watcher.timer >/dev/null 2>&1 \
     || systemctl --user is-active data-lab-ego-process-watcher.timer >/dev/null 2>&1; then

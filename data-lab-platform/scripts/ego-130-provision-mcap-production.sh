@@ -354,3 +354,4 @@ echo "Verify: bash data-lab-platform/scripts/ego-station-doctor.sh ${STATION_ID}
 echo "Release: bash data-lab-platform/scripts/ego-release-check.sh ${STATION_ID} ${TARGET}"
 echo "Record: phone UI :8080 (capture disabled at boot; manual start only)"
 echo "Quad preview: phone :8081 (ecs-ego-web-staging); standby JPEG :8765 (ecs-preview-standby on demand)"
+echo "GPD host: if not done yet, run ego-gpd-display-stack.sh on this edge host (lid-closed capture; see gpd §2.10)"

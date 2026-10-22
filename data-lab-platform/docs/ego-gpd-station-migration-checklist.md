@@ -29,7 +29,8 @@
 
 按 [gpd-micropc2-capture-station-setup.md](./gpd-micropc2-capture-station-setup.md) **全文**执行，至少包括：
 
-1. **显示 §2 全套**（与 001 一致，**非**仅 mask 加速度计）：GRUB `panel_orientation`、Xorg、`gpd-fix-display-rotate.sh`、logind 合盖不休眠、acpi/udev/`gpd-fix-display-rotate.service`、`iio-sensor-proxy` mask + GNOME `orientation-lock`。**一键**：`bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@<IP>` → **reboot** → 按 [gpd §2.8–§2.9](./gpd-micropc2-capture-station-setup.md) 验收  
+1. **显示 §2 全套 + §2.10 合盖采集电源（必做）**（与 001 一致，**非**仅 mask 加速度计）：GRUB、logind 合盖不休眠、acpi/udev、`iio-sensor-proxy` mask、**GNOME 禁止自动挂起 + `powerprofilesctl performance`**（[gpd §2.10](./gpd-micropc2-capture-station-setup.md)）。**从 002 复制仓库文件到 003/004 不会带上这些系统配置**——每台 GPD 必须单独执行：  
+   `RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@<IP>` → **reboot** → 按 [gpd §2.8–§2.10](./gpd-micropc2-capture-station-setup.md) 验收（含合盖 ≥3min 仍在线）  
 2. **内核钉扎** `PINNED_KERNEL=7.0.0-29-generic`（或现场新验证版本）+ `apt-mark hold` 七个包  
 3. **mask** `apt-daily.timer`、`apt-daily-upgrade.timer`、`unattended-upgrades`；`/root/NO-AUTO-UPGRADE.txt`  
 3b. **关闭 Apport 崩溃弹窗**（002 现场曾反复弹出 “System program problem detected”）：见 [gpd-micropc2-capture-station-setup.md](./gpd-micropc2-capture-station-setup.md) **§6.4**（`apport`/`whoopsie` mask + `enabled=0`）  
@@ -162,7 +163,7 @@ provision 脚本：`ego-130-provision-mcap-production.sh` 会同步 **preview + 
 | 路径 | 用途 |
 |------|------|
 | `docs/gpd-micropc2-capture-station-setup.md` | 001 系统基线 SSOT |
-| `scripts/ego-gpd-display-stack.sh` | GPD 显示 §2 一键（GRUB/logind/acpi/udev；003/004 必跑 + reboot） |
+| `scripts/ego-gpd-display-stack.sh` | GPD 显示 §2 + **§2.10 合盖采集电源** 一键（003/004 **每台**必跑 + reboot；不可只复制 002 文件） |
 | `scripts/ego-pull-edge-snapshot.sh` | 边缘机代码/配置镜像到 `edge-station-snapshots/<station>-<date>/`（git 备份） |
 | `docs/ego-gpd-station-migration-checklist.md` | 本文（003/004 必做） |
 | `scripts/ego-130-provision-mcap-production.sh` | MCAP + `station.conf` |

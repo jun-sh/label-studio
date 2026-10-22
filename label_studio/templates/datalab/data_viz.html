@@ -271,6 +271,11 @@
       }
 
       hideDuplicateIframes();
+
+      var vizLayer = document.getElementById(LAYER_ID);
+      if (vizLayer) {
+        vizLayer.style.pointerEvents = "";
+      }
     }
 
     function mountLayer() {

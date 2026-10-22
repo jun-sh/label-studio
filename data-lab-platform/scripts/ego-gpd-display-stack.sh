@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # GPD MicroPC 2 display stack — ego-001 §2 parity (GRUB, logind, acpi/udev/systemd, iio mask).
-# SSOT: docs/gpd-micropc2-capture-station-setup.md §2
+# Also §2.10 capture power: GNOME never auto-suspend + performance power profile (lid-closed recording).
+# SSOT: docs/gpd-micropc2-capture-station-setup.md §2 + §2.10
 #
 # On edge host:  sudo bash ego-gpd-display-stack.sh
-# From dev:      bash ego-gpd-display-stack.sh server@10.10.11.52
+# From dev:      RC_CAPTURE_PASS=1 bash ego-gpd-display-stack.sh server@10.10.11.52
 set -euo pipefail
 
 GRUB_LINE='GRUB_CMDLINE_LINUX_DEFAULT="quiet splash fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up"'
@@ -91,6 +92,78 @@ IdleAction=ignore
 EOF
   systemctl restart systemd-logind || true
 
+  # §2.10 GNOME/dconf: logind ignore alone is NOT enough (battery auto-suspend, balanced CPU).
+  install -d /etc/dconf/db/local.d /etc/dconf/db/local.d/locks
+  cat > /etc/dconf/db/local.d/01-ego-capture-power <<'EOF'
+# EGO edge capture: screen may blank; system must not suspend or throttle for idle/lid.
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-type='nothing'
+sleep-inactive-battery-type='nothing'
+sleep-inactive-ac-timeout=0
+sleep-inactive-battery-timeout=0
+idle-dim=false
+
+[org/gnome/desktop/session]
+idle-delay=uint32 0
+EOF
+  cat > /etc/dconf/db/local.d/locks/01-ego-capture-power <<'EOF'
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-type
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-timeout
+/org/gnome/settings-daemon/plugins/power/sleep-inactive-battery-timeout
+EOF
+  if [[ -f /etc/dconf/profile/user ]]; then
+    if ! grep -q '^system-db:local' /etc/dconf/profile/user 2>/dev/null; then
+      printf '%s\n' 'system-db:local' >> /etc/dconf/profile/user
+    fi
+  else
+    install -d /etc/dconf/profile
+    printf '%s\n' 'user-db:user' 'system-db:local' > /etc/dconf/profile/user
+  fi
+  if command -v dconf >/dev/null 2>&1; then
+    dconf update
+  fi
+
+  _apply_server_gsettings_power() {
+    local bus="/run/user/1000/bus"
+    [[ -S "$bus" ]] || return 0
+    id server &>/dev/null || return 0
+    local run_gs=(gsettings set)
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing 2>/dev/null || true
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type nothing 2>/dev/null || true
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0 2>/dev/null || true
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 0 2>/dev/null || true
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.settings-daemon.plugins.power idle-dim false 2>/dev/null || true
+    sudo -u server DBUS_SESSION_BUS_ADDRESS="unix:path=${bus}" \
+      "${run_gs[@]}" org.gnome.desktop.session idle-delay 0 2>/dev/null || true
+  }
+  _apply_server_gsettings_power
+
+  cat > /etc/systemd/system/ego-capture-power-profile.service <<'EOF'
+[Unit]
+Description=EGO capture station: performance power profile (no idle power-saver)
+After=power-profiles-daemon.service
+Wants=power-profiles-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/powerprofilesctl set performance
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable ego-capture-power-profile.service 2>/dev/null || true
+  if command -v powerprofilesctl >/dev/null 2>&1; then
+    powerprofilesctl set performance 2>/dev/null || true
+  fi
+
   # §2.7 acpi / sleep / xsession / udev / systemd
   cat > /etc/acpi/gpd-lid-fix.sh <<'EOF'
 #!/bin/bash
@@ -150,17 +223,37 @@ EOF
   systemctl restart acpid 2>/dev/null || true
   udevadm control --reload-rules
 
-  echo "OK: GPD display stack installed (ego-001 §2 parity)"
+  echo "OK: GPD display stack installed (ego-001 §2 + §2.10 capture power)"
   echo "Verify: systemctl is-enabled iio-sensor-proxy → masked"
+  echo "        test -f /etc/systemd/logind.conf.d/ego-capture.conf"
+  echo "        test -f /etc/dconf/db/local.d/01-ego-capture-power"
+  echo "        powerprofilesctl get → performance"
   echo "        grep panel_orientation /etc/default/grub"
   echo "Reboot once so GRUB cmdline takes effect."
+}
+
+_ssh() {
+  if [[ -n "${RC_CAPTURE_PASS:-}" ]] && command -v sshpass >/dev/null 2>&1; then
+    sshpass -p "${RC_CAPTURE_PASS}" ssh -o StrictHostKeyChecking=accept-new "$@"
+  else
+    ssh -o StrictHostKeyChecking=accept-new "$@"
+  fi
+}
+
+_scp() {
+  if [[ -n "${RC_CAPTURE_PASS:-}" ]] && command -v sshpass >/dev/null 2>&1; then
+    sshpass -p "${RC_CAPTURE_PASS}" scp -o StrictHostKeyChecking=accept-new "$@"
+  else
+    scp -o StrictHostKeyChecking=accept-new "$@"
+  fi
 }
 
 if [[ $# -ge 1 ]]; then
   TARGET="$1"
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  scp -o StrictHostKeyChecking=accept-new "${SCRIPT_DIR}/$(basename "$0")" "${TARGET}:/tmp/ego-gpd-display-stack.sh"
-  ssh -o StrictHostKeyChecking=accept-new "${TARGET}" "echo 1 | sudo -S -p '' bash /tmp/ego-gpd-display-stack.sh"
+  SUDO_PW="${RC_CAPTURE_PASS:-1}"
+  _scp "${SCRIPT_DIR}/$(basename "$0")" "${TARGET}:/tmp/ego-gpd-display-stack.sh"
+  _ssh "${TARGET}" "echo ${SUDO_PW} | sudo -S -p '' bash /tmp/ego-gpd-display-stack.sh"
 else
   _run_local
 fi

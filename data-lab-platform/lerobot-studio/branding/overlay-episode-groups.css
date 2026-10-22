@@ -4,7 +4,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  width: 100% !important;
+  max-width: 100% !important;
+  align-self: stretch;
   min-height: 36px;
   margin: 0;
   padding: 6px 10px;

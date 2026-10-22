@@ -74,7 +74,9 @@ function handleIngestError(res, err) {
   });
 }
 
-const server = http.createServer((req, res) => {
+// Long-session X-Session-Seal (~35KB+ b64) exceeds Node default maxHeaderSize (16KB) → HTTP 431.
+const MAX_HTTP_HEADER_SIZE = Number(process.env.INGEST_MAX_HTTP_HEADER_SIZE || 131072);
+const server = http.createServer({ maxHeaderSize: MAX_HTTP_HEADER_SIZE }, (req, res) => {
   if (req.method === "OPTIONS") {
     return send(res, 204, "");
   }

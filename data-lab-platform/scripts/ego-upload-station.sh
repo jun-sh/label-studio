@@ -33,6 +33,7 @@ EOF
       case "$arg" in
         --notify) NOTIFY_FLAG=1 ;;
         --no-notify) NOTIFY_FLAG=0 ;;
+        --no-live-ui|--status) ;;
         *) EXTRA+=("$arg") ;;
       esac
       ;;

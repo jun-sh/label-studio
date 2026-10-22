@@ -33,20 +33,23 @@ function isShellSidebarOpenInDom() {
   );
 }
 
-function isShellSidebarOpen() {
-  if (localStorage.getItem("sidebar-opened") === "true") return true;
+function isShellSidebarMenuVisible() {
   return isShellSidebarOpenInDom();
 }
 
 function syncEmbedPointerEvents(layer: HTMLElement) {
-  const sidebarOpen = isShellSidebarOpen() || Date.now() < embedInteractionLockUntil;
-  // Let the floating shell menu receive clicks above the full-screen viz iframe.
-  layer.style.pointerEvents = sidebarOpen ? "none" : "";
+  // /data visualizer: keep iframe interactive; shell sidebar stacks above (z-index 100+).
+  if (layer.id === "datalab-viz-layer") {
+    layer.style.pointerEvents = "";
+    return;
+  }
+  const blockMenu = isShellSidebarMenuVisible() || Date.now() < embedInteractionLockUntil;
+  layer.style.pointerEvents = blockMenu ? "none" : "";
 }
 
 function lockEmbedForShellMenu(ms = 500) {
   embedInteractionLockUntil = Date.now() + ms;
-  document.querySelectorAll("#datalab-viz-layer, #datalab-collection-layer, #datalab-station-layer").forEach((node) => {
+  document.querySelectorAll("#datalab-collection-layer, #datalab-station-layer").forEach((node) => {
     (node as HTMLElement).style.pointerEvents = "none";
   });
 }

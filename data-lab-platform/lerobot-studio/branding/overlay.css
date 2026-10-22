@@ -99,7 +99,32 @@ html[data-datalab-data-viz-embed="1"] #lerobot-root nav [class*="left-1/2"][clas
 html[data-datalab-data-viz-embed="1"] #lerobot-root > div > div.flex-1 {
   flex: 1 1 auto !important;
   min-height: 0 !important;
-  overflow: hidden !important;
+  min-width: 0 !important;
+  overflow: auto !important;
+  overscroll-behavior: contain;
+}
+
+/*
+ * Browse home: flatten nested overflow-hidden + 100vh inner scroller so flex-1
+ * is the only scroll container (wheel works reliably inside /data iframe).
+ */
+html[data-datalab-data-viz-embed="1"]
+  #lerobot-root
+  > div
+  > div.flex-1
+  > .flex-1.flex.flex-col
+  > .overflow-hidden.relative:has([class*="calc(100vh-3rem)"]) {
+  flex: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+
+html[data-datalab-data-viz-embed="1"] #lerobot-root > div > div.flex-1 [class*="calc(100vh-3rem)"] {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  overflow: visible !important;
 }
 
 /* Collection embed: collapse top toolbar; parent shell owns chrome */
@@ -141,7 +166,7 @@ html[data-datalab-collection-embed="1"] body > div#root > *:not(header) {
 }
 
 /* Keep browse / menu controls intrinsic width (avoid full-bleed toolbar buttons) */
-html[data-datalab-embed="1"] button,
+html[data-datalab-embed="1"] button:not([data-datalab-episode-date-header]),
 html[data-datalab-embed="1"] [role="menuitem"],
 html[data-datalab-embed="1"] [role="menuitemradio"] {
   width: auto !important;

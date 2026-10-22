@@ -13,7 +13,8 @@
 
 **通用 GPD 系统基线**（内核钉扎、显示、apt mask）：[gpd-micropc2-capture-station-setup.md](./gpd-micropc2-capture-station-setup.md)  
 **001/002 差异与 CORRUPT 根因**：[ego-gpd-station-migration-checklist.md](./ego-gpd-station-migration-checklist.md)  
-**003/004**：复制本文变量表 + 迁移清单 §2–§3，换 `station-id` / IP / MAC / profile 即可。
+**003/004**：复制本文变量表 + 迁移清单 §2–§3，换 `station-id` / IP / MAC / profile 即可。  
+**合盖长时间采集坑（2026-10-21）**：仅 rsync 002 的 ego-studio/systemd **不够**；每台新机必须跑 **`ego-gpd-display-stack.sh`**（含 [gpd §2.10](./gpd-micropc2-capture-station-setup.md)），否则合盖 1–2 分钟 App 可能卡死/WiFi 灰。
 
 ---
 
@@ -23,6 +24,10 @@
 cd /path/to/data-lab
 STATION=ego-002
 HOST=server@10.10.11.52
+
+# A0. GPD 显示 + 合盖不休眠 + GNOME 不挂起 + performance（003/004 每台必跑，不可跳过）
+RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/ego-gpd-display-stack.sh "${HOST}"
+# 然后 reboot 一次
 
 # A. 系统基线（在 52 本机按 gpd 手册 §1–§5；Tenda 见 §6.1）
 EGO_OAK_USB_DEV=3-4 bash data-lab-platform/scripts/ego-130-provision-tenda-usb.sh "${HOST}"
@@ -277,3 +282,12 @@ jq '.status, .integrity.issues, .timeline.ok' \
 ### 8.5 `ego-derive-status` 显示 ego-001 / 无派生
 
 须在边缘使用已 source `ego-station.env` 的脚本，或显式 `--station ego-002`；在 34 上查询时用 `http://10.10.10.34:8080/.../ego-002/...`。
+
+### 8.6 合盖 1–2 分钟后 App 卡住 / WiFi 灰（仅合盖长时间录）
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| 开盖长录正常；合盖数分钟后 App/TCP 死 | `logind` 已 ignore 合盖，但 **电池自动挂起**（`sleep-inactive-battery-type=suspend`）或 **balanced 降频** | `RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@10.10.11.52`（含 §2.10 dconf + `ego-capture-power-profile.service`） |
+| 003/004 从 002 克隆后复现 | 系统配置未 per-host 安装 | 每台执行 **A0**（§1），不能只复制 git/002 快照 |
+
+验收：`powerprofilesctl get` → `performance`；`gsettings get … sleep-inactive-battery-type` → `'nothing'`。详见 [gpd §2.10](./gpd-micropc2-capture-station-setup.md)。

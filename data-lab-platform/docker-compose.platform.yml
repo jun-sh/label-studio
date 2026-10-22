@@ -65,6 +65,7 @@ services:
       - ./data-lab-platform/lerobot-studio/mux-exec.mjs:/app/mux-exec.mjs:ro
       - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
+      - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
       - ./data-lab-platform/lerobot-studio/ingest:/app/ingest:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
       - ./data-lab-platform/lerobot-studio/scripts/merge-station-imu.py:/app/scripts/merge-station-imu.py:ro

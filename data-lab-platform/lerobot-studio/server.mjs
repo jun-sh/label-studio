@@ -393,11 +393,11 @@ function injectBranding(html, search = "") {
   }
   inject +=
     '<link rel="shortcut icon" href="/static/images/favicon.ico" />' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=57"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay.css?v=59"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-collection-mode.css?v=71"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-hand-keypoints.css?v=9"/>' +
     '<link rel="stylesheet" href="/lerobot/branding/overlay-depth-preview.css?v=7"/>' +
-    '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-groups.css?v=9"/>' +
+    '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-groups.css?v=10"/>' +
     '<script src="/lerobot/branding/stream-embed-gate.js?v=51"></script>' +
     '<script src="/lerobot/branding/stream-http-source.js?v=53"></script>' +
     '<script defer src="/lerobot/branding/overlay.js?v=62"></script>' +

@@ -151,6 +151,7 @@ gsettings set org.gnome.settings-daemon.peripherals.touchscreen orientation-lock
 [Login]
 HandleLidSwitch=ignore
 HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
 IdleAction=ignore
 ```
 
@@ -260,6 +261,39 @@ test -f /etc/systemd/logind.conf.d/ego-capture.conf
 systemctl is-enabled gpd-fix-display-rotate.service acpid
 DISPLAY=:0 XAUTHORITY=/home/server/.Xauthority xrandr --query | head -3
 ```
+
+### 2.10 合盖长时间采集（必做 · ego-002 现场坑 · 003/004 复制 002 时勿跳过）
+
+**现象（仅复现条件很窄时也要做本节）：** 开盖长时间录正常；**合上盖子 1–2 分钟后** App 画面卡住、WiFi 图标变灰/像断连。  
+**根因：** §2.6 `logind` **只禁止合盖 suspend**，**不能**阻止 GNOME「自动挂起」（尤其 **电池** `sleep-inactive-battery-type=suspend`）和 **`powerprofilesctl balanced` 降频**。合盖后屏幕黑 + 散热变差，采集/USB 热点更容易背压。
+
+**一键（与 §2.9 同脚本，已含 §2.10）：**
+
+```bash
+# 新机 / 从 002 克隆文件后必须在目标 GPD 上执行（不能只在 002 配一次）
+RC_CAPTURE_PASS=1 bash data-lab-platform/scripts/ego-gpd-display-stack.sh server@<边缘IP>
+```
+
+脚本会额外写入：
+
+| 项 | 路径 / 服务 |
+|----|-------------|
+| GNOME 永不自动挂起（AC/电池） | `/etc/dconf/db/local.d/01-ego-capture-power` + locks |
+| 开机 performance 档位 | `ego-capture-power-profile.service` → `powerprofilesctl set performance` |
+| 当前图形会话立即生效 | 对已登录 `server` 执行 `gsettings`（有 D-Bus 时） |
+
+**验收（合盖前录一段，合盖 ≥3 分钟，App/TCP 仍应活着）：**
+
+```bash
+test -f /etc/dconf/db/local.d/01-ego-capture-power
+powerprofilesctl get    # performance
+sudo -u server DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
+  gsettings get org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type
+# 期望：'nothing'
+journalctl -b --no-pager | grep -iE 'suspend|PM: suspend' | tail -3   # 复测后应为空
+```
+
+**003/004 流程：** 从 002 **rsync 代码/systemd 不够**；每台新 GPD 必须单独跑 **`ego-gpd-display-stack.sh`**（再 reboot）。见 [ego-gpd-station-migration-checklist.md](./ego-gpd-station-migration-checklist.md) §2 第 1 条。
 
 ---
 

@@ -64,12 +64,7 @@ async function openShellSidebar(page: import("@playwright/test").Page) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const result = await probeSidebar(page).catch(() => ({ ok: false, reason: "navigation" }) as SidebarProbe);
 
-    if (
-      result.ok &&
-      (result.opacity ?? 0) >= 0.99 &&
-      (result.linkCount ?? 0) >= 3 &&
-      (result.layerPointerEvents === null || result.layerPointerEvents === "none")
-    ) {
+    if (result.ok && (result.opacity ?? 0) >= 0.99 && (result.linkCount ?? 0) >= 3) {
       return result;
     }
     await page.waitForTimeout(200);

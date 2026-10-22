@@ -715,9 +715,8 @@
     "datalab-stream-loading-layer",
   ];
 
-  function isShellSidebarOpen() {
-    if (localStorage.getItem("sidebar-opened") === "true") return true;
-    var sidebar = document.querySelector(".sidebar");
+  function isShellSidebarMenuVisible() {
+    var sidebar = document.querySelector(".lsf-sidebar, .sidebar");
     if (!sidebar) return false;
     var cls = sidebar.className || "";
     return (
@@ -728,13 +727,46 @@
     );
   }
 
+  function keepDataVizLayerInteractive() {
+    var layer = document.getElementById("datalab-viz-layer");
+    if (!layer) return;
+    if (layer.style.pointerEvents === "none") {
+      layer.style.pointerEvents = "";
+    }
+  }
+
   function syncDatalabLayerPointerEvents() {
-    var open = isShellSidebarOpen();
+    var menuVisible = isShellSidebarMenuVisible();
     LAYER_IDS.forEach(function (id) {
       var layer = document.getElementById(id);
       if (!layer) return;
-      layer.style.pointerEvents = open ? "none" : "";
+      if (id === "datalab-viz-layer") {
+        layer.style.pointerEvents = "";
+        return;
+      }
+      layer.style.pointerEvents = menuVisible ? "none" : "";
     });
+    keepDataVizLayerInteractive();
+  }
+
+  function bindDataVizLayerPointerFix() {
+    function watchLayer() {
+      var layer = document.getElementById("datalab-viz-layer");
+      if (!layer) {
+        global.requestAnimationFrame(watchLayer);
+        return;
+      }
+      keepDataVizLayerInteractive();
+      if (layer.dataset.datalabVizPeWatch === "1") return;
+      layer.dataset.datalabVizPeWatch = "1";
+      var observer = new MutationObserver(function () {
+        keepDataVizLayerInteractive();
+      });
+      observer.observe(layer, { attributes: true, attributeFilter: ["style"] });
+    }
+    watchLayer();
+    global.addEventListener("datalab:layout", keepDataVizLayerInteractive);
+    global.setInterval(keepDataVizLayerInteractive, 100);
   }
 
   /** Django collection layers sit on body above .app-wrapper; ensure trigger receives clicks. */
@@ -851,6 +883,7 @@
     bindLegacyBackButtonGuard();
     bindMenuOpen();
     bindMenubarTriggerPassthrough();
+    bindDataVizLayerPointerFix();
     watchForMenu();
     bindCollectionVizWatcher();
     bindLanguageWatcher();

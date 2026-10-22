@@ -405,7 +405,7 @@ function injectBranding(html, search = "") {
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=27"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>' +
-    '<script defer src="/lerobot/branding/overlay-episode-groups.js?v=5"></script>';
+    '<script defer src="/lerobot/branding/overlay-episode-groups.js?v=6"></script>';
   if (collectionEmbed) {
     inject +=
       `<script>window.__DATALAB_COLLECTION_UI__=${JSON.stringify(COLLECTION_UI)};</script>` +

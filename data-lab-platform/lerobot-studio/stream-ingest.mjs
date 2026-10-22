@@ -255,7 +255,7 @@ function remapRowsJsonlForGlobalOffset(srcPath, destPath, offset) {
 function episodeDisplayTask(root, stationId, sessionId, createdAt) {
   return resolveSessionTask(root, stationId, { sessionId, createdAt });
 }
-const DEFAULT_QUOTA_GB = Number(process.env.STREAM_QUOTA_GB || 100);
+const DEFAULT_QUOTA_GB = Number(process.env.STREAM_QUOTA_GB || 1000);
 const RETENTION_DAYS = Number(process.env.STREAM_RETENTION_DAYS || 7);
 const DISK_HIGH_WATER_RATIO = Number(process.env.STREAM_DISK_HIGH_WATER || 0.85);
 const DISK_TARGET_RATIO = Number(process.env.STREAM_DISK_TARGET || 0.7);

@@ -1,4 +1,4 @@
-# Hot-tier storage policy (34): 20GB quota, 7-day retention, P0 staging purge unchanged in stream-ingest.
+# Hot-tier storage policy (34): 1000GB per-station stream quota (all ego stations), 7-day retention.
 # Cold migration: host cron runs scripts/storage/hot-tier-enforce.sh + archive-to-cold.sh
 #
 # Usage from repo root:
@@ -13,8 +13,8 @@ services:
       - ./data-storage/ego-archive:/cold-archive:rw
     environment:
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_QUOTA_GB=400
-      - DATALAB_STORAGE_QUOTA_GB=512
+      - STREAM_QUOTA_GB=1000
+      - DATALAB_STORAGE_QUOTA_GB=1200
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
       - STREAM_SEGMENT_MINUTES=5
@@ -33,7 +33,7 @@ services:
     environment:
       - PYTHONPATH=/ego-platform/src
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB=1000
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
 
@@ -49,7 +49,7 @@ services:
       - ./data-lab-platform/lerobot-studio/patches:/app/patches:ro
     environment:
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_QUOTA_GB=400
+      - STREAM_QUOTA_GB=1000
       - STREAM_RETENTION_DAYS=7
       - STREAM_WINDOW_MINUTES=30
       - STREAM_SEGMENT_MINUTES=5

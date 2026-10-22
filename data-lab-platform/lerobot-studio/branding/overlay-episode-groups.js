@@ -42,6 +42,7 @@
   var tickTimer = null;
   var applying = false;
   var collapsedState = loadCollapsedState();
+  var lastGroupingSignature = "";
   var uploadDateByIndex = null;
   var uploadDateFetchKey = null;
   var uploadDateFetchPromise = null;
@@ -302,6 +303,15 @@
     return groupIndex < totalGroups - 1;
   }
 
+  function rowsForDateKey(container, dateKey) {
+    if (!container || !dateKey) return [];
+    return Array.prototype.slice.call(
+      container.querySelectorAll(
+        '[data-datalab-episode-row="1"][data-datalab-episode-date="' + dateKey + '"]',
+      ),
+    );
+  }
+
   function applyRowVisibility(group) {
     var hidden = group.header.getAttribute("data-collapsed") === "1";
     for (var i = 0; i < group.rows.length; i++) {
@@ -309,6 +319,55 @@
         "data-datalab-episode-hidden",
         hidden ? "1" : "0",
       );
+    }
+  }
+
+  function applyRowVisibilityForHeader(headerEl, container) {
+    var dateKey = headerEl.getAttribute("data-datalab-episode-date-header");
+    var hidden = headerEl.getAttribute("data-collapsed") === "1";
+    var rowEls = rowsForDateKey(container, dateKey);
+    for (var i = 0; i < rowEls.length; i++) {
+      rowEls[i].setAttribute("data-datalab-episode-hidden", hidden ? "1" : "0");
+    }
+  }
+
+  function groupingSignature(rows) {
+    var parts = [];
+    for (var i = 0; i < rows.length; i++) {
+      parts.push(rows[i].episodeIndex + ":" + (rows[i].date || ""));
+    }
+    return parts.join("|");
+  }
+
+  function bindHeaderDelegation(container) {
+    if (!container || container.dataset.datalabEpisodeGroupsClick === "1") return;
+    container.dataset.datalabEpisodeGroupsClick = "1";
+    container.addEventListener(
+      "click",
+      function (ev) {
+        var headerEl = ev.target.closest
+          ? ev.target.closest("[data-datalab-episode-date-header]")
+          : null;
+        if (!headerEl || !container.contains(headerEl)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        var dateKey = headerEl.getAttribute("data-datalab-episode-date-header");
+        var isCollapsed = headerEl.getAttribute("data-collapsed") === "1";
+        var next = !isCollapsed;
+        headerEl.setAttribute("data-collapsed", next ? "1" : "0");
+        headerEl.setAttribute("aria-expanded", next ? "false" : "true");
+        collapsedState[dateKey] = next;
+        saveCollapsedState();
+        applyRowVisibilityForHeader(headerEl, container);
+      },
+      true,
+    );
+  }
+
+  function refreshHeaderStates(container) {
+    var headers = container.querySelectorAll("[data-datalab-episode-date-header]");
+    for (var i = 0; i < headers.length; i++) {
+      applyRowVisibilityForHeader(headers[i], container);
     }
   }
 
@@ -366,26 +425,24 @@
       var listContainer = findListContainer(rows);
       if (!listContainer) return;
 
+      bindHeaderDelegation(listContainer);
+
+      var signature = groupingSignature(rows);
+      if (
+        signature === lastGroupingSignature &&
+        listContainer.querySelector("[data-datalab-episode-date-header]")
+      ) {
+        refreshHeaderStates(listContainer);
+        return;
+      }
+      lastGroupingSignature = signature;
+
       removeExistingHeaders(listContainer);
 
       for (var gIdx = 0; gIdx < groups.length; gIdx++) {
         var group = groups[gIdx];
         var collapsed = defaultCollapsed(group.dateKey, gIdx, groups.length);
         var header = createHeader(group.dateKey, group.rows.length, collapsed);
-
-        (function (headerEl, dateKey, groupRows) {
-          headerEl.addEventListener("click", function (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            var isCollapsed = headerEl.getAttribute("data-collapsed") === "1";
-            var next = !isCollapsed;
-            headerEl.setAttribute("data-collapsed", next ? "1" : "0");
-            headerEl.setAttribute("aria-expanded", next ? "false" : "true");
-            collapsedState[dateKey] = next;
-            saveCollapsedState();
-            applyRowVisibility({ header: headerEl, rows: groupRows });
-          });
-        })(header, group.dateKey, group.rows);
 
         listContainer.insertBefore(header, group.rows[0].rowEl);
         group.header = header;

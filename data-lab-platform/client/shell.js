@@ -715,6 +715,9 @@
     "datalab-stream-loading-layer",
   ];
 
+  /** Collection/data embed iframes must stay clickable; shell sidebar stacks above (z-index). */
+  var INTERACTIVE_LAYER_IDS = LAYER_IDS.slice();
+
   function isShellSidebarMenuVisible() {
     var sidebar = document.querySelector(".lsf-sidebar, .sidebar");
     if (!sidebar) return false;
@@ -727,46 +730,45 @@
     );
   }
 
-  function keepDataVizLayerInteractive() {
-    var layer = document.getElementById("datalab-viz-layer");
-    if (!layer) return;
-    if (layer.style.pointerEvents === "none") {
-      layer.style.pointerEvents = "";
-    }
+  function keepEmbedLayersInteractive() {
+    INTERACTIVE_LAYER_IDS.forEach(function (id) {
+      var layer = document.getElementById(id);
+      if (!layer) return;
+      if (layer.style.pointerEvents === "none") {
+        layer.style.pointerEvents = "";
+      }
+    });
   }
 
   function syncDatalabLayerPointerEvents() {
-    var menuVisible = isShellSidebarMenuVisible();
-    LAYER_IDS.forEach(function (id) {
-      var layer = document.getElementById(id);
-      if (!layer) return;
-      if (id === "datalab-viz-layer") {
-        layer.style.pointerEvents = "";
-        return;
-      }
-      layer.style.pointerEvents = menuVisible ? "none" : "";
-    });
-    keepDataVizLayerInteractive();
+    keepEmbedLayersInteractive();
   }
 
   function bindDataVizLayerPointerFix() {
-    function watchLayer() {
-      var layer = document.getElementById("datalab-viz-layer");
-      if (!layer) {
-        global.requestAnimationFrame(watchLayer);
+    function watchLayers() {
+      var any = false;
+      INTERACTIVE_LAYER_IDS.forEach(function (id) {
+        if (document.getElementById(id)) any = true;
+      });
+      if (!any) {
+        global.requestAnimationFrame(watchLayers);
         return;
       }
-      keepDataVizLayerInteractive();
-      if (layer.dataset.datalabVizPeWatch === "1") return;
-      layer.dataset.datalabVizPeWatch = "1";
-      var observer = new MutationObserver(function () {
-        keepDataVizLayerInteractive();
+      keepEmbedLayersInteractive();
+      if (document.body.dataset.datalabEmbedPeWatch === "1") return;
+      document.body.dataset.datalabEmbedPeWatch = "1";
+      INTERACTIVE_LAYER_IDS.forEach(function (id) {
+        var layer = document.getElementById(id);
+        if (!layer) return;
+        new MutationObserver(keepEmbedLayersInteractive).observe(layer, {
+          attributes: true,
+          attributeFilter: ["style"],
+        });
       });
-      observer.observe(layer, { attributes: true, attributeFilter: ["style"] });
     }
-    watchLayer();
-    global.addEventListener("datalab:layout", keepDataVizLayerInteractive);
-    global.setInterval(keepDataVizLayerInteractive, 100);
+    watchLayers();
+    global.addEventListener("datalab:layout", keepEmbedLayersInteractive);
+    global.setInterval(keepEmbedLayersInteractive, 100);
   }
 
   /** Django collection layers sit on body above .app-wrapper; ensure trigger receives clicks. */

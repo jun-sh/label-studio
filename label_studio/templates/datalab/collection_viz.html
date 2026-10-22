@@ -584,15 +584,10 @@
     }
 
     function syncLayerPointerEvents() {
-      var open = isShellSidebarOpen();
       [COLLECTION_LAYER, VIZ_LAYER, LOADING_LAYER, "datalab-viz-layer"].forEach(function (id) {
         var layer = document.getElementById(id);
         if (!layer) return;
-        if (id === "datalab-viz-layer") {
-          layer.style.pointerEvents = "";
-          return;
-        }
-        layer.style.pointerEvents = open ? "none" : "";
+        layer.style.pointerEvents = "";
       });
     }
 

@@ -77,6 +77,8 @@ services:
     environment:
       - INGEST_PORT=7862
       - STREAM_DATA_ROOT=/srv/stream
+      # Per-station hot tier (all collection stations); override via STREAM_QUOTA_GB_<STATION>.
+      - STREAM_QUOTA_GB=${STREAM_QUOTA_GB:-1000}
       - DATALAB_ROOT=/datalab
       - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
       - DERIVE_ASYNC=${DERIVE_ASYNC:-0}

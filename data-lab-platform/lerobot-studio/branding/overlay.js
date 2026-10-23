@@ -11,6 +11,12 @@
   var chromeApplied = false;
 
   var REPLACEMENTS = [
+    [
+      /© \{\{year\}\} IO-AI\.TECH\. All rights reserved\./gi,
+      "© {{year}} Datalab",
+    ],
+    [/©\s*(\d{4})\s*\.\s*/g, "© $1 Datalab"],
+    [/©\s*(\d{4})\s*Data Lab\b/g, "© $1 Datalab"],
     [/Access more advanced capabilities in EmbodiFlow/gi, ""],
     [/EmbodiFlow/gi, ""],
     [/IO-AI\.?TECH/gi, ""],
@@ -27,8 +33,9 @@
     [/预览与播放机器人数据集/g, SUBTITLE_EN],
     [/Click a card to 打开数据set/gi, "Click a card to open dataset"],
     [/打开数据set/gi, "open dataset"],
-    [/common\.companyName/g, "Data Lab"],
-    [/艾欧智能/g, "Data Lab"],
+    [/common\.companyName/g, "Datalab"],
+    [/艾欧智能/g, "Datalab"],
+    [/\bData Lab\b/g, "Datalab"],
     [/LeRobot v3 Sample/gi, "v3 样例数据集"],
     [/无需上传，直接在浏览器中查看 LeRobot 数据集/g, "无需上传，直接在浏览器中查看数据集"],
     [
@@ -259,7 +266,7 @@
     document.querySelectorAll("nav span.truncate, aside span.truncate").forEach(function (el) {
       var text = (el.textContent || "").trim();
       if (text === "common.companyName") {
-        el.textContent = "Data Lab";
+        el.textContent = "Datalab";
       }
     });
   }

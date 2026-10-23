@@ -5,7 +5,7 @@ import { IconCloudProviderS3 } from "@humansignal/icons";
 export const s3Provider: ProviderConfig = {
   name: "s3",
   title: "Amazon S3",
-  description: "Configure your AWS S3 connection with all required Data Lab settings",
+  description: "Configure your AWS S3 connection with all required Datalab settings",
   icon: IconCloudProviderS3,
   fields: [
     {

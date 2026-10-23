@@ -90,6 +90,15 @@ export async function kickDeriveSession(stationId, root, options = {}) {
 
     claimResult = claimSession(root, sid, workerId);
     if (claimResult.ok) {
+      // Another worker may have finished between the checks above and our claim.
+      if (
+        hasSessionMarker(root, sid, SESSION_MARKERS.READY) ||
+        isSessionDerivingLeaseActive(root, sid)
+      ) {
+        releaseSessionClaim(root, sid, workerId);
+        claimResult = { ok: false, reason: "completed_by_other" };
+        continue;
+      }
       sessionId = sid;
       break;
     }

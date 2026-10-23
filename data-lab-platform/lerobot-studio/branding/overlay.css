@@ -252,6 +252,43 @@ html[data-datalab-parent-chrome="1"][data-datalab-stream-pending="1"]:not([data-
   pointer-events: auto !important;
 }
 
+/* Stream open failed: hide sample welcome in collection embed */
+html[data-datalab-collection-embed="1"][data-datalab-stream-failed="1"]:not([data-datalab-stream-ready="1"])
+  #lerobot-root
+  > *:not(header),
+html[data-datalab-collection-embed="1"][data-datalab-stream-failed="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > #root
+  > *:not(header),
+html[data-datalab-collection-embed="1"][data-datalab-stream-failed="1"]:not([data-datalab-stream-ready="1"])
+  body
+  > div#root
+  > *:not(header) {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html[data-datalab-stream-failed="1"]:not([data-datalab-stream-ready="1"])::after {
+  content: attr(data-datalab-stream-label);
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b1220;
+  color: #94a3b8;
+  font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+html[data-datalab-parent-chrome="1"][data-datalab-stream-failed="1"]:not([data-datalab-stream-ready="1"])::after {
+  display: none !important;
+  content: none !important;
+}
+
 /* After first successful load, keep main UI stable (no welcome flash) */
 html[data-datalab-stream-ready="1"] #lerobot-root > *:not(header),
 html[data-datalab-stream-ready="1"] body > #root > *:not(header),

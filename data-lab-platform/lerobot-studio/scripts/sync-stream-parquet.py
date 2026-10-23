@@ -1300,7 +1300,12 @@ def republish_unit_session_shard(root: Path, session_id: str) -> int:
         sync_unit_station_metadata(root, manifest)
         errors = validate_unit_manifest_data_shards(root)
         if errors:
-            raise RuntimeError("; ".join(errors))
+            # Manifest ordering shifted other episodes' indices; only a full remap is consistent.
+            print(
+                f"incremental publish inconsistent ({len(errors)} errors), full republish",
+                file=sys.stderr,
+            )
+            republish_unit_data_shards(root)
     return count
 
 

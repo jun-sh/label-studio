@@ -83,6 +83,7 @@ services:
       - STREAM_QUOTA_GB=${STREAM_QUOTA_GB:-1000}
       - STREAM_COLD_ARCHIVE_ROOT=/cold-archive
       - STREAM_RAW_COLD_BACKUP=${STREAM_RAW_COLD_BACKUP:-1}
+      - INGEST_MCAP_ASYNC=${INGEST_MCAP_ASYNC:-0}
       # Incremental disk accounting: no full-tree scan on startup/upload path (see ingest/disk-accounting.mjs).
       - INGEST_SKIP_STARTUP_DISK_CLEANUP=${INGEST_SKIP_STARTUP_DISK_CLEANUP:-1}
       - STREAM_DISK_RECONCILE_INTERVAL_MS=${STREAM_DISK_RECONCILE_INTERVAL_MS:-21600000}

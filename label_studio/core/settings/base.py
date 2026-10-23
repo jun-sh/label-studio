@@ -407,8 +407,8 @@ RQ_FAILED_JOB_TTL = int(get_env('RQ_FAILED_JOB_TTL', 30 * 24 * 60 * 60))
 
 # drf-spectacular settings for OpenAPI 3.0 schema generation
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'Data Lab API',
-    'DESCRIPTION': 'Data Lab API for data annotation and labeling',
+    'TITLE': 'Datalab API',
+    'DESCRIPTION': 'Datalab API for data annotation and labeling',
     'VERSION': '',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
@@ -425,7 +425,7 @@ SPECTACULAR_SETTINGS = {
     'SERVERS': [
         {
             'url': HOSTNAME,
-            'description': 'Data Lab',
+            'description': 'Datalab',
         },
     ],
     'CONTACT': {'url': 'https://labelstud.io'},

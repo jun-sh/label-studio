@@ -4,7 +4,7 @@
     "name": "EGO 采集站 · ego-001",
     "name_en": "EGO MCAP production station (VPU H.264)",
     "scope": "lan",
-    "host": "10.10.10.130",
+    "host": "10.10.61.102",
     "online": false,
     "stream": true,
     "datasetUrl": "stream://ego-001",

@@ -107,6 +107,18 @@
   var openInFlight = null;
   var openedBaseUrl = null;
 
+  function waitForViewerChrome(timeoutMs) {
+    return new Promise(function (resolve) {
+      var deadline = Date.now() + (timeoutMs || 15000);
+      function tick() {
+        if (document.querySelector(".dv-dockview")) return resolve(true);
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(tick, 100);
+      }
+      tick();
+    });
+  }
+
   function streamDatasetLabel(baseUrl) {
     var m = String(baseUrl || "").match(/\/api\/stream\/([^/]+)/);
     if (!m) return "EGO 采集站";
@@ -139,6 +151,10 @@
       });
       try {
         await ctrl.initializeSource(src);
+        var mounted = await waitForViewerChrome(20000);
+        if (!mounted) {
+          throw new Error("viewer_chrome_not_mounted");
+        }
         ctrl.deps.completeTask?.("open-http-stream");
         openedBaseUrl = baseUrl;
         g.__DATALAB_STREAM_STABLE__ = true;

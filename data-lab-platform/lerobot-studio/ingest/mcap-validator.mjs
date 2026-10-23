@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,9 +27,23 @@ export function validationErrorFromMcapResult(result) {
   };
 }
 
+let cachedPython = null;
+
+function runValidator(archivePath) {
+  cachedPython = cachedPython || resolvePython();
+  return new Promise((resolve) => {
+    const proc = spawn(cachedPython, [VALIDATE_SCRIPT, archivePath]);
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d) => (stdout += d));
+    proc.stderr.on("data", (d) => (stderr += d));
+    proc.on("error", (err) => resolve({ status: -1, stdout, stderr: String(err?.message || err) }));
+    proc.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
 export async function validateMcapArchive(archivePath) {
-  const py = resolvePython();
-  const res = spawnSync(py, [VALIDATE_SCRIPT, archivePath], { encoding: "utf8" });
+  const res = await runValidator(archivePath);
   const raw = String(res.stdout || res.stderr || "").trim();
   let parsed;
   try {

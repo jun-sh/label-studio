@@ -5,7 +5,7 @@ import { IconCloudProviderRedis } from "@humansignal/icons";
 export const redisProvider: ProviderConfig = {
   name: "redis",
   title: "Redis Storage",
-  description: "Configure your Redis storage connection with all required Data Lab settings",
+  description: "Configure your Redis storage connection with all required Datalab settings",
   icon: IconCloudProviderRedis,
   fields: [
     {

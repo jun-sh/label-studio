@@ -22,7 +22,7 @@
   },
   "shell": {
     "menubar": {
-      "logo_alt": "Data Lab 标志",
+      "logo_alt": "Datalab 标志",
       "hotkeys_tooltip": "快捷键",
       "account_settings": "账户与设置",
       "logout": "退出登录",
@@ -88,7 +88,7 @@
     "create_project_aria": "创建新项目",
     "resources_title": "资源",
     "resources_description": "学习、探索与获取帮助",
-    "footer_community": "Data Lab · 社区",
+    "footer_community": "Datalab · 社区",
     "resource_documentation": "文档",
     "resource_api": "API 文档",
     "resource_release_notes": "更新说明",
@@ -199,7 +199,7 @@
     "column_last_activity": "最近活动",
     "user_id_tooltip": "用户 ID：{{id}}",
     "invite_title": "邀请成员",
-    "invite_description": "邀请成员加入你的 Data Lab 实例。被邀请者将能完全访问你的所有项目。",
+    "invite_description": "邀请成员加入你的 Datalab 实例。被邀请者将能完全访问你的所有项目。",
     "invite_learn_more": "了解更多",
     "reset_link": "重置链接",
     "copy_link": "复制链接",
@@ -434,13 +434,13 @@
     "page_title_segment": "Webhooks",
     "list_intro": "配置订阅特定事件的集成。事件触发时，{{product}} 会向所配置的 Webhook URL 发送 HTTP POST 请求。",
     "empty_title": "添加首个 Webhook",
-    "empty_description": "配置订阅事件的集成。事件发生时，Data Lab 会向所配置的 Webhook URL 发送 HTTP POST 请求。",
+    "empty_description": "配置订阅事件的集成。事件发生时，Datalab 会向所配置的 Webhook URL 发送 HTTP POST 请求。",
     "add_webhook": "添加 Webhook",
     "contact_admin_create": "请联系管理员创建 Webhook",
     "contact_admin_footer": "Webhook 配置详情请咨询管理员。",
     "edit": "编辑",
     "delete": "删除",
-    "app_product_name": "Data Lab"
+    "app_product_name": "Datalab"
   },
   "danger_zone": {
     "page_title_segment": "危险操作",

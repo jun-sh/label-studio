@@ -36,6 +36,17 @@ function pickSessionId(root, forcedSessionId) {
   return null;
 }
 
+async function publishWithLockRetry(root, stationId, sessionId, { tries = 12, waitMs = 5000 } = {}) {
+  for (let i = 1; ; i += 1) {
+    try {
+      return publishSessionIfNeeded(root, stationId, sessionId);
+    } catch (err) {
+      if (err?.code !== "PUBLISH_LOCK_BUSY" || i >= tries) throw err;
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
+
 export async function runDerivePipelineUnit(stationId, options = {}) {
   const { sessionId: forcedSessionId = null, muxOnly = false, rebuildViewOnly = false } = options;
   const root = stationRoot(stationId);
@@ -62,7 +73,7 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
     if (!fs.existsSync(path.join(existing, "unit.json"))) {
       return { ok: false, reason: "unit_missing", sessionId };
     }
-    const pub = publishSessionIfNeeded(root, stationId, sessionId);
+    const pub = await publishWithLockRetry(root, stationId, sessionId);
     return { ok: true, phase: "READY", sessionId, publish: pub };
   }
 
@@ -102,7 +113,20 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
     return { ok: false, phase: "FAILED", sessionId, reason: "derive_exhausted" };
   }
 
-  const pub = publishSessionIfNeeded(root, stationId, sessionId);
+  let pub;
+  try {
+    pub = await publishWithLockRetry(root, stationId, sessionId);
+  } catch (err) {
+    const reason = {
+      code: "DERIVE_TRANSIENT",
+      category: "publish",
+      message: `publish failed: ${String(err?.message || err).slice(0, 400)}`,
+    };
+    markSessionFailed(root, sessionId, reason, { gate: unitResult.gate, attempt });
+    deriveLog(stationId, "derive_unit_publish_failed", { sessionId, message: reason.message });
+    recordSessionTimelineEvent(root, sessionId, "publish_failed", { message: reason.message });
+    return { ok: false, phase: "FAILED", sessionId, reason, attempt };
+  }
   const manifest = rebuildManifestFromDisk(root, stationId);
   updateInfoFromManifest(root, manifest);
   writeMuxValidatedFromManifest(root, stationId, manifest);

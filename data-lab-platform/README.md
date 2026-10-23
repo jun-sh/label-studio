@@ -162,7 +162,7 @@ bash data-lab-platform/deploy-local-datasets.sh
 
 ## 品牌与界面定制
 
-- **左下角品牌**：显示 **Data Lab**，链接为站点根路径 `/`（非外链 `https://`）
+- **左下角品牌**：显示 **Datalab**，链接为站点根路径 `/`（非外链 `https://`）
 - **实现**：`patches/apply-branding.sh` 补丁上游 bundle + `branding/overlay.js`（v12）运行时修正
 - **嵌入模式**（`/data` iframe）：`datalab_embed=1`，隐藏部分语言切换与外链菜单项；**保留**左下角品牌区
 

@@ -25,13 +25,13 @@ const LocalFilesServingWarning = () => {
       <Alert variant="destructive">
         <AlertTitle>Local file serving is disabled</AlertTitle>
         <AlertDescription>
-          Set the "LOCAL_FILES_SERVING_ENABLED" environment variable to "true" and restart Data Lab to enable local
+          Set the "LOCAL_FILES_SERVING_ENABLED" environment variable to "true" and restart Datalab to enable local
           files storage. Contact your administrator for configuration details.
           {isCommunityEdition && (
             <Alert variant="info">
               <AlertDescription>
                 <p>
-                  Tip: Create a "mydata" or "label-studio-data" directory next to the command you use to run Data Lab
+                  Tip: Create a "mydata" or "label-studio-data" directory next to the command you use to run Datalab
                   and local file serving will be enabled automatically.
                 </p>
                 <p>
@@ -51,7 +51,7 @@ const LocalFilesServingWarning = () => {
 export const localFilesProvider: ProviderConfig = {
   name: "localfiles",
   title: "Local Files",
-  description: "Configure your local file storage connection with all required Data Lab settings",
+  description: "Configure your local file storage connection with all required Datalab settings",
   icon: () => (
     <IconFolderOpen
       width={40}
@@ -76,7 +76,7 @@ export const localFilesProvider: ProviderConfig = {
       placeholder: defaultPathExample || "/data/my-folder/subdirectory",
       schema: pathSchema,
       defaultValue: defaultPathExample,
-      description: `This path must be an absolute path on the host machine where Data Lab is running and start with \n"${localFilesDocumentRoot}" (LOCAL_FILES_DOCUMENT_ROOT).`,
+      description: `This path must be an absolute path on the host machine where Datalab is running and start with \n"${localFilesDocumentRoot}" (LOCAL_FILES_DOCUMENT_ROOT).`,
     },
   ],
   layout: [{ fields: ["serving_warning"] }, { fields: ["path"] }],

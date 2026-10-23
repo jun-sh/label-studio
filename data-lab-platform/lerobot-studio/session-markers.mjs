@@ -5,6 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { readDeriverLock, releaseDeriverLock } from "./derive-lock.mjs";
+
 export const SESSION_MARKERS = {
   DONE_UPLOAD: "session.DONE_UPLOAD",
   DERIVING: "session.DERIVING",
@@ -140,6 +142,10 @@ export function reclaimDerivingAfterWorkerRestart(root, workerId) {
     const legacyNoBoot = !marker?.bootId;
     if (staleBoot || staleLease || legacyNoBoot) {
       clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+      const lock = readDeriverLock(root, sessionId);
+      if (lock && String(lock.workerId || "") !== String(workerId || "")) {
+        releaseDeriverLock(root, { sessionId, force: true });
+      }
       reclaimed.push(sessionId);
     }
   }

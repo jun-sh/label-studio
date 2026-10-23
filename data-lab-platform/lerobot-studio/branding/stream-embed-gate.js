@@ -42,11 +42,13 @@
   g.__datalabMarkStreamReady = function () {
     root.setAttribute("data-datalab-stream-ready", "1");
     root.removeAttribute("data-datalab-stream-pending");
+    root.removeAttribute("data-datalab-stream-failed");
   };
 
   g.__datalabMarkStreamFailed = function () {
     if (root.getAttribute("data-datalab-stream-ready") === "1") return;
     root.removeAttribute("data-datalab-stream-pending");
+    root.setAttribute("data-datalab-stream-failed", "1");
     root.setAttribute(
       "data-datalab-stream-label",
       lang.indexOf("zh") === 0 ? "流式数据暂不可用" : "Live stream unavailable",

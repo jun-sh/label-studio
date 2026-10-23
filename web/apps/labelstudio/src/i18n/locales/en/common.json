@@ -22,7 +22,7 @@
   },
   "shell": {
     "menubar": {
-      "logo_alt": "Data Lab logo",
+      "logo_alt": "Datalab logo",
       "hotkeys_tooltip": "Keyboard Shortcuts",
       "account_settings": "Account & Settings",
       "logout": "Log Out",
@@ -88,7 +88,7 @@
     "create_project_aria": "Create new project",
     "resources_title": "Resources",
     "resources_description": "Learn, explore and get help",
-    "footer_community": "Data Lab · Community",
+    "footer_community": "Datalab · Community",
     "resource_documentation": "Documentation",
     "resource_api": "API Documentation",
     "resource_release_notes": "Release Notes",
@@ -199,7 +199,7 @@
     "column_last_activity": "Last Activity",
     "user_id_tooltip": "User ID: {{id}}",
     "invite_title": "Invite members",
-    "invite_description": "Invite members to join your Data Lab instance. People that you invite have full access to all of your projects. ",
+    "invite_description": "Invite members to join your Datalab instance. People that you invite have full access to all of your projects. ",
     "invite_learn_more": "Learn more.",
     "reset_link": "Reset Link",
     "copy_link": "Copy link",
@@ -434,13 +434,13 @@
     "page_title_segment": "Webhooks",
     "list_intro": "Setup integrations that subscribe to certain events using Webhooks. When an event is triggered, {{product}} sends an HTTP POST request to the configured webhook URL.",
     "empty_title": "Add your first webhook",
-    "empty_description": "Configure integrations that subscribe to events. When an event occurs, Data Lab sends an HTTP POST request to the configured webhook URL.",
+    "empty_description": "Configure integrations that subscribe to events. When an event occurs, Datalab sends an HTTP POST request to the configured webhook URL.",
     "add_webhook": "Add Webhook",
     "contact_admin_create": "Contact your administrator to create Webhooks",
     "contact_admin_footer": "Contact your administrator for webhook configuration details.",
     "edit": "Edit",
     "delete": "Delete",
-    "app_product_name": "Data Lab"
+    "app_product_name": "Datalab"
   },
   "danger_zone": {
     "page_title_segment": "Danger Zone",

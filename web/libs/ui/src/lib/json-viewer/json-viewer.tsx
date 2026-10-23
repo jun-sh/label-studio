@@ -13,7 +13,7 @@ import styles from "./json-viewer.module.scss";
 // json-edit-react doesn't support CSS variables in theme configuration
 const dataLabJsonTheme = {
   ...defaultTheme,
-  displayName: "Data Lab",
+  displayName: "Datalab",
   styles: {
     ...defaultTheme.styles,
     container: {

@@ -1377,6 +1377,66 @@ function viewerScaffoldComplete(root) {
   return true;
 }
 
+function isViewerCompatibleInfo(info) {
+  if (!info || typeof info !== "object") return false;
+  const ver = String(info.codebase_version || "").trim().toLowerCase();
+  if (!ver.startsWith("v3")) return false;
+  if (!info.data_path || !info.video_path) return false;
+  if (typeof info.fps !== "number" || !(info.fps > 0)) return false;
+  if (!info.features || typeof info.features !== "object" || !Object.keys(info.features).length) {
+    return false;
+  }
+  return true;
+}
+
+/** Backfill v3 LeRobot viewer fields on legacy stream info.json (ingest-only writes). */
+export function repairStreamInfoForViewer(stationId) {
+  if (!mayMutateStreamFs()) return false;
+  const root = stationRoot(stationId);
+  const infoPath = path.join(root, "meta", "info.json");
+  if (!fs.existsSync(infoPath)) return false;
+  const existing = readJson(infoPath, {});
+  if (isViewerCompatibleInfo(existing)) return false;
+
+  const defaults = defaultInfo(stationId, {});
+  const merged = {
+    ...defaults,
+    ...existing,
+    codebase_version: existing.codebase_version || defaults.codebase_version,
+    robot_type: existing.robot_type || defaults.robot_type,
+    data_path: existing.data_path || defaults.data_path,
+    video_path: existing.video_path || defaults.video_path,
+    fps: typeof existing.fps === "number" && existing.fps > 0 ? existing.fps : defaults.fps,
+    chunks_size:
+      typeof existing.chunks_size === "number" && existing.chunks_size > 0
+        ? existing.chunks_size
+        : defaults.chunks_size,
+    total_tasks:
+      typeof existing.total_tasks === "number" && existing.total_tasks >= 0
+        ? existing.total_tasks
+        : defaults.total_tasks,
+    data_files_size_in_mb: existing.data_files_size_in_mb ?? defaults.data_files_size_in_mb,
+    video_files_size_in_mb: existing.video_files_size_in_mb ?? defaults.video_files_size_in_mb,
+    features: { ...defaults.features, ...(existing.features || {}) },
+    splits: existing.splits || defaults.splits,
+    total_frames:
+      typeof existing.total_frames === "number" && existing.total_frames >= 0
+        ? existing.total_frames
+        : defaults.total_frames,
+    total_episodes:
+      typeof existing.total_episodes === "number" && existing.total_episodes >= 0
+        ? existing.total_episodes
+        : defaults.total_episodes,
+  };
+  writeJsonAtomic(infoPath, merged);
+  streamLog(stationId, "info_viewer_repair", {
+    had_codebase_version: Boolean(existing.codebase_version),
+    total_frames: merged.total_frames,
+    total_episodes: merged.total_episodes,
+  });
+  return true;
+}
+
 function repairStreamViewerScaffold(stationId) {
   const root = stationRoot(stationId);
   if (!fs.existsSync(root)) return false;
@@ -4059,6 +4119,7 @@ async function handleMcapSegmentUpload(stationId, req) {
       sessionId,
       segmentId,
       duplicate: true,
+      durable: true,
       sha256: expectedSha || null,
       sourceFormat: "mcap",
       deriveAsync: false,
@@ -4081,7 +4142,8 @@ async function handleMcapSegmentUpload(stationId, req) {
     sessionSeal,
     source: "edge",
   };
-  const asyncIngest = String(process.env.INGEST_MCAP_ASYNC ?? "1").trim() !== "0";
+  // ACK only after raw is durable: the edge deletes its copy once it sees a success response.
+  const asyncIngest = String(process.env.INGEST_MCAP_ASYNC ?? "0").trim() === "1";
   if (asyncIngest) {
     queueMcapIngestBackground(stationId, ingestOpts);
     return {
@@ -4974,7 +5036,8 @@ export function handleStreamScaffoldRequest(stationId) {
   }
   const created = ensureStreamViewerScaffold(stationId);
   repairStreamViewerScaffold(stationId);
-  return { ok: true, stationId, created };
+  const infoRepaired = repairStreamInfoForViewer(stationId);
+  return { ok: true, stationId, created, infoRepaired };
 }
 
 const STREAM_INGEST_INTERNAL_URL =
@@ -4983,10 +5046,26 @@ const STREAM_INGEST_INTERNAL_URL =
 /** Ensure meta/info.json exists; lerobot (root) delegates creation to stream-ingest. */
 export async function ensureStreamScaffoldAvailable(stationId) {
   const infoPath = path.join(stationRoot(stationId), "meta", "info.json");
-  if (fs.existsSync(infoPath)) return true;
+  if (fs.existsSync(infoPath)) {
+    if (mayMutateStreamFs()) {
+      repairStreamInfoForViewer(stationId);
+      return true;
+    }
+    if (!isViewerCompatibleInfo(readJson(infoPath, {}))) {
+      try {
+        const url = `${STREAM_INGEST_INTERNAL_URL}/lerobot/api/stream/${encodeURIComponent(stationId)}/scaffold`;
+        const res = await fetch(url, { method: "GET", signal: AbortSignal.timeout(60_000) });
+        if (!res.ok) return true;
+      } catch {
+        /* serve existing file */
+      }
+    }
+    return true;
+  }
   if (mayMutateStreamFs()) {
     ensureStreamViewerScaffold(stationId);
     repairStreamViewerScaffold(stationId);
+    repairStreamInfoForViewer(stationId);
     return fs.existsSync(infoPath);
   }
   try {
@@ -5007,6 +5086,7 @@ export function resolveStreamFile(stationId, urlPath) {
     if (mayMutateStreamFs()) {
       ensureStreamViewerScaffold(stationId);
       repairStreamViewerScaffold(stationId);
+      repairStreamInfoForViewer(stationId);
     }
   }
   if (!isPublishedPath(norm)) return null;

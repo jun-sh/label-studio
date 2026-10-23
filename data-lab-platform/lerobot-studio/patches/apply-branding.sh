@@ -14,6 +14,12 @@ patch_file() {
   sed -i \
     -e 's/Access more advanced capabilities in EmbodiFlow//g' \
     -e 's/EmbodiFlow//g' \
+    -e 's|copyright:`© {{year}} IO-AI.TECH. All rights reserved.`|copyright:`© {{year}} Datalab`|g' \
+    -e 's|copyright:`© {{year}} Data Lab`|copyright:`© {{year}} Datalab`|g' \
+    -e 's/companyName:`艾欧智能`/companyName:`Datalab`/g' \
+    -e 's/companyName:`IO-AI.TECH`/companyName:`Datalab`/g' \
+    -e 's/companyName:``/companyName:`Datalab`/g' \
+    -e 's/companyName:`Data Lab`/companyName:`Datalab`/g' \
     -e 's/IO-AI\.TECH//g' \
     -e 's/io-ai\.tech//g' \
     -e 's/LeRobot Studio/Data Viewer/g' \
@@ -25,8 +31,6 @@ patch_file() {
     -e 's/预览与播放机器人数据集/Preview robot datasets in browser/g' \
     -e 's/Click a card to 打开数据set/Click a card to open dataset/g' \
     -e 's/打开数据set/open dataset/g' \
-    -e 's/companyName:`艾欧智能`/companyName:`Data Lab`/g' \
-    -e 's/companyName:``/companyName:`Data Lab`/g' \
     -e 's/companyWebsite:`https:\/\/`/companyWebsite:`\/`/g' \
     -e "s#w=d||v(\`common.companyName\`)#w=d||v(\`common.appName\`)#g" \
     -e 's|https://huggingface.co/datasets/lerobot/lerobot/resolve/main/lerobotv3.zip|'"${BUNDLED_ZIP}"'|g' \

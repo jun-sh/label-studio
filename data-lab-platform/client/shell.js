@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "30";
+  var SHELL_VERSION = "31";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -537,6 +537,28 @@
     if (document.title !== brand) document.title = brand;
   }
 
+  /** Normalize product name in sidebar/footer (cached bundles may still say "Data Lab"). */
+  function patchProductBrandLabels() {
+    if (!document.body) return;
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var n;
+    while ((n = walker.nextNode())) {
+      if (!n.parentElement) continue;
+      var tag = n.parentElement.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      var t = n.textContent;
+      if (!t) continue;
+      var next = t;
+      if (next.indexOf("Data Lab") >= 0) {
+        next = next.replace(/\bData Lab\b/g, "Datalab");
+      }
+      if (/©\s*\d{4}\s*\./.test(next)) {
+        next = next.replace(/©\s*(\d{4})\s*\./g, "© $1 Datalab");
+      }
+      if (next !== t) n.textContent = next;
+    }
+  }
+
   function bindDocumentTitleWatcher() {
     patchDocumentTitle();
     var titleEl = document.querySelector("title");
@@ -681,6 +703,7 @@
     patchCollectionMenuItem(menu);
     syncMenuActiveState(menu);
     purgeLegacyReactCollectionViz();
+    patchProductBrandLabels();
 
     document.documentElement.setAttribute("data-datalab-shell", SHELL_VERSION);
 

@@ -28,7 +28,7 @@
     zh: {
       pageTitle: "EGO 采集站",
       pageSubtitle: "采集站列表 · 在线状态",
-      documentTitle: "采集 | Data Lab",
+      documentTitle: "Datalab",
       loadingList: "正在加载采集站列表…",
       reloading: "正在重新加载…",
       loadingRetry: function (n, max) {
@@ -45,7 +45,7 @@
     en: {
       pageTitle: "EGO collection stations",
       pageSubtitle: "Station list · online status",
-      documentTitle: "Collection | Data Lab",
+      documentTitle: "Datalab",
       loadingList: "Loading station list…",
       reloading: "Reloading…",
       loadingRetry: function (n, max) {

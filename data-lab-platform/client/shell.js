@@ -519,11 +519,30 @@
     if (icon) icon.innerHTML = iconHtml;
   }
 
+  var BRAND_DOCUMENT_TITLE = "Datalab";
+
+  function brandDocumentTitle() {
+    try {
+      if (global.APP_SETTINGS && global.APP_SETTINGS.page_title) {
+        return String(global.APP_SETTINGS.page_title);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+    return BRAND_DOCUMENT_TITLE;
+  }
+
   function patchDocumentTitle() {
-    if (pageLang() !== "zh") return;
-    var title = document.title || "";
-    if (title.indexOf("项目 |") >= 0) document.title = title.replace(/项目 \|/g, "标注 |");
-    if (title.indexOf("项目 ·") >= 0) document.title = title.replace(/项目 ·/g, "标注 |");
+    var brand = brandDocumentTitle();
+    if (document.title !== brand) document.title = brand;
+  }
+
+  function bindDocumentTitleWatcher() {
+    patchDocumentTitle();
+    var titleEl = document.querySelector("title");
+    if (!titleEl || typeof MutationObserver === "undefined") return;
+    var observer = new MutationObserver(patchDocumentTitle);
+    observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
   }
 
   function stripActiveMenuClasses(className) {
@@ -879,7 +898,7 @@
   }
 
   function init() {
-    patchDocumentTitle();
+    bindDocumentTitleWatcher();
     bindThemeChrome();
     bindCollectionNavGuard();
     bindLegacyBackButtonGuard();

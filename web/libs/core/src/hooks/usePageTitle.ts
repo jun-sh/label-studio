@@ -15,9 +15,9 @@ export const createTitleFromSegments = (titleSegments: (string | undefined)[]) =
   return titleSegments.filter(Boolean).join(PAGE_TITLE_SEPARATOR);
 };
 
-export const setPageTitle = (pageTitle?: string, includeBaseTitle = true) => {
-  const title = includeBaseTitle ? getPageTitle(pageTitle) : pageTitle;
-  if (title && typeof document !== "undefined") {
+export const setPageTitle = (_pageTitle?: string, _includeBaseTitle = true) => {
+  const title = getBasePageTitle() || "Datalab";
+  if (typeof document !== "undefined") {
     document.title = title;
   }
 };

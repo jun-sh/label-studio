@@ -13,6 +13,7 @@ import segment_upload as su
 from segment_store import (
     manifest_status,
     read_manifest,
+    reconcile_interrupted_uploading_for_root,
     reconcile_stale_uploading_segments,
     write_manifest_v2,
     write_session_seal,
@@ -266,6 +267,18 @@ def test_stale_uploading_recovered_before_upload(segment_root: Path) -> None:
     n = upload_pending_segments(root=segment_root, session_id=session_id, uploader=uploader)
     assert n == 1
     assert manifest_status(read_manifest(seg)) == "UPLOADED"
+
+
+def test_interrupted_uploading_recovered_without_stale_wait(segment_root: Path) -> None:
+    session_id = "sess_interrupt"
+    seg = segment_root / "sessions" / session_id / "segments" / "seg_000001"
+    _write_uploadable_segment(seg, session_id=session_id, status="UPLOADING")
+    manifest = read_manifest(seg)
+    manifest["upload"]["last_attempt_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    write_manifest_v2(seg, manifest)
+    recovered = reconcile_interrupted_uploading_for_root(segment_root, session_id)
+    assert recovered == [(session_id, "seg_000001")]
+    assert manifest_status(read_manifest(seg)) == "CLOSED"
 
 
 def test_fresh_uploading_not_recovered(segment_root: Path) -> None:

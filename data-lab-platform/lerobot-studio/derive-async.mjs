@@ -418,14 +418,22 @@ export function ensureIdleDeriveWatcher() {
   const intervalMs = Math.max(5000, Number(process.env.DERIVE_IDLE_CHECK_MS || 15_000));
   setInterval(() => {
     if (!fs.existsSync(STREAM_ROOT)) return;
-    for (const stationId of fs.readdirSync(STREAM_ROOT)) {
-      if (stationId.startsWith(".")) continue;
+    const stations = fs
+      .readdirSync(STREAM_ROOT)
+      .filter((name) => !name.startsWith("."));
+    let index = 0;
+    const step = () => {
+      if (index >= stations.length) return;
+      const stationId = stations[index];
+      index += 1;
       try {
         evaluateAndKickIdleDerive(stationId, "idle");
       } catch {
         /* ignore */
       }
-    }
+      setImmediate(step);
+    };
+    setImmediate(step);
   }, intervalMs);
   streamLog("system", "derive_idle_watcher_started", {
     intervalMs,

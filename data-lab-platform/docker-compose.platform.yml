@@ -55,6 +55,7 @@ services:
       - "7862"
     volumes:
       - ./data-storage/stream:/srv/stream
+      - ./data-storage/ego-archive:/cold-archive
       - ./data-storage/pipeline:/datalab/data-storage/pipeline:ro
       - ./data-storage/corpus:/datalab/data-storage/corpus:ro
       - ./data-storage/ego-delivery:/datalab/data-storage/ego-delivery:ro
@@ -66,6 +67,7 @@ services:
       - ./data-lab-platform/lerobot-studio/derive:/app/derive:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro
       - ./data-lab-platform/lerobot-studio/ingest-server.mjs:/app/ingest-server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/derive-async.mjs:/app/derive-async.mjs:ro
       - ./data-lab-platform/lerobot-studio/ingest:/app/ingest:ro
       - ./data-lab-platform/lerobot-studio/scripts/sync-stream-parquet.py:/app/scripts/sync-stream-parquet.py:ro
       - ./data-lab-platform/lerobot-studio/scripts/merge-station-imu.py:/app/scripts/merge-station-imu.py:ro
@@ -79,6 +81,11 @@ services:
       - STREAM_DATA_ROOT=/srv/stream
       # Per-station hot tier (all collection stations); override via STREAM_QUOTA_GB_<STATION>.
       - STREAM_QUOTA_GB=${STREAM_QUOTA_GB:-1000}
+      - STREAM_COLD_ARCHIVE_ROOT=/cold-archive
+      - STREAM_RAW_COLD_BACKUP=${STREAM_RAW_COLD_BACKUP:-1}
+      # Incremental disk accounting: no full-tree scan on startup/upload path (see ingest/disk-accounting.mjs).
+      - INGEST_SKIP_STARTUP_DISK_CLEANUP=${INGEST_SKIP_STARTUP_DISK_CLEANUP:-1}
+      - STREAM_DISK_RECONCILE_INTERVAL_MS=${STREAM_DISK_RECONCILE_INTERVAL_MS:-21600000}
       - DATALAB_ROOT=/datalab
       - COLLECTION_STATIONS_JSON=/app/config/collection-stations.json
       - DERIVE_ASYNC=${DERIVE_ASYNC:-0}
@@ -230,7 +237,7 @@ services:
     environment:
       - STREAM_SYNC_INTERVAL=5
       - STREAM_DATA_ROOT=/srv/stream
-      - STREAM_PARQUET_SYNC_SKIP_STATIONS=${STREAM_PARQUET_SYNC_SKIP_STATIONS:-}
+      - STREAM_PARQUET_SYNC_SKIP_STATIONS=${STREAM_PARQUET_SYNC_SKIP_STATIONS:-ego-002}
 
   lerobot:
     build:

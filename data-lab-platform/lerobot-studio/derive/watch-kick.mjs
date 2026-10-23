@@ -9,6 +9,8 @@ import {
   markSessionFailed,
   SESSION_MARKERS,
   hasSessionMarker,
+  clearStaleSessionDeriving,
+  isSessionDerivingLeaseActive,
 } from "../session-markers.mjs";
 import { streamLog } from "../stream-ingest.mjs";
 import { claimSession, releaseSessionClaim, resolveDeriveWorkerId } from "./session-claim.mjs";
@@ -51,7 +53,8 @@ export async function kickDeriveSession(stationId, root, options = {}) {
     reconcileSessionUploadMarkers(root, sid);
     if (!hasSessionMarker(root, sid, SESSION_MARKERS.DONE_UPLOAD)) continue;
     if (hasSessionMarker(root, sid, SESSION_MARKERS.READY)) continue;
-    if (hasSessionMarker(root, sid, SESSION_MARKERS.DERIVING)) continue;
+    clearStaleSessionDeriving(root, sid);
+    if (isSessionDerivingLeaseActive(root, sid)) continue;
 
     if (hasSessionMarker(root, sid, SESSION_MARKERS.FAILED)) {
       const attempt = readDeriveAttempt(root, sid);

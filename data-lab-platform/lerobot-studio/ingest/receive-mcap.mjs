@@ -21,7 +21,10 @@ import {
   SEGMENT_INGEST_STATUS,
   transitionSegmentState,
 } from "./segment-state.mjs";
+import { recordStationDiskDelta } from "./disk-accounting.mjs";
 import { maybeMarkSessionDoneUpload, touchUploadActivity } from "./session-coordinator.mjs";
+import { queueRawMcapColdBackup } from "./raw-cold-backup.mjs";
+import { recordSessionTimelineEvent } from "./session-timeline.mjs";
 import { writeServerSessionSeal } from "./session-seal.mjs";
 import { validateMcapArchive, validationErrorFromMcapResult } from "./mcap-validator.mjs";
 import {
@@ -110,7 +113,8 @@ export async function ingestMcapArchive(stationId, options = {}) {
   }
 
   ensureDir(path.dirname(rawDest));
-  if (!fs.existsSync(rawDest)) {
+  const isNewRaw = !fs.existsSync(rawDest);
+  if (isNewRaw) {
     atomicMoveFile(archivePath, rawDest);
   } else if (path.resolve(archivePath) !== path.resolve(rawDest) && fs.existsSync(archivePath)) {
     try {
@@ -161,6 +165,18 @@ export async function ingestMcapArchive(stationId, options = {}) {
     segmentId,
     source,
   });
+
+  if (isNewRaw) {
+    recordStationDiskDelta(root, stationId, bytes, { reason: "ingest_mcap" });
+    queueRawMcapColdBackup(stationId, root, sessionId, segmentId, rawDest);
+    recordSessionTimelineEvent(root, sessionId, "segment_ingested", { segmentId, bytes });
+  }
+
+  if (done.marked) {
+    recordSessionTimelineEvent(root, sessionId, "done_upload", {
+      delivery_quality: done.gate?.sealReconcile?.deliveryQuality || null,
+    });
+  }
 
   ingestLog(stationId, "ingest_mcap_ok", {
     sessionId,

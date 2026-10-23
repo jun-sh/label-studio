@@ -15,6 +15,7 @@ from ego_capture_studio.capture.camera_intrinsics import (
 from ego_capture_studio.capture.segment_store import list_closed_pending_segments
 from ego_capture_studio.capture.segment_upload import (
     SegmentUploader,
+    recover_interrupted_uploads_on_start,
     upload_pending_segments,
     upload_session_seal_finalize,
     upload_session_until_complete,
@@ -76,6 +77,7 @@ def main() -> None:
     args = p.parse_args()
 
     root = Path(args.segment_root)
+    recover_interrupted_uploads_on_start(root, None)
     session_id = args.session_id.strip()
     if not session_id:
         reg_path = root / "registry.json"

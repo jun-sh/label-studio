@@ -12,6 +12,7 @@ import {
   resumePendingStreamMuxForAllStations,
   runDiskCleanupForAllStations,
   stationRoot,
+  streamIngestUploadReady,
   verifyStationUploadToken,
 } from "./stream-ingest.mjs";
 import { handleImportTaskGet, handleImportUpload } from "./import-handlers.mjs";
@@ -86,6 +87,13 @@ const server = http.createServer({ maxHeaderSize: MAX_HTTP_HEADER_SIZE }, (req, 
 
   if (p === "/healthz" || p === `${BASE}/healthz`) {
     return send(res, 200, "ok\n", { "Content-Type": "text/plain" });
+  }
+
+  if (p === "/readyz" || p === `${BASE}/readyz`) {
+    if (!streamIngestUploadReady()) {
+      return send(res, 503, "not ready\n", { "Content-Type": "text/plain" });
+    }
+    return send(res, 200, "ready\n", { "Content-Type": "text/plain" });
   }
 
   const importTaskMatch = p.match(

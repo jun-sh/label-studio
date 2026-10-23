@@ -120,20 +120,37 @@ export function probeMp4DurationSec(filePath, fallbackFps = 30) {
   return 0;
 }
 
+// Keyed by path + size + mtime: finished MP4s are immutable, so status polls cost one stat, not one ffprobe.
+const frameCountCache = new Map();
+const FRAME_COUNT_CACHE_MAX = 20_000;
+
 export function probeMp4FrameCount(filePath, { defaultFps = 30, exact = false } = {}) {
-  if (!filePath || !fs.existsSync(filePath)) return 0;
+  if (!filePath) return 0;
+  let st;
+  try {
+    st = fs.statSync(filePath);
+  } catch {
+    return 0;
+  }
   const wantExact =
     exact || String(process.env.DERIVE_FFPROBE_COUNT_FRAMES || "").trim() === "1";
-  const fast = frameCountFromStream(probeMp4StreamJson(filePath), defaultFps);
-  if (fast > 0 && !wantExact) return fast;
+  const cacheKey = `${filePath}|${st.size}|${st.mtimeMs}|${wantExact ? 1 : 0}|${defaultFps}`;
+  const cached = frameCountCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  let result = frameCountFromStream(probeMp4StreamJson(filePath), defaultFps);
   if (wantExact) {
     const exactCount = frameCountFromStream(
       probeMp4StreamJson(filePath, { countFrames: true }),
       defaultFps,
     );
-    if (exactCount > 0) return exactCount;
+    if (exactCount > 0) result = exactCount;
   }
-  return fast;
+  if (result > 0) {
+    if (frameCountCache.size >= FRAME_COUNT_CACHE_MAX) frameCountCache.clear();
+    frameCountCache.set(cacheKey, result);
+  }
+  return result;
 }
 
 /** Build ffconcat for MP4 concat with explicit duration on first segment (batch-2 drift fix). */

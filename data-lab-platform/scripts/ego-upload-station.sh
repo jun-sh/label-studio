@@ -217,6 +217,32 @@ PY
 
 _sync_segment_store_env
 
+UPLOAD_LOCK="${SEG_ROOT}/.ego-upload.lock"
+mkdir -p "$(dirname "$UPLOAD_LOCK")"
+exec 9>"$UPLOAD_LOCK"
+if ! flock -n 9; then
+  echo "❌ 已有 ego-upload 在运行（锁: ${UPLOAD_LOCK}）" >&2
+  echo "   若确认无上传进程，可删除锁文件后重试。" >&2
+  exit 3
+fi
+
+_recover_interrupted_uploads() {
+  [[ "${EGO_UPLOAD_RECOVER_ON_START:-1}" == "0" ]] && return 0
+  SEG_ROOT="$SEG_ROOT" "$PY" - <<'PY'
+import os
+from pathlib import Path
+
+from ego_capture_studio.capture.segment_upload import recover_interrupted_uploads_on_start
+
+root = Path(os.environ["SEG_ROOT"])
+n = recover_interrupted_uploads_on_start(root, None)
+if n:
+    print(f"[ego-upload] recovered_uploading_segments={len(n)}", flush=True)
+PY
+}
+
+_recover_interrupted_uploads | tee -a "$LOG_FILE" >&2
+
 _has_session_id_flag() {
   local a
   for a in "${EXTRA[@]}"; do

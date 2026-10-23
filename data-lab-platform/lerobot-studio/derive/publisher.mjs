@@ -12,6 +12,8 @@ import { syncMainParquet } from "./parquet-writer.mjs";
 import { appendJournalEvent, rebuildManifestFromDisk, writeMuxValidatedFromManifest } from "./manifest.mjs";
 import { episodeChunkPaths, unitDir } from "./unit-paths.mjs";
 import { videoKeysForStation } from "../ingest/staging-materialize.mjs";
+import { withPublishLock } from "./publish-lock.mjs";
+import { resolveDeriveWorkerId } from "./session-claim.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SYNC_EPISODES_SCRIPT = path.join(__dirname, "../scripts/sync-stream-parquet.py");
@@ -28,6 +30,22 @@ export function syncUnitEpisodesMeta(root) {
  */
 export function republishStreamDataShards(root) {
   execFileSync("python3", [SYNC_EPISODES_SCRIPT, "--republish-units", root], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+}
+
+/** Incremental L2 data shard + meta for one session (P1 publish path). */
+export function republishStreamDataEpisode(root, sessionId) {
+  execFileSync(
+    "python3",
+    [SYNC_EPISODES_SCRIPT, "--republish-units", "--session-id", sessionId, root],
+    { encoding: "utf8", stdio: "pipe" },
+  );
+}
+
+export function syncUnitStationMetadata(root) {
+  execFileSync("python3", [SYNC_EPISODES_SCRIPT, "--sync-unit-meta", root], {
     encoding: "utf8",
     stdio: "pipe",
   });
@@ -149,7 +167,7 @@ export function updateInfoFromManifest(root, manifest) {
 }
 
 /** Refresh Viewer HTTP snapshot + chunks manifest after unit L2 publish. */
-export function refreshViewerFromManifest(root, stationId, manifest) {
+export function refreshViewerFromManifest(root, stationId, manifest, { republishData = false } = {}) {
   const infoPath = path.join(root, "meta", "info.json");
   const info = readJson(infoPath, {});
   writeJsonAtomic(path.join(root, "meta", "info.viewer.json"), info);
@@ -186,13 +204,15 @@ export function refreshViewerFromManifest(root, stationId, manifest) {
   marker.total_frames = totalFrames;
   marker.episodes_count = episodes.length;
   writeJsonAtomic(markerPath, marker);
-  try {
-    republishStreamDataShards(root);
-    writeJsonAtomic(path.join(root, "meta", "info.viewer.json"), readJson(infoPath, info));
-  } catch (err) {
-    console.warn("[publisher] republishStreamDataShards failed:", err?.message || err);
-    throw err;
+  if (republishData) {
+    try {
+      republishStreamDataShards(root);
+    } catch (err) {
+      console.warn("[publisher] republishStreamDataShards failed:", err?.message || err);
+      throw err;
+    }
   }
+  writeJsonAtomic(path.join(root, "meta", "info.viewer.json"), readJson(infoPath, info));
   return { totalFrames, episodes: episodes.length };
 }
 
@@ -209,7 +229,7 @@ export function rebuildView(root, stationId) {
   }
   updateInfoFromManifest(root, manifest);
   writeMuxValidatedFromManifest(root, stationId, manifest);
-  refreshViewerFromManifest(root, stationId, manifest);
+  refreshViewerFromManifest(root, stationId, manifest, { republishData: false });
   try {
     republishStreamDataShards(root);
   } catch (err) {
@@ -220,13 +240,16 @@ export function rebuildView(root, stationId) {
 }
 
 export function publishSessionIfNeeded(root, stationId, sessionId) {
-  const manifest = rebuildManifestFromDisk(root, stationId);
-  const ep = (manifest.episodes || []).find((e) => e.session_id === sessionId);
-  if (!ep) {
-    throw new Error(`session ${sessionId} missing from manifest after unit derive`);
-  }
-  publishUnitEpisode(root, stationId, sessionId, ep.episode_index, ep);
-  updateInfoFromManifest(root, manifest);
-  republishStreamDataShards(root);
-  return { published: true, episodeIndex: ep.episode_index, replay: false };
+  const workerId = resolveDeriveWorkerId();
+  return withPublishLock(root, workerId, () => {
+    const manifest = rebuildManifestFromDisk(root, stationId);
+    const ep = (manifest.episodes || []).find((e) => e.session_id === sessionId);
+    if (!ep) {
+      throw new Error(`session ${sessionId} missing from manifest after unit derive`);
+    }
+    publishUnitEpisode(root, stationId, sessionId, ep.episode_index, ep);
+    updateInfoFromManifest(root, manifest);
+    republishStreamDataEpisode(root, sessionId);
+    return { published: true, episodeIndex: ep.episode_index, replay: false, incremental: true };
+  });
 }

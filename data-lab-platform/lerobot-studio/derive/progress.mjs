@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { renewDeriverLock } from "../derive-lock.mjs";
+import { renewSessionDerivingLease } from "../session-markers.mjs";
 
 export const DERIVE_PROGRESS_PHASES = Object.freeze({
   EXTRACT: "EXTRACT",
@@ -70,6 +71,14 @@ export function writeDeriveProgress(root, sessionId, patch = {}) {
     renewDeriverLock(root, { sessionId, workerId: payload.workerId, stationId: payload.stationId });
   } catch {
     /* ignore — lock renew is best-effort */
+  }
+  try {
+    renewSessionDerivingLease(root, sessionId, {
+      workerId: payload.workerId,
+      stationId: payload.stationId,
+    });
+  } catch {
+    /* ignore */
   }
   return payload;
 }

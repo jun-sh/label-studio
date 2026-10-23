@@ -65,9 +65,85 @@ export function markSessionUploadDone(root, sessionId, meta = {}) {
   writeSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD, meta);
 }
 
+export function deriveDerivingLeaseSec() {
+  return Math.max(300, Number(process.env.DERIVE_DERIVING_LEASE_S || 7200));
+}
+
+export function currentDeriveWorkerBootId() {
+  return String(process.env.DERIVE_WORKER_BOOT_ID || `boot-${process.pid}`).trim();
+}
+
+export function isSessionDerivingLeaseActive(root, sessionId, { nowMs = Date.now() } = {}) {
+  if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) return false;
+  const marker = readSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+  const leaseMs = deriveDerivingLeaseSec() * 1000;
+  const expiresMs = marker?.leaseExpiresAt
+    ? Date.parse(marker.leaseExpiresAt)
+    : Date.parse(marker?.at || "") + leaseMs;
+  return Number.isFinite(expiresMs) && expiresMs > nowMs;
+}
+
+/** Drop stale session.DERIVING so derive-watch can retry after worker crash. */
+export function clearStaleSessionDeriving(root, sessionId, { nowMs = Date.now() } = {}) {
+  if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) {
+    return { cleared: false };
+  }
+  if (isSessionDerivingLeaseActive(root, sessionId, { nowMs })) {
+    return { cleared: false, active: true };
+  }
+  const marker = readSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+  clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+  return { cleared: true, reason: "deriving_lease_expired", previous: marker };
+}
+
 export function markSessionDeriving(root, sessionId, meta = {}) {
   clearSessionMarker(root, sessionId, SESSION_MARKERS.FAILED);
-  writeSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING, meta);
+  const leaseSec = deriveDerivingLeaseSec();
+  const nowMs = Date.now();
+  writeSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING, {
+    leaseExpiresAt: new Date(nowMs + leaseSec * 1000).toISOString(),
+    pid: process.pid,
+    bootId: currentDeriveWorkerBootId(),
+    ...meta,
+  });
+}
+
+export function renewSessionDerivingLease(root, sessionId, meta = {}) {
+  if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) return false;
+  const prev = readSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+  const leaseSec = deriveDerivingLeaseSec();
+  const nowMs = Date.now();
+  writeSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING, {
+    ...prev,
+    ...meta,
+    leaseExpiresAt: new Date(nowMs + leaseSec * 1000).toISOString(),
+    pid: process.pid,
+    renewedAt: new Date().toISOString(),
+  });
+  return true;
+}
+
+/** Worker restart: same workerId but different pid → release stale DERIVING for retry. */
+export function reclaimDerivingAfterWorkerRestart(root, workerId) {
+  const sessionsDir = path.join(root, "state", "sessions");
+  if (!fs.existsSync(sessionsDir)) return [];
+  const bootId = currentDeriveWorkerBootId();
+  const reclaimed = [];
+  for (const ent of fs.readdirSync(sessionsDir, { withFileTypes: true })) {
+    if (!ent.isDirectory() || !ent.name.startsWith("sess_")) continue;
+    const sessionId = ent.name;
+    if (!hasSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING)) continue;
+    if (hasSessionMarker(root, sessionId, SESSION_MARKERS.READY)) continue;
+    const marker = readSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+    const staleBoot = marker?.bootId && marker.bootId !== bootId;
+    const staleLease = !isSessionDerivingLeaseActive(root, sessionId);
+    const legacyNoBoot = !marker?.bootId;
+    if (staleBoot || staleLease || legacyNoBoot) {
+      clearSessionMarker(root, sessionId, SESSION_MARKERS.DERIVING);
+      reclaimed.push(sessionId);
+    }
+  }
+  return reclaimed;
 }
 
 export function markSessionReady(root, sessionId, payload = {}) {

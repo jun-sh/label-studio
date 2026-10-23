@@ -7,6 +7,8 @@ import hashlib
 import json
 import logging
 import os
+import signal
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -34,8 +36,10 @@ from ego_capture_studio.capture.segment_store import (
     mark_segment_uploaded,
     mark_segment_uploading,
     purge_uploaded_segments,
+    reconcile_interrupted_uploading_for_root,
     reconcile_stale_uploading_segments,
     read_manifest,
+    release_uploading_segment,
     read_session_seal,
     sealed_segment_total,
     segment_file_key,
@@ -82,6 +86,56 @@ def _log(event: str, **fields: object) -> None:
     for key, value in fields.items():
         parts.append(f"{key}={value}")
     _logger.info(" ".join(str(p) for p in parts))
+
+
+_current_upload_segment: Path | None = None
+_current_upload_session_id: str | None = None
+_upload_signal_handlers_installed = False
+
+
+def _recover_current_upload_segment(*, reason: str) -> None:
+    global _current_upload_segment, _current_upload_session_id
+    seg_dir = _current_upload_segment
+    session_id = _current_upload_session_id
+    if seg_dir is None or not session_id:
+        return
+    if release_uploading_segment(seg_dir, reason=reason):
+        _log(
+            "segment_upload_interrupted",
+            session_id=session_id,
+            segment_id=seg_dir.name,
+            reason=reason,
+        )
+
+
+def _on_upload_interrupt(signum: int, _frame: object) -> None:
+    _recover_current_upload_segment(reason="upload_interrupted_by_signal")
+    code = 128 + (signum if 0 < signum < 128 else 0)
+    raise SystemExit(code)
+
+
+def install_upload_interrupt_handlers() -> None:
+    global _upload_signal_handlers_installed
+    if _upload_signal_handlers_installed:
+        return
+    signal.signal(signal.SIGINT, _on_upload_interrupt)
+    signal.signal(signal.SIGTERM, _on_upload_interrupt)
+    _upload_signal_handlers_installed = True
+
+
+def recover_interrupted_uploads_on_start(root: Path, session_id: str | None = None) -> list[tuple[str, str]]:
+    if os.environ.get("EGO_UPLOAD_RECOVER_ON_START", "1").strip().lower() in ("0", "false", "no"):
+        return []
+    install_upload_interrupt_handlers()
+    recovered = reconcile_interrupted_uploading_for_root(root, session_id)
+    for sid, seg_name in recovered:
+        _log(
+            "segment_interrupted_recovered",
+            session_id=sid,
+            segment_id=seg_name,
+            reason="upload_restart_recovery",
+        )
+    return recovered
 
 
 class SegmentUploader:
@@ -643,6 +697,8 @@ def _upload_one_segment(
     uploader: SegmentUploader,
     force: bool = False,
 ) -> bool:
+    global _current_upload_segment, _current_upload_session_id
+    install_upload_interrupt_handlers()
     segment_id = segment_dir.name
     skip = _prepare_segment_for_upload(segment_dir, force=force)
     if skip:
@@ -669,13 +725,19 @@ def _upload_one_segment(
                     reason="vanished_manifest",
                 )
                 return False
-            archive_bytes = _segment_archive_bytes(segment_dir)
-            status.set_uploading(
-                session_id=session_id,
-                segment_id=segment_id,
-                bytes_total=archive_bytes or 78 * 1024 * 1024,
-            )
-            out = uploader.upload_segment_dir(segment_dir)
+            _current_upload_segment = segment_dir
+            _current_upload_session_id = session_id
+            try:
+                archive_bytes = _segment_archive_bytes(segment_dir)
+                status.set_uploading(
+                    session_id=session_id,
+                    segment_id=segment_id,
+                    bytes_total=archive_bytes or 78 * 1024 * 1024,
+                )
+                out = uploader.upload_segment_dir(segment_dir)
+            finally:
+                _current_upload_segment = None
+                _current_upload_session_id = None
             if archive_bytes <= 0:
                 archive_bytes = _segment_archive_bytes(segment_dir) or 78 * 1024 * 1024
             # Defer local delete until upload_pending_segments() finishes the batch so

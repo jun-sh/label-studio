@@ -8,6 +8,11 @@ import { kickDeriveSession } from "./derive/watch-kick.mjs";
 import { listActiveDeriverLocks } from "./derive-lock.mjs";
 import { stationRoot, streamLog, STREAM_ROOT } from "./stream-ingest.mjs";
 import { resolveDeriveWorkerId } from "./derive/session-claim.mjs";
+import { reclaimDerivingAfterWorkerRestart } from "./session-markers.mjs";
+
+if (!process.env.DERIVE_WORKER_BOOT_ID) {
+  process.env.DERIVE_WORKER_BOOT_ID = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 const stationId = (process.env.STATION_ID || process.env.EGO_STATION_ID || "ego-001").trim();
 const pollMs = Math.max(3000, Number(process.env.DERIVE_WATCH_POLL_MS || 10_000));
@@ -35,6 +40,11 @@ async function tick() {
 
 console.log(`[ego-derive-watch] station=${stationId} workerId=${workerId} poll=${pollMs}ms STREAM_DATA_ROOT=${STREAM_ROOT}`);
 streamLog(stationId, "derive_watch_started", { pollMs, workerId });
+const root = stationRoot(stationId);
+const reclaimed = reclaimDerivingAfterWorkerRestart(root, workerId);
+if (reclaimed.length) {
+  streamLog(stationId, "derive_watch_reclaimed_stale", { workerId, sessions: reclaimed });
+}
 await tick();
 setInterval(() => {
   tick().catch((err) => {

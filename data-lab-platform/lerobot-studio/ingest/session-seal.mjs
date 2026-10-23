@@ -35,6 +35,52 @@ function segmentIdFromSealEntry(entry) {
   return String(entry.segment_dir || entry.segment_id || "").trim() || null;
 }
 
+/** Edge quarantined at capture — not uploaded; session may still complete with gaps. */
+export function isSealSegmentSkippedAtEdge(entry) {
+  const status = String(entry?.status || "CLOSED").trim().toUpperCase();
+  return status === "CORRUPT";
+}
+
+export function sealEntriesRequiringUpload(seal) {
+  const entries = Array.isArray(seal?.segments) ? seal.segments : [];
+  return entries.filter((ent) => !isSealSegmentSkippedAtEdge(ent));
+}
+
+export function buildSealDeliveryQuality(seal, reconcileIssues = []) {
+  const entries = Array.isArray(seal?.segments) ? seal.segments : [];
+  const gaps = [];
+  for (const ent of entries) {
+    const segId = segmentIdFromSealEntry(ent);
+    if (!segId) continue;
+    if (isSealSegmentSkippedAtEdge(ent)) {
+      gaps.push({ segmentId: segId, reason: "edge_corrupt", sealStatus: ent.status || "CORRUPT" });
+    }
+  }
+  for (const issue of reconcileIssues) {
+    if (issue.code === "missing_segment" && issue.segmentId) {
+      gaps.push({ segmentId: issue.segmentId, reason: "missing_upload", sealStatus: "CLOSED" });
+    }
+  }
+  const required = sealEntriesRequiringUpload(seal);
+  const uploaded = required.length - gaps.filter((g) => g.reason === "missing_upload").length;
+  return {
+    schema_version: 1,
+    seal_segment_count: entries.length,
+    required_upload_count: required.length,
+    uploaded_segment_count: Math.max(0, uploaded),
+    gaps,
+    completeness:
+      required.length > 0 ? Math.round((uploaded / required.length) * 1000) / 1000 : 1,
+    partial_ok: gaps.length > 0 && uploaded > 0,
+  };
+}
+
+/** Segments the edge declared for this session; ingest states outside this set must not gate it. */
+export function sealSegmentIds(seal) {
+  const entries = Array.isArray(seal?.segments) ? seal.segments : [];
+  return new Set(entries.map(segmentIdFromSealEntry).filter(Boolean));
+}
+
 /**
  * Persist seal from client upload. Rejects conflicting complete seals.
  */
@@ -94,23 +140,27 @@ export function reconcileSealWithSegmentStates(root, sessionId) {
   }
 
   const expected = Number(seal.segment_count || 0);
-  const states = listSessionSegmentStates(root, sessionId);
+  const sealIds = sealSegmentIds(seal);
+  const requiredEntries = sealEntriesRequiringUpload(seal);
+  const requiredIds = new Set(requiredEntries.map(segmentIdFromSealEntry).filter(Boolean));
+  const states = listSessionSegmentStates(root, sessionId).filter((s) => requiredIds.has(s.segment_id));
   const failed = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.INGEST_FAILED);
   if (failed.length) {
+    const issues = failed.map((s) => ({ code: "ingest_failed", segmentId: s.segment_id }));
     return {
       ok: false,
       reason: "ingest_failed",
-      issues: failed.map((s) => ({ code: "ingest_failed", segmentId: s.segment_id })),
+      issues,
       seal,
       expected,
+      deliveryQuality: buildSealDeliveryQuality(seal, issues),
     };
   }
 
   const byId = new Map(states.map((s) => [s.segment_id, s]));
   const issues = [];
-  const sealEntries = Array.isArray(seal.segments) ? seal.segments : [];
 
-  for (const ent of sealEntries) {
+  for (const ent of requiredEntries) {
     const segId = segmentIdFromSealEntry(ent);
     if (!segId) {
       issues.push({ code: "invalid_seal_entry" });
@@ -129,13 +179,15 @@ export function reconcileSealWithSegmentStates(root, sessionId) {
   }
 
   const pending = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.DERIVE_PENDING);
-  if (pending.length < expected) {
+  if (pending.length < requiredEntries.length) {
     issues.push({
       code: "pending_shortfall",
       have: pending.length,
-      need: expected,
+      need: requiredEntries.length,
     });
   }
+
+  const deliveryQuality = buildSealDeliveryQuality(seal, issues);
 
   return {
     ok: issues.length === 0,
@@ -143,7 +195,9 @@ export function reconcileSealWithSegmentStates(root, sessionId) {
     issues,
     seal,
     expected,
+    requiredUploadCount: requiredEntries.length,
     pendingCount: pending.length,
+    deliveryQuality,
   };
 }
 

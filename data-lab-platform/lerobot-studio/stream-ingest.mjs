@@ -262,6 +262,10 @@ const DISK_TARGET_RATIO = Number(process.env.STREAM_DISK_TARGET || 0.7);
 const CLEANUP_DEBOUNCE_MS = Number(process.env.STREAM_CLEANUP_DEBOUNCE_MS || 60_000);
 const CLEANUP_INTERVAL_MS = Number(process.env.STREAM_CLEANUP_INTERVAL_MS || 300_000);
 const DISK_USAGE_CACHE_MAX_AGE_MS = Number(process.env.STREAM_DISK_USAGE_CACHE_MS || 120_000);
+const DISK_RECONCILE_INTERVAL_MS = Number(
+  process.env.STREAM_DISK_RECONCILE_INTERVAL_MS || 6 * 3600 * 1000,
+);
+const SKIP_STARTUP_DISK_CLEANUP = process.env.INGEST_SKIP_STARTUP_DISK_CLEANUP !== "0";
 /** P1: rolling replay window / segment length (minutes). */
 export const STREAM_WINDOW_MINUTES = Number(process.env.STREAM_WINDOW_MINUTES || 30);
 export const STREAM_SEGMENT_MINUTES = Number(process.env.STREAM_SEGMENT_MINUTES || 5);
@@ -293,6 +297,8 @@ const parquetQueue = new Map();
 const viewerPublishQueue = new Map();
 /** @type {Map<string, NodeJS.Timeout | null>} */
 const cleanupQueue = new Map();
+/** @type {Set<string>} */
+const cleanupInFlight = new Set();
 /** @type {Map<string, { queue: object[], workerRunning: boolean }>} */
 const segmentIngestQueues = new Map();
 /** @type {Map<string, { timer: NodeJS.Timeout | null, pending: boolean }>} */
@@ -527,11 +533,9 @@ function mp4OkFromCachedMuxValidation(muxVal, expectedMp4, sessionId = null) {
     return false;
   }
   if (muxVal.layout === "unit" || muxVal.source === "manifest") {
+    // Same rule as writeMuxValidatedFromManifest / verifyManifestMp4Coverage (per-episode MP4 sums run long).
     const frameVals = Object.values(muxVal.frames || {});
-    return (
-      frameVals.length > 0 &&
-      frameVals.every((n) => Number(n) >= expectedMp4 - 1 && Number(n) <= expectedMp4 + 1)
-    );
+    return frameVals.length > 0 && frameVals.every((n) => Number(n) >= expectedMp4 - 1);
   }
   if (sessionId && muxVal.sessionId === sessionId) {
     const frameVals = Object.values(muxVal.frames || {});
@@ -1129,17 +1133,13 @@ function frameInflightDir(root, frameIndex) {
   return path.join(stagingTmpRoot(root), "inflight", `frame_${String(frameIndex).padStart(6, "0")}`);
 }
 
-function sleepMs(ms) {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    /* spin */
-  }
-}
+/** Optional spin for tests only — never block the HTTP event loop in production (default 0). */
+const LOCK_SPIN_MS = Number(process.env.STREAM_LOCK_SPIN_MS || 0);
 
 function acquireFileLock(lockPath, timeoutMs = 60_000) {
   ensureDir(path.dirname(lockPath));
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+  const staleMs = Math.max(timeoutMs, 120_000);
+  const tryCreate = () => {
     try {
       const fd = fs.openSync(lockPath, "wx");
       fs.writeFileSync(fd, `${process.pid}\n${Date.now()}\n`);
@@ -1148,17 +1148,29 @@ function acquireFileLock(lockPath, timeoutMs = 60_000) {
       if (/** @type {NodeJS.ErrnoException} */ (e).code !== "EEXIST") throw e;
       try {
         const st = fs.statSync(lockPath);
-        if (Date.now() - st.mtimeMs > Math.max(timeoutMs, 120_000)) {
+        if (Date.now() - st.mtimeMs > staleMs) {
           fs.unlinkSync(lockPath);
-          continue;
+          return tryCreate();
         }
       } catch {
         /* ignore */
       }
+      return null;
     }
-    sleepMs(25);
+  };
+
+  let fd = tryCreate();
+  if (fd !== null) return fd;
+  if (LOCK_SPIN_MS > 0) {
+    const start = Date.now();
+    const spinBudget = Math.min(timeoutMs, LOCK_SPIN_MS);
+    while (Date.now() - start < spinBudget) {
+      fd = tryCreate();
+      if (fd !== null) return fd;
+      spawnSync("sleep", ["0.025"], { stdio: "ignore" });
+    }
   }
-  throw new Error(`lock timeout: ${lockPath}`);
+  throw new Error(`lock busy: ${lockPath}`);
 }
 
 function releaseFileLock(lockPath, fd) {
@@ -2808,6 +2820,24 @@ function dirSizeBytes(dir) {
   return total;
 }
 
+/** Non-blocking usage measure for large stations (keeps HTTP / healthz responsive). */
+function measureDirSizeBytesAsync(dir) {
+  return new Promise((resolve) => {
+    if (!fs.existsSync(dir)) return resolve(0);
+    const proc = spawn("du", ["-sb", dir], { stdio: ["ignore", "pipe", "ignore"] });
+    let out = "";
+    proc.stdout.on("data", (chunk) => {
+      out += chunk;
+    });
+    proc.on("error", () => resolve(dirSizeBytes(dir)));
+    proc.on("close", (code) => {
+      if (code !== 0) return resolve(dirSizeBytes(dir));
+      const m = /^(\d+)/.exec(out.trim());
+      resolve(m ? Number(m[1]) : dirSizeBytes(dir));
+    });
+  });
+}
+
 function readDiskHousekeeping(root) {
   return readJson(path.join(root, "live", "disk-housekeeping.json"), null);
 }
@@ -2816,9 +2846,36 @@ function readDiskHousekeeping(root) {
 function cachedDiskUsageBytes(root) {
   const hk = readDiskHousekeeping(root);
   if (!hk || typeof hk.usageBytes !== "number") return null;
+  const maxAge =
+    hk.usageSource === "incremental"
+      ? DISK_RECONCILE_INTERVAL_MS
+      : DISK_USAGE_CACHE_MAX_AGE_MS;
   const at = hk.at ? Date.parse(hk.at) : NaN;
-  if (!Number.isFinite(at) || Date.now() - at > DISK_USAGE_CACHE_MAX_AGE_MS) return null;
+  if (!Number.isFinite(at) || Date.now() - at > maxAge) return null;
   return hk.usageBytes;
+}
+
+function shouldRunFullDiskReconcile(root) {
+  const hk = readDiskHousekeeping(root);
+  const last = hk?.lastReconcileAt ? Date.parse(hk.lastReconcileAt) : NaN;
+  if (!Number.isFinite(last)) return true;
+  return Date.now() - last >= DISK_RECONCILE_INTERVAL_MS;
+}
+
+function effectiveStationUsageBytes(root) {
+  const hk = readDiskHousekeeping(root);
+  if (hk && typeof hk.usageBytes === "number" && hk.usageSource === "incremental") {
+    return hk.usageBytes;
+  }
+  const cached = cachedDiskUsageBytes(root);
+  if (cached != null) return cached;
+  if (hk && typeof hk.usageBytes === "number") return hk.usageBytes;
+  return null;
+}
+
+/** K8s-style readiness: upload API must stay responsive (no sync full-tree work on HTTP thread). */
+export function streamIngestUploadReady() {
+  return true;
 }
 
 function rmRfSafe(target) {
@@ -2826,6 +2883,22 @@ function rmRfSafe(target) {
     fs.rmSync(target, { recursive: true, force: true });
   } catch {
     /* ignore */
+  }
+}
+
+/** Purge a single subtree and keep incremental usage in sync (bounded scan, not full station). */
+function rmRfSafeAccounted(stationId, root, target, reason = "purge") {
+  let freedBytes = 0;
+  try {
+    if (fs.existsSync(target)) freedBytes = dirSizeBytes(target);
+  } catch {
+    /* ignore */
+  }
+  rmRfSafe(target);
+  if (freedBytes > 0) {
+    void import("./ingest/disk-accounting.mjs").then(({ recordStationDiskDelta }) => {
+      recordStationDiskDelta(root, stationId, -freedBytes, { reason });
+    });
   }
 }
 
@@ -2880,19 +2953,19 @@ function listArchiveDirs(root) {
     .sort((a, b) => a.mtimeMs - b.mtimeMs);
 }
 
-function purgeExpiredArchives(root, activeSessionId) {
+function purgeExpiredArchives(stationId, root, activeSessionId) {
   const cutoff = retentionCutoffMs();
   let freed = 0;
   for (const entry of listArchiveDirs(root)) {
     if (activeSessionId && entry.name.startsWith(`${activeSessionId}_`)) continue;
     if (entry.mtimeMs >= cutoff) continue;
-    rmRfSafe(entry.path);
+    rmRfSafeAccounted(stationId, root, entry.path, "purge_expired_archive");
     freed += 1;
   }
   return freed;
 }
 
-function purgeExpiredSessionMarkers(root, activeSessionId) {
+function purgeExpiredSessionMarkers(stationId, root, activeSessionId) {
   const sessionsDir = path.join(root, "sessions");
   if (!fs.existsSync(sessionsDir)) return 0;
   const cutoff = retentionCutoffMs();
@@ -2905,15 +2978,15 @@ function purgeExpiredSessionMarkers(root, activeSessionId) {
     const meta = registry.sessions?.[ent.name];
     const endedAt = meta?.endedAt ? Date.parse(meta.endedAt) : fs.statSync(full).mtimeMs;
     if (Number.isFinite(endedAt) && endedAt >= cutoff) continue;
-    rmRfSafe(full);
+    rmRfSafeAccounted(stationId, root, full, "purge_expired_session");
     freed += 1;
   }
   return freed;
 }
 
-function purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes) {
-  let usage = cachedDiskUsageBytes(root);
-  if (usage == null) usage = dirSizeBytes(root);
+function purgeArchivesUntilUnderQuota(stationId, root, activeSessionId, quotaBytes) {
+  let usage = effectiveStationUsageBytes(root);
+  if (usage == null) usage = stagingDirSizeBytes(root);
   if (usage <= quotaBytes * DISK_HIGH_WATER_RATIO) return 0;
   const archives = listArchiveDirs(root);
   let removed = 0;
@@ -2921,7 +2994,7 @@ function purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes) {
   for (const entry of archives) {
     if (removed >= maxPerRun) break;
     if (activeSessionId && entry.name.startsWith(`${activeSessionId}_`)) continue;
-    rmRfSafe(entry.path);
+    rmRfSafeAccounted(stationId, root, entry.path, "purge_archive_quota");
     removed += 1;
   }
   return removed;
@@ -3175,14 +3248,8 @@ function purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes) {
   let totalActions = 0;
   while (passes < 8) {
     passes += 1;
-    let usage = cachedDiskUsageBytes(root);
-    if (usage == null) {
-      const hk = readDiskHousekeeping(root);
-      usage =
-        hk && typeof hk.usageBytes === "number"
-          ? hk.usageBytes
-          : stagingDirSizeBytes(root);
-    }
+    let usage = effectiveStationUsageBytes(root);
+    if (usage == null) usage = stagingDirSizeBytes(root);
     if (usage <= targetBytes) break;
 
     const stagingBytes = stagingDirSizeBytes(root);
@@ -3193,61 +3260,135 @@ function purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes) {
       continue;
     }
 
-    const archivesRemoved = purgeArchivesUntilUnderQuota(root, activeSessionId, quotaBytes);
+    const archivesRemoved = purgeArchivesUntilUnderQuota(
+      stationId,
+      root,
+      activeSessionId,
+      quotaBytes,
+    );
     totalActions += archivesRemoved;
     if (archivesRemoved > 0) continue;
 
-    purgeExpiredArchives(root, activeSessionId);
-    purgeExpiredSessionMarkers(root, activeSessionId);
+    purgeExpiredArchives(stationId, root, activeSessionId);
+    purgeExpiredSessionMarkers(stationId, root, activeSessionId);
     break;
   }
   return totalActions;
 }
 
-function runDiskCleanup(stationId) {
+function writeDiskHousekeeping(root, stationId, activeSessionId, usageBytes, quotaBytes, extra = {}) {
+  const prev = readDiskHousekeeping(root) || {};
+  writeJsonAtomic(path.join(root, "live", "disk-housekeeping.json"), {
+    ...prev,
+    stationId,
+    at: new Date().toISOString(),
+    activeSessionId,
+    usageBytes,
+    quotaBytes,
+    retentionDays: RETENTION_DAYS,
+    windowMinutes: STREAM_WINDOW_MINUTES,
+    segmentMinutes: STREAM_SEGMENT_MINUTES,
+    ...extra,
+  });
+  streamLog(stationId, "disk_cleanup", {
+    sessionId: activeSessionId,
+    usageBytes,
+    quotaBytes,
+    retentionDays: RETENTION_DAYS,
+    windowMinutes: STREAM_WINDOW_MINUTES,
+    ...extra,
+  });
+}
+
+async function runDiskCleanupWorker(stationId) {
   const root = stationRoot(stationId);
   if (!fs.existsSync(root)) return;
+  const quotaBytes = stationQuotaBytes(stationId);
+  const highWater = quotaBytes * DISK_HIGH_WATER_RATIO;
+  const usageEstimate = effectiveStationUsageBytes(root);
+  const needsReconcile = shouldRunFullDiskReconcile(root);
+  let activeSessionId = null;
+
   withCleanupLock(root, () => {
-    const activeSessionId = getActiveSessionId(root);
-    const quotaBytes = stationQuotaBytes(stationId);
+    activeSessionId = getActiveSessionId(root);
     const stagingBytes = stagingDirSizeBytes(root);
     if (stagingBytes >= STAGING_EMERGENCY_PURGE_BYTES) {
       purgeStagingWithMuxGuards(stationId, root, { emergency: true });
     }
-    purgeExpiredArchives(root, activeSessionId);
-    purgeExpiredSessionMarkers(root, activeSessionId);
-    purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes);
-    const usageBytes = dirSizeBytes(root);
-    writeJsonAtomic(path.join(root, "live", "disk-housekeeping.json"), {
-      stationId,
-      at: new Date().toISOString(),
-      activeSessionId,
-      usageBytes,
-      quotaBytes,
-      retentionDays: RETENTION_DAYS,
-      windowMinutes: STREAM_WINDOW_MINUTES,
-      segmentMinutes: STREAM_SEGMENT_MINUTES,
-    });
-    streamLog(stationId, "disk_cleanup", {
-      sessionId: activeSessionId,
-      usageBytes,
-      quotaBytes,
-      retentionDays: RETENTION_DAYS,
-      windowMinutes: STREAM_WINDOW_MINUTES,
+    purgeExpiredArchives(stationId, root, activeSessionId);
+    purgeExpiredSessionMarkers(stationId, root, activeSessionId);
+    if (usageEstimate != null && usageEstimate < highWater) {
+      writeDiskHousekeeping(root, stationId, activeSessionId, usageEstimate, quotaBytes, {
+        skippedFullScan: true,
+        usageSource: readDiskHousekeeping(root)?.usageSource || "estimate",
+      });
+      return;
+    }
+    if (usageEstimate != null && usageEstimate >= highWater) {
+      purgeUntilUnderQuota(stationId, root, activeSessionId, quotaBytes);
+    }
+  });
+
+  if (!needsReconcile) return;
+
+  const usageBytes = await measureDirSizeBytesAsync(root);
+  withCleanupLock(root, () => {
+    const sid = getActiveSessionId(root);
+    writeDiskHousekeeping(root, stationId, sid, usageBytes, quotaBytes, {
+      measuredAsync: true,
+      usageSource: "reconcile",
+      lastReconcileAt: new Date().toISOString(),
     });
   });
+}
+
+function runDiskCleanup(stationId) {
+  if (cleanupInFlight.has(stationId)) return;
+  cleanupInFlight.add(stationId);
+  void runDiskCleanupWorker(stationId)
+    .catch((err) => {
+      console.warn(
+        `[stream-ingest] disk_cleanup failed station=${stationId}:`,
+        err?.message || err,
+      );
+    })
+    .finally(() => {
+      cleanupInFlight.delete(stationId);
+    });
 }
 
 /** Startup / ops: purge legacy staging and enforce quota for every station dir. */
 export function runDiskCleanupForAllStations() {
   if (!fs.existsSync(STREAM_ROOT)) return;
+  if (SKIP_STARTUP_DISK_CLEANUP) {
+    console.log(
+      "[stream-ingest] startup full disk_cleanup skipped; scheduling background reconcile per station (set INGEST_SKIP_STARTUP_DISK_CLEANUP=0 for legacy startup purge)",
+    );
+    const staggerMs = Number(process.env.STREAM_CLEANUP_STATION_STAGGER_MS || 60_000);
+    let index = 0;
+    for (const ent of fs.readdirSync(STREAM_ROOT, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      const stationId = ent.name;
+      const delayMs = index * staggerMs;
+      index += 1;
+      setTimeout(() => runDiskCleanup(stationId), delayMs);
+    }
+    return;
+  }
+  const staggerMs = Number(process.env.STREAM_CLEANUP_STATION_STAGGER_MS || 60_000);
+  let index = 0;
   for (const ent of fs.readdirSync(STREAM_ROOT, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    try {
-      runDiskCleanup(ent.name);
-    } catch (err) {
-      console.warn(`[stream-ingest] cleanup failed station=${ent.name}:`, err?.message || err);
-    }
+    const stationId = ent.name;
+    const delayMs = index * staggerMs;
+    index += 1;
+    setTimeout(() => {
+      try {
+        runDiskCleanup(stationId);
+      } catch (err) {
+        console.warn(`[stream-ingest] cleanup failed station=${ent.name}:`, err?.message || err);
+      }
+    }, delayMs);
   }
 }
 
@@ -4448,13 +4589,7 @@ export function getStreamStatus(stationId) {
   const sessionFile = path.join(root, "live", "session.json");
   const live = readJson(sessionFile, {});
   // Never walk the full stream tree on HTTP hot paths (128GB+ can block server.mjs for minutes).
-  const usageBytes = (() => {
-    const fresh = cachedDiskUsageBytes(root);
-    if (fresh != null) return fresh;
-    const hk = readDiskHousekeeping(root);
-    if (hk && typeof hk.usageBytes === "number") return hk.usageBytes;
-    return 0;
-  })();
+  const usageBytes = effectiveStationUsageBytes(root) ?? 0;
   const jsonlRows = countJsonlRows(root);
   const ingestFrames = jsonlRows > 0 ? jsonlRows : Number(info.total_frames || 0);
   const quotaBytes = stationQuotaBytes(stationId);

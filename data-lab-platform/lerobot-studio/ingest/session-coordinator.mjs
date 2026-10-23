@@ -14,7 +14,7 @@ import {
 } from "../session-markers.mjs";
 import { ensureDir, readJson, writeJsonAtomic } from "./io.mjs";
 import { listSessionSegmentStates, SEGMENT_INGEST_STATUS } from "./segment-state.mjs";
-import { reconcileSealWithSegmentStates } from "./session-seal.mjs";
+import { reconcileSealWithSegmentStates, sealSegmentIds } from "./session-seal.mjs";
 
 function uploadActivityPath(root) {
   return path.join(root, "live", "upload_activity.json");
@@ -45,10 +45,26 @@ export function readExpectedSegmentTotal(root, sessionId) {
 
 export function evaluateSessionUploadGate(root, sessionId) {
   const headerExpected = readExpectedSegmentTotal(root, sessionId);
-  const states = listSessionSegmentStates(root, sessionId);
+  const sealReconcile = reconcileSealWithSegmentStates(root, sessionId);
+  const requiredIds =
+    sealReconcile.seal?.complete && sealReconcile.requiredUploadCount != null
+      ? new Set(
+          (sealReconcile.seal.segments || [])
+            .filter((ent) => {
+              const status = String(ent?.status || "CLOSED").trim().toUpperCase();
+              return status !== "CORRUPT";
+            })
+            .map((ent) => String(ent.segment_dir || ent.segment_id || "").trim())
+            .filter(Boolean),
+        )
+      : sealReconcile.seal?.complete
+        ? sealSegmentIds(sealReconcile.seal)
+        : null;
+  const states = listSessionSegmentStates(root, sessionId).filter(
+    (s) => !requiredIds || requiredIds.has(s.segment_id),
+  );
   const derivePending = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.DERIVE_PENDING);
   const failed = states.filter((s) => s.status === SEGMENT_INGEST_STATUS.INGEST_FAILED);
-  const sealReconcile = reconcileSealWithSegmentStates(root, sessionId);
   const expected = sealReconcile.ok
     ? sealReconcile.expected
     : Number(sealReconcile.seal?.segment_count || headerExpected || 0);
@@ -73,6 +89,7 @@ export function maybeMarkSessionDoneUpload(root, sessionId, meta = {}) {
   markSessionUploadDone(root, sessionId, {
     source: "ingest_module",
     phase: "DONE_UPLOAD",
+    delivery_quality: gate.sealReconcile?.deliveryQuality || null,
     ...meta,
     gate,
   });

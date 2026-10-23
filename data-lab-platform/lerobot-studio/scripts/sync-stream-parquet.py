@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -337,7 +338,7 @@ def write_tasks_parquet(root: Path, episodes: list[dict], full_task: str) -> Non
 
 def _atomic_parquet_write(table: pa.Table, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp = out.with_name(f"{out.name}.tmp.{os.getpid()}.{time.time_ns()}")
     pq.write_table(table, tmp)
     tmp.replace(out)
 
@@ -1242,6 +1243,67 @@ def validate_unit_manifest_data_shards(root: Path) -> list[str]:
     return errors
 
 
+def _republish_one_unit_episode(root: Path, ep: dict, *, features: dict, fps: float) -> bool:
+    session_id = str(ep.get("session_id") or "").strip()
+    ep_index = int(ep.get("episode_index", 0))
+    from_idx = int(ep.get("dataset_from_index") or 0)
+    if not session_id:
+        return False
+    derived = root / "derived" / session_id / "data.parquet"
+    if not derived.is_file():
+        return False
+    table = remap_unit_table_to_global(
+        pq.read_table(derived),
+        episode_index=ep_index,
+        from_index=from_idx,
+        fps=fps,
+    )
+    table = finalize_data_table(table, features)
+    out = root / "data" / "chunk-000" / f"file-{ep_index:03d}.parquet"
+    _atomic_parquet_write(table, out)
+    return True
+
+
+def sync_unit_station_metadata(root: Path, manifest: dict | None = None) -> int:
+    """Refresh meta/info + episodes/tasks parquet for unit layout (no data shard rewrite)."""
+    manifest = manifest or unit_manifest_published(root)
+    if not manifest:
+        return 0
+    info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
+    fps = float(info.get("fps") or 30)
+    episodes = episodes_from_unit_manifest(manifest)
+    total_frames = sync_unit_manifest_info(root, manifest)
+    task = resolve_live_task(root, read_json(root / "live" / "session.json", {}))
+    write_episodes_parquet(root, episodes, fps, task)
+    write_station_tasks(root, episodes, task)
+    write_meta_stats_json(root)
+    return total_frames
+
+
+def republish_unit_session_shard(root: Path, session_id: str) -> int:
+    """Incremental publish: remap one session's derived unit into its L2 data shard."""
+    manifest = unit_manifest_published(root)
+    if not manifest:
+        return 0
+    info = ensure_system_features(read_json(root / "meta" / "info.json", {}))
+    features = info.get("features") or {}
+    fps = float(info.get("fps") or 30)
+    target = str(session_id or "").strip()
+    count = 0
+    for ep in episodes_from_unit_manifest(manifest):
+        if str(ep.get("session_id") or "").strip() != target:
+            continue
+        if _republish_one_unit_episode(root, ep, features=features, fps=fps):
+            count = 1
+        break
+    if count:
+        sync_unit_station_metadata(root, manifest)
+        errors = validate_unit_manifest_data_shards(root)
+        if errors:
+            raise RuntimeError("; ".join(errors))
+    return count
+
+
 def republish_unit_data_shards(root: Path) -> int:
     """Copy derived/sess_*/data.parquet into data/chunk-000/file-{episode_index}.parquet."""
     manifest = unit_manifest_published(root)
@@ -1253,31 +1315,10 @@ def republish_unit_data_shards(root: Path) -> int:
     episodes = episodes_from_unit_manifest(manifest)
     count = 0
     for ep in episodes:
-        session_id = str(ep.get("session_id") or "").strip()
-        ep_index = int(ep.get("episode_index", count))
-        from_idx = int(ep.get("dataset_from_index") or 0)
-        if not session_id:
-            continue
-        derived = root / "derived" / session_id / "data.parquet"
-        if not derived.is_file():
-            continue
-        table = remap_unit_table_to_global(
-            pq.read_table(derived),
-            episode_index=ep_index,
-            from_index=from_idx,
-            fps=fps,
-        )
-        table = finalize_data_table(table, features)
-        out = root / "data" / "chunk-000" / f"file-{ep_index:03d}.parquet"
-        _atomic_parquet_write(table, out)
-        count += 1
+        if _republish_one_unit_episode(root, ep, features=features, fps=fps):
+            count += 1
     if count:
-        sync_unit_manifest_info(root, manifest)
-        task = resolve_live_task(root, read_json(root / "live" / "session.json", {}))
-        write_episodes_parquet(root, episodes, fps, task)
-        write_station_tasks(root, episodes, task)
-        info = read_json(root / "meta" / "info.json", {})
-        (root / "meta" / "info.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+        sync_unit_station_metadata(root, manifest)
         errors = validate_unit_manifest_data_shards(root)
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -1305,27 +1346,48 @@ def main() -> int:
     viewer_scaffold = "--viewer-scaffold" in argv
     meta_only = "--meta-only" in argv
     republish_units = "--republish-units" in argv
+    sync_unit_meta = "--sync-unit-meta" in argv
     repair_corpus = "--repair-corpus-task-dates" in argv
     no_viewer_sync = "--no-viewer-sync" in argv
+    session_id = None
+    if "--session-id" in argv:
+        idx = argv.index("--session-id")
+        if idx + 1 < len(argv):
+            session_id = argv[idx + 1]
     flags = {
         "--meta-only",
         "--viewer-scaffold",
         "--repair-corpus-task-dates",
         "--no-viewer-sync",
         "--republish-units",
+        "--sync-unit-meta",
+        "--session-id",
     }
-    positional = [a for a in argv if a not in flags]
+    positional = [a for a in argv if a not in flags and a != session_id]
+    if sync_unit_meta:
+        if len(positional) != 1:
+            print("usage: sync-stream-parquet.py --sync-unit-meta <station_root>", file=sys.stderr)
+            return 1
+        root = Path(positional[0])
+        sync_unit_station_metadata(root)
+        print("sync_unit_meta ok")
+        return 0
     if republish_units:
         if len(positional) != 1:
-            print("usage: sync-stream-parquet.py --republish-units <station_root>", file=sys.stderr)
+            print(
+                "usage: sync-stream-parquet.py --republish-units [--session-id <sess>] <station_root>",
+                file=sys.stderr,
+            )
             return 1
         root = Path(positional[0])
         try:
-            count = republish_unit_data_shards(root)
+            if session_id:
+                count = republish_unit_session_shard(root, session_id)
+            else:
+                count = republish_unit_data_shards(root)
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        write_meta_stats_json(root)
         print(f"republished {count}")
         return 0
     if repair_corpus:

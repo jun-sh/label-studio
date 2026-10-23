@@ -2074,6 +2074,62 @@ def reconcile_stale_uploading_segments(
     return recovered
 
 
+def iter_station_session_ids(root: Path) -> list[str]:
+    sessions = root / "sessions"
+    if not sessions.is_dir():
+        return []
+    return sorted(
+        p.name
+        for p in sessions.iterdir()
+        if p.is_dir() and p.name.startswith("sess_")
+    )
+
+
+def release_uploading_segment(segment_dir: Path, *, reason: str) -> bool:
+    """If segment is UPLOADING, reset to CLOSED (interrupt / operator recovery)."""
+    try:
+        manifest = read_manifest(segment_dir)
+    except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+        return False
+    if manifest_status(manifest) != "UPLOADING":
+        return False
+    upload = dict(
+        manifest.get("upload") if isinstance(manifest.get("upload"), dict) else _default_upload_meta()
+    )
+    upload["last_error"] = reason[:500]
+    upload["interrupted_recovered_at"] = _utc_now_iso()
+    _update_manifest_status(segment_dir, "CLOSED", upload_patch=upload)
+    return True
+
+
+def reconcile_interrupted_uploading_for_root(
+    root: Path,
+    session_id: str | None = None,
+    *,
+    reason: str = "upload_restart_recovery",
+) -> list[tuple[str, str]]:
+    """Reset UPLOADING → CLOSED with no age gate (new ego-upload / Ctrl+C recovery).
+
+    Only call when no live uploader holds these segments (ego-upload flock + CLI entry).
+    """
+    session_ids = [session_id] if session_id else iter_station_session_ids(root)
+    recovered: list[tuple[str, str]] = []
+    for sid in session_ids:
+        if not sid:
+            continue
+        for seg_dir in iter_session_segment_dirs(root, sid):
+            try:
+                manifest = read_manifest(seg_dir)
+                status = manifest_status(manifest)
+            except (OSError, json.JSONDecodeError, FileNotFoundError, KeyError):
+                continue
+            if status != "UPLOADING":
+                continue
+            if release_uploading_segment(seg_dir, reason=reason):
+                recovered.append((sid, seg_dir.name))
+    return recovered
+
+
 def clear_segment_uploaded(segment_dir: Path) -> None:
     manifest = read_manifest(segment_dir)
     status = manifest_status(manifest)

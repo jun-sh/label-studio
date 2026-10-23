@@ -14,6 +14,7 @@ import {
   markSessionFailed,
   markSessionReady,
   SESSION_MARKERS,
+  readSessionMarker,
 } from "../session-markers.mjs";
 import {
   maxDeriveRetryAttempts,
@@ -23,6 +24,7 @@ import {
   isDeriveFailureRetryable,
 } from "./session-retry.mjs";
 import { unitDir } from "./unit-paths.mjs";
+import { recordSessionTimelineEvent } from "../ingest/session-timeline.mjs";
 
 function pickSessionId(root, forcedSessionId) {
   if (forcedSessionId) return forcedSessionId;
@@ -53,6 +55,7 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
   }
 
   deriveLog(stationId, "derive_unit_pipeline_start", { sessionId, muxOnly });
+  recordSessionTimelineEvent(root, sessionId, "derive_start", { muxOnly });
 
   if (muxOnly) {
     const existing = unitDir(root, sessionId);
@@ -103,8 +106,9 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
   const manifest = rebuildManifestFromDisk(root, stationId);
   updateInfoFromManifest(root, manifest);
   writeMuxValidatedFromManifest(root, stationId, manifest);
-  refreshViewerFromManifest(root, stationId, manifest);
+  refreshViewerFromManifest(root, stationId, manifest, { republishData: false });
   const gate = unitResult.gate;
+  const doneUpload = readSessionMarker(root, sessionId, SESSION_MARKERS.DONE_UPLOAD);
   markSessionReady(root, sessionId, {
     total: unitResult.frames,
     parquetRows: unitResult.frames,
@@ -113,12 +117,18 @@ export async function runDerivePipelineUnit(stationId, options = {}) {
     layout: "unit",
     episodeIndex: pub.episodeIndex,
     browser_playable: Boolean(unitResult.unitJson?.gate?.browser_playable),
+    delivery_quality: doneUpload?.delivery_quality || null,
   });
   deriveLog(stationId, "derive_unit_ready", {
     sessionId,
     frames: unitResult.frames,
     episodeIndex: pub.episodeIndex,
     checksPassed: gate.checksPassed,
+  });
+  recordSessionTimelineEvent(root, sessionId, "derive_ready", {
+    episodeIndex: pub.episodeIndex,
+    frames: unitResult.frames,
+    delivery_quality: doneUpload?.delivery_quality || null,
   });
   return {
     ok: true,

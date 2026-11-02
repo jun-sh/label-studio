@@ -52,19 +52,32 @@ fi
 
 if [[ "${EGO_STRESS_SKIP_PROVISION:-0}" != "1" ]]; then
   unset EGO_STRESS_CAPTURE
+  EDGE_HOST="${EGO_E2E_HOST:-10.10.10.130}"
   RC_CAPTURE_PASS="$EDGE_PASS" CAPTURE_PROFILE=pilot \
-    bash "${SCRIPT_DIR}/ego-130-provision-mcap-production.sh" "server@10.10.10.130" "$STATION" 2>&1 | tee -a "$RUN_LOG"
+    bash "${SCRIPT_DIR}/ego-130-provision-mcap-production.sh" "server@${EDGE_HOST}" "$STATION" 2>&1 | tee -a "$RUN_LOG"
 fi
 
-RC_CAPTURE_PASS="$EDGE_PASS" bash "${SCRIPT_DIR}/ego-release-check.sh" "$STATION" 2>&1 | tee -a "$RUN_LOG"
+if [[ "${EGO_STRESS_SKIP_RELEASE_CHECK:-0}" != "1" ]]; then
+  EDGE_HOST="${EGO_E2E_HOST:-10.10.10.130}"
+  RC_CAPTURE_PASS="$EDGE_PASS" bash "${SCRIPT_DIR}/ego-release-check.sh" "$STATION" "server@${EDGE_HOST}" 2>&1 | tee -a "$RUN_LOG" || {
+    log "==> RELEASE CHECK FAIL"
+    exit 1
+  }
+else
+  log "SKIP release-check (EGO_STRESS_SKIP_RELEASE_CHECK=1)"
+fi
 
-log "=== 0/4 清场 130 + 34 stream ==="
-RC_CAPTURE_PASS="$EDGE_PASS" python3 <<'PY' | tee -a "$RUN_LOG"
+log "=== 0/4 清场 edge + 34 stream ==="
+if [[ "${EGO_STRESS_SKIP_CLEAN:-0}" == "1" ]]; then
+  log "SKIP clean (EGO_STRESS_SKIP_CLEAN=1) — append-only soak on existing stream"
+else
+RC_CAPTURE_PASS="$EDGE_PASS" python3 <<PY | tee -a "$RUN_LOG"
 import os, paramiko
-station = "ego-001"
+station = os.environ.get("STATION_ID", "ego-001")
+host = os.environ.get("EGO_E2E_HOST", "10.10.10.130")
 seg = f"/home/server/cache/{station}/segments"
 c = paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect("10.10.10.130", username="server", password=os.environ.get("RC_CAPTURE_PASS","1"), timeout=20)
+c.connect(host, username="server", password=os.environ.get("RC_CAPTURE_PASS","1"), timeout=20)
 script = f"""
 set -euo pipefail
 systemctl --user stop ecs-record-oak-mcap.service 2>/dev/null || true
@@ -75,7 +88,7 @@ sleep 2
 rm -rf {seg}/sessions {seg}/registry.json {seg}/checkpoint.json {seg}/strict_emit_ts.json
 mkdir -p {seg}
 systemctl --user stop ecs-preview-standby.service 2>/dev/null || true
-echo 130_cleared
+echo edge_cleared host={host} station={station}
 """
 _, o, e = c.exec_command(f"bash -s <<'REMOTE'\n{script}\nREMOTE", timeout=120)
 print((o.read()+e.read()).decode().strip())
@@ -92,6 +105,7 @@ docker exec data-lab-lerobot-1 sh -c "
     /srv/bundled/covers/${SLUG}.webp \
     /srv/bundled/overlays/${SLUG}_* 2>/dev/null || true
 " 2>/dev/null || true
+fi
 
 log "=== 1/4 录制+上传 ${EPISODES} ep (pilot durations) ==="
 record_start=$SECONDS

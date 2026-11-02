@@ -291,3 +291,53 @@ jq '.status, .integrity.issues, .timeline.ok' \
 | 003/004 从 002 克隆后复现 | 系统配置未 per-host 安装 | 每台执行 **A0**（§1），不能只复制 git/002 快照 |
 
 验收：`powerprofilesctl get` → `performance`；`gsettings get … sleep-inactive-battery-type` → `'nothing'`。详见 [gpd §2.10](./gpd-micropc2-capture-station-setup.md)。
+
+---
+
+## 9. ego-002 压测顺序（对齐 ego-001，最小阶梯）
+
+与通用交付标准见 [ego-upload-derive-test-plan.md](./ego-upload-derive-test-plan.md)。**002 勿在未 sign-off 前跑 `ego-stress-20min` 默认清场**（会 `rm -rf` 34 上 `stream/ego-002`）。
+
+| Tier | 名称 | 做什么 | 通过线（002） |
+|------|------|--------|----------------|
+| **0** | 采集 sign-off | 52 上单段 ≤75s → `ego-upload` → derive | manifest **无** hard `integrity.issues`（overflow 仅 `qc_issues` 可接受）；raw 含 `seg_000001`；`preview_ready` |
+| **1** | 34 流水线 | `STATION_ID=ego-002 bash scripts/ego-stress-fast.sh` | 脚本 exit 0；不新增 unexplained `FAILED` |
+| **2** | 边缘 soak | 见下「002 专用 env」 | 新录 session manifest 无 hard overflow；`ready/failed` 与 audit 摘要达标 |
+
+**前置（Day 0/1 已做）**：内核 29 + hold、`EGO-002-COLLECT`、Tenda init、`EGO_RING_OVERFLOW_HARD_FAIL=0`、`derive-worker-ego-002` 的 `EGO_DERIVE_COMMERCIAL_GATE=0`。
+
+**002 勿与 001 同时长录**（USB/derive 争用）。Tier 0 通过后再开 Tier 2。
+
+### 9.1 Tier 0 — 单段 E1（开发机，不清 34 库）
+
+```bash
+cd data-lab
+export RC_CAPTURE_PASS=1 STATION_ID=ego-002 EGO_E2E_HOST=10.10.11.52
+export EPISODES=1 DURATIONS_CSV=45 MIN_SEC=40 MAX_SEC=75 WAIT_AFTER_STOP=25
+python3 -u data-lab-platform/scripts/ego-e2e-20seg-record-upload.py
+# 验收新 sess_*：jq '.integrity' ~/cache/ego-002/segments/sessions/<sid>/segments/seg_000001/manifest.json
+# 34: delivery-status preview_ready；unit.json source_segments 含 seg_000001
+```
+
+### 9.2 Tier 1 — 34 derive/process 压测
+
+```bash
+STATION_ID=ego-002 bash data-lab-platform/scripts/ego-stress-fast.sh
+```
+
+### 9.3 Tier 2 — 002 专用 env（保留现有 Collection 数据）
+
+默认 `ego-stress-20min.sh` 会清空 **130** 与 **34 stream**；在 **已有 11.2 七条** 的 34 上必须：
+
+```bash
+cd data-lab
+export RC_CAPTURE_PASS=1 STATION_ID=ego-002 EGO_E2E_HOST=10.10.11.52 SAMPLES_SLUG=ego_002
+export EGO_STRESS_SKIP_CLEAN=1 EGO_STRESS_SKIP_PROVISION=1 EGO_STRESS_SKIP_DERIVE_MODE=1 EGO_STRESS_SKIP_RELEASE_CHECK=1
+# 短 soak（推荐先跑）：3 段 ≈ 2.5min 录制 + pipeline
+export E2E_EPISODES=3 STRESS_DURATIONS_CSV=45,50,55
+bash data-lab-platform/scripts/ego-stress-20min.sh
+```
+
+全量 20min / 14 ep 仅在 **专用测试卷或已备份 stream** 后去掉 `EGO_STRESS_SKIP_CLEAN=1` 再跑。日志：`data-storage/logs/stress-20min-*.log`，摘要：`docs/m0-evidence/stress-20min-*-summary.json`。
+
+**对照 001**：001 新录 spread 典型 30–60 帧；002 新 session 的 `unit.json` 四路 MP4 spread 应同量级（非 11.2 历史片）。

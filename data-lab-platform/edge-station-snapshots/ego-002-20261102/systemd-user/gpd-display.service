@@ -1,0 +1,15 @@
+[Unit]
+Description=GPD MicroPC2 display fix (1024x576)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/server/.Xauthority
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/local/bin/gpd-display-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target

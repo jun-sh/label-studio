@@ -1,0 +1,24 @@
+[Unit]
+Description=Upload closed EGO segments to Data Lab (manual or timer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/server/workspace/ego-studio
+
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATALAB_UPLOAD_TIMEOUT_S=600
+Environment=EGO_SEGMENT_DELETE_AFTER_UPLOAD=1
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.upload_segments \
+  --ensure-session \
+  --limit 3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-upload-segments

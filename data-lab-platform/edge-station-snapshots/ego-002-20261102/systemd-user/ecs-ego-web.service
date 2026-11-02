@@ -1,0 +1,27 @@
+[Unit]
+Description=EGO local capture control web (mobile UI)
+Documentation=file:///home/server/ego-web/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/ego-web
+EnvironmentFile=-%h/.config/ego-station.env
+Environment=PYTHONUNBUFFERED=1
+Environment=EGO_WEB_HOST=0.0.0.0
+Environment=EGO_WEB_PORT=8080
+Environment=EGO_CAPTURE_TARGET=ecs-oak-capture-stack.target
+Environment=EGO_PREVIEW_URL=http://127.0.0.1:8765/preview/front_left/jpg
+Environment=EGO_STANDBY_IDLE_STOP_S=45
+# EGO_SEGMENT_ROOT / EGO_CAPTURE_CHECKPOINT: from ego-station.env per station (ego-001, …)
+ExecStart=/usr/bin/python3 /home/server/ego-web/ego_web.py
+Restart=on-failure
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-ego-web
+
+[Install]
+WantedBy=default.target

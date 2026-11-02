@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ego Studio — Capture · Dataset · Evaluation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="logo" href="/">Ego Studio</a>
+      <nav class="nav-links">
+        <a href="#captures">What we capture</a>
+        <a href="#replay">Replay &amp; live</a>
+        <a href="#evaluate">Evaluate</a>
+        <a href="https://egoverse.ai/" class="pill" rel="noopener">EgoVerse</a>
+        <a href="/api/health" class="pill">API</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">Capture · Dataset · Evaluation</p>
+      <h1>Human egocentric data, engineered for <em>robot learning</em></h1>
+      <p class="lede">
+        Operator-grade pipeline: time-aligned video, accurate camera poses, 3D head tracking,
+        dense language segments, standardized and open-ended task metadata — exportable for policy training.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#captures">Product scope</a>
+        <a class="btn ghost" href="https://github.com/GaTech-RL2/EgoVerse" rel="noopener">EgoVerse (reference)</a>
+      </div>
+    </section>
+
+    <section class="capture-scope" id="captures">
+      <div class="capture-scope-head">
+        <h2 class="section-title">What EgoVerse Captures</h2>
+        <p class="capture-tagline">Dense annotations and diverse task coverage</p>
+        <p class="section-sub scope-note">
+          The copy below mirrors the public <a href="https://egoverse.ai/" rel="noopener">EgoVerse</a> product framing.
+          This deployment implements the capture contract (poses, head, language, task/scene/operator metadata, QC, export)
+          for your own recorders and annotators — it is not affiliated with the EgoVerse consortium.
+        </p>
+      </div>
+      <div class="capture-columns">
+        <article class="promo-card">
+          <h3>Ready for Policy Learning</h3>
+          <p class="promo-lead">Includes accurate camera poses, 3D head tracking, and dense language annotation.</p>
+          <ul>
+            <li><strong>Camera poses</strong> — world–camera trajectory as JSONL or SLAM/VIO adapters</li>
+            <li><strong>3D head tracking</strong> — rigid head–camera coupling or external tracker hooks</li>
+            <li><strong>Dense language</strong> — timestamped segments in <code>language.json</code> (ASR-ready)</li>
+          </ul>
+        </article>
+        <article class="promo-card">
+          <h3>Standardized and Open-Ended Tasks</h3>
+          <p class="promo-lead">
+            EgoVerse contains standardized flagship tasks alongside open-ended scenarios across diverse tasks, scenes, objects, and operators.
+          </p>
+          <ul>
+            <li><strong>Flagship vs open-ended</strong> — <code>task_tier</code> on <code>manifest.json</code></li>
+            <li><strong>Scenes &amp; operators</strong> — <code>scene_id</code>, <code>operator_id</code></li>
+            <li><strong>Objects &amp; coverage</strong> — <code>object_tags</code>, declared dense channels</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="feature-grid" id="replay">
+      <article class="card">
+        <h2>Offline replay</h2>
+        <ul>
+          <li><code>uv run python scripts/make_replay_fixture.py</code> — synthetic MP4 + poses + language</li>
+          <li><code>uv run python scripts/replay_episode.py</code> — visualize bundle + captions</li>
+          <li>EgoVerse corpus via official download tools (see README)</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>Live USB capture</h2>
+        <ul>
+          <li><code>uv run python scripts/probe_cameras.py</code> — map <code>/dev/video*</code> nodes</li>
+          <li><code>uv run python scripts/record_usb.py</code> — record <code>video.mp4</code> into an episode folder</li>
+          <li>Dual streams: <code>video_left.mp4</code> / <code>video_right.mp4</code> supported in export</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>QC &amp; export</h2>
+        <ul>
+          <li>Gates for required poses/language, pose gaps, overlapping transcripts</li>
+          <li><code>export/policy_ready_bundle.json</code> for training stacks</li>
+          <li>REST: <code>/api/health</code>, <code>/api/stats</code></li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="stats" id="evaluate">
+      <h2 class="section-title">Dataset snapshot</h2>
+      <p class="section-sub">Wire <code>/api/stats</code> to your warehouse or mirror EgoVerse release counters.</p>
+      <div class="stat-grid" id="stat-grid">
+        <div class="stat"><span class="num" data-key="hours_recorded">—</span><span class="label">Hours recorded</span></div>
+        <div class="stat"><span class="num" data-key="episodes">—</span><span class="label">Episodes</span></div>
+        <div class="stat"><span class="num" data-key="tasks">—</span><span class="label">Tasks</span></div>
+        <div class="stat"><span class="num" data-key="scenes">—</span><span class="label">Scenes</span></div>
+        <div class="stat"><span class="num" data-key="annotators">—</span><span class="label">Annotators</span></div>
+      </div>
+    </section>
+
+    <section class="consortium">
+      <h2 class="section-title">Operator console</h2>
+      <p class="section-sub">
+        <code>export PATH="$HOME/.local/bin:$PATH"</code><br /><code>cd /home/server/workspace/ego_studio</code><br /><code>uv run python -m ego_capture_studio.cli.serve_web --host 0.0.0.0 --port 8080</code>
+      </p>
+    </section>
+
+    <section class="footer-cta">
+      <p>© {{ year }} · Ego Studio · <a href="https://egoverse.ai/" rel="noopener">EgoVerse</a> is an independent consortium dataset</p>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

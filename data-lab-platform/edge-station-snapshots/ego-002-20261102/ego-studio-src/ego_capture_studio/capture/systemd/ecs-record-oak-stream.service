@@ -1,0 +1,37 @@
+[Unit]
+Description=EGO OAK capture-only (Scheme A: local segments + MJPEG preview)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/server/workspace/ego-studio
+
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATALAB_JPEG_QUALITY=70
+Environment=OPENCV_NUM_THREADS=2
+Environment=CAPTURE_JPEG_MAX_EDGE=0
+Environment=PREVIEW_FPS=8
+Environment=PREVIEW_MAX_EDGE=640
+Environment=PREVIEW_JPEG_QUALITY=75
+
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.cli.record_oak_stream \
+  --fps 30 --imu-hz 200
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=120
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-record-oak-stream
+
+[Install]
+WantedBy=ecs-oak-capture-stack.target

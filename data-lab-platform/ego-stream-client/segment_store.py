@@ -533,15 +533,24 @@ def _assess_segment_integrity(
         ring_ovf = capture_health.get("ring_ovf")
         if isinstance(ring_ovf, dict):
             total_ovf = sum(int(v) for v in ring_ovf.values())
-            ovf_threshold = max(
-                int(os.environ.get("EGO_RING_OVERFLOW_CORRUPT_THRESHOLD", "32")),
-                int(frame_count * float(os.environ.get("EGO_RING_OVERFLOW_CORRUPT_RATIO", "0.02"))),
-            )
-            if total_ovf > ovf_threshold:
-                issues.append(f"capture_ring_overflow:total={total_ovf}")
-            elif total_ovf > 0:
-                qc_issues.append(f"capture_ring_overflow:total={total_ovf}")
-            # Below threshold: QC note only (82175ba). Above threshold: hard fault at capture close.
+            if total_ovf > 0:
+                # Tiered gate: ring overflow is QC at edge upload; strict export QC runs on ingest.
+                hard_fail = os.environ.get("EGO_RING_OVERFLOW_HARD_FAIL", "0").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                )
+                if hard_fail:
+                    ovf_threshold = max(
+                        int(os.environ.get("EGO_RING_OVERFLOW_CORRUPT_THRESHOLD", "32")),
+                        int(frame_count * float(os.environ.get("EGO_RING_OVERFLOW_CORRUPT_RATIO", "0.02"))),
+                    )
+                    if total_ovf > ovf_threshold:
+                        issues.append(f"capture_ring_overflow:total={total_ovf}")
+                    else:
+                        qc_issues.append(f"capture_ring_overflow:total={total_ovf}")
+                else:
+                    qc_issues.append(f"capture_ring_overflow:total={total_ovf}")
         quad_skew = int(capture_health.get("quad_skew_events") or 0)
         # Sequential lockstep can show multi-ms spread at pop time even when FSYNC is
         # healthy; only reject when rings overflowed in the same segment window.

@@ -1,0 +1,47 @@
+# ego-001 station-specific camera topology (physical socket layout).
+# Helmet CAM_B/C/D were wired for legacy 3RGB+depth; remap sockets to ego-standard roles.
+# Deploy on 130: EGO_TOPOLOGY_FILE=/home/server/workspace/ego-studio/config/camera_topology_ego-001.yaml
+# Other stations (ego-002, 003, …) need their own camera_topology_<station>.* — do not copy this file.
+
+topology_id: ego-001-physical
+version: 1
+board_profile: OAK-FFC-4P-Ego
+description: ego-001 helmet physical wiring — CAM_B/C/D retain legacy socket layout
+
+primary_socket: CAM_A
+head_right_socket: CAM_D
+
+socket_to_role:
+  CAM_A: front_left
+  CAM_B: rear_left
+  CAM_C: rear_right
+  CAM_D: front_right
+
+role_to_lerobot_key:
+  front_left: observation.images.camera_front_left
+  front_right: observation.images.camera_front_right
+  rear_left: observation.images.camera_rear_left
+  rear_right: observation.images.camera_rear_right
+
+viewer_display_order:
+  - front_left
+  - front_right
+  - rear_left
+  - rear_right
+
+viewer_labels:
+  zh:
+    front_left: 前左
+    front_right: 前右
+    rear_left: 后左
+    rear_right: 后右
+  en:
+    front_left: Front Left
+    front_right: Front Right
+    rear_left: Rear Left
+    rear_right: Rear Right
+
+strict_sync:
+  causal_sockets:
+    - CAM_B
+    - CAM_C

@@ -1,0 +1,26 @@
+[Unit]
+Description=EGO station heartbeat (low priority, always-on; reports captureState)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/home/server/workspace/ego-studio
+EnvironmentFile=-%h/.config/ego-station.env
+EnvironmentFile=-%h/.config/ego-station.env.d/station.conf
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DATALAB_HEARTBEAT_INTERVAL_S=15
+Environment=DATALAB_HEARTBEAT_TIMEOUT_S=3
+Environment=DATALAB_HEARTBEAT_NICE=10
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/home/server/workspace/ego-studio/.venv/bin/python3 /home/server/workspace/ego-studio/src/ego_capture_studio/tools/station_heartbeat_loop.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-station-heartbeat
+
+[Install]
+WantedBy=default.target

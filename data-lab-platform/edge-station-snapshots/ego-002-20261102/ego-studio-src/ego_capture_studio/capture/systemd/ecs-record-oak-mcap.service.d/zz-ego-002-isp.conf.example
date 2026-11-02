@@ -1,0 +1,9 @@
+# ego-002 only: copy to edge host on BOTH units:
+#   ~/.config/systemd/user/ecs-record-oak-mcap.service.d/zz-ego-002-isp.conf
+#   ~/.config/systemd/user/ecs-preview-standby.service.d/zz-ego-002-isp.conf
+# Then: systemctl --user daemon-reload && systemctl --user restart ecs-preview-standby.service
+# Docs: data-lab-platform/docs/ego-oak-isp-tuning.md (003/004: rename to zz-ego-00N-isp.conf)
+# Keeps OAK_AE_MAX_EXPOSURE_US=20000 from z-mcap-production.conf (do not override with 25000).
+[Service]
+# ego-002 field default (2026-10-07): +1 (satisfied); +2 brighter; +3 may kill front AE.
+Environment=OAK_AE_COMPENSATION=1

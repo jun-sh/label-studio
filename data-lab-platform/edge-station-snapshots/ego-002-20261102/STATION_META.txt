@@ -1,0 +1,3 @@
+7.0.0-29-generic
+server-ego-002
+no-git

@@ -1,0 +1,19 @@
+[Unit]
+Description=EGO OAK USB bootloader recovery (idle precheck; no capture)
+Documentation=file:///home/server/workspace/ego-studio/README.md
+After=network-online.target
+ConditionPathExists=/home/server/workspace/ego-studio/.venv/bin/python
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/server/workspace/ego-studio/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# Only run when Luxonis bootloader PID 03e7:f63c is present; exit 0 otherwise.
+ExecStart=/bin/bash -c 'lsusb | grep -q "03e7:f63c" && /home/server/workspace/ego-studio/.venv/bin/python -m ego_capture_studio.tools.oak_boot_from_bootloader || exit 0'
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecs-oak-bootloader-precheck
+
+[Install]
+WantedBy=default.target

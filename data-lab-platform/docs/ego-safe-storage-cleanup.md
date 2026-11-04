@@ -74,9 +74,14 @@ bash data-lab-platform/scripts/ego-safe-storage-cleanup.sh --apply --station ego
 
 **整站删除（含 raw）**：`scripts/ego-trash-station.sh ego-002 --apply`（挪到 `_trash/`，可 `mv` 还原）。  
 **只清 collection / 重 derive（保留 raw）**：`scripts/ego-reset-34-only.sh` — **禁止**当整站删除用。  
-**删左侧若干条（按 `#` / episode_index）** — **首选 Collection UI**：Episodes 工具栏 **「多选」→ 勾选 →「删除」**（仅 L2，保留 raw）。  
-运维备用 CLI：`scripts/ego-delete-episodes.sh ego-002 --index 12,31 --apply`（默认 dry-run）。  
-API：`POST /lerobot/api/collection/stations/{id}/episodes/delete`，body `{ "episode_indices": [12,31], "confirm": true }`。
+**删左侧若干条（按 `#` / episode_index）** — **首选 Collection UI**（与 LeRobot/io-ai 侧边栏一致）：
+
+1. 点 **编辑** → 行内 **垃圾桶**（或多选后 **批量删除**）
+2. 在确认框点 **确定** → 调用 34 L2 删除 API（保留 raw）
+3. **删除成功**：底部 toast「删除成功：#N 已从采集站移除」→ 自动刷新 → **该条从列表消失**（不是保持浅灰）
+4. **浅灰 + 恢复箭头**：仅是 viewer **预览软删标记**，34 数据仍在；不是 datalab 删除成功。点恢复或刷新可取消该标记
+
+运维备用 CLI：`scripts/ego-delete-episodes.sh ego-002 --index 12,31 --apply`
 
 `.bak` 迁移目录仍用：`scripts/ego-cleanup-bak-dirs.sh --apply`
 

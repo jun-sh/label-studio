@@ -413,8 +413,8 @@ function injectBranding(html, search = "") {
       '<link rel="stylesheet" href="/lerobot/branding/overlay-import.css?v=5"/>' +
       '<script src="/_datalab/import-core.js?v=7"></script>' +
       '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
-      '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-delete.css?v=5"/>' +
-      '<script defer src="/lerobot/branding/overlay-episode-delete.js?v=5"></script>' +
+      '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-delete.css?v=6"/>' +
+      '<script defer src="/lerobot/branding/overlay-episode-delete.js?v=6"></script>' +
       '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
   html = html.replace(/<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*>\s*/gi, "");

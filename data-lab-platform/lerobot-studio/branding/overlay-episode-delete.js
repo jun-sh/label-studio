@@ -165,6 +165,22 @@
     return /bulkDelete|批量删除|Delete selected/i.test(title);
   }
 
+  function blockEvent(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+  }
+
+  function handleDeletePointer(e) {
+    var btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn) return;
+    var panel = episodesPanelRoot();
+    if (!panel.contains(btn)) return;
+    if (isRowDeleteButton(btn) || isBulkDeleteButton(btn)) {
+      blockEvent(e);
+    }
+  }
+
   function removeLegacyToolbarDelete() {
     var stale = document.querySelectorAll("[data-datalab-delete-trigger]");
     for (var i = 0; i < stale.length; i++) {
@@ -193,15 +209,20 @@
     }).join(", ");
     if (isZh()) {
       return g.confirm(
-        "从采集列表删除以下 episode？\n" +
+        "从采集站删除以下 episode？\n" +
           list +
-          "\n\n仅删除 collection 视图（L2），不会删除 raw/segments。\n此操作不可从 UI 撤销。",
+          "\n\n说明：\n" +
+          "· 若条目只是变浅灰并出现「恢复」，那是 viewer 预览标记，数据仍在。\n" +
+          "· 点「确定」才会删 34 上的 collection（L2），raw/segments 保留。\n" +
+          "· 删除成功：页面刷新后该 # 从列表消失（不是保持灰色）。",
       );
     }
     return g.confirm(
-      "Remove these episodes from the collection list?\n" +
+      "Remove these episodes from the collection station?\n" +
         list +
-        "\n\nL2/collection only — raw/segments are kept.\nThis cannot be undone from the UI.",
+        "\n\nNote: gray + restore icon = viewer preview only.\n" +
+        "OK runs the server delete (L2; raw kept).\n" +
+        "Success: after reload the # disappears from the list.",
     );
   }
 
@@ -246,13 +267,26 @@
           var detail =
             (result.payload && (result.payload.detail || result.payload.error)) ||
             (isZh() ? "删除失败" : "Delete failed");
-          showToast(String(detail), "error");
+          showToast(
+            (isZh() ? "删除失败：" : "Delete failed: ") +
+              detail +
+              (isZh() ? "（将刷新以取消灰色标记）" : " (reload to clear gray mark)"),
+            "error",
+          );
+          setTimeout(function () {
+            g.location.reload();
+          }, 1200);
           return;
         }
+        var list = indices
+          .map(function (n) {
+            return "#" + n;
+          })
+          .join(", ");
         showToast(
           isZh()
-            ? "已删除 " + indices.length + " 条，正在刷新…"
-            : "Removed " + indices.length + " episode(s). Reloading…",
+            ? "删除成功：" + list + " 已从采集站移除，正在刷新…"
+            : "Deleted " + list + " from station. Reloading…",
           "ok",
         );
         setTimeout(function () {
@@ -260,7 +294,13 @@
         }, 600);
       })
       .catch(function () {
-        showToast(isZh() ? "网络错误" : "Network error", "error");
+        showToast(
+          isZh() ? "网络错误（将刷新以取消灰色标记）" : "Network error (reload to clear gray)",
+          "error",
+        );
+        setTimeout(function () {
+          g.location.reload();
+        }, 1200);
       })
       .finally(function () {
         busy = false;
@@ -277,17 +317,13 @@
     removeLegacyToolbarDelete();
 
     if (isBulkDeleteButton(btn)) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
+      blockEvent(e);
       runDelete(collectBulkSelectedIndices());
       return;
     }
 
     if (isRowDeleteButton(btn)) {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
+      blockEvent(e);
       var row = findEpisodeRowEl(btn);
       var idx = episodeIndexFromRow(row);
       if (idx == null) {
@@ -302,6 +338,7 @@
     removeLegacyToolbarDelete();
     if (hookInstalled) return;
     hookInstalled = true;
+    document.addEventListener("pointerdown", handleDeletePointer, true);
     document.addEventListener("click", onClickCapture, true);
     if (!g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ && document.body) {
       g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ = new MutationObserver(function () {

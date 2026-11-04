@@ -1,36 +1,27 @@
-/* Collection embed: Episodes toolbar delete button */
+/* Collection embed: LeRobot-native episode delete + row action layout */
 
 html[data-datalab-collection-embed="1"] [data-datalab-delete-trigger="1"] {
   display: none !important;
 }
 
-html[data-datalab-collection-embed="1"] [data-datalab-edit-menu="1"] {
-  min-width: 112px;
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: #fff;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+/* Upstream stacks row actions below metadata (flex-col); keep one visual row like io-ai dense list */
+html[data-datalab-collection-embed="1"] #lerobot-root .group.relative.flex.w-full.min-w-0.flex-col.border-b {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
 }
 
-html[data-datalab-collection-embed="1"] [data-datalab-edit-menu="1"] button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  font-size: 13px;
-  cursor: pointer;
+html[data-datalab-collection-embed="1"] #lerobot-root .group.relative.flex.w-full.min-w-0.flex-col.border-b > div[role="button"] {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-html[data-datalab-collection-embed="1"] [data-datalab-edit-menu="1"] button:hover {
-  background: rgba(15, 23, 42, 0.06);
-}
-
-html[data-datalab-collection-embed="1"] [data-datalab-edit-menu="1"] .datalab-edit-menu-delete {
-  color: #b91c1c;
+html[data-datalab-collection-embed="1"] #lerobot-root .group.relative.flex.w-full.min-w-0.flex-col.border-b > div.mx-2.mt-1.flex {
+  margin-top: 0;
+  margin-right: 0.35rem;
+  margin-left: 0;
+  align-self: center;
+  flex: 0 0 auto;
 }
 
 html[data-datalab-collection-embed="1"] [data-datalab-delete-toast="1"] {

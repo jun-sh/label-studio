@@ -1,5 +1,12 @@
 /**
- * Collection embed: delete episodes via the native Edit (pencil) toolbar menu.
+ * Collection stream embed: wire LeRobot sidebar delete UX to datalab L2 delete API.
+ *
+ * Matches io-ai / LeRobot viewer patterns:
+ * - Toolbar: 多选 + 编辑/完成 + 导入 (no extra datalab delete chip)
+ * - Edit mode: per-row edit + delete icon buttons
+ * - Multi-select: bulk delete in the selection bar
+ *
+ * Upstream delete only toggles client state; for stream:// we persist via API.
  */
 (function () {
   "use strict";
@@ -30,15 +37,10 @@
   if (!isCollectionStationEmbed()) return;
   g.__DATALAB_OVERLAY_EPISODE_DELETE__ = true;
 
-  var editBtnHooked = null;
-  var menuEl = null;
   var toastEl = null;
   var toastTimer = null;
   var busy = false;
-  var skipEditIntercept = false;
-  var tickScheduled = false;
-  var tickDebounceTimer = null;
-  var TICK_DEBOUNCE_MS = 250;
+  var hookInstalled = false;
 
   function pageLang() {
     try {
@@ -70,20 +72,17 @@
     return null;
   }
 
-  function buttonText(btn) {
-    return (btn.textContent || "").replace(/\s+/g, " ").trim();
+  function episodesPanelRoot() {
+    return (
+      document.querySelector("[data-datalab-episodes-panel='1']") ||
+      document.querySelector(".dv-groupview") ||
+      document.getElementById("lerobot-root") ||
+      document.body
+    );
   }
 
-  function findEpisodeToolbarButton(labelRe) {
-    var buttons = document.querySelectorAll("button");
-    for (var i = 0; i < buttons.length; i++) {
-      var btn = buttons[i];
-      if (btn.closest("[data-datalab-edit-menu]")) continue;
-      if (btn.closest("[data-datalab-import-modal]")) continue;
-      if (btn.getAttribute("data-datalab-delete-trigger") === "1") continue;
-      if (labelRe.test(buttonText(btn))) return btn;
-    }
-    return null;
+  function buttonText(btn) {
+    return (btn.textContent || "").replace(/\s+/g, " ").trim();
   }
 
   function parseEpisodeIndex(label) {
@@ -96,14 +95,30 @@
   }
 
   function findEpisodeRowEl(el) {
+    if (!el || !el.closest) return null;
     return (
-      el.closest(".group") ||
-      el.closest("[class*='border-b']") ||
-      el.parentElement
+      el.closest("[data-datalab-episode-row='1']") ||
+      el.closest(".group.relative.flex.w-full") ||
+      el.closest(".group")
     );
   }
 
-  function isRowSelected(rowEl) {
+  function episodeIndexFromRow(rowEl) {
+    if (!rowEl) return null;
+    var main = rowEl.querySelector('[role="button"][aria-label*="Episode"]');
+    if (main) {
+      var idx = parseEpisodeIndex(main.getAttribute("aria-label") || "");
+      if (idx != null) return idx;
+    }
+    var badge = rowEl.querySelector(".font-mono");
+    if (badge) {
+      var m = String(badge.textContent || "").match(/#\s*(\d+)/);
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  }
+
+  function rowIsBulkChecked(rowEl) {
     if (!rowEl) return false;
     if (rowEl.querySelector('input[type="checkbox"]:checked')) return true;
     var toggles = rowEl.querySelectorAll('[role="checkbox"]');
@@ -115,37 +130,46 @@
     return false;
   }
 
-  function collectSelectedEpisodeIndices() {
-    var panel =
-      document.querySelector("[data-datalab-episodes-panel='1']") ||
-      document.querySelector(".dv-groupview");
-    var root = panel || document;
+  function collectBulkSelectedIndices() {
+    var root = episodesPanelRoot();
     var out = new Set();
-
-    var nodes = root.querySelectorAll('button[aria-label], [role="button"][aria-label]');
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      var label = el.getAttribute("aria-label") || "";
-      if (!isEpisodeSelectLabel(label)) continue;
-      var rowEl = findEpisodeRowEl(el);
-      if (!isRowSelected(rowEl)) continue;
-      var idx = parseEpisodeIndex(label);
+    var rows = root.querySelectorAll(
+      "[data-datalab-episode-row='1'], .group.relative.flex.w-full.min-w-0.flex-col",
+    );
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!rowIsBulkChecked(row)) continue;
+      var idx = episodeIndexFromRow(row);
       if (idx != null) out.add(idx);
     }
-
-    if (out.size === 0) {
-      var current = root.querySelector(
-        'button[aria-current="true"][aria-label*="Episode"], button[aria-current="page"][aria-label*="Episode"]',
-      );
-      if (current) {
-        var curIdx = parseEpisodeIndex(current.getAttribute("aria-label") || "");
-        if (curIdx != null) out.add(curIdx);
-      }
-    }
-
     return Array.from(out).sort(function (a, b) {
       return a - b;
     });
+  }
+
+  function isRowDeleteButton(btn) {
+    if (!btn || btn.getAttribute("data-datalab-delete-trigger") === "1") return false;
+    var row = findEpisodeRowEl(btn);
+    if (!row) return false;
+    var title = (btn.getAttribute("title") || "").trim();
+    if (/delete episode|删除 episode|删除 Episode|エピソードを削除/i.test(title)) return true;
+    var cls = String(btn.className || "");
+    return cls.indexOf("destructive") >= 0;
+  }
+
+  function isBulkDeleteButton(btn) {
+    if (!btn || btn.closest("[data-datalab-episode-row='1']")) return false;
+    var label = buttonText(btn);
+    if (/^(批量删除|Delete selected|選択を削除)$/i.test(label)) return true;
+    var title = (btn.getAttribute("title") || "").trim();
+    return /bulkDelete|批量删除|Delete selected/i.test(title);
+  }
+
+  function removeLegacyToolbarDelete() {
+    var stale = document.querySelectorAll("[data-datalab-delete-trigger]");
+    for (var i = 0; i < stale.length; i++) {
+      stale[i].remove();
+    }
   }
 
   function showToast(message, variant) {
@@ -161,11 +185,6 @@
       if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
       toastEl = null;
     }, 4500);
-  }
-
-  function closeEditMenu() {
-    if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
-    menuEl = null;
   }
 
   function confirmDelete(indices) {
@@ -193,11 +212,9 @@
       showToast(isZh() ? "无法识别工位" : "Station id missing", "error");
       return;
     }
-    if (indices.length === 0) {
+    if (!indices || indices.length === 0) {
       showToast(
-        isZh()
-          ? "请先用「多选」勾选要删的条目，或选中当前 episode"
-          : "Use multi-select or pick the current episode first",
+        isZh() ? "请先勾选要删除的 episode" : "Select episode(s) to delete first",
         "error",
       );
       return;
@@ -250,123 +267,45 @@
       });
   }
 
-  function triggerNativeEdit(editBtn) {
-    closeEditMenu();
-    skipEditIntercept = true;
-    try {
-      editBtn.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, cancelable: true, view: g }),
-      );
-    } finally {
-      skipEditIntercept = false;
-    }
-  }
+  function onClickCapture(e) {
+    var btn = e.target && e.target.closest ? e.target.closest("button") : null;
+    if (!btn) return;
 
-  function openEditMenu(editBtn) {
-    closeEditMenu();
-    var rect = editBtn.getBoundingClientRect();
-    menuEl = document.createElement("div");
-    menuEl.setAttribute("data-datalab-edit-menu", "1");
-    menuEl.setAttribute("role", "menu");
+    var panel = episodesPanelRoot();
+    if (!panel.contains(btn)) return;
 
-    var editItem = document.createElement("button");
-    editItem.type = "button";
-    editItem.setAttribute("role", "menuitem");
-    editItem.textContent = isZh() ? "编辑" : "Edit";
-    editItem.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      triggerNativeEdit(editBtn);
-    });
+    removeLegacyToolbarDelete();
 
-    var deleteItem = document.createElement("button");
-    deleteItem.type = "button";
-    deleteItem.setAttribute("role", "menuitem");
-    deleteItem.className = "datalab-edit-menu-delete";
-    deleteItem.textContent = isZh() ? "删除" : "Delete";
-    deleteItem.addEventListener("click", function (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      closeEditMenu();
-      runDelete(collectSelectedEpisodeIndices());
-    });
-
-    menuEl.appendChild(editItem);
-    menuEl.appendChild(deleteItem);
-    menuEl.style.position = "fixed";
-    menuEl.style.left = Math.max(8, rect.left) + "px";
-    menuEl.style.top = rect.bottom + 4 + "px";
-    menuEl.style.zIndex = "100000";
-    document.body.appendChild(menuEl);
-  }
-
-  function onEditClickCapture(e) {
-    if (skipEditIntercept) return;
-    if (menuEl && menuEl.contains(e.target)) return;
-
-    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
-    if (!editBtn || (!editBtn.contains(e.target) && e.target !== editBtn)) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    if (menuEl) {
-      closeEditMenu();
+    if (isBulkDeleteButton(btn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      runDelete(collectBulkSelectedIndices());
       return;
     }
-    openEditMenu(editBtn);
-  }
 
-  function onDocumentClick(e) {
-    if (!menuEl) return;
-    if (menuEl.contains(e.target)) return;
-    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
-    if (editBtn && (editBtn === e.target || editBtn.contains(e.target))) return;
-    closeEditMenu();
-  }
-
-  function removeLegacyDeleteButton() {
-    var stale = document.querySelectorAll("[data-datalab-delete-trigger]");
-    for (var i = 0; i < stale.length; i++) {
-      stale[i].remove();
+    if (isRowDeleteButton(btn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      var row = findEpisodeRowEl(btn);
+      var idx = episodeIndexFromRow(row);
+      if (idx == null) {
+        showToast(isZh() ? "无法识别 episode 编号" : "Episode index missing", "error");
+        return;
+      }
+      runDelete([idx]);
     }
   }
 
-  function installEditMenuHook() {
-    removeLegacyDeleteButton();
-    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
-    if (!editBtn) return;
-    if (editBtnHooked === editBtn) return;
-    if (editBtnHooked) {
-      editBtnHooked.removeEventListener("click", onEditClickCapture, true);
-    }
-    editBtnHooked = editBtn;
-    editBtn.setAttribute("data-datalab-edit-delete-hook", "1");
-    editBtn.addEventListener("click", onEditClickCapture, true);
-  }
-
-  function tick() {
-    installEditMenuHook();
-  }
-
-  function scheduleTick() {
-    if (tickScheduled) return;
-    tickScheduled = true;
-    if (tickDebounceTimer) clearTimeout(tickDebounceTimer);
-    tickDebounceTimer = setTimeout(function () {
-      tickScheduled = false;
-      tickDebounceTimer = null;
-      tick();
-    }, TICK_DEBOUNCE_MS);
-  }
-
-  function schedule() {
-    document.addEventListener("click", onDocumentClick, true);
-    tick();
-    setTimeout(tick, 500);
-    setTimeout(tick, 1500);
+  function installHooks() {
+    removeLegacyToolbarDelete();
+    if (hookInstalled) return;
+    hookInstalled = true;
+    document.addEventListener("click", onClickCapture, true);
     if (!g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ && document.body) {
       g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ = new MutationObserver(function () {
-        scheduleTick();
+        removeLegacyToolbarDelete();
       });
       g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__.observe(document.body, {
         childList: true,
@@ -376,8 +315,8 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", schedule);
+    document.addEventListener("DOMContentLoaded", installHooks);
   } else {
-    schedule();
+    installHooks();
   }
 })();

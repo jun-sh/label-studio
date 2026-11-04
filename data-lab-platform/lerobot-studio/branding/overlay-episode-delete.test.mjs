@@ -6,8 +6,12 @@ function parseEpisodeIndex(label) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-function isEpisodeSelectLabel(label) {
-  return /^(选择 Episode|Select Episode)\s+\d+/i.test(label || "");
+function isRowDeleteTitle(title) {
+  return /delete episode|删除 episode|删除 Episode|エピソードを削除/i.test(String(title || "").trim());
+}
+
+function isBulkDeleteLabel(label) {
+  return /^(批量删除|Delete selected|選択を削除)$/i.test(String(label || "").replace(/\s+/g, " ").trim());
 }
 
 describe("overlay-episode-delete helpers", () => {
@@ -17,8 +21,15 @@ describe("overlay-episode-delete helpers", () => {
     assert.equal(parseEpisodeIndex("other"), null);
   });
 
-  it("isEpisodeSelectLabel", () => {
-    assert.equal(isEpisodeSelectLabel("Select Episode 0"), true);
-    assert.equal(isEpisodeSelectLabel("Edit"), false);
+  it("isRowDeleteTitle matches LeRobot i18n", () => {
+    assert.equal(isRowDeleteTitle("删除 Episode"), true);
+    assert.equal(isRowDeleteTitle("Delete episode"), true);
+    assert.equal(isRowDeleteTitle("Edit task"), false);
+  });
+
+  it("isBulkDeleteLabel", () => {
+    assert.equal(isBulkDeleteLabel("批量删除"), true);
+    assert.equal(isBulkDeleteLabel("Delete selected"), true);
+    assert.equal(isBulkDeleteLabel("删除"), false);
   });
 });

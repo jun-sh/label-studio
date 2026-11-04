@@ -38,6 +38,61 @@
   var busy = false;
   var hookInstalled = false;
   var repairPrompted = false;
+  var KEEP_EDIT_KEY = "datalab-collection-restore-edit";
+
+  function findEpisodeToolbarButton(labelRe) {
+    var buttons = document.querySelectorAll("button");
+    for (var i = 0; i < buttons.length; i++) {
+      var btn = buttons[i];
+      if (labelRe.test(buttonText(btn))) return btn;
+    }
+    return null;
+  }
+
+  function isEditModeActive() {
+    return Boolean(findEpisodeToolbarButton(/^(完成|Done)$/i));
+  }
+
+  function markKeepEditModeForReload() {
+    try {
+      if (isEditModeActive()) {
+        g.sessionStorage.setItem(KEEP_EDIT_KEY, "1");
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function reloadKeepingEditMode(forceKeepEdit) {
+    try {
+      if (forceKeepEdit || isEditModeActive()) {
+        g.sessionStorage.setItem(KEEP_EDIT_KEY, "1");
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    g.location.reload();
+  }
+
+  function restoreEditModeAfterReload() {
+    try {
+      if (g.sessionStorage.getItem(KEEP_EDIT_KEY) !== "1") return;
+      g.sessionStorage.removeItem(KEEP_EDIT_KEY);
+    } catch (e) {
+      return;
+    }
+    var attempts = 0;
+    function tick() {
+      if (isEditModeActive()) return;
+      var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
+      if (editBtn) {
+        editBtn.click();
+        return;
+      }
+      if (attempts++ < 24) setTimeout(tick, 250);
+    }
+    setTimeout(tick, 400);
+  }
 
   function pageLang() {
     try {
@@ -238,19 +293,19 @@
       .join(", ");
     if (isZh()) {
       return g.confirm(
-        "从采集站永久删除 " +
+        "确认从采集站永久删除 " +
           list +
           "？\n\n" +
-          "· 仅删 collection（L2），raw/segments 保留。\n" +
-          "· 成功：刷新后该条从列表消失（不会一直灰色）。",
+          "· 本次操作仅移除采集列表中的可回放数据（L2）；原始录制（raw/segments）仍保留。\n" +
+          "· 确认后系统将更新列表并刷新视图，对应条目将不再显示于侧边栏。",
       );
     }
     return g.confirm(
       "Permanently remove " +
         list +
-        " from the station?\n\n" +
-        "L2 only; raw kept.\n" +
-        "Success: row disappears after reload (not gray).",
+        " from this collection station?\n\n" +
+        "· This removes list playback data (L2) only; raw recordings and segments are retained.\n" +
+        "· After confirmation the list will refresh and the entry will no longer appear in the sidebar.",
     );
   }
 
@@ -270,7 +325,7 @@
       return;
     }
     if (!opts.skipConfirm && !confirmDelete(indices)) {
-      g.location.reload();
+      reloadKeepingEditMode(false);
       return;
     }
 
@@ -306,7 +361,7 @@
             "error",
           );
           setTimeout(function () {
-            g.location.reload();
+            reloadKeepingEditMode(false);
           }, 1200);
           return;
         }
@@ -317,18 +372,18 @@
           .join(", ");
         showToast(
           isZh()
-            ? "删除成功：" + list + " 已移除，正在刷新…"
-            : "Removed " + list + ". Reloading…",
+            ? "删除成功：" + list + " 已移除，正在更新列表…"
+            : "Removed " + list + ". Updating list…",
           "ok",
         );
         setTimeout(function () {
-          g.location.reload();
+          reloadKeepingEditMode(true);
         }, 500);
       })
       .catch(function () {
         showToast(isZh() ? "网络错误（将刷新）" : "Network error (reload)", "error");
         setTimeout(function () {
-          g.location.reload();
+          reloadKeepingEditMode(false);
         }, 1200);
       })
       .finally(function () {
@@ -407,10 +462,16 @@
     }
     setTimeout(maybePromptSoftDeletedRepair, 800);
     setTimeout(maybePromptSoftDeletedRepair, 2500);
+    restoreEditModeAfterReload();
   }
 
   installHooks();
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", installHooks);
+    document.addEventListener("DOMContentLoaded", function () {
+      installHooks();
+      restoreEditModeAfterReload();
+    });
+  } else {
+    restoreEditModeAfterReload();
   }
 })();

@@ -414,7 +414,7 @@ function injectBranding(html, search = "") {
       '<script src="/_datalab/import-core.js?v=7"></script>' +
       '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
       '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-delete.css?v=7"/>' +
-      '<script src="/lerobot/branding/overlay-episode-delete.js?v=7"></script>' +
+      '<script src="/lerobot/branding/overlay-episode-delete.js?v=8"></script>' +
       '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
   html = html.replace(/<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*>\s*/gi, "");

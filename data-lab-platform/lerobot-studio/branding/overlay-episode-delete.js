@@ -1,12 +1,8 @@
 /**
  * Collection stream embed: wire LeRobot sidebar delete UX to datalab L2 delete API.
  *
- * Matches io-ai / LeRobot viewer patterns:
- * - Toolbar: 多选 + 编辑/完成 + 导入 (no extra datalab delete chip)
- * - Edit mode: per-row edit + delete icon buttons
- * - Multi-select: bulk delete in the selection bar
- *
- * Upstream delete only toggles client state; for stream:// we persist via API.
+ * Success = server delete + reload → episode row gone (not gray).
+ * Gray = viewer-only soft mark; we block it when possible and offer repair.
  */
 (function () {
   "use strict";
@@ -41,6 +37,7 @@
   var toastTimer = null;
   var busy = false;
   var hookInstalled = false;
+  var repairPrompted = false;
 
   function pageLang() {
     try {
@@ -81,6 +78,17 @@
     );
   }
 
+  function isInEpisodeSidebar(el) {
+    if (!el || !el.closest) return false;
+    var lr = document.getElementById("lerobot-root");
+    if (!lr || !lr.contains(el)) return false;
+    return Boolean(
+      el.closest(".group.relative.flex.w-full") ||
+        el.closest("[data-datalab-episodes-panel='1']") ||
+        el.closest(".dv-groupview"),
+    );
+  }
+
   function buttonText(btn) {
     return (btn.textContent || "").replace(/\s+/g, " ").trim();
   }
@@ -88,10 +96,6 @@
   function parseEpisodeIndex(label) {
     var m = String(label || "").match(/(?:选择 Episode|Select Episode)\s*(\d+)/i);
     return m ? parseInt(m[1], 10) : null;
-  }
-
-  function isEpisodeSelectLabel(label) {
-    return /^(选择 Episode|Select Episode)\s+\d+/i.test(label || "");
   }
 
   function findEpisodeRowEl(el) {
@@ -116,6 +120,31 @@
       if (m) return parseInt(m[1], 10);
     }
     return null;
+  }
+
+  function rowIsSoftDeleted(rowEl) {
+    if (!rowEl) return false;
+    var cls = String(rowEl.className || "");
+    if (cls.indexOf("opacity-60") >= 0) return true;
+    return Boolean(
+      rowEl.querySelector(
+        'button[title*="恢复 Episode"], button[title*="Restore episode"], button[title*="Restore Episode"]',
+      ),
+    );
+  }
+
+  function collectSoftDeletedIndices() {
+    var root = episodesPanelRoot();
+    var out = [];
+    var rows = root.querySelectorAll(".group.relative.flex.w-full.min-w-0.flex-col");
+    for (var i = 0; i < rows.length; i++) {
+      if (!rowIsSoftDeleted(rows[i])) continue;
+      var idx = episodeIndexFromRow(rows[i]);
+      if (idx != null) out.push(idx);
+    }
+    return out.sort(function (a, b) {
+      return a - b;
+    });
   }
 
   function rowIsBulkChecked(rowEl) {
@@ -158,7 +187,7 @@
   }
 
   function isBulkDeleteButton(btn) {
-    if (!btn || btn.closest("[data-datalab-episode-row='1']")) return false;
+    if (!btn) return false;
     var label = buttonText(btn);
     if (/^(批量删除|Delete selected|選択を削除)$/i.test(label)) return true;
     var title = (btn.getAttribute("title") || "").trim();
@@ -173,9 +202,7 @@
 
   function handleDeletePointer(e) {
     var btn = e.target && e.target.closest ? e.target.closest("button") : null;
-    if (!btn) return;
-    var panel = episodesPanelRoot();
-    if (!panel.contains(btn)) return;
+    if (!btn || !isInEpisodeSidebar(btn)) return;
     if (isRowDeleteButton(btn) || isBulkDeleteButton(btn)) {
       blockEvent(e);
     }
@@ -200,33 +227,35 @@
     toastTimer = setTimeout(function () {
       if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
       toastEl = null;
-    }, 4500);
+    }, 5000);
   }
 
   function confirmDelete(indices) {
-    var list = indices.map(function (n) {
-      return "#" + n;
-    }).join(", ");
+    var list = indices
+      .map(function (n) {
+        return "#" + n;
+      })
+      .join(", ");
     if (isZh()) {
       return g.confirm(
-        "从采集站删除以下 episode？\n" +
+        "从采集站永久删除 " +
           list +
-          "\n\n说明：\n" +
-          "· 若条目只是变浅灰并出现「恢复」，那是 viewer 预览标记，数据仍在。\n" +
-          "· 点「确定」才会删 34 上的 collection（L2），raw/segments 保留。\n" +
-          "· 删除成功：页面刷新后该 # 从列表消失（不是保持灰色）。",
+          "？\n\n" +
+          "· 仅删 collection（L2），raw/segments 保留。\n" +
+          "· 成功：刷新后该条从列表消失（不会一直灰色）。",
       );
     }
     return g.confirm(
-      "Remove these episodes from the collection station?\n" +
+      "Permanently remove " +
         list +
-        "\n\nNote: gray + restore icon = viewer preview only.\n" +
-        "OK runs the server delete (L2; raw kept).\n" +
-        "Success: after reload the # disappears from the list.",
+        " from the station?\n\n" +
+        "L2 only; raw kept.\n" +
+        "Success: row disappears after reload (not gray).",
     );
   }
 
-  function runDelete(indices) {
+  function runDelete(indices, opts) {
+    opts = opts || {};
     if (busy) return;
     var stationId = stationIdFromContext();
     if (!stationId) {
@@ -240,7 +269,10 @@
       );
       return;
     }
-    if (!confirmDelete(indices)) return;
+    if (!opts.skipConfirm && !confirmDelete(indices)) {
+      g.location.reload();
+      return;
+    }
 
     busy = true;
     fetch(
@@ -270,7 +302,7 @@
           showToast(
             (isZh() ? "删除失败：" : "Delete failed: ") +
               detail +
-              (isZh() ? "（将刷新以取消灰色标记）" : " (reload to clear gray mark)"),
+              (isZh() ? "（将刷新）" : " (reload)"),
             "error",
           );
           setTimeout(function () {
@@ -285,19 +317,16 @@
           .join(", ");
         showToast(
           isZh()
-            ? "删除成功：" + list + " 已从采集站移除，正在刷新…"
-            : "Deleted " + list + " from station. Reloading…",
+            ? "删除成功：" + list + " 已移除，正在刷新…"
+            : "Removed " + list + ". Reloading…",
           "ok",
         );
         setTimeout(function () {
           g.location.reload();
-        }, 600);
+        }, 500);
       })
       .catch(function () {
-        showToast(
-          isZh() ? "网络错误（将刷新以取消灰色标记）" : "Network error (reload to clear gray)",
-          "error",
-        );
+        showToast(isZh() ? "网络错误（将刷新）" : "Network error (reload)", "error");
         setTimeout(function () {
           g.location.reload();
         }, 1200);
@@ -307,12 +336,35 @@
       });
   }
 
+  function maybePromptSoftDeletedRepair() {
+    if (repairPrompted || busy) return;
+    var indices = collectSoftDeletedIndices();
+    if (!indices.length) return;
+    repairPrompted = true;
+    var list = indices
+      .map(function (n) {
+        return "#" + n;
+      })
+      .join(", ");
+    var ok = isZh()
+      ? g.confirm(
+          list +
+            " 目前只是 viewer 灰色预览，采集站上仍在。\n\n是否现在永久删除并从列表中移除？",
+        )
+      : g.confirm(
+          list +
+            " are gray preview marks only; still on server.\n\nPermanently delete and remove from list?",
+        );
+    if (ok) {
+      runDelete(indices, { skipConfirm: true });
+    } else {
+      repairPrompted = false;
+    }
+  }
+
   function onClickCapture(e) {
     var btn = e.target && e.target.closest ? e.target.closest("button") : null;
-    if (!btn) return;
-
-    var panel = episodesPanelRoot();
-    if (!panel.contains(btn)) return;
+    if (!btn || !isInEpisodeSidebar(btn)) return;
 
     removeLegacyToolbarDelete();
 
@@ -338,22 +390,27 @@
     removeLegacyToolbarDelete();
     if (hookInstalled) return;
     hookInstalled = true;
-    document.addEventListener("pointerdown", handleDeletePointer, true);
-    document.addEventListener("click", onClickCapture, true);
+    g.addEventListener("pointerdown", handleDeletePointer, true);
+    g.addEventListener("mousedown", handleDeletePointer, true);
+    g.addEventListener("click", onClickCapture, true);
     if (!g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ && document.body) {
       g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__ = new MutationObserver(function () {
         removeLegacyToolbarDelete();
+        maybePromptSoftDeletedRepair();
       });
       g.__DATALAB_OVERLAY_EPISODE_DELETE_OBSERVER__.observe(document.body, {
         childList: true,
         subtree: true,
+        attributes: true,
+        attributeFilter: ["class"],
       });
     }
+    setTimeout(maybePromptSoftDeletedRepair, 800);
+    setTimeout(maybePromptSoftDeletedRepair, 2500);
   }
 
+  installHooks();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", installHooks);
-  } else {
-    installHooks();
   }
 })();

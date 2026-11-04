@@ -1,5 +1,5 @@
 /**
- * Collection embed: delete selected episodes (L2 only; raw/segments preserved).
+ * Collection embed: delete episodes via the native Edit (pencil) toolbar menu.
  */
 (function () {
   "use strict";
@@ -30,19 +30,15 @@
   if (!isCollectionStationEmbed()) return;
   g.__DATALAB_OVERLAY_EPISODE_DELETE__ = true;
 
-  var deleteBtn = null;
+  var editBtnHooked = null;
+  var menuEl = null;
   var toastEl = null;
   var toastTimer = null;
   var busy = false;
+  var skipEditIntercept = false;
   var tickScheduled = false;
   var tickDebounceTimer = null;
   var TICK_DEBOUNCE_MS = 250;
-
-  var DELETE_ICON_INNER =
-    '<polyline points="3 6 5 6 21 6"></polyline>' +
-    '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>' +
-    '<line x1="10" y1="11" x2="10" y2="17"></line>' +
-    '<line x1="14" y1="11" x2="14" y2="17"></line>';
 
   function pageLang() {
     try {
@@ -82,21 +78,10 @@
     var buttons = document.querySelectorAll("button");
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
-      if (btn.closest("[data-datalab-delete-root]")) continue;
+      if (btn.closest("[data-datalab-edit-menu]")) continue;
       if (btn.closest("[data-datalab-import-modal]")) continue;
+      if (btn.getAttribute("data-datalab-delete-trigger") === "1") continue;
       if (labelRe.test(buttonText(btn))) return btn;
-    }
-    return null;
-  }
-
-  function findEpisodeToolbarAnchor() {
-    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
-    var selectBtn = findEpisodeToolbarButton(/^(多选|Select multiple)$/i);
-    if (editBtn && editBtn.parentNode) {
-      return { row: editBtn.parentNode, templateBtn: editBtn, insertAfter: editBtn };
-    }
-    if (selectBtn && selectBtn.parentNode) {
-      return { row: selectBtn.parentNode, templateBtn: selectBtn, insertAfter: selectBtn };
     }
     return null;
   }
@@ -178,68 +163,9 @@
     }, 4500);
   }
 
-  function setButtonLabel(btn, label) {
-    var spans = btn.querySelectorAll("span");
-    var i;
-    for (i = spans.length - 1; i >= 0; i--) {
-      var el = spans[i];
-      if (el.querySelector("svg")) continue;
-      var text = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (text.length > 0) {
-        el.textContent = label;
-        return;
-      }
-    }
-    var tail = document.createElement("span");
-    tail.textContent = label;
-    btn.appendChild(tail);
-  }
-
-  function applyDeleteIcon(btn, templateSvg) {
-    var svg = btn.querySelector("svg");
-    if (!svg) {
-      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      btn.insertBefore(svg, btn.firstChild);
-    }
-    if (templateSvg) {
-      ["class", "width", "height", "viewBox", "fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin"].forEach(
-        function (attr) {
-          var val = templateSvg.getAttribute(attr);
-          if (val != null) svg.setAttribute(attr, val);
-        },
-      );
-    }
-    if (!svg.getAttribute("viewBox")) svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-    svg.innerHTML = DELETE_ICON_INNER;
-  }
-
-  function deleteButtonLabel() {
-    return isZh() ? "删除" : "Delete";
-  }
-
-  function buildDeleteButton(templateBtn) {
-    var btn;
-    if (templateBtn) {
-      btn = templateBtn.cloneNode(true);
-      btn.disabled = false;
-      btn.removeAttribute("aria-disabled");
-      btn.removeAttribute("data-state");
-      btn.removeAttribute("aria-pressed");
-      btn.setAttribute("data-datalab-delete-trigger", "1");
-      btn.setAttribute("type", "button");
-      setButtonLabel(btn, deleteButtonLabel());
-      applyDeleteIcon(btn, templateBtn.querySelector("svg"));
-    } else {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.setAttribute("data-datalab-delete-trigger", "1");
-      btn.className = "inline-flex items-center gap-1.5";
-      applyDeleteIcon(btn, null);
-      setButtonLabel(btn, deleteButtonLabel());
-    }
-    btn.addEventListener("click", onDeleteClick);
-    return btn;
+  function closeEditMenu() {
+    if (menuEl && menuEl.parentNode) menuEl.parentNode.removeChild(menuEl);
+    menuEl = null;
   }
 
   function confirmDelete(indices) {
@@ -260,18 +186,13 @@
     );
   }
 
-  function onDeleteClick(e) {
-    e.preventDefault();
-    e.stopPropagation();
+  function runDelete(indices) {
     if (busy) return;
-
     var stationId = stationIdFromContext();
     if (!stationId) {
       showToast(isZh() ? "无法识别工位" : "Station id missing", "error");
       return;
     }
-
-    var indices = collectSelectedEpisodeIndices();
     if (indices.length === 0) {
       showToast(
         isZh()
@@ -281,12 +202,9 @@
       );
       return;
     }
-
     if (!confirmDelete(indices)) return;
 
     busy = true;
-    if (deleteBtn) deleteBtn.disabled = true;
-
     fetch(
       "/lerobot/api/collection/stations/" +
         encodeURIComponent(stationId) +
@@ -329,36 +247,105 @@
       })
       .finally(function () {
         busy = false;
-        if (deleteBtn) deleteBtn.disabled = false;
       });
   }
 
-  function installDeleteButton() {
-    var anchor = findEpisodeToolbarAnchor();
-    if (!anchor || !anchor.row) return;
-
-    var importBtn = anchor.row.querySelector("[data-datalab-import-trigger]");
-    var insertAfter = importBtn || anchor.insertAfter;
-    if (!insertAfter) return;
-
-    if (deleteBtn && deleteBtn.isConnected && deleteBtn.previousSibling === insertAfter) {
-      return;
-    }
-
-    if (deleteBtn && deleteBtn.parentNode) deleteBtn.remove();
-    var stale = anchor.row.querySelector("[data-datalab-delete-trigger]");
-    if (stale) stale.remove();
-
-    deleteBtn = buildDeleteButton(anchor.templateBtn);
-    if (insertAfter.nextSibling) {
-      anchor.row.insertBefore(deleteBtn, insertAfter.nextSibling);
-    } else {
-      anchor.row.appendChild(deleteBtn);
+  function triggerNativeEdit(editBtn) {
+    closeEditMenu();
+    skipEditIntercept = true;
+    try {
+      editBtn.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, view: g }),
+      );
+    } finally {
+      skipEditIntercept = false;
     }
   }
 
+  function openEditMenu(editBtn) {
+    closeEditMenu();
+    var rect = editBtn.getBoundingClientRect();
+    menuEl = document.createElement("div");
+    menuEl.setAttribute("data-datalab-edit-menu", "1");
+    menuEl.setAttribute("role", "menu");
+
+    var editItem = document.createElement("button");
+    editItem.type = "button";
+    editItem.setAttribute("role", "menuitem");
+    editItem.textContent = isZh() ? "编辑" : "Edit";
+    editItem.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      triggerNativeEdit(editBtn);
+    });
+
+    var deleteItem = document.createElement("button");
+    deleteItem.type = "button";
+    deleteItem.setAttribute("role", "menuitem");
+    deleteItem.className = "datalab-edit-menu-delete";
+    deleteItem.textContent = isZh() ? "删除" : "Delete";
+    deleteItem.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeEditMenu();
+      runDelete(collectSelectedEpisodeIndices());
+    });
+
+    menuEl.appendChild(editItem);
+    menuEl.appendChild(deleteItem);
+    menuEl.style.position = "fixed";
+    menuEl.style.left = Math.max(8, rect.left) + "px";
+    menuEl.style.top = rect.bottom + 4 + "px";
+    menuEl.style.zIndex = "100000";
+    document.body.appendChild(menuEl);
+  }
+
+  function onEditClickCapture(e) {
+    if (skipEditIntercept) return;
+    if (menuEl && menuEl.contains(e.target)) return;
+
+    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
+    if (!editBtn || (!editBtn.contains(e.target) && e.target !== editBtn)) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    if (menuEl) {
+      closeEditMenu();
+      return;
+    }
+    openEditMenu(editBtn);
+  }
+
+  function onDocumentClick(e) {
+    if (!menuEl) return;
+    if (menuEl.contains(e.target)) return;
+    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
+    if (editBtn && (editBtn === e.target || editBtn.contains(e.target))) return;
+    closeEditMenu();
+  }
+
+  function removeLegacyDeleteButton() {
+    var stale = document.querySelectorAll("[data-datalab-delete-trigger]");
+    for (var i = 0; i < stale.length; i++) {
+      stale[i].remove();
+    }
+  }
+
+  function installEditMenuHook() {
+    removeLegacyDeleteButton();
+    var editBtn = findEpisodeToolbarButton(/^(编辑|Edit)$/i);
+    if (!editBtn) return;
+    if (editBtnHooked === editBtn) return;
+    if (editBtnHooked) {
+      editBtnHooked.removeEventListener("click", onEditClickCapture, true);
+    }
+    editBtnHooked = editBtn;
+    editBtn.setAttribute("data-datalab-edit-delete-hook", "1");
+    editBtn.addEventListener("click", onEditClickCapture, true);
+  }
+
   function tick() {
-    installDeleteButton();
+    installEditMenuHook();
   }
 
   function scheduleTick() {
@@ -373,6 +360,7 @@
   }
 
   function schedule() {
+    document.addEventListener("click", onDocumentClick, true);
     tick();
     setTimeout(tick, 500);
     setTimeout(tick, 1500);

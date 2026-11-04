@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import {
   buildDateGroups,
+  appendRecordedClockToTaskLabel,
   formatDateGroupLabel,
   formatSessionDateFromIso,
   parseSessionDateFromTaskText,
   parseSessionIdFromTaskText,
   resolveEpisodeDate,
+  sortEpisodeRowsByRecordedAt,
   unknownDateKey,
 } from "./overlay-episode-groups-lib.mjs";
 
@@ -31,6 +33,24 @@ assert.equal(
   parseSessionDateFromTaskText("EGO-001 · bae2b20e · 08-28 · 156f"),
   "08-28",
 );
+assert.equal(
+  parseSessionDateFromTaskText("EGO-002 · d691d21f · 11-03 14:35 · 1791f"),
+  "11-03",
+);
+assert.equal(
+  appendRecordedClockToTaskLabel(
+    "EGO-002 · d691d21f · 11-03 · 1791f",
+    "2026-11-03T06:35:00.000Z",
+  ).includes("11-03"),
+  true,
+);
+assert.match(
+  appendRecordedClockToTaskLabel(
+    "EGO-002 · d691d21f · 11-03 · 1791f",
+    "2026-11-03T06:35:00.000Z",
+  ),
+  /11-03 \d{2}:\d{2}/,
+);
 assert.equal(parseSessionDateFromTaskText("no date here"), null);
 
 assert.equal(formatDateGroupLabel("09-07", "zh"), "9月7日");
@@ -45,5 +65,22 @@ assert.equal(groups.length, 2);
 assert.deepEqual(groups[0], { date: "09-05", episodeIndices: [0, 1] });
 assert.deepEqual(groups[1], { date: "09-07", episodeIndices: [2] });
 assert.equal(unknownDateKey(), "__unknown__");
+
+const sorted = sortEpisodeRowsByRecordedAt(
+  [
+    { episodeIndex: 40 },
+    { episodeIndex: 39 },
+    { episodeIndex: 41 },
+  ],
+  {
+    39: "2026-11-04T01:00:00.000Z",
+    40: "2026-11-04T02:00:00.000Z",
+    41: "2026-11-04T01:30:00.000Z",
+  },
+);
+assert.deepEqual(
+  sorted.map((r) => r.episodeIndex),
+  [39, 41, 40],
+);
 
 console.log("overlay-episode-groups.test.mjs: ok");

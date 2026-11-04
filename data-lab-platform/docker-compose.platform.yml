@@ -255,6 +255,8 @@ services:
       - ./data-storage/samples:/datalab-samples:ro
       - ./data-lab-platform/lerobot-studio/branding:/app/branding:ro
       - ./data-lab-platform/lerobot-studio/server.mjs:/app/server.mjs:ro
+      - ./data-lab-platform/lerobot-studio/delete-stream-episodes.mjs:/app/delete-stream-episodes.mjs:ro
+      - ./data-lab-platform/scripts/ego-delete-episodes.py:/app/scripts/ego-delete-episodes.py:ro
       - ./data-lab-platform/lerobot-studio/perception-modules.mjs:/app/perception-modules.mjs:ro
       - ./data-lab-platform/config/ego-perception-modules.json:/app/config/ego-perception-modules.json:ro
       - ./data-lab-platform/lerobot-studio/stream-ingest.mjs:/app/stream-ingest.mjs:ro

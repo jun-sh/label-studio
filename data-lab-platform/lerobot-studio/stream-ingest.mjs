@@ -5198,10 +5198,15 @@ export function getEpisodeUploadDateMap(stationId) {
       session_id: sessionId,
       date: formatSessionDate(uploadedAt),
       uploaded_at: uploadedAt || null,
+      recorded_at: uploadedAt || null,
     });
   }
 
-  episodes.sort((a, b) => a.episode_index - b.episode_index);
+  episodes.sort(
+    (a, b) =>
+      Date.parse(a.recorded_at || "") - Date.parse(b.recorded_at || "") ||
+      a.episode_index - b.episode_index,
+  );
   return { episodes };
 }
 

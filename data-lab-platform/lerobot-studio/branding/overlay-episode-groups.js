@@ -44,6 +44,7 @@
   var collapsedState = loadCollapsedState();
   var lastGroupingSignature = "";
   var uploadDateByIndex = null;
+  var uploadRecordedAtByIndex = null;
   var uploadDateFetchKey = null;
   var uploadDateFetchPromise = null;
 
@@ -59,6 +60,70 @@
       if (/^\d{2}-\d{2}$/.test(part)) return part;
     }
     return null;
+  }
+
+  function parseRecordedAtMs(iso) {
+    if (!iso) return null;
+    var t = Date.parse(String(iso));
+    return Number.isFinite(t) ? t : null;
+  }
+
+  function sortEpisodeRowsByRecordedAt(rows) {
+    var map = uploadRecordedAtByIndex || {};
+    return rows.slice().sort(function (a, b) {
+      var ma = parseRecordedAtMs(map[a.episodeIndex]);
+      var mb = parseRecordedAtMs(map[b.episodeIndex]);
+      if (ma != null && mb != null && ma !== mb) return ma - mb;
+      if (ma != null && mb == null) return -1;
+      if (ma == null && mb != null) return 1;
+      return a.episodeIndex - b.episodeIndex;
+    });
+  }
+
+  function formatSessionDateTimeFromIso(iso) {
+    if (!iso) return "";
+    var dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return "";
+    var mm = String(dt.getMonth() + 1).padStart(2, "0");
+    var dd = String(dt.getDate()).padStart(2, "0");
+    var hh = String(dt.getHours()).padStart(2, "0");
+    var mi = String(dt.getMinutes()).padStart(2, "0");
+    return mm + "-" + dd + " " + hh + ":" + mi;
+  }
+
+  function appendRecordedClockToTaskLabel(taskText, iso) {
+    var raw = String(taskText || "").trim();
+    if (!raw || !iso) return raw;
+    var stamp = formatSessionDateTimeFromIso(iso);
+    if (!stamp) return raw;
+    var mmdd = stamp.slice(0, 5);
+    if (raw.indexOf(mmdd + " ") >= 0 && /\d{2}:\d{2}/.test(raw)) return raw;
+    return raw.replace(
+      new RegExp("(·\\s*" + mmdd.replace(/-/g, "\\-") + ")(\\s*·)", ""),
+      "$1 " + stamp.slice(6) + "$2",
+    );
+  }
+
+  function patchRowRecordedClock(row) {
+    var iso = uploadRecordedAtByIndex && uploadRecordedAtByIndex[row.episodeIndex];
+    if (!iso) return;
+    var stamp = formatSessionDateTimeFromIso(iso);
+    if (!stamp) return;
+    var mmdd = stamp.slice(0, 5);
+    var hm = stamp.slice(6);
+    if ((row.taskText || "").indexOf(mmdd + " " + hm) >= 0) return;
+    var needle = " · " + mmdd + " · ";
+    var replacement = " · " + mmdd + " " + hm + " · ";
+    var walker = document.createTreeWalker(row.rowEl, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var t = node.textContent || "";
+      if (t.indexOf(needle) >= 0) {
+        node.textContent = t.replace(needle, replacement);
+        row.taskText = appendRecordedClockToTaskLabel(row.taskText, iso);
+        return;
+      }
+    }
   }
 
   function resolveEpisodeDate(taskText, episodeIndex) {
@@ -89,10 +154,11 @@
     var stationId = streamStationIdFromUrl();
     if (!stationId) {
       uploadDateByIndex = null;
+      uploadRecordedAtByIndex = null;
       uploadDateFetchKey = null;
       return Promise.resolve();
     }
-    if (uploadDateFetchKey === stationId && uploadDateByIndex) {
+    if (uploadDateFetchKey === stationId && uploadDateByIndex && uploadRecordedAtByIndex) {
       return Promise.resolve();
     }
     if (uploadDateFetchPromise && uploadDateFetchKey === stationId) {
@@ -106,18 +172,25 @@
         return res.ok ? res.json() : { episodes: [] };
       })
       .then(function (payload) {
-        var map = {};
+        var dateMap = {};
+        var recordedMap = {};
         var episodes = payload && payload.episodes ? payload.episodes : [];
         for (var i = 0; i < episodes.length; i++) {
           var ep = episodes[i];
-          if (ep && ep.date && /^\d{2}-\d{2}$/.test(ep.date)) {
-            map[Number(ep.episode_index)] = ep.date;
+          if (!ep || ep.episode_index == null) continue;
+          var idx = Number(ep.episode_index);
+          if (ep.date && /^\d{2}-\d{2}$/.test(ep.date)) {
+            dateMap[idx] = ep.date;
           }
+          var recorded = ep.recorded_at || ep.uploaded_at;
+          if (recorded) recordedMap[idx] = recorded;
         }
-        uploadDateByIndex = map;
+        uploadDateByIndex = dateMap;
+        uploadRecordedAtByIndex = recordedMap;
       })
       .catch(function () {
         uploadDateByIndex = {};
+        uploadRecordedAtByIndex = {};
       })
       .finally(function () {
         uploadDateFetchPromise = null;
@@ -254,9 +327,7 @@
       });
     }
 
-    rows.sort(function (a, b) {
-      return a.episodeIndex - b.episodeIndex;
-    });
+    rows = sortEpisodeRowsByRecordedAt(rows);
     return rows;
   }
 
@@ -334,9 +405,31 @@
   function groupingSignature(rows) {
     var parts = [];
     for (var i = 0; i < rows.length; i++) {
-      parts.push(rows[i].episodeIndex + ":" + (rows[i].date || ""));
+      var rec = uploadRecordedAtByIndex
+        ? uploadRecordedAtByIndex[rows[i].episodeIndex] || ""
+        : "";
+      parts.push(rows[i].episodeIndex + ":" + (rows[i].date || "") + ":" + rec);
     }
     return parts.join("|");
+  }
+
+  function mountGroupedRows(listContainer, groups) {
+    removeExistingHeaders(listContainer);
+    for (var gIdx = 0; gIdx < groups.length; gIdx++) {
+      var group = groups[gIdx];
+      var collapsed = defaultCollapsed(group.dateKey, gIdx, groups.length);
+      var header = createHeader(group.dateKey, group.rows.length, collapsed);
+      listContainer.appendChild(header);
+      group.header = header;
+      for (var rIdx = 0; rIdx < group.rows.length; rIdx++) {
+        var row = group.rows[rIdx];
+        row.rowEl.setAttribute("data-datalab-episode-row", "1");
+        row.rowEl.setAttribute("data-datalab-episode-date", group.dateKey);
+        listContainer.appendChild(row.rowEl);
+        patchRowRecordedClock(row);
+        applyRowVisibility(group);
+      }
+    }
   }
 
   function bindHeaderDelegation(container) {
@@ -412,6 +505,7 @@
         var container = findListContainer(rows);
         if (container) removeExistingHeaders(container);
         for (var i = 0; i < rows.length; i++) {
+          patchRowRecordedClock(rows[i]);
           rows[i].rowEl.removeAttribute("data-datalab-episode-row");
           rows[i].rowEl.removeAttribute("data-datalab-episode-hidden");
           rows[i].rowEl.removeAttribute("data-datalab-episode-date");
@@ -437,23 +531,7 @@
       }
       lastGroupingSignature = signature;
 
-      removeExistingHeaders(listContainer);
-
-      for (var gIdx = 0; gIdx < groups.length; gIdx++) {
-        var group = groups[gIdx];
-        var collapsed = defaultCollapsed(group.dateKey, gIdx, groups.length);
-        var header = createHeader(group.dateKey, group.rows.length, collapsed);
-
-        listContainer.insertBefore(header, group.rows[0].rowEl);
-        group.header = header;
-
-        for (var rIdx = 0; rIdx < group.rows.length; rIdx++) {
-          var row = group.rows[rIdx];
-          row.rowEl.setAttribute("data-datalab-episode-row", "1");
-          row.rowEl.setAttribute("data-datalab-episode-date", group.dateKey);
-          applyRowVisibility(group);
-        }
-      }
+      mountGroupedRows(listContainer, groups);
     } finally {
       applying = false;
     }

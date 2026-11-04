@@ -18,6 +18,7 @@ import {
   streamHttpDatasetUrl,
 } from "./stream-ingest.mjs";
 import { proxyStationPreview, proxyStationPreviewWake } from "./preview-proxy.mjs";
+import { deleteStreamEpisodes } from "./delete-stream-episodes.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.env.LEROBOT_STUDIO_ROOT || "/srv/lerobot";
@@ -75,7 +76,7 @@ const MIME = {
 function corsHeaders(extra = {}) {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, HEAD, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Range, Content-Type, Accept, Authorization",
     "Access-Control-Expose-Headers": "Content-Length, Content-Range, Accept-Ranges",
     ...extra,
@@ -405,13 +406,15 @@ function injectBranding(html, search = "") {
     '<script type="module" src="/lerobot/branding/overlay-hand-keypoints.mjs?v=27"></script>' +
     '<script type="module" src="/lerobot/branding/overlay-depth-preview.mjs?v=7"></script>' +
     '<script defer src="/lerobot/branding/stream-live-poll.js?v=51"></script>' +
-    '<script defer src="/lerobot/branding/overlay-episode-groups.js?v=6"></script>';
+    '<script defer src="/lerobot/branding/overlay-episode-groups.js?v=8"></script>';
   if (collectionEmbed) {
     inject +=
       `<script>window.__DATALAB_COLLECTION_UI__=${JSON.stringify(COLLECTION_UI)};</script>` +
       '<link rel="stylesheet" href="/lerobot/branding/overlay-import.css?v=5"/>' +
       '<script src="/_datalab/import-core.js?v=7"></script>' +
       '<script defer src="/lerobot/branding/overlay-import.js?v=11"></script>' +
+      '<link rel="stylesheet" href="/lerobot/branding/overlay-episode-delete.css?v=1"/>' +
+      '<script defer src="/lerobot/branding/overlay-episode-delete.js?v=1"></script>' +
       '<script defer src="/lerobot/branding/overlay-collection-theme.js?v=3"></script>';
   }
   html = html.replace(/<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*>\s*/gi, "");
@@ -438,7 +441,7 @@ function findDataset(id) {
   return entry;
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     return send(res, 204, "", corsHeaders());
   }
@@ -601,6 +604,33 @@ const server = http.createServer((req, res) => {
   const stationPingMatch = p.match(
     new RegExp(`^${BASE}/api/collection/stations/([^/]+)/ping$`),
   );
+  const deleteEpisodesMatch = p.match(
+    new RegExp(`^${BASE}/api/collection/stations/([^/]+)/episodes/delete$`),
+  );
+  if (deleteEpisodesMatch && req.method === "POST") {
+    const stationId = decodeURIComponent(deleteEpisodesMatch[1]);
+    const station = collectionStations.find((s) => s.id === stationId);
+    if (!station) {
+      return sendJson(res, 404, { error: "station_not_found" });
+    }
+    if (!station.stream) {
+      return sendJson(res, 400, { error: "station_not_stream" });
+    }
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      return sendJson(res, 400, { error: "invalid_json" });
+    }
+    const indices = body.episode_indices ?? body.indices;
+    const apply = body.apply !== false && body.dry_run !== true;
+    if (apply && body.confirm !== true) {
+      return sendJson(res, 400, { error: "confirm_required", hint: "set confirm: true" });
+    }
+    const result = deleteStreamEpisodes(stationId, indices, { apply });
+    return sendJson(res, result.ok ? 200 : result.status || 500, result);
+  }
+
   if (stationPingMatch && req.method === "GET") {
     const stationId = decodeURIComponent(stationPingMatch[1]);
     const station = collectionStations.find((s) => s.id === stationId);

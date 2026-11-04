@@ -10,8 +10,8 @@ export function parseSessionDateFromTaskText(text) {
     .split("·")
     .map((s) => s.trim());
   for (const part of parts) {
-    const withFrames = part.match(/^(\d{2}-\d{2})(?:\s*\([^)]*\)|\s+\d+f)?$/i);
-    if (withFrames) return withFrames[1];
+    const withClock = part.match(/^(\d{2}-\d{2})(?:\s+\d{2}:\d{2})?(?:\s*\([^)]*\)|\s+\d+f)?$/i);
+    if (withClock) return withClock[1];
     if (/^\d{2}-\d{2}$/.test(part)) return part;
   }
   return null;
@@ -70,6 +70,34 @@ export function formatSessionDateFromIso(iso) {
   return `${mm}-${dd}`;
 }
 
+export function formatSessionDateTimeFromIso(iso) {
+  if (!iso) return "";
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return "";
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  const hh = String(dt.getHours()).padStart(2, "0");
+  const mi = String(dt.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
+/** Insert local HH:mm after MM-DD token in auto task labels. Idempotent. */
+export function appendRecordedClockToTaskLabel(taskText, iso) {
+  const raw = String(taskText || "").trim();
+  if (!raw || !iso) return raw;
+  const stamp = formatSessionDateTimeFromIso(iso);
+  if (!stamp) return raw;
+  const mmdd = stamp.slice(0, 5);
+  if (new RegExp(`${mmdd.replace(/-/g, "\\-")}\\s+\\d{2}:\\d{2}`).test(raw)) {
+    return raw;
+  }
+  const escaped = mmdd.replace(/-/g, "\\-");
+  return raw.replace(
+    new RegExp(`(·\\s*${escaped})(\\s*·)`, ""),
+    `$1 ${stamp.slice(6)}$2`,
+  );
+}
+
 export function resolveEpisodeDate({ taskText, episodeIndex, uploadDateByIndex }) {
   const fromTask = parseSessionDateFromTaskText(taskText);
   if (fromTask) return fromTask;
@@ -81,4 +109,28 @@ export function resolveEpisodeDate({ taskText, episodeIndex, uploadDateByIndex }
     return uploadDateByIndex[episodeIndex];
   }
   return null;
+}
+
+/** Parse ISO timestamp from ingest registry (session started / segment committed). */
+export function parseRecordedAtMs(iso) {
+  if (!iso) return null;
+  const t = Date.parse(String(iso));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Sort sidebar rows by recording time (ascending), then episode_index for ties/missing.
+ * @param {Array<{ episodeIndex: number }>} rows
+ * @param {Record<number, string>|null} recordedAtByIndex episode_index -> ISO time
+ */
+export function sortEpisodeRowsByRecordedAt(rows, recordedAtByIndex) {
+  const map = recordedAtByIndex || {};
+  return rows.slice().sort((a, b) => {
+    const ma = parseRecordedAtMs(map[a.episodeIndex]);
+    const mb = parseRecordedAtMs(map[b.episodeIndex]);
+    if (ma != null && mb != null && ma !== mb) return ma - mb;
+    if (ma != null && mb == null) return -1;
+    if (ma == null && mb != null) return 1;
+    return a.episodeIndex - b.episodeIndex;
+  });
 }

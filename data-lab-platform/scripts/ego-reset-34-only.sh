@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
-# Wipe 34 platform derived data for a station; preserve raw/segments tar.zst archives.
-# Phase0 §9.3 — does NOT SSH to edge.
+# ego-reset-34-only — DERIVED-ONLY reset on Data Lab (34). Phase0 §9.3.
+#
+# Clears LeRobot stream view (data/videos/meta/state/live), corpus/samples, pipeline.
+# ALWAYS preserves data-storage/stream/<STATION>/raw/segments (MCAP archives).
+#
+# NOT for removing an entire station from collection:
+#   - Do NOT use this when operators mean "delete all ego-002 data on 34".
+#   - For full station removal (raw included), use ego-trash-station.sh (soft delete).
+#
+# Does NOT SSH to edge. Edge cache is untouched.
+#
+# Usage:
+#   STATION_ID=ego-002 bash ego-reset-34-only.sh
+#   STATION_ID=ego-002 EGO_RESET_YES=1 bash ego-reset-34-only.sh --yes
 set -euo pipefail
 
 STATION="${STATION_ID:-ego-001}"
@@ -50,8 +62,9 @@ confirm() {
   if [[ "${1:-}" == "--yes" ]]; then
     return 0
   fi
-  echo "DELETE 34-side DERIVED data for ${STATION} (data/videos/sensor_raw/staging/live/state)."
-  echo "PRESERVE raw/segments/*.tar.zst. Edge segments are NOT wiped."
+  echo "DERIVED-ONLY reset for ${STATION} on 34 (NOT full station delete)."
+  echo "Clears: data/videos/meta/state/live, corpus, pipeline. KEEPS raw/segments."
+  echo "Full station (incl. raw) -> ego-trash-station.sh ${STATION} --apply"
   echo "Set EGO_RESET_YES=1 to skip prompt."
   read -r -p "Continue? [y/N] " ans
   [[ "${ans,,}" == "y" || "${ans,,}" == "yes" ]]
@@ -114,3 +127,4 @@ frames="$(curl -sf "http://127.0.0.1:8080/lerobot/api/stream/${STATION}/status" 
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('totalFrames', '?'))" 2>/dev/null || echo "?")"
 log "raw archives preserved: ${raw_count}; stream totalFrames=${frames} (expect 0 after re-derive)"
 log "done — re-upload/derive from raw: ego-derive run ${STATION} or upload_segments --force"
+log "NOTE: derived-only; full station removal -> ego-trash-station.sh"

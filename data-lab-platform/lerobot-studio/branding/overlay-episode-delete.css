@@ -1,0 +1,37 @@
+/* Collection embed: Episodes toolbar delete button */
+
+html[data-datalab-collection-embed="1"] [data-datalab-delete-trigger="1"] {
+  flex-shrink: 0;
+  color: hsl(var(--destructive, 0 84% 60%));
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-delete-trigger="1"]:disabled {
+  opacity: 0.45;
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-delete-toast="1"] {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 99999;
+  max-width: min(92vw, 420px);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-delete-toast="1"][data-variant="error"] {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+html[data-datalab-collection-embed="1"] [data-datalab-delete-toast="1"][data-variant="ok"] {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}

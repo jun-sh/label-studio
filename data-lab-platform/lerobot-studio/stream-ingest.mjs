@@ -441,7 +441,7 @@ export function countRawTarZstForSession(root, sessionId) {
   if (!sessionId) return 0;
   const dir = path.join(root, "raw", "segments", sessionId);
   if (!fs.existsSync(dir)) return 0;
-  return fs.readdirSync(dir).filter((f) => f.endsWith(".tar.zst")).length;
+  return fs.readdirSync(dir).filter((f) => f.endsWith(".tar.zst") || f.endsWith(".mcap.zst")).length;
 }
 
 function segmentDeriveMarkerPath(root, sessionId, segmentId) {
@@ -2630,8 +2630,9 @@ function loadTasksParquetRows(root) {
     [
       "-c",
       "import sys,json,pandas as pd; df=pd.read_parquet(sys.argv[1]); "
-      + "('task' in df.columns) and sys.exit('legacy tasks.parquet format'); "
-      + "rows=[{'task_index':int(row.task_index),'task':str(task)} for task,row in df.iterrows()]; "
+      + "rows=([{'task_index':int(row.task_index),'task':str(row.task)} for _,row in df.iterrows()] "
+      + "if 'task' in df.columns else "
+      + "[{'task_index':int(row.task_index),'task':str(task)} for task,row in df.iterrows()]); "
       + "print(json.dumps(rows))",
       tasksPath,
     ],
@@ -2644,6 +2645,46 @@ function loadTasksParquetRows(root) {
   } catch {
     return [];
   }
+}
+
+function loadManifestEpisodesByIndex(root) {
+  const manifest = readJson(path.join(root, "manifest", "manifest.json"), {});
+  const byIndex = new Map();
+  for (const ep of manifest?.episodes || []) {
+    const idx = Number(ep?.episode_index);
+    if (!Number.isFinite(idx)) continue;
+    byIndex.set(idx, ep);
+  }
+  return byIndex;
+}
+
+/** Published timestamps from manifest journal (first publish per session). */
+function loadPublishedAtMaps(root) {
+  const journalPath = path.join(root, "manifest", "journal.jsonl");
+  const byEpisode = new Map();
+  const bySessionFirst = new Map();
+  const bySessionLast = new Map();
+  if (!fs.existsSync(journalPath)) {
+    return { byEpisode, bySessionFirst, bySessionLast };
+  }
+  for (const line of fs.readFileSync(journalPath, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const entry = JSON.parse(trimmed);
+      if (entry?.event !== "published" || !entry.at) continue;
+      const episodeIndex = Number(entry.episode_index);
+      if (Number.isFinite(episodeIndex)) byEpisode.set(episodeIndex, entry.at);
+      const sessionId = String(entry.session_id || "").trim();
+      if (sessionId) {
+        if (!bySessionFirst.has(sessionId)) bySessionFirst.set(sessionId, entry.at);
+        bySessionLast.set(sessionId, entry.at);
+      }
+    } catch {
+      /* ignore malformed journal lines */
+    }
+  }
+  return { byEpisode, bySessionFirst, bySessionLast };
 }
 
 function isRecentActivity(iso) {
@@ -5165,7 +5206,8 @@ function segmentReceivedAt(root, sessionId) {
 export function getEpisodeUploadDateMap(stationId) {
   const root = stationRoot(stationId);
   const taskRows = loadTasksParquetRows(root);
-  if (!taskRows.length) return { episodes: [] };
+  const manifestByIndex = loadManifestEpisodesByIndex(root);
+  const publishedAt = loadPublishedAtMaps(root);
 
   const registry = readJson(path.join(root, "live", "session-registry.json"), {});
   const uploadActivity = readJson(path.join(root, "live", "upload_activity.json"), {});
@@ -5176,17 +5218,35 @@ export function getEpisodeUploadDateMap(stationId) {
     if (ep.session_id) indexBySession.set(ep.session_id, ep);
   }
 
+  const rows =
+    taskRows.length > 0
+      ? taskRows
+      : [...manifestByIndex.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([episodeIndex, ep]) => ({
+            task_index: episodeIndex,
+            task: "",
+            session_id: ep?.session_id || ep?.source_session_id || "",
+          }));
+
   const episodes = [];
-  for (const row of taskRows) {
+  for (const row of rows) {
     const episodeIndex = Number(row.task_index);
     if (!Number.isFinite(episodeIndex)) continue;
-    const sessionId = sessionIdFromTaskText(row.task);
+    const manifestEp = manifestByIndex.get(episodeIndex);
+    const sessionId =
+      sessionIdFromTaskText(row.task) ||
+      String(row.session_id || "").trim() ||
+      String(manifestEp?.session_id || manifestEp?.source_session_id || "").trim();
     if (!sessionId) continue;
 
     const indexEp = indexBySession.get(sessionId);
     const sess = sessions[sessionId] || {};
     const upload = uploadSessions[sessionId] || {};
     const uploadedAt =
+      publishedAt.bySessionFirst.get(sessionId) ||
+      publishedAt.byEpisode.get(episodeIndex) ||
+      publishedAt.bySessionLast.get(sessionId) ||
       indexEp?.committed_at ||
       sess.startedAt ||
       sess.endedAt ||

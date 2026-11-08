@@ -127,8 +127,6 @@
   }
 
   function resolveEpisodeDate(taskText, episodeIndex) {
-    var fromTask = parseSessionDateFromTaskText(taskText);
-    if (fromTask) return fromTask;
     if (
       uploadDateByIndex &&
       uploadDateByIndex[episodeIndex] &&
@@ -136,6 +134,8 @@
     ) {
       return uploadDateByIndex[episodeIndex];
     }
+    var fromTask = parseSessionDateFromTaskText(taskText);
+    if (fromTask) return fromTask;
     return null;
   }
 

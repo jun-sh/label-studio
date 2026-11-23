@@ -1235,6 +1235,7 @@ function localizeRebuildProgress(progress) {
   const text = String(progress);
   if (text === "writing parquet files") return t("qc_rebuild_writing_parquet");
   if (text === "recomputing stats") return t("qc_rebuild_recomputing_stats");
+  if (text === "resuming after restart") return t("qc_rebuild_resuming");
   return text;
 }
 
@@ -1325,11 +1326,15 @@ function setRebuildUiActive(active) {
   if (els.rebuildBtn) els.rebuildBtn.disabled = active || !state.dataset;
 }
 
+const REBUILD_POLL_MAX_FAILURES = 40; // ~1 min at 1.5 s: rides out a service restart
+
 async function pollRebuildJob(jobId) {
   clearRebuildPollTimer();
+  let consecutiveFailures = 0;
   const poll = async () => {
     try {
       const status = await api(`/api/qc/rebuild/${jobId}`);
+      consecutiveFailures = 0;
       hideRebuildModal();
       renderRebuildProgress(status);
       if (status.status === "queued" || status.status === "running") {
@@ -1345,11 +1350,18 @@ async function pollRebuildJob(jobId) {
       } else if (status.status === "failed") {
         const err = status.error || text;
         const message = String(err).includes("Service restarted")
-          ? t("qc_rebuild_stale_hint")
+          ? t("qc_rebuild_stale_hint", { error: err })
           : formatRebuildStatus(status);
         showRebuildResultModal(message, "error");
       }
     } catch (error) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures < REBUILD_POLL_MAX_FAILURES) {
+        // The job keeps running (or resumes) server-side; keep following it.
+        if (els.rebuildInlineProgressLabel) els.rebuildInlineProgressLabel.textContent = t("qc_rebuild_reconnecting");
+        rebuildPollTimer = setTimeout(poll, 1500);
+        return;
+      }
       clearRebuildPollTimer();
       setRebuildUiActive(false);
       showRebuildResultModal(t("qc_rebuild_poll_error", { error: parseApiError(error) }), "error");
@@ -1362,7 +1374,7 @@ async function resumeActiveRebuild(activeJob) {
   if (!activeJob?.job_id) return;
   if (!["queued", "running"].includes(activeJob.status)) {
     if (activeJob.status === "failed") {
-      showRebuildResultModal(t("qc_rebuild_stale_hint"), "error");
+      showRebuildResultModal(t("qc_rebuild_stale_hint", { error: activeJob.error || "" }), "error");
     }
     return;
   }

@@ -117,7 +117,8 @@ def test_start_rebuild_job_rejects_when_all_episodes_removed(tmp_path: Path) -> 
 def test_failed_rebuild_removes_output_even_with_info_json(tmp_path: Path) -> None:
     state, store, delivery_root = _job_fixture(tmp_path, removed=set())
 
-    def _fail_after_copy(*, output_root: Path, **_kwargs) -> None:
+    def _fail_after_copy(*, output_root: Path, job_id: str, **_kwargs) -> None:
+        rebuild_service._write_marker(output_root, job_id)
         (output_root / "meta").mkdir(parents=True)
         (output_root / "meta" / "info.json").write_text("{}", encoding="utf-8")
         raise RuntimeError("boom")
@@ -131,12 +132,15 @@ def test_failed_rebuild_removes_output_even_with_info_json(tmp_path: Path) -> No
     assert not Path(job["output_root"]).exists()
 
 
-def test_cleanup_failed_output_keeps_preexisting_dir(tmp_path: Path) -> None:
+def test_cleanup_failed_output_only_removes_dirs_owned_by_the_job(tmp_path: Path) -> None:
     output_root = tmp_path / "existing"
     (output_root / "meta").mkdir(parents=True)
-    rebuild_service._cleanup_failed_output(output_root, existed_before_job=True)
+    rebuild_service._cleanup_failed_output(output_root, "job-a")  # no marker: someone else's
     assert output_root.is_dir()
-    rebuild_service._cleanup_failed_output(output_root, existed_before_job=False)
+    rebuild_service._write_marker(output_root, "job-b")
+    rebuild_service._cleanup_failed_output(output_root, "job-a")  # other job's marker
+    assert output_root.is_dir()
+    rebuild_service._cleanup_failed_output(output_root, "job-b")
     assert not output_root.exists()
 
 

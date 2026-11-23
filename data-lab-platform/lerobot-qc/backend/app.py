@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,9 +29,11 @@ from qc_metrics import build_trajectory_payload, compute_qc_metrics
 from qc_store import QcStore
 from overview_service import build_overview
 from rebuild_service import (
+    collect_interrupted_jobs,
     get_active_rebuild_job,
     hydrate_jobs_from_store,
     resolve_rebuild_job,
+    resume_interrupted_jobs,
     running_job_ids,
     start_rebuild_job,
 )
@@ -48,7 +52,26 @@ DEFAULT_EPISODE_PAGE_SIZE = max(50, min(500, int(os.environ.get("LEROBOT_QC_EPIS
 configure_cache(CACHE_ROOT)
 configure_collection_cache(CACHE_ROOT / "collections")
 
-app = FastAPI(title="LeRobot QC", version="0.1.0")
+RESUME_REBUILDS_ON_STARTUP = os.environ.get("LEROBOT_QC_RESUME_REBUILDS", "1") != "0"
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    if RESUME_REBUILDS_ON_STARTUP:
+        # Reserve interrupted jobs before the first request, then resume them in the
+        # background (loading datasets from slow storage must not delay startup).
+        interrupted = collect_interrupted_jobs(SIDECAR_ROOT)
+        if interrupted:
+            threading.Thread(
+                target=resume_interrupted_jobs,
+                args=(interrupted, SIDECAR_ROOT),
+                name="qc-rebuild-resume",
+                daemon=True,
+            ).start()
+    yield
+
+
+app = FastAPI(title="LeRobot QC", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import csv
+import functools
 import hashlib
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,21 +96,57 @@ def resolve_sidecar_dir(dataset_root: Path, sidecar_base: Path) -> Path:
     return canonical_dir
 
 
+def _locked(method):
+    """Serialize access to the shared manifest (reviews, jobs) across request/rebuild threads."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+# One QcStore per sidecar directory in this process. Separate instances each hold their own
+# in-memory manifest, and whichever saves last overwrites the other's changes (e.g. a
+# rebuild's progress update wiping reviews made in a newer session).
+_open_stores: dict[str, "QcStore"] = {}
+_open_stores_lock = threading.Lock()
+
+
+def forget_open_stores() -> None:
+    """Drop cached stores (tests, or after editing sidecar files outside the service)."""
+    with _open_stores_lock:
+        _open_stores.clear()
+
+
 @dataclass
 class QcStore:
     sidecar_root: Path
     dataset_root: Path
     operator_id: str = "anonymous"
     manifest: dict[str, Any] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @classmethod
     def open(cls, dataset_root: Path, sidecar_base: Path, operator_id: str = "anonymous") -> "QcStore":
         dataset_root = dataset_root.resolve()
         store_dir = resolve_sidecar_dir(dataset_root, sidecar_base)
-        store_dir.mkdir(parents=True, exist_ok=True)
-        store = cls(sidecar_root=store_dir, dataset_root=dataset_root, operator_id=operator_id)
-        store._load_manifest()
-        return store
+        key = str(store_dir.resolve())
+        with _open_stores_lock:
+            existing = _open_stores.get(key)
+            if existing is not None and existing.manifest_path.is_file():
+                with existing._lock:
+                    existing.operator_id = operator_id
+                    if existing.dataset_root != dataset_root:
+                        existing.dataset_root = dataset_root
+                        existing.manifest["dataset_root"] = str(dataset_root)
+                return existing
+            store_dir.mkdir(parents=True, exist_ok=True)
+            store = cls(sidecar_root=store_dir, dataset_root=dataset_root, operator_id=operator_id)
+            store._load_manifest()
+            _open_stores[key] = store
+            return store
 
     @property
     def manifest_path(self) -> Path:
@@ -142,6 +180,7 @@ class QcStore:
         }
         self._save_manifest()
 
+    @_locked
     def _save_manifest(self) -> None:
         self.manifest["updated_at"] = _utc_now()
         _atomic_write_text(
@@ -153,6 +192,7 @@ class QcStore:
         raw = (operator_id or self.operator_id or "anonymous").strip()
         return raw or "anonymous"
 
+    @_locked
     def append_audit(
         self,
         *,
@@ -177,10 +217,12 @@ class QcStore:
         with self.audit_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    @_locked
     def get_review(self, episode_index: int) -> dict[str, Any]:
         reviews = self.manifest.get("reviews") or {}
         return dict(reviews.get(str(episode_index)) or {"status": "pending"})
 
+    @_locked
     def set_review(
         self,
         episode_index: int,
@@ -214,11 +256,13 @@ class QcStore:
         )
         return record
 
+    @_locked
     def get_instruction_override(self, episode_index: int) -> str | None:
         overrides = self.manifest.get("instruction_overrides") or {}
         value = overrides.get(str(episode_index))
         return str(value) if value is not None else None
 
+    @_locked
     def set_instruction_override(
         self,
         episode_index: int,
@@ -268,6 +312,7 @@ class QcStore:
                 [_utc_now(), self._resolve_operator_id(operator_id), episode_index, original, corrected]
             )
 
+    @_locked
     def removed_episode_indices(self) -> set[int]:
         removed: set[int] = set()
         reviews = self.manifest.get("reviews") or {}
@@ -300,10 +345,12 @@ class QcStore:
             json.dumps(payload, indent=2, ensure_ascii=False),
         )
 
+    @_locked
     def visible_episode_indices(self, all_indices: list[int]) -> list[int]:
         removed = self.removed_episode_indices()
         return [idx for idx in all_indices if idx not in removed]
 
+    @_locked
     def export_state(self) -> dict[str, Any]:
         return {
             "sidecar_root": str(self.sidecar_root),
@@ -313,12 +360,14 @@ class QcStore:
             "audit_log_path": str(self.audit_path),
         }
 
+    @_locked
     def register_rebuild_job(self, job: dict[str, Any]) -> None:
         jobs = self.manifest.setdefault("rebuild_jobs", [])
         jobs.append(job)
         self._save_manifest()
         self.append_audit(episode_index=None, action="rebuild_started", after=job)
 
+    @_locked
     def update_rebuild_job(self, job_id: str, updates: dict[str, Any]) -> None:
         jobs = self.manifest.setdefault("rebuild_jobs", [])
         for job in jobs:
@@ -327,18 +376,22 @@ class QcStore:
                 break
         self._save_manifest()
 
+    @_locked
     def get_rebuild_job(self, job_id: str) -> dict[str, Any] | None:
         for job in self.manifest.get("rebuild_jobs") or []:
             if job.get("job_id") == job_id:
                 return dict(job)
         return None
 
+    @_locked
     def active_rebuild_job(self) -> dict[str, Any] | None:
         return manifest_active_rebuild_job(self.manifest)
 
+    @_locked
     def last_qc_change_at(self) -> str | None:
         return manifest_last_qc_change_at(self.manifest)
 
+    @_locked
     def delivery_status(self) -> dict[str, Any]:
         return manifest_delivery_status(self.manifest)
 
@@ -354,6 +407,7 @@ class QcStore:
             entries.append(json.loads(line))
         return entries
 
+    @_locked
     def review_summary(
         self,
         all_episode_indices: list[int] | None = None,

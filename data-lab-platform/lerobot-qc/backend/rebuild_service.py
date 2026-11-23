@@ -146,13 +146,15 @@ def _unregister_running_dataset(dataset_root: Path, job_id: str) -> None:
             del _running_by_dataset[key]
 
 
-def _cleanup_incomplete_output(output_root: Path) -> None:
-    if not output_root.exists():
+def _cleanup_failed_output(output_root: Path, *, existed_before_job: bool) -> None:
+    """Remove what a failed job wrote; never touch a directory the job did not create.
+
+    Minimal rebuild copies meta/info.json first, so a partial output cannot be told apart
+    from a finished one by its contents.
+    """
+    if existed_before_job or not output_root.exists():
         return
-    info_path = output_root / "meta" / "info.json"
-    if info_path.is_file():
-        return
-    logger.warning("Removing incomplete rebuild output: %s", output_root)
+    logger.warning("Removing failed rebuild output: %s", output_root)
     shutil.rmtree(output_root, ignore_errors=True)
 
 
@@ -850,6 +852,9 @@ def start_rebuild_job(
     active = get_active_rebuild_job(store)
     if active and active.get("status") in ("queued", "running"):
         raise ValueError(f"Rebuild already in progress: {active.get('job_id')}")
+    removed = store.removed_episode_indices()
+    if not any(int(idx) not in removed for idx in state.episodes_df["episode_index"].tolist()):
+        raise ValueError("All episodes are marked removed; nothing to deliver")
 
     job_id = uuid.uuid4().hex[:12]
     _register_running_dataset(state.dataset_root, job_id)
@@ -874,6 +879,7 @@ def start_rebuild_job(
 
     def _worker() -> None:
         started = _utc_now()
+        existed_before_job = output_root.exists()
         _sync_job(job_id, store, status="running", started_at=started)
         try:
             result = rebuild_delivery_dataset(
@@ -893,7 +899,7 @@ def start_rebuild_job(
             store.append_audit(episode_index=None, action="rebuild_completed", after=finished)
         except Exception as exc:
             logger.exception("Rebuild job %s failed", job_id)
-            _cleanup_incomplete_output(output_root)
+            _cleanup_failed_output(output_root, existed_before_job=existed_before_job)
             failed = {
                 "status": "failed",
                 "finished_at": _utc_now(),

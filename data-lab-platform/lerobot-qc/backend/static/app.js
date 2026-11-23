@@ -92,6 +92,8 @@ const els = {
   metricsPanel: document.getElementById("metricsPanel"),
   instructionInput: document.getElementById("instructionInput"),
   saveInstructionBtn: document.getElementById("saveInstructionBtn"),
+  instructionDirty: document.getElementById("instructionDirty"),
+  deliveryStatus: document.getElementById("deliveryStatus"),
   approveBtn: document.getElementById("approveBtn"),
   rejectBtn: document.getElementById("rejectBtn"),
   suspiciousBtn: document.getElementById("suspiciousBtn"),
@@ -133,6 +135,7 @@ const state = {
   queryPackage: "",
   currentEpisode: null,
   currentDetail: null,
+  reviewSummary: null,
   trajectory: null,
   frameIndex: 0,
   playing: false,
@@ -383,11 +386,61 @@ function patchEpisodeReview(episodeIndex, review) {
 }
 
 function renderReviewProgress(summary) {
+  state.reviewSummary = summary || null;
   if (!summary) {
     els.reviewProgress.textContent = "";
+    renderDeliveryStatus(null);
     return;
   }
   els.reviewProgress.textContent = t("qc_review_progress", summary);
+  renderDeliveryStatus(summary.delivery);
+}
+
+function formatTimestamp(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? String(iso) : date.toLocaleString();
+}
+
+function renderDeliveryStatus(delivery) {
+  const el = els.deliveryStatus;
+  if (!el) return;
+  el.classList.remove("ok", "warn", "error");
+  if (!delivery) {
+    el.textContent = "";
+    return;
+  }
+  const vars = {
+    output: String(delivery.output_root || "").split("/").pop(),
+    episodes: delivery.kept_episodes ?? "?",
+    time: formatTimestamp(delivery.finished_at),
+  };
+  const byState = {
+    never_built: ["qc_delivery_never_built", ""],
+    current: ["qc_delivery_current", "ok"],
+    stale: ["qc_delivery_stale", "warn"],
+    missing: ["qc_delivery_missing", "warn"],
+  };
+  const [key, cls] = byState[delivery.state] || byState.never_built;
+  el.textContent = t(key, vars);
+  el.title = delivery.output_root || "";
+  if (cls) el.classList.add(cls);
+}
+
+function savedInstructionText() {
+  return String(state.currentDetail?.language_instruction || "").trim();
+}
+
+function isInstructionDirty() {
+  if (!state.currentDetail || els.instructionInput.disabled) return false;
+  return els.instructionInput.value.trim() !== savedInstructionText();
+}
+
+function updateInstructionDirty() {
+  if (!els.instructionDirty) return;
+  const dirty = isInstructionDirty();
+  els.instructionDirty.hidden = !dirty;
+  els.instructionDirty.textContent = dirty ? t("qc_instruction_unsaved") : "";
 }
 
 function renderEpisodeList() {
@@ -963,6 +1016,13 @@ async function refreshDatasetInfo() {
 }
 
 async function selectEpisode(episodeIndex) {
+  if (
+    episodeIndex !== state.currentEpisode &&
+    isInstructionDirty() &&
+    !window.confirm(t("qc_instruction_unsaved_confirm", { idx: state.currentEpisode }))
+  ) {
+    return;
+  }
   pauseAllVideos();
   state.currentEpisode = episodeIndex;
   renderEpisodeList();
@@ -983,6 +1043,7 @@ async function selectEpisode(episodeIndex) {
   els.instructionInput.value = detail.language_instruction || "";
   updateRemovedBanner(detail);
   updateQcActionButtons();
+  updateInstructionDirty();
   const videoKeys = getPlaybackVideoKeys(detail.video_keys || state.dataset?.video_keys || []);
   renderVideoGrid(videoKeys);
   loadEpisodeVideoSources(episodeIndex, videoKeys, { time: 0, pause: true });
@@ -1280,6 +1341,7 @@ async function pollRebuildJob(jobId) {
       const text = formatRebuildStatus(status);
       if (status.status === "completed") {
         showRebuildResultModal(formatRebuildStatus(status), "success");
+        refreshReviewProgress().catch(() => {});
       } else if (status.status === "failed") {
         const err = status.error || text;
         const message = String(err).includes("Service restarted")
@@ -1312,6 +1374,14 @@ async function resumeActiveRebuild(activeJob) {
 
 async function startRebuild() {
   if (rebuildActive) return;
+  const summary = state.reviewSummary;
+  const unreviewed = (summary?.pending || 0) + (summary?.suspicious || 0);
+  if (
+    unreviewed > 0 &&
+    !window.confirm(t("qc_rebuild_confirm_unreviewed", { pending: summary.pending || 0, suspicious: summary.suspicious || 0 }))
+  ) {
+    return;
+  }
   clearRebuildPollTimer();
   setRebuildUiActive(true);
   hideRebuildModal();
@@ -1557,6 +1627,12 @@ els.rejectBtn.addEventListener("click", () => postReview("rejected"));
 els.suspiciousBtn.addEventListener("click", () => postReview("suspicious"));
 els.restoreEpisodeBtn?.addEventListener("click", () => postReview("pending"));
 els.saveInstructionBtn.addEventListener("click", saveInstruction);
+els.instructionInput.addEventListener("input", updateInstructionDirty);
+window.addEventListener("beforeunload", (event) => {
+  if (!isInstructionDirty()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 els.rebuildBtn.addEventListener("click", startRebuild);
 els.closeRebuildModal.addEventListener("click", hideRebuildModal);
 els.screeningFileInput.addEventListener("change", async (event) => {

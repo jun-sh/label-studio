@@ -411,6 +411,17 @@ select:focus {
   color: #15803d;
 }
 
+.ls-helper.warn {
+  color: #b45309;
+}
+
+.ls-instruction-dirty {
+  margin: 0;
+  align-self: center;
+  color: #b45309;
+  font-weight: 600;
+}
+
 .ls-check {
   flex-direction: row;
   align-items: center;

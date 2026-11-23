@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -242,12 +243,28 @@ def healthz() -> JSONResponse:
     return JSONResponse({"ok": True, "service": "lerobot-qc"})
 
 
+_STATIC_ASSET_RE = re.compile(r'(?P<attr>(?:src|href)=")/static/(?P<name>[\w.-]+\.(?:js|css))(?:\?[^"]*)?"')
+
+
+def _with_asset_versions(html: str) -> str:
+    """Append ?v=<mtime> to local JS/CSS so browsers pick up edits without a hard reload."""
+
+    def _versioned(match: re.Match[str]) -> str:
+        asset = STATIC_DIR / match.group("name")
+        if not asset.is_file():
+            return match.group(0)
+        return f'{match.group("attr")}/static/{match.group("name")}?v={int(asset.stat().st_mtime)}"'
+
+    return _STATIC_ASSET_RE.sub(_versioned, html)
+
+
 @app.get("/")
 def root() -> HTMLResponse:
     index_path = STATIC_DIR / "index.html"
     if not index_path.is_file():
         return HTMLResponse("<h1>LeRobot QC</h1><p>Missing static UI</p>")
-    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+    html = _with_asset_versions(index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 @app.post("/api/dataset/load")

@@ -61,8 +61,8 @@ def v3_dataset(tmp_path: Path) -> Path:
         pa.Table.from_pandas(episodes, preserve_index=False),
         root / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
     )
-    tasks = pd.DataFrame([{"task_index": 0, "task": "pick the cube"}])
-    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=False), root / "meta" / "tasks.parquet")
+    tasks = pd.DataFrame({"task_index": [0]}, index=pd.Index(["pick the cube"], name="task"))
+    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=True), root / "meta" / "tasks.parquet")
 
     frames = pd.DataFrame(
         {

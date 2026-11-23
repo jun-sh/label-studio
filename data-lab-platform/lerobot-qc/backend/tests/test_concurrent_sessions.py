@@ -66,8 +66,13 @@ def test_concurrent_packages_use_isolated_sessions(tmp_path: Path) -> None:
 
     assert payload_a["session_path"] == path_a
     assert payload_b["session_path"] == path_b
-    assert payload_a["qc_state"]["0"]["review"]["status"] == "approved"
-    assert payload_b["qc_state"]["0"]["review"]["status"] == "suspicious"
+    # Episode review state is served per page (/api/episodes); info only carries the summary.
+    assert payload_a["review_summary"]["approved"] == 1
+    assert payload_a["review_summary"]["suspicious"] == 0
+    assert payload_b["review_summary"]["suspicious"] == 1
+    assert payload_b["review_summary"]["approved"] == 0
+    assert session_a.store.get_review(0)["status"] == "approved"
+    assert session_b.store.get_review(0)["status"] == "suspicious"
 
 
 def test_require_session_rejects_missing_context() -> None:

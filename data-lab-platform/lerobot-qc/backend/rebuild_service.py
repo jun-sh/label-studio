@@ -249,6 +249,66 @@ def _patch_episode_tasks(row: pd.Series, store: QcStore, original_index: int) ->
     return patched
 
 
+_TASK_INDEX_STATS_PREFIX = "stats/task_index/"
+
+
+def _constant_stat_like(value: Any, constant: float) -> Any:
+    if isinstance(value, np.ndarray):
+        return np.full(value.shape, constant, dtype=value.dtype if value.dtype.kind == "f" else np.float64)
+    if isinstance(value, (list, tuple)):
+        return [float(constant)] * len(value)
+    return float(constant)
+
+
+def _patch_episode_task_index(row: pd.Series, task_index: int) -> pd.Series:
+    """Point an episode at a new task_index and keep its per-episode task_index stats consistent."""
+    # Rebuild from a dict: Series.__setitem__ would unwrap 1-element arrays into scalars.
+    values = row.to_dict()
+    if "task_index" in values:
+        values["task_index"] = task_index
+    for col, value in list(values.items()):
+        if not isinstance(col, str) or not col.startswith(_TASK_INDEX_STATS_PREFIX):
+            continue
+        stat_name = col[len(_TASK_INDEX_STATS_PREFIX):]
+        if stat_name == "count":
+            continue
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            continue
+        values[col] = _constant_stat_like(value, 0.0 if stat_name == "std" else float(task_index))
+    return pd.Series(values, index=row.index, name=row.name, dtype=object)
+
+
+def plan_instruction_tasks(
+    tasks_map: dict[int, str],
+    store: QcStore,
+    kept_original_indices: list[int],
+) -> tuple[dict[int, str], dict[int, int]]:
+    """Map instruction overrides to task indices without touching episodes that share a task.
+
+    Existing task texts are reused; new texts are appended after the current max task_index.
+    Returns (updated tasks_map, {original_episode_index: task_index}).
+    """
+    updated = dict(tasks_map)
+    text_to_index: dict[str, int] = {}
+    for idx, text in sorted(updated.items()):
+        text_to_index.setdefault(text, idx)
+    next_index = max(updated, default=-1) + 1
+    overrides = store.manifest.get("instruction_overrides") or {}
+    episode_task_index: dict[int, int] = {}
+    for ep_idx in kept_original_indices:
+        text = str(overrides.get(str(ep_idx)) or "").strip()
+        if not text:
+            continue
+        task_index = text_to_index.get(text)
+        if task_index is None:
+            task_index = next_index
+            next_index += 1
+            updated[task_index] = text
+            text_to_index[text] = task_index
+        episode_task_index[ep_idx] = task_index
+    return updated, episode_task_index
+
+
 def _filter_episodes_parquet(
     episodes_df: pd.DataFrame,
     *,
@@ -256,6 +316,7 @@ def _filter_episodes_parquet(
     old_to_new: dict[int, int],
     store: QcStore,
     video_metadata: dict[int, dict[str, Any]] | None = None,
+    episode_task_index: dict[int, int] | None = None,
 ) -> pd.DataFrame:
     """Preserve original columns; patch episode_index, dataset bounds, tasks, and video refs."""
     rows: list[pd.Series] = []
@@ -263,6 +324,8 @@ def _filter_episodes_parquet(
     for original_index in kept:
         src = episodes_df[episodes_df["episode_index"] == original_index].iloc[0]
         src = _patch_episode_tasks(src, store, original_index)
+        if episode_task_index and original_index in episode_task_index:
+            src = _patch_episode_task_index(src, episode_task_index[original_index])
         length = int(src["length"]) if "length" in src.index and pd.notna(src["length"]) else 0
         patched = src.copy()
         new_index = old_to_new[original_index]
@@ -301,10 +364,17 @@ def _filter_data_parquet(
     *,
     removed: set[int],
     old_to_new: dict[int, int],
+    episode_task_index: dict[int, int] | None = None,
 ) -> int:
     table = pq.read_table(src_path)
     schema = table.schema
     df = table.to_pandas()
+    if episode_task_index and "task_index" in df.columns:
+        # Must run before episode_index is remapped: keys are original episode indices.
+        mapped = df["episode_index"].map(episode_task_index)
+        mask = mapped.notna()
+        if mask.any():
+            df.loc[mask, "task_index"] = mapped[mask].astype(df["task_index"].dtype)
     if removed:
         df = df[~df["episode_index"].isin(removed)].copy()
     if old_to_new:
@@ -380,31 +450,16 @@ def _try_finalize(output_root: Path) -> tuple[bool, str | None]:
     return False, "LeRobot finalize did not run"
 
 
-def _apply_instruction_corrections(
-    tasks_map: dict[int, str],
-    state: DatasetState,
-    store: QcStore,
-    kept_original_indices: list[int],
-) -> dict[int, str]:
-    updated = dict(tasks_map)
-    overrides = store.manifest.get("instruction_overrides") or {}
-    for ep_idx in kept_original_indices:
-        override = overrides.get(str(ep_idx))
-        if not override:
-            continue
-        row = state.episode_row(ep_idx)
-        _, task_index = state.resolve_language_instruction(row)
-        if task_index is not None:
-            updated[task_index] = str(override)
-    return updated
-
-
 def _rebuild_tasks_parquet(output_root: Path, tasks_map: dict[int, str]) -> None:
+    """Write LeRobot v3 tasks.parquet: task text is the index, task_index the only column."""
     if not tasks_map:
         return
-    rows = [{"task_index": idx, "task": text} for idx, text in sorted(tasks_map.items())]
-    df = pd.DataFrame(rows)
-    table = pa.Table.from_pandas(df, preserve_index=False)
+    items = sorted(tasks_map.items())
+    df = pd.DataFrame(
+        {"task_index": np.array([idx for idx, _ in items], dtype=np.int64)},
+        index=pd.Index([text for _, text in items], name="task"),
+    )
+    table = pa.Table.from_pandas(df, preserve_index=True)
     _atomic_write_parquet(table, output_root / "meta" / "tasks.parquet")
 
 
@@ -478,12 +533,16 @@ def _rebuild_minimal_delivery_dataset(
     removed = store.removed_episode_indices()
     all_indices = [int(x) for x in state.episodes_df["episode_index"].tolist()]
     kept, old_to_new = _build_episode_mapping(all_indices, removed)
+    source_tasks_map = _load_tasks_map(state.dataset_root)
+    tasks_map, episode_task_index = plan_instruction_tasks(source_tasks_map, store, kept)
 
     if output_root.exists():
         raise ValueError(f"Output directory already exists: {output_root}")
 
     _sync_job(job_id, store, progress="copying dataset", status="running")
     _copy_dataset_tree(state.dataset_root, output_root, skip_videos=True)
+    if tasks_map != source_tasks_map:
+        _rebuild_tasks_parquet(output_root, tasks_map)
 
     total_frames = 0
     data_files = sorted((state.dataset_root / "data").rglob("*.parquet"))
@@ -502,6 +561,7 @@ def _rebuild_minimal_delivery_dataset(
             output_root / "data" / rel,
             removed=removed,
             old_to_new=old_to_new,
+            episode_task_index=episode_task_index,
         )
 
     def _report_video_progress(
@@ -551,6 +611,7 @@ def _rebuild_minimal_delivery_dataset(
             old_to_new=old_to_new,
             store=store,
             video_metadata=video_metadata,
+            episode_task_index=episode_task_index,
         )
         schema = pq.read_schema(src_parquet)
         _atomic_write_parquet(
@@ -561,6 +622,8 @@ def _rebuild_minimal_delivery_dataset(
     info = json.loads((output_root / "meta" / "info.json").read_text(encoding="utf-8"))
     info["total_episodes"] = len(kept)
     info["total_frames"] = total_frames
+    if tasks_map:
+        info["total_tasks"] = len(tasks_map)
     info["codebase_version"] = "v3.0"
     _update_splits(info, len(kept))
     _write_json(output_root / "meta" / "info.json", info)
@@ -615,7 +678,7 @@ def _rebuild_legacy_delivery_dataset(
 
     chunks_size = int(state.info.get("chunks_size") or CHUNKS_SIZE_DEFAULT)
     fps = state.fps
-    tasks_map = _apply_instruction_corrections(_load_tasks_map(state.dataset_root), state, store, kept)
+    tasks_map, episode_task_index = plan_instruction_tasks(_load_tasks_map(state.dataset_root), store, kept)
 
     episode_rows: list[dict[str, Any]] = []
     frame_tables: list[pd.DataFrame] = []
@@ -652,6 +715,8 @@ def _rebuild_legacy_delivery_dataset(
                 ep_df["index"] = np.arange(from_index, to_index, dtype=np.int64)
             if "timestamp" in ep_df.columns:
                 ep_df["timestamp"] = np.arange(length, dtype=np.float64) / fps
+            if original_index in episode_task_index and "task_index" in ep_df.columns:
+                ep_df["task_index"] = np.int64(episode_task_index[original_index])
             frame_tables.append(ep_df)
 
         ep_record: dict[str, Any] = {
@@ -660,7 +725,9 @@ def _rebuild_legacy_delivery_dataset(
             "dataset_from_index": from_index,
             "dataset_to_index": to_index,
         }
-        if "task_index" in row.index and pd.notna(row["task_index"]):
+        if original_index in episode_task_index:
+            ep_record["task_index"] = episode_task_index[original_index]
+        elif "task_index" in row.index and pd.notna(row["task_index"]):
             ep_record["task_index"] = int(row["task_index"])
         override = store.get_instruction_override(original_index)
         if override:
@@ -693,6 +760,8 @@ def _rebuild_legacy_delivery_dataset(
     info = dict(state.info)
     info["total_episodes"] = len(kept)
     info["total_frames"] = int(global_frame_offset)
+    if tasks_map:
+        info["total_tasks"] = len(tasks_map)
     info["chunks_size"] = chunks_size
     info["codebase_version"] = "v3.0"
     _update_splits(info, len(kept))

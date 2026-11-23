@@ -122,13 +122,12 @@ def minimal_dataset(tmp_path: Path) -> tuple[Path, Path]:
         pa.Table.from_pandas(episodes, preserve_index=False),
         root / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
     )
+    # LeRobot v3 layout: task text is the index, task_index the only column.
     tasks = pd.DataFrame(
-        [
-            {"task_index": 0, "task": "pick the cube"},
-            {"task_index": 1, "task": "stack the cup"},
-        ]
+        {"task_index": np.array([0, 1], dtype=np.int64)},
+        index=pd.Index(["pick the cube", "stack the cup"], name="task"),
     )
-    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=False), root / "meta" / "tasks.parquet")
+    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=True), root / "meta" / "tasks.parquet")
 
     frames = pd.DataFrame(
         {
@@ -240,9 +239,24 @@ def test_minimal_rebuild_preserves_schema_videos_and_payload(
     report_path = store.sidecar_root / "delivery_reports" / "testbatch.txt"
     assert report_path.is_file()
 
-    orig_tasks = (dataset_root / "meta/tasks.parquet").read_bytes()
-    reb_tasks = (output_root / "meta/tasks.parquet").read_bytes()
-    assert orig_tasks == reb_tasks
+    # Override of episode 0 is appended as a new task; episode 0 frames point at it,
+    # while the other episode that shared task 0 keeps the original text.
+    reb_tasks = pd.read_parquet(output_root / "meta/tasks.parquet")
+    assert list(reb_tasks.columns) == ["task_index"]
+    assert dict(zip(reb_tasks.index, reb_tasks["task_index"])) == {
+        "pick the cube": 0,
+        "stack the cup": 1,
+        "place the cube on the plate": 2,
+    }
+    assert info["total_tasks"] == 3
+    assert set(reb_data[reb_data["episode_index"] == 0]["task_index"]) == {2}
+    assert set(reb_data[reb_data["episode_index"] == 1]["task_index"]) == {1}
+    assert reb_data["task_index"].dtype == orig_data["task_index"].dtype
+    rebuilt_state = load_local_dataset(str(output_root))
+    ep0_text, _ = rebuilt_state.resolve_language_instruction(
+        pd.Series({"task_index": int(reb_data[reb_data["episode_index"] == 0]["task_index"].iloc[0])})
+    )
+    assert ep0_text == "place the cube on the plate"
 
     stats = json.loads((output_root / "meta/stats.json").read_text(encoding="utf-8"))
     assert stats["action"]["count"] == [10]
@@ -260,3 +274,51 @@ def test_update_splits() -> None:
     rebuild_service._update_splits(info, 115)
     assert info["splits"]["train"] == "0:115"
     assert info["splits"]["val"] == "5:115"
+
+
+def _store_with_overrides(tmp_path: Path, overrides: dict[str, str]) -> QcStore:
+    root = tmp_path / "ds"
+    root.mkdir()
+    store = QcStore.open(root, tmp_path / "sidecar", operator_id="tester")
+    store.manifest["instruction_overrides"] = overrides
+    return store
+
+
+def test_plan_instruction_tasks_reuses_existing_and_appends_new(tmp_path: Path) -> None:
+    store = _store_with_overrides(
+        tmp_path,
+        {"0": "new text", "1": "stack the cup", "2": "new text", "5": "removed episode text"},
+    )
+    tasks_map, episode_task = rebuild_service.plan_instruction_tasks(
+        {0: "pick the cube", 1: "stack the cup"}, store, [0, 1, 2, 3]
+    )
+    assert tasks_map == {0: "pick the cube", 1: "stack the cup", 2: "new text"}
+    assert episode_task == {0: 2, 1: 1, 2: 2}
+
+
+def test_plan_instruction_tasks_without_overrides_is_noop(tmp_path: Path) -> None:
+    store = _store_with_overrides(tmp_path, {})
+    source = {0: "pick the cube"}
+    tasks_map, episode_task = rebuild_service.plan_instruction_tasks(source, store, [0, 1])
+    assert tasks_map == source
+    assert episode_task == {}
+
+
+def test_patch_episode_task_index_updates_per_episode_stats() -> None:
+    row = pd.Series(
+        {
+            "episode_index": 3,
+            "stats/task_index/min": np.array([0.0]),
+            "stats/task_index/max": np.array([0.0]),
+            "stats/task_index/mean": np.array([0.0]),
+            "stats/task_index/std": np.array([0.4]),
+            "stats/task_index/q50": np.array([0.0]),
+            "stats/task_index/count": np.array([42]),
+        }
+    )
+    patched = rebuild_service._patch_episode_task_index(row, 5)
+    for stat in ("min", "max", "mean", "q50"):
+        assert patched[f"stats/task_index/{stat}"].tolist() == [5.0]
+    assert patched["stats/task_index/std"].tolist() == [0.0]
+    assert patched["stats/task_index/count"].tolist() == [42]
+    assert row["stats/task_index/min"].tolist() == [0.0]

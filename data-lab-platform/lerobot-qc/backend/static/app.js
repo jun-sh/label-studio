@@ -1626,6 +1626,14 @@ els.approveBtn.addEventListener("click", () => postReview("approved"));
 els.rejectBtn.addEventListener("click", () => postReview("rejected"));
 els.suspiciousBtn.addEventListener("click", () => postReview("suspicious"));
 els.restoreEpisodeBtn?.addEventListener("click", () => postReview("pending"));
+document.getElementById("overviewLink")?.addEventListener("click", (event) => {
+  // The review page rewrites its URL after load, so carry the live embed/locale state.
+  const params = new URLSearchParams();
+  if (window.LA_I18N?.IS_DATALAB_EMBED) params.set("datalab_embed", "1");
+  if (window.LA_I18N?.getLocale) params.set("lang", window.LA_I18N.getLocale());
+  if (els.collectionSelect?.value) params.set("collection", els.collectionSelect.value);
+  event.currentTarget.href = params.toString() ? `overview?${params}` : "overview";
+});
 els.saveInstructionBtn.addEventListener("click", saveInstruction);
 els.instructionInput.addEventListener("input", updateInstructionDirty);
 window.addEventListener("beforeunload", (event) => {

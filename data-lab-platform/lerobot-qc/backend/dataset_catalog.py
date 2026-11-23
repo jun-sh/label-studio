@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -333,20 +335,162 @@ def list_collections(*, include_unavailable: bool = False) -> list[dict[str, Any
     return collections
 
 
-def get_collection(collection_id: str) -> dict[str, Any]:
+COLLECTION_CACHE_TTL_S = float(os.environ.get("LEROBOT_QC_COLLECTION_CACHE_TTL", "600"))
+_collection_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+_collection_cache_lock = threading.Lock()
+_collection_refreshing: set[tuple[str, str]] = set()
+_collection_cache_dir: Path | None = None
+
+
+def configure_collection_cache(cache_dir: Path | None) -> None:
+    """Persist collection listings under cache_dir so a restart does not rescan slow storage."""
+    global _collection_cache_dir
+    _collection_cache_dir = cache_dir
+
+
+def clear_collection_cache() -> None:
+    with _collection_cache_lock:
+        _collection_cache.clear()
+
+
+def _load_collection_uncached(collection_id: str) -> dict[str, Any] | None:
+    registry = _load_collections_registry()
+    if registry is not None:
+        # Only scan the requested collection: enriching every package of every
+        # collection costs thousands of stat() calls on the HDD-backed storage.
+        for entry in registry.get("collections") or []:
+            if isinstance(entry, dict) and str(entry.get("id") or "").strip() == collection_id:
+                return _load_registry_collection(registry, entry)
+        return None
     for collection in list_collections():
         if collection.get("id") == collection_id:
             return collection
-    raise KeyError(collection_id)
+    return None
+
+
+def _cache_file(key: tuple[str, str]) -> Path | None:
+    if _collection_cache_dir is None:
+        return None
+    import hashlib
+
+    digest = hashlib.sha256("\0".join(key).encode("utf-8")).hexdigest()[:16]
+    return _collection_cache_dir / f"collection_{digest}.json"
+
+
+def _read_persisted(key: tuple[str, str]) -> tuple[float, dict[str, Any]] | None:
+    path = _cache_file(key)
+    if path is None or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("key") != list(key):
+            return None
+        age = max(0.0, time.time() - float(payload["saved_at"]))
+        return time.monotonic() - age, payload["collection"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _store(key: tuple[str, str], collection: dict[str, Any]) -> None:
+    with _collection_cache_lock:
+        _collection_cache[key] = (time.monotonic(), collection)
+    path = _cache_file(key)
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps({"key": list(key), "saved_at": time.time(), "collection": collection}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def _refresh_in_background(key: tuple[str, str], collection_id: str) -> None:
+    with _collection_cache_lock:
+        if key in _collection_refreshing:
+            return
+        _collection_refreshing.add(key)
+
+    def _run() -> None:
+        try:
+            collection = _load_collection_uncached(collection_id)
+            if collection is not None:
+                _store(key, collection)
+        finally:
+            with _collection_cache_lock:
+                _collection_refreshing.discard(key)
+
+    threading.Thread(target=_run, name=f"collection-refresh-{collection_id}", daemon=True).start()
+
+
+def get_collection(collection_id: str, *, force_refresh: bool = False) -> dict[str, Any]:
+    """Collection listing with stale-while-revalidate caching.
+
+    Listing walks every package on (slow, USB/NTFS) storage, so a cached copy is served
+    and refreshed in the background once older than COLLECTION_CACHE_TTL_S.
+    """
+    key = (collection_id, str(datasets_root()))
+    if not force_refresh:
+        with _collection_cache_lock:
+            cached = _collection_cache.get(key)
+        if cached is None:
+            cached = _read_persisted(key)
+            if cached is not None:
+                with _collection_cache_lock:
+                    _collection_cache.setdefault(key, cached)
+        if cached is not None:
+            if time.monotonic() - cached[0] >= COLLECTION_CACHE_TTL_S:
+                _refresh_in_background(key, collection_id)
+            return cached[1]
+    collection = _load_collection_uncached(collection_id)
+    if collection is None:
+        raise KeyError(collection_id)
+    _store(key, collection)
+    return collection
+
+
+def list_collections_cached(*, include_unavailable: bool = False) -> list[dict[str, Any]]:
+    """list_collections() backed by the per-collection cache (registry mode).
+
+    Registry entries whose directory is missing are cheap to describe; available ones come
+    from get_collection() so the package scan is shared and cached.
+    """
+    registry = _load_collections_registry()
+    if registry is None:
+        return list_collections(include_unavailable=include_unavailable)
+    collections: list[dict[str, Any]] = []
+    for entry in registry.get("collections") or []:
+        if not isinstance(entry, dict):
+            continue
+        collection_id = str(entry.get("id") or "").strip()
+        if not collection_id:
+            continue
+        # Cache first: resolving the directory already costs stat() calls on slow storage.
+        try:
+            collections.append(get_collection(collection_id))
+            continue
+        except KeyError:
+            pass
+        if include_unavailable:
+            fallback = _load_registry_collection(registry, entry, include_unavailable=True)
+            if fallback is not None:
+                collections.append(fallback)
+    return collections
 
 
 def resolve_package_path(collection_id: str, package_id: str) -> str:
-    collection = get_collection(collection_id)
-    for pkg in collection.get("packages") or []:
-        if pkg.get("id") == package_id:
-            path = pkg.get("local_path")
-            if path:
-                return str(path)
+    for force_refresh in (False, True):
+        # A cached listing may predate a newly added package: retry once uncached.
+        collection = get_collection(collection_id, force_refresh=force_refresh)
+        for pkg in collection.get("packages") or []:
+            if pkg.get("id") == package_id:
+                path = pkg.get("local_path")
+                if path:
+                    return str(path)
     raise KeyError(f"{collection_id}/{package_id}")
 
 

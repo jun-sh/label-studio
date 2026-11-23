@@ -139,6 +139,12 @@ def _register_running_dataset(dataset_root: Path, job_id: str) -> None:
         _running_by_dataset[key] = job_id
 
 
+def running_job_ids() -> set[str]:
+    """Job ids executing in this process (sidecar 'running' entries may be stale after a restart)."""
+    with _running_lock:
+        return set(_running_by_dataset.values())
+
+
 def _unregister_running_dataset(dataset_root: Path, job_id: str) -> None:
     key = _dataset_key(dataset_root)
     with _running_lock:

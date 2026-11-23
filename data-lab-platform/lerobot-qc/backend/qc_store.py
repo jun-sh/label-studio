@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,9 +25,14 @@ def _atomic_write_text(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
-def canonical_dataset_key(dataset_root: Path) -> str:
-    """Stable identity for a LeRobot package regardless of host mount prefix."""
-    parts = list(dataset_root.resolve().parts)
+def canonical_dataset_key(dataset_root: Path, *, resolve: bool = True) -> str:
+    """Stable identity for a LeRobot package regardless of host mount prefix.
+
+    resolve=False derives the key from the path text only (no lstat per component),
+    for bulk use against slow FUSE/USB mounts.
+    """
+    path = dataset_root.resolve() if resolve else Path(os.path.normpath(str(dataset_root)))
+    parts = list(path.parts)
     start = 0
     for index, part in enumerate(parts):
         lowered = part.lower()
@@ -328,49 +334,13 @@ class QcStore:
         return None
 
     def active_rebuild_job(self) -> dict[str, Any] | None:
-        for job in reversed(self.manifest.get("rebuild_jobs") or []):
-            if job.get("status") in ("queued", "running"):
-                return dict(job)
-        return None
+        return manifest_active_rebuild_job(self.manifest)
 
     def last_qc_change_at(self) -> str | None:
-        """Timestamp of the latest review/instruction change (ISO UTC, comparable as text)."""
-        stamped = self.manifest.get("qc_updated_at")
-        if stamped:
-            return str(stamped)
-        # Manifests written before qc_updated_at existed: fall back to review timestamps.
-        times = [str(r.get("updated_at")) for r in (self.manifest.get("reviews") or {}).values() if r.get("updated_at")]
-        return max(times) if times else None
+        return manifest_last_qc_change_at(self.manifest)
 
     def delivery_status(self) -> dict[str, Any]:
-        """Whether the latest completed delivery reflects the current QC decisions.
-
-        state: never_built | missing (output dir gone) | stale (QC changed after the job
-        started, i.e. after it snapshotted the sidecar) | current.
-        """
-        completed = [
-            job
-            for job in self.manifest.get("rebuild_jobs") or []
-            if job.get("status") == "completed" and job.get("output_root")
-        ]
-        last_change = self.last_qc_change_at()
-        if not completed:
-            return {"state": "never_built", "last_qc_change_at": last_change}
-        last = max(completed, key=lambda job: str(job.get("finished_at") or job.get("created_at") or ""))
-        snapshot_at = str(last.get("started_at") or last.get("created_at") or "")
-        if not Path(str(last["output_root"])).is_dir():
-            state = "missing"
-        elif last_change and last_change > snapshot_at:
-            state = "stale"
-        else:
-            state = "current"
-        return {
-            "state": state,
-            "output_root": last.get("output_root"),
-            "finished_at": last.get("finished_at"),
-            "kept_episodes": last.get("kept_episodes"),
-            "last_qc_change_at": last_change,
-        }
+        return manifest_delivery_status(self.manifest)
 
     def read_audit_entries(self, limit: int = 200) -> list[dict[str, Any]]:
         if not self.audit_path.is_file():
@@ -391,25 +361,69 @@ class QcStore:
         total_episodes: int | None = None,
     ) -> dict[str, Any]:
         total = total_episodes if total_episodes is not None else len(all_episode_indices or [])
-        counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
-        reviews = self.manifest.get("reviews") or {}
-        reviewed_indices: set[int] = set()
-        for key, record in reviews.items():
-            try:
-                ep_idx = int(key)
-            except (TypeError, ValueError):
-                continue
-            reviewed_indices.add(ep_idx)
-            status = record.get("status") or "pending"
-            if status not in counts:
-                status = "pending"
-            counts[status] += 1
-        counts["pending"] += max(0, total - len(reviewed_indices))
-        visible = total - len(self.removed_episode_indices())
-        return {
-            "total": total,
-            "visible": visible,
-            "removed_preview": total - visible,
-            **counts,
-            "delivery": self.delivery_status(),
-        }
+        return {**manifest_review_counts(self.manifest, total), "delivery": self.delivery_status()}
+
+
+def manifest_review_counts(manifest: dict[str, Any], total: int) -> dict[str, int]:
+    """Review counts for a package with `total` episodes; unreviewed episodes count as pending."""
+    counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
+    reviewed: set[int] = set()
+    for key, record in (manifest.get("reviews") or {}).items():
+        try:
+            ep_idx = int(key)
+        except (TypeError, ValueError):
+            continue
+        reviewed.add(ep_idx)
+        status = record.get("status") or "pending"
+        counts[status if status in counts else "pending"] += 1
+    counts["pending"] += max(0, total - len(reviewed))
+    visible = total - counts["rejected"]
+    return {"total": total, "visible": visible, "removed_preview": total - visible, **counts}
+
+
+def manifest_last_qc_change_at(manifest: dict[str, Any]) -> str | None:
+    """Timestamp of the latest review/instruction change (ISO UTC, comparable as text)."""
+    stamped = manifest.get("qc_updated_at")
+    if stamped:
+        return str(stamped)
+    # Manifests written before qc_updated_at existed: fall back to review timestamps.
+    times = [str(r.get("updated_at")) for r in (manifest.get("reviews") or {}).values() if r.get("updated_at")]
+    return max(times) if times else None
+
+
+def manifest_active_rebuild_job(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    for job in reversed(manifest.get("rebuild_jobs") or []):
+        if job.get("status") in ("queued", "running"):
+            return dict(job)
+    return None
+
+
+def manifest_delivery_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Whether the latest completed delivery reflects the current QC decisions.
+
+    state: never_built | missing (output dir gone) | stale (QC changed after the job
+    started, i.e. after it snapshotted the sidecar) | current.
+    """
+    completed = [
+        job
+        for job in manifest.get("rebuild_jobs") or []
+        if job.get("status") == "completed" and job.get("output_root")
+    ]
+    last_change = manifest_last_qc_change_at(manifest)
+    if not completed:
+        return {"state": "never_built", "last_qc_change_at": last_change}
+    last = max(completed, key=lambda job: str(job.get("finished_at") or job.get("created_at") or ""))
+    snapshot_at = str(last.get("started_at") or last.get("created_at") or "")
+    if not Path(str(last["output_root"])).is_dir():
+        state = "missing"
+    elif last_change and last_change > snapshot_at:
+        state = "stale"
+    else:
+        state = "current"
+    return {
+        "state": state,
+        "output_root": last.get("output_root"),
+        "finished_at": last.get("finished_at"),
+        "kept_episodes": last.get("kept_episodes"),
+        "last_qc_change_at": last_change,
+    }

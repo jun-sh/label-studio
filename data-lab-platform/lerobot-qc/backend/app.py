@@ -13,15 +13,24 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from dataset_catalog import datasets_root, get_collection, list_collections, resolve_package_path, validate_dataset_path
+from dataset_catalog import (
+    configure_collection_cache,
+    datasets_root,
+    get_collection,
+    list_collections_cached,
+    resolve_package_path,
+    validate_dataset_path,
+)
 from dataset_manager import DatasetState, load_local_dataset
 from dataset_sessions import DATASET_PATH_HEADER, DatasetSession, DatasetSessionRegistry
 from qc_metrics import build_trajectory_payload, compute_qc_metrics
 from qc_store import QcStore
+from overview_service import build_overview
 from rebuild_service import (
     get_active_rebuild_job,
     hydrate_jobs_from_store,
     resolve_rebuild_job,
+    running_job_ids,
     start_rebuild_job,
 )
 from screening_service import import_screening_payload
@@ -37,6 +46,7 @@ DEFAULT_OPERATOR = os.environ.get("LEROBOT_QC_OPERATOR", "anonymous")
 DEFAULT_EPISODE_PAGE_SIZE = max(50, min(500, int(os.environ.get("LEROBOT_QC_EPISODE_PAGE_SIZE", "200"))))
 
 configure_cache(CACHE_ROOT)
+configure_collection_cache(CACHE_ROOT / "collections")
 
 app = FastAPI(title="LeRobot QC", version="0.1.0")
 app.add_middleware(
@@ -258,13 +268,35 @@ def _with_asset_versions(html: str) -> str:
     return _STATIC_ASSET_RE.sub(_versioned, html)
 
 
+def _static_page(name: str) -> HTMLResponse:
+    page_path = STATIC_DIR / name
+    if not page_path.is_file():
+        return HTMLResponse("<h1>LeRobot QC</h1><p>Missing static UI</p>")
+    html = _with_asset_versions(page_path.read_text(encoding="utf-8"))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/")
 def root() -> HTMLResponse:
-    index_path = STATIC_DIR / "index.html"
-    if not index_path.is_file():
-        return HTMLResponse("<h1>LeRobot QC</h1><p>Missing static UI</p>")
-    html = _with_asset_versions(index_path.read_text(encoding="utf-8"))
-    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+    return _static_page("index.html")
+
+
+@app.get("/overview")
+def overview_page() -> HTMLResponse:
+    return _static_page("overview.html")
+
+
+@app.get("/api/qc/overview")
+def api_qc_overview(collection: str = Query(..., min_length=1), refresh: bool = False) -> JSONResponse:
+    """Review progress and delivery state of every package in a collection (read-only).
+
+    refresh=true rescans the package list on storage instead of using the cached listing.
+    """
+    try:
+        payload = build_overview(collection, SIDECAR_ROOT, running_job_ids(), refresh=refresh)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Collection not found: {collection}") from exc
+    return JSONResponse(payload)
 
 
 @app.post("/api/dataset/load")
@@ -301,7 +333,7 @@ def api_list_episodes(
 
 @app.get("/api/datasets/collections")
 def api_list_collections() -> JSONResponse:
-    collections = list_collections(include_unavailable=True)
+    collections = list_collections_cached(include_unavailable=True)
     summaries = [
         {
             "id": c.get("id"),

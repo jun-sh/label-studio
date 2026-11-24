@@ -215,9 +215,14 @@ class CaptureTimerTest(unittest.TestCase):
             ),
             mock.patch.object(ego_web, "_capture_unit_running", return_value=False),
             mock.patch.object(ego_web, "_stop_capture_hard", return_value=True) as hard,
-            mock.patch.object(ego_web, "_capture_active", return_value=False),
+            # Inactive before the cold start, active once the unit is started.
+            mock.patch.object(ego_web, "_capture_active", side_effect=[False, True]),
             mock.patch.object(ego_web, "_capture_stopping", return_value=False),
             mock.patch.object(ego_web, "_ensure_capture_fully_stopped", return_value=True),
+            mock.patch.object(ego_web, "_capture_run_since_epoch", return_value=1000.0),
+            mock.patch.object(
+                ego_web, "_journal_capture_info", return_value={"beep_epoch": 1000.0}
+            ),
             mock.patch.object(
                 ego_web, "_ensure_preview_handoff_for_capture", return_value=(True, "")
             ),
@@ -230,7 +235,8 @@ class CaptureTimerTest(unittest.TestCase):
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
             ) as ctl,
         ):
-            ego_web._run_capture_action("start")
+            ok, msg = ego_web._run_capture_action("start")
+        self.assertEqual((ok, msg), (True, ""))
         hard.assert_called_once()
         ctl.assert_any_call("start", ego_web.CAPTURE_TARGET, timeout=ego_web.START_TIMEOUT_S)
 

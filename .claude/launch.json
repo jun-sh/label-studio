@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "viewer-host",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "data-lab-platform/lerobot-viewer-host", "run", "dev"],
+      "port": 7870
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "datalab-viewer-host",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 7870",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@ioai/lerobot-studio": "1.7.0",
+    "hyparquet": "^1.33.1",
+    "lucide-react": "^1.78.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.3.5",
+    "vite": "^7.0.0"
+  }
+}

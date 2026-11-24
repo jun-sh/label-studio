@@ -194,5 +194,6 @@ docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platfor
 
 ## 上游与许可
 
-- 可视化器静态资源来自 [io-ai.tech/lerobot](https://io-ai.tech/lerobot/)，首次启动自动下载到卷 `lerobot-studio-data`。  
+- 可视化器上游为 [ioai-tech/lerobot-studio](https://github.com/ioai-tech/lerobot-studio)（MIT，许可文本见 `lerobot-studio/vendor/lerobot-studio.LICENSE`）。当前仍从 `io-ai.tech/lerobot` 下载 2026-05 固定的构建产物（早于上游开源），对外发布前须改为从 MIT tag 构建。
+- 四个内置样例及封面来自 io-ai 的 COS，上游明确不随仓库分发、未授权；仅限内部演示，对外发布前须替换。  
 - Label Studio 部分遵循原仓库许可与文档；Data Lab 叠加层文档以本目录为准。

@@ -94,7 +94,7 @@ def test_selective_process_videos_reindexes_mixed_file(mock_reencode, tmp_path: 
         fps=5.0,
     )
 
-    assert stats == {"copied": 0, "reencoded": 1, "skipped": 0}
+    assert stats == {"copied": 0, "reencoded": 1, "skipped": 0, "resumed": 0}
     assert mock_reencode.call_count == 1
     assert (dst_root / "videos/observation.images.top/chunk-000/file-000.mp4").read_bytes() == b"reencoded"
     assert metadata[0]["videos/observation.images.top/from_timestamp"] == 0.0
@@ -144,7 +144,7 @@ def test_selective_process_videos_copies_pure_file(mock_reencode, tmp_path: Path
         fps=5.0,
     )
 
-    assert stats == {"copied": 1, "reencoded": 0, "skipped": 0}
+    assert stats == {"copied": 1, "reencoded": 0, "skipped": 0, "resumed": 0}
     mock_reencode.assert_not_called()
     assert metadata == {}
     assert (dst_root / "videos/observation.images.top/chunk-000/file-001.mp4").read_bytes() == b"pure-copy"
@@ -227,7 +227,7 @@ def test_selective_process_videos_reports_progress(mock_reencode, tmp_path: Path
         on_progress=_on_progress,
     )
 
-    assert stats == {"copied": 2, "reencoded": 1, "skipped": 0}
+    assert stats == {"copied": 2, "reencoded": 1, "skipped": 0, "resumed": 0}
     assert metadata
     assert progress_events == [
         (1, 3, "copy", "observation.images.top", 0, 0),

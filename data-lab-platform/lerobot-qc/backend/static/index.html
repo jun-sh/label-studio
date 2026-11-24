@@ -38,6 +38,7 @@
         </div>
       </div>
       <div class="ls-topbar-actions">
+        <a class="ls-btn ls-btn-ghost" id="overviewLink" href="overview">Overview</a>
         <span class="ls-status" id="status" role="status" aria-live="polite">Disconnected</span>
       </div>
     </header>
@@ -135,6 +136,7 @@
           <textarea id="instructionInput" rows="3" placeholder="VLM-generated task text" disabled></textarea>
           <div class="ls-qc-instruction-actions">
             <button type="button" id="saveInstructionBtn" class="ls-btn ls-btn-primary" disabled>Save instruction</button>
+            <span id="instructionDirty" class="ls-helper ls-instruction-dirty" hidden></span>
             <div class="ls-qc-review-actions">
               <button type="button" id="restoreEpisodeBtn" class="ls-btn ls-btn-ghost" hidden>Restore removal</button>
               <button type="button" id="approveBtn" class="ls-btn ls-btn-primary" disabled>Mark approved</button>
@@ -166,7 +168,8 @@
         <details class="ls-advanced ls-export-panel" id="deliveryPanel" open>
           <summary id="deliverySummary">Delivery rebuild</summary>
           <div class="ls-advanced-body">
-            <p class="ls-skill-hint" id="deliveryHint">Physically rebuild a delivery dataset from approved episodes (sidecar removals applied).</p>
+            <p class="ls-skill-hint" id="deliveryHint">Build a new delivery dataset: drops episodes marked removed and applies instruction corrections. Pending and suspicious episodes are kept.</p>
+            <p class="ls-helper" id="deliveryStatus" aria-live="polite"></p>
             <div class="ls-form-row ls-export-row">
               <button type="button" id="rebuildBtn" class="ls-btn ls-btn-primary" disabled>Rebuild</button>
             </div>

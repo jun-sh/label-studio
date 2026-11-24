@@ -17,9 +17,9 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from dataset_manager import DatasetState, _load_tasks_map
+from dataset_manager import DatasetState, _load_tasks_map, load_local_dataset
 from qc_metrics import read_episode_frames
-from qc_store import QcStore
+from qc_store import QcStore, manifest_active_rebuild_job
 from stats_service import recompute_dataset_stats
 from video_delivery import format_video_progress, selective_process_videos
 from video_service import expected_video_duration, trim_video_for_delivery
@@ -29,6 +29,13 @@ REBUILD_MODE = os.environ.get("LEROBOT_QC_REBUILD_MODE", "minimal").strip().lowe
 RebuildMode = Literal["minimal", "legacy"]
 
 logger = logging.getLogger(__name__)
+
+# Written into a job's output directory while it is being built: proves the directory belongs
+# to that job (so it may be resumed or deleted) and marks the delivery as unfinished.
+JOB_MARKER = ".qc_rebuild_job.json"
+MAX_RESUME_ATTEMPTS = int(os.environ.get("LEROBOT_QC_MAX_RESUME_ATTEMPTS", "3"))
+_resume_pending: set[str] = set()
+_resume_lock = threading.Lock()
 
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
@@ -117,6 +124,9 @@ def reconcile_stale_jobs(store: QcStore) -> None:
         with _jobs_lock:
             if job_id in _jobs:
                 continue
+        with _resume_lock:
+            if job_id in _resume_pending:
+                continue
         failed = {
             "status": "failed",
             "finished_at": _utc_now(),
@@ -139,6 +149,12 @@ def _register_running_dataset(dataset_root: Path, job_id: str) -> None:
         _running_by_dataset[key] = job_id
 
 
+def running_job_ids() -> set[str]:
+    """Job ids executing in this process (sidecar 'running' entries may be stale after a restart)."""
+    with _running_lock:
+        return set(_running_by_dataset.values())
+
+
 def _unregister_running_dataset(dataset_root: Path, job_id: str) -> None:
     key = _dataset_key(dataset_root)
     with _running_lock:
@@ -146,14 +162,41 @@ def _unregister_running_dataset(dataset_root: Path, job_id: str) -> None:
             del _running_by_dataset[key]
 
 
-def _cleanup_incomplete_output(output_root: Path) -> None:
-    if not output_root.exists():
+def _marker_job_id(output_root: Path) -> str | None:
+    try:
+        return str(json.loads((output_root / JOB_MARKER).read_text(encoding="utf-8")).get("job_id") or "") or None
+    except (OSError, ValueError):
+        return None
+
+
+def _write_marker(output_root: Path, job_id: str) -> None:
+    output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / JOB_MARKER).write_text(json.dumps({"job_id": job_id, "written_at": _utc_now()}), encoding="utf-8")
+
+
+def _cleanup_failed_output(output_root: Path, job_id: str) -> None:
+    """Remove a failed job's output; only a directory whose marker names this job is touched.
+
+    Minimal rebuild copies meta/info.json first, so a partial output cannot be told apart
+    from a finished one by its contents — the marker is what identifies it.
+    """
+    if not output_root.exists() or _marker_job_id(output_root) != job_id:
         return
-    info_path = output_root / "meta" / "info.json"
-    if info_path.is_file():
-        return
-    logger.warning("Removing incomplete rebuild output: %s", output_root)
+    logger.warning("Removing failed rebuild output: %s", output_root)
     shutil.rmtree(output_root, ignore_errors=True)
+
+
+def _prepare_resume(output_root: Path, job_id: str) -> None:
+    """Keep finished videos of an interrupted run; everything else is cheap and rebuilt."""
+    if _marker_job_id(output_root) != job_id:
+        raise ValueError(f"Output directory is not owned by job {job_id}: {output_root}")
+    for child in output_root.iterdir():
+        if child.name in ("videos", JOB_MARKER):
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
 
 
 def allocate_delivery_path(delivery_root: Path, task_name: str, batch_id: str) -> tuple[str, Path]:
@@ -221,14 +264,16 @@ def _build_episode_mapping(
     return kept, {old: new for new, old in enumerate(kept)}
 
 
-def _copy_dataset_tree(src_root: Path, dst_root: Path, *, skip_videos: bool = False) -> None:
+def _copy_dataset_tree(
+    src_root: Path, dst_root: Path, *, skip_videos: bool = False, dirs_exist_ok: bool = False
+) -> None:
     if skip_videos:
         def _ignore_videos(_dir: str, names: list[str]) -> list[str]:
             return ["videos"] if "videos" in names else []
 
-        shutil.copytree(src_root, dst_root, ignore=_ignore_videos, dirs_exist_ok=False)
+        shutil.copytree(src_root, dst_root, ignore=_ignore_videos, dirs_exist_ok=dirs_exist_ok)
         return
-    shutil.copytree(src_root, dst_root, dirs_exist_ok=False)
+    shutil.copytree(src_root, dst_root, dirs_exist_ok=dirs_exist_ok)
 
 
 def _update_splits(info: dict[str, Any], kept_count: int) -> None:
@@ -249,6 +294,66 @@ def _patch_episode_tasks(row: pd.Series, store: QcStore, original_index: int) ->
     return patched
 
 
+_TASK_INDEX_STATS_PREFIX = "stats/task_index/"
+
+
+def _constant_stat_like(value: Any, constant: float) -> Any:
+    if isinstance(value, np.ndarray):
+        return np.full(value.shape, constant, dtype=value.dtype if value.dtype.kind == "f" else np.float64)
+    if isinstance(value, (list, tuple)):
+        return [float(constant)] * len(value)
+    return float(constant)
+
+
+def _patch_episode_task_index(row: pd.Series, task_index: int) -> pd.Series:
+    """Point an episode at a new task_index and keep its per-episode task_index stats consistent."""
+    # Rebuild from a dict: Series.__setitem__ would unwrap 1-element arrays into scalars.
+    values = row.to_dict()
+    if "task_index" in values:
+        values["task_index"] = task_index
+    for col, value in list(values.items()):
+        if not isinstance(col, str) or not col.startswith(_TASK_INDEX_STATS_PREFIX):
+            continue
+        stat_name = col[len(_TASK_INDEX_STATS_PREFIX):]
+        if stat_name == "count":
+            continue
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            continue
+        values[col] = _constant_stat_like(value, 0.0 if stat_name == "std" else float(task_index))
+    return pd.Series(values, index=row.index, name=row.name, dtype=object)
+
+
+def plan_instruction_tasks(
+    tasks_map: dict[int, str],
+    store: QcStore,
+    kept_original_indices: list[int],
+) -> tuple[dict[int, str], dict[int, int]]:
+    """Map instruction overrides to task indices without touching episodes that share a task.
+
+    Existing task texts are reused; new texts are appended after the current max task_index.
+    Returns (updated tasks_map, {original_episode_index: task_index}).
+    """
+    updated = dict(tasks_map)
+    text_to_index: dict[str, int] = {}
+    for idx, text in sorted(updated.items()):
+        text_to_index.setdefault(text, idx)
+    next_index = max(updated, default=-1) + 1
+    overrides = store.manifest.get("instruction_overrides") or {}
+    episode_task_index: dict[int, int] = {}
+    for ep_idx in kept_original_indices:
+        text = str(overrides.get(str(ep_idx)) or "").strip()
+        if not text:
+            continue
+        task_index = text_to_index.get(text)
+        if task_index is None:
+            task_index = next_index
+            next_index += 1
+            updated[task_index] = text
+            text_to_index[text] = task_index
+        episode_task_index[ep_idx] = task_index
+    return updated, episode_task_index
+
+
 def _filter_episodes_parquet(
     episodes_df: pd.DataFrame,
     *,
@@ -256,6 +361,7 @@ def _filter_episodes_parquet(
     old_to_new: dict[int, int],
     store: QcStore,
     video_metadata: dict[int, dict[str, Any]] | None = None,
+    episode_task_index: dict[int, int] | None = None,
 ) -> pd.DataFrame:
     """Preserve original columns; patch episode_index, dataset bounds, tasks, and video refs."""
     rows: list[pd.Series] = []
@@ -263,6 +369,8 @@ def _filter_episodes_parquet(
     for original_index in kept:
         src = episodes_df[episodes_df["episode_index"] == original_index].iloc[0]
         src = _patch_episode_tasks(src, store, original_index)
+        if episode_task_index and original_index in episode_task_index:
+            src = _patch_episode_task_index(src, episode_task_index[original_index])
         length = int(src["length"]) if "length" in src.index and pd.notna(src["length"]) else 0
         patched = src.copy()
         new_index = old_to_new[original_index]
@@ -301,10 +409,17 @@ def _filter_data_parquet(
     *,
     removed: set[int],
     old_to_new: dict[int, int],
+    episode_task_index: dict[int, int] | None = None,
 ) -> int:
     table = pq.read_table(src_path)
     schema = table.schema
     df = table.to_pandas()
+    if episode_task_index and "task_index" in df.columns:
+        # Must run before episode_index is remapped: keys are original episode indices.
+        mapped = df["episode_index"].map(episode_task_index)
+        mask = mapped.notna()
+        if mask.any():
+            df.loc[mask, "task_index"] = mapped[mask].astype(df["task_index"].dtype)
     if removed:
         df = df[~df["episode_index"].isin(removed)].copy()
     if old_to_new:
@@ -380,31 +495,16 @@ def _try_finalize(output_root: Path) -> tuple[bool, str | None]:
     return False, "LeRobot finalize did not run"
 
 
-def _apply_instruction_corrections(
-    tasks_map: dict[int, str],
-    state: DatasetState,
-    store: QcStore,
-    kept_original_indices: list[int],
-) -> dict[int, str]:
-    updated = dict(tasks_map)
-    overrides = store.manifest.get("instruction_overrides") or {}
-    for ep_idx in kept_original_indices:
-        override = overrides.get(str(ep_idx))
-        if not override:
-            continue
-        row = state.episode_row(ep_idx)
-        _, task_index = state.resolve_language_instruction(row)
-        if task_index is not None:
-            updated[task_index] = str(override)
-    return updated
-
-
 def _rebuild_tasks_parquet(output_root: Path, tasks_map: dict[int, str]) -> None:
+    """Write LeRobot v3 tasks.parquet: task text is the index, task_index the only column."""
     if not tasks_map:
         return
-    rows = [{"task_index": idx, "task": text} for idx, text in sorted(tasks_map.items())]
-    df = pd.DataFrame(rows)
-    table = pa.Table.from_pandas(df, preserve_index=False)
+    items = sorted(tasks_map.items())
+    df = pd.DataFrame(
+        {"task_index": np.array([idx for idx, _ in items], dtype=np.int64)},
+        index=pd.Index([text for _, text in items], name="task"),
+    )
+    table = pa.Table.from_pandas(df, preserve_index=True)
     _atomic_write_parquet(table, output_root / "meta" / "tasks.parquet")
 
 
@@ -474,16 +574,25 @@ def _rebuild_minimal_delivery_dataset(
     output_root: Path,
     batch_id: str,
     job_id: str,
+    resume: bool = False,
 ) -> dict[str, Any]:
     removed = store.removed_episode_indices()
     all_indices = [int(x) for x in state.episodes_df["episode_index"].tolist()]
     kept, old_to_new = _build_episode_mapping(all_indices, removed)
+    source_tasks_map = _load_tasks_map(state.dataset_root)
+    tasks_map, episode_task_index = plan_instruction_tasks(source_tasks_map, store, kept)
 
-    if output_root.exists():
+    if resume:
+        _prepare_resume(output_root, job_id)
+    elif output_root.exists():
         raise ValueError(f"Output directory already exists: {output_root}")
+    else:
+        _write_marker(output_root, job_id)
 
     _sync_job(job_id, store, progress="copying dataset", status="running")
-    _copy_dataset_tree(state.dataset_root, output_root, skip_videos=True)
+    _copy_dataset_tree(state.dataset_root, output_root, skip_videos=True, dirs_exist_ok=True)
+    if tasks_map != source_tasks_map:
+        _rebuild_tasks_parquet(output_root, tasks_map)
 
     total_frames = 0
     data_files = sorted((state.dataset_root / "data").rglob("*.parquet"))
@@ -502,6 +611,7 @@ def _rebuild_minimal_delivery_dataset(
             output_root / "data" / rel,
             removed=removed,
             old_to_new=old_to_new,
+            episode_task_index=episode_task_index,
         )
 
     def _report_video_progress(
@@ -531,6 +641,7 @@ def _rebuild_minimal_delivery_dataset(
         old_to_new=old_to_new,
         fps=state.fps,
         on_progress=_report_video_progress,
+        resume=resume,
     )
 
     episode_files = sorted((state.dataset_root / "meta" / "episodes").rglob("*.parquet"))
@@ -551,6 +662,7 @@ def _rebuild_minimal_delivery_dataset(
             old_to_new=old_to_new,
             store=store,
             video_metadata=video_metadata,
+            episode_task_index=episode_task_index,
         )
         schema = pq.read_schema(src_parquet)
         _atomic_write_parquet(
@@ -561,6 +673,8 @@ def _rebuild_minimal_delivery_dataset(
     info = json.loads((output_root / "meta" / "info.json").read_text(encoding="utf-8"))
     info["total_episodes"] = len(kept)
     info["total_frames"] = total_frames
+    if tasks_map:
+        info["total_tasks"] = len(tasks_map)
     info["codebase_version"] = "v3.0"
     _update_splits(info, len(kept))
     _write_json(output_root / "meta" / "info.json", info)
@@ -584,12 +698,14 @@ def _rebuild_minimal_delivery_dataset(
         ),
     )
 
+    (output_root / JOB_MARKER).unlink(missing_ok=True)
     return {
         "output_root": str(output_root),
         "kept_episodes": len(kept),
         "removed_episodes": len(removed),
         "finalized": False,
         "rebuild_mode": "minimal",
+        "videos_resumed": video_stats.get("resumed", 0),
         "report_path": str(report_path),
         "videos_copied": video_stats.get("copied", 0),
         "videos_reencoded": video_stats.get("reencoded", 0),
@@ -611,11 +727,11 @@ def _rebuild_legacy_delivery_dataset(
 
     if output_root.exists():
         raise ValueError(f"Output directory already exists: {output_root}")
-    output_root.mkdir(parents=True, exist_ok=False)
+    _write_marker(output_root, job_id)
 
     chunks_size = int(state.info.get("chunks_size") or CHUNKS_SIZE_DEFAULT)
     fps = state.fps
-    tasks_map = _apply_instruction_corrections(_load_tasks_map(state.dataset_root), state, store, kept)
+    tasks_map, episode_task_index = plan_instruction_tasks(_load_tasks_map(state.dataset_root), store, kept)
 
     episode_rows: list[dict[str, Any]] = []
     frame_tables: list[pd.DataFrame] = []
@@ -652,6 +768,8 @@ def _rebuild_legacy_delivery_dataset(
                 ep_df["index"] = np.arange(from_index, to_index, dtype=np.int64)
             if "timestamp" in ep_df.columns:
                 ep_df["timestamp"] = np.arange(length, dtype=np.float64) / fps
+            if original_index in episode_task_index and "task_index" in ep_df.columns:
+                ep_df["task_index"] = np.int64(episode_task_index[original_index])
             frame_tables.append(ep_df)
 
         ep_record: dict[str, Any] = {
@@ -660,7 +778,9 @@ def _rebuild_legacy_delivery_dataset(
             "dataset_from_index": from_index,
             "dataset_to_index": to_index,
         }
-        if "task_index" in row.index and pd.notna(row["task_index"]):
+        if original_index in episode_task_index:
+            ep_record["task_index"] = episode_task_index[original_index]
+        elif "task_index" in row.index and pd.notna(row["task_index"]):
             ep_record["task_index"] = int(row["task_index"])
         override = store.get_instruction_override(original_index)
         if override:
@@ -693,6 +813,8 @@ def _rebuild_legacy_delivery_dataset(
     info = dict(state.info)
     info["total_episodes"] = len(kept)
     info["total_frames"] = int(global_frame_offset)
+    if tasks_map:
+        info["total_tasks"] = len(tasks_map)
     info["chunks_size"] = chunks_size
     info["codebase_version"] = "v3.0"
     _update_splits(info, len(kept))
@@ -729,6 +851,7 @@ def _rebuild_legacy_delivery_dataset(
     ]
     report_path = _write_delivery_report(store, batch_id=batch_id, report_lines=report_lines)
 
+    (output_root / JOB_MARKER).unlink(missing_ok=True)
     finalized, finalize_error = _try_finalize(output_root)
     result: dict[str, Any] = {
         "output_root": str(output_root),
@@ -751,9 +874,12 @@ def rebuild_delivery_dataset(
     batch_id: str,
     job_id: str,
     mode: str | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     rebuild_mode = _resolve_rebuild_mode(mode)
     if rebuild_mode == "legacy":
+        if resume:
+            raise ValueError("Legacy rebuilds cannot be resumed")
         return _rebuild_legacy_delivery_dataset(
             state=state,
             store=store,
@@ -767,6 +893,7 @@ def rebuild_delivery_dataset(
         output_root=output_root,
         batch_id=batch_id,
         job_id=job_id,
+        resume=resume,
     )
 
 
@@ -781,6 +908,9 @@ def start_rebuild_job(
     active = get_active_rebuild_job(store)
     if active and active.get("status") in ("queued", "running"):
         raise ValueError(f"Rebuild already in progress: {active.get('job_id')}")
+    removed = store.removed_episode_indices()
+    if not any(int(idx) not in removed for idx in state.episodes_df["episode_index"].tolist()):
+        raise ValueError("All episodes are marked removed; nothing to deliver")
 
     job_id = uuid.uuid4().hex[:12]
     _register_running_dataset(state.dataset_root, job_id)
@@ -802,18 +932,46 @@ def start_rebuild_job(
     }
     store.register_rebuild_job(job_record)
     _set_job(job_id, **_job_updates(job_record))
+    _launch_worker(
+        state=state,
+        store=store,
+        job_id=job_id,
+        output_root=output_root,
+        batch_id=batch,
+        mode=mode,
+        resume=False,
+    )
+    return job_record
+
+
+def _launch_worker(
+    *,
+    state: DatasetState,
+    store: QcStore,
+    job_id: str,
+    output_root: Path,
+    batch_id: str,
+    mode: str | None,
+    resume: bool,
+    started_at: str | None = None,
+) -> threading.Thread:
+    """Run a rebuild in a background thread. The dataset must already be registered as running.
+
+    started_at is the QC snapshot time used for delivery freshness; a resumed job keeps the
+    original one because it still builds from the decisions taken at that time.
+    """
 
     def _worker() -> None:
-        started = _utc_now()
-        _sync_job(job_id, store, status="running", started_at=started)
+        _sync_job(job_id, store, status="running", started_at=started_at or _utc_now())
         try:
             result = rebuild_delivery_dataset(
                 state=state,
                 store=store,
                 output_root=output_root,
-                batch_id=batch,
+                batch_id=batch_id,
                 job_id=job_id,
                 mode=mode,
+                resume=resume,
             )
             finished = {
                 "status": "completed",
@@ -824,7 +982,7 @@ def start_rebuild_job(
             store.append_audit(episode_index=None, action="rebuild_completed", after=finished)
         except Exception as exc:
             logger.exception("Rebuild job %s failed", job_id)
-            _cleanup_incomplete_output(output_root)
+            _cleanup_failed_output(output_root, job_id)
             failed = {
                 "status": "failed",
                 "finished_at": _utc_now(),
@@ -837,4 +995,120 @@ def start_rebuild_job(
 
     thread = threading.Thread(target=_worker, name=f"qc-rebuild-{job_id}", daemon=True)
     thread.start()
-    return job_record
+    return thread
+
+
+
+def collect_interrupted_jobs(sidecar_root: Path) -> list[dict[str, Any]]:
+    """Find jobs left queued/running by a previous process and reserve them for resume.
+
+    Synchronous and cheap (sidecar JSON on local disk); call before serving requests so a
+    dataset load cannot mark these jobs failed first (see reconcile_stale_jobs).
+    """
+    found: list[dict[str, Any]] = []
+    if not sidecar_root.is_dir():
+        return found
+    for manifest_path in sorted(sidecar_root.glob("*/qc_manifest.json")):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        job = manifest_active_rebuild_job(manifest)
+        if job and job.get("job_id") and manifest.get("dataset_root"):
+            found.append({"job": job, "dataset_root": str(manifest["dataset_root"])})
+    with _resume_lock:
+        _resume_pending.update(str(item["job"]["job_id"]) for item in found)
+    return found
+
+
+def resume_interrupted_jobs(
+    found: list[dict[str, Any]],
+    sidecar_root: Path,
+    *,
+    load_state: Any = load_local_dataset,
+) -> None:
+    """Resume (or restart) interrupted jobs one at a time. Blocking: run it in a thread."""
+    for item in found:
+        job_id = str(item["job"]["job_id"])
+        try:
+            thread = _resume_one(item, sidecar_root, load_state)
+            if thread is not None:
+                thread.join()
+        except Exception:
+            logger.exception("Could not resume rebuild job %s", job_id)
+        finally:
+            with _resume_lock:
+                _resume_pending.discard(job_id)
+
+
+def _resume_one(item: dict[str, Any], sidecar_root: Path, load_state: Any) -> threading.Thread | None:
+    job_id = str(item["job"]["job_id"])
+    dataset_root = Path(item["dataset_root"])
+    store = QcStore.open(dataset_root, sidecar_root)
+    current = store.get_rebuild_job(job_id) or dict(item["job"])
+    if current.get("status") not in ("queued", "running"):
+        return None
+    output_root = Path(str(current.get("output_root") or ""))
+    attempts = int(current.get("resume_attempts") or 0) + 1
+
+    def _fail(message: str) -> None:
+        if str(output_root):
+            _cleanup_failed_output(output_root, job_id)
+        failed = {"status": "failed", "finished_at": _utc_now(), "error": message}
+        _sync_job(job_id, store, **failed)
+        store.append_audit(episode_index=None, action="rebuild_failed", after=failed)
+
+    if not current.get("output_root"):
+        _fail("Service restarted while rebuild was in progress (job has no output path)")
+        return None
+    if attempts > MAX_RESUME_ATTEMPTS:
+        _fail(f"Service restarted while rebuild was in progress; gave up after {MAX_RESUME_ATTEMPTS} resume attempts")
+        return None
+    mode = _resolve_rebuild_mode(current.get("rebuild_mode"))
+    if mode == "legacy":
+        _fail("Service restarted while rebuild was in progress (legacy rebuilds cannot be resumed)")
+        return None
+    if not dataset_root.is_dir():
+        _fail(f"Service restarted while rebuild was in progress; source dataset not found: {dataset_root}")
+        return None
+    owned = output_root.is_dir() and _marker_job_id(output_root) == job_id
+    if output_root.exists() and not owned:
+        failed = {
+            "status": "failed",
+            "finished_at": _utc_now(),
+            "error": f"Output directory exists but is not owned by job {job_id}; left untouched: {output_root}",
+        }
+        _sync_job(job_id, store, **failed)
+        return None
+
+    # Persist the attempt before doing any work, so a crash during resume still counts.
+    _sync_job(job_id, store, status="running", progress="resuming after restart", resume_attempts=attempts)
+    state = load_state(str(dataset_root))
+
+    started_at = current.get("started_at")
+    last_change = store.last_qc_change_at()
+    qc_changed = bool(started_at and last_change and str(last_change) > str(started_at))
+    resume = owned and bool(started_at) and not qc_changed
+    if not resume:
+        # Reviews changed since the snapshot (or nothing was written yet): videos built from
+        # the old removal list must not be mixed with new parquet data — start over.
+        if owned:
+            shutil.rmtree(output_root)
+        started_at = None
+    _register_running_dataset(state.dataset_root, job_id)
+    store.append_audit(
+        episode_index=None,
+        action="rebuild_resumed",
+        after={"job_id": job_id, "resume": resume, "qc_changed": qc_changed, "attempt": attempts},
+    )
+    logger.info("Rebuild job %s: %s (attempt %s)", job_id, "resuming" if resume else "restarting", attempts)
+    return _launch_worker(
+        state=state,
+        store=store,
+        job_id=job_id,
+        output_root=output_root,
+        batch_id=str(current.get("batch_id") or "resumed"),
+        mode=mode,
+        resume=resume,
+        started_at=started_at,
+    )

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QC Overview</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="ls-app ls-ov">
+    <header class="ls-topbar">
+      <div class="ls-topbar-left">
+        <div class="ls-brand">
+          <span class="ls-brand-mark">DL</span>
+          <div>
+            <strong id="ovTitle">QC overview</strong>
+            <span class="ls-brand-sub" id="ovSub">Review progress and delivery state per package</span>
+          </div>
+        </div>
+      </div>
+      <div class="ls-topbar-actions">
+        <a class="ls-btn ls-btn-ghost" id="ovBackLink" href="./">Back to review</a>
+      </div>
+    </header>
+
+    <section class="ls-panel ls-ov-controls">
+      <label class="ls-ov-field">
+        <span id="ovCollectionLabel">Collection</span>
+        <select id="ovCollection"></select>
+      </label>
+      <label class="ls-ov-field ls-ov-search">
+        <span id="ovSearchLabel">Package</span>
+        <input id="ovSearch" type="search" autocomplete="off" />
+      </label>
+      <button type="button" class="ls-btn ls-btn-ghost" id="ovRefresh">Refresh</button>
+      <p class="ls-helper ls-ov-totals" id="ovTotals" aria-live="polite"></p>
+    </section>
+
+    <nav class="ls-ov-stages" id="ovStages" aria-label="Filter by stage"></nav>
+
+    <section class="ls-panel ls-ov-table-wrap">
+      <p class="ls-helper" id="ovStatus"></p>
+      <table class="ls-ov-table" id="ovTable" hidden>
+        <thead>
+          <tr>
+            <th data-sort="id" id="ovColPackage">Package</th>
+            <th data-sort="stage" id="ovColStage">Stage</th>
+            <th data-sort="progress" id="ovColProgress">Review progress</th>
+            <th data-sort="suspicious" class="num" id="ovColSuspicious">Suspicious</th>
+            <th data-sort="instruction_overrides" class="num" id="ovColOverrides">Instr. fixes</th>
+            <th data-sort="delivery" id="ovColDelivery">Delivery</th>
+            <th data-sort="last_qc_change_at" id="ovColLastChange">Last review</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ovBody"></tbody>
+      </table>
+    </section>
+  </div>
+  <script src="/static/i18n.js"></script>
+  <script src="/static/overview.js"></script>
+</body>
+</html>

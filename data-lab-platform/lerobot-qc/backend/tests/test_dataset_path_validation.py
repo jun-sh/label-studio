@@ -34,3 +34,18 @@ def test_validate_dataset_path_not_found(tmp_path: Path, monkeypatch: pytest.Mon
 
     with pytest.raises(ValueError, match="not found"):
         validate_dataset_path(tmp_path / "missing")
+
+
+def test_index_assets_are_versioned_by_mtime() -> None:
+    import re
+
+    from fastapi.testclient import TestClient
+
+    import app as qc_app
+
+    response = TestClient(qc_app.app).get("/")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    for name in ("app.js", "i18n.js", "styles.css"):
+        mtime = int((qc_app.STATIC_DIR / name).stat().st_mtime)
+        assert re.search(rf'/static/{re.escape(name)}\?v={mtime}"', response.text), name

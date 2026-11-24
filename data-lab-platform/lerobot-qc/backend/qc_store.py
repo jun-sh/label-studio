@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import csv
+import functools
 import hashlib
 import json
+import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,9 +27,14 @@ def _atomic_write_text(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
-def canonical_dataset_key(dataset_root: Path) -> str:
-    """Stable identity for a LeRobot package regardless of host mount prefix."""
-    parts = list(dataset_root.resolve().parts)
+def canonical_dataset_key(dataset_root: Path, *, resolve: bool = True) -> str:
+    """Stable identity for a LeRobot package regardless of host mount prefix.
+
+    resolve=False derives the key from the path text only (no lstat per component),
+    for bulk use against slow FUSE/USB mounts.
+    """
+    path = dataset_root.resolve() if resolve else Path(os.path.normpath(str(dataset_root)))
+    parts = list(path.parts)
     start = 0
     for index, part in enumerate(parts):
         lowered = part.lower()
@@ -88,21 +96,57 @@ def resolve_sidecar_dir(dataset_root: Path, sidecar_base: Path) -> Path:
     return canonical_dir
 
 
+def _locked(method):
+    """Serialize access to the shared manifest (reviews, jobs) across request/rebuild threads."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+# One QcStore per sidecar directory in this process. Separate instances each hold their own
+# in-memory manifest, and whichever saves last overwrites the other's changes (e.g. a
+# rebuild's progress update wiping reviews made in a newer session).
+_open_stores: dict[str, "QcStore"] = {}
+_open_stores_lock = threading.Lock()
+
+
+def forget_open_stores() -> None:
+    """Drop cached stores (tests, or after editing sidecar files outside the service)."""
+    with _open_stores_lock:
+        _open_stores.clear()
+
+
 @dataclass
 class QcStore:
     sidecar_root: Path
     dataset_root: Path
     operator_id: str = "anonymous"
     manifest: dict[str, Any] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     @classmethod
     def open(cls, dataset_root: Path, sidecar_base: Path, operator_id: str = "anonymous") -> "QcStore":
         dataset_root = dataset_root.resolve()
         store_dir = resolve_sidecar_dir(dataset_root, sidecar_base)
-        store_dir.mkdir(parents=True, exist_ok=True)
-        store = cls(sidecar_root=store_dir, dataset_root=dataset_root, operator_id=operator_id)
-        store._load_manifest()
-        return store
+        key = str(store_dir.resolve())
+        with _open_stores_lock:
+            existing = _open_stores.get(key)
+            if existing is not None and existing.manifest_path.is_file():
+                with existing._lock:
+                    existing.operator_id = operator_id
+                    if existing.dataset_root != dataset_root:
+                        existing.dataset_root = dataset_root
+                        existing.manifest["dataset_root"] = str(dataset_root)
+                return existing
+            store_dir.mkdir(parents=True, exist_ok=True)
+            store = cls(sidecar_root=store_dir, dataset_root=dataset_root, operator_id=operator_id)
+            store._load_manifest()
+            _open_stores[key] = store
+            return store
 
     @property
     def manifest_path(self) -> Path:
@@ -136,6 +180,7 @@ class QcStore:
         }
         self._save_manifest()
 
+    @_locked
     def _save_manifest(self) -> None:
         self.manifest["updated_at"] = _utc_now()
         _atomic_write_text(
@@ -147,6 +192,7 @@ class QcStore:
         raw = (operator_id or self.operator_id or "anonymous").strip()
         return raw or "anonymous"
 
+    @_locked
     def append_audit(
         self,
         *,
@@ -171,10 +217,12 @@ class QcStore:
         with self.audit_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    @_locked
     def get_review(self, episode_index: int) -> dict[str, Any]:
         reviews = self.manifest.get("reviews") or {}
         return dict(reviews.get(str(episode_index)) or {"status": "pending"})
 
+    @_locked
     def set_review(
         self,
         episode_index: int,
@@ -196,6 +244,7 @@ class QcStore:
             "operator_id": resolved_operator,
         }
         reviews[key] = record
+        self.manifest["qc_updated_at"] = record["updated_at"]
         self._save_manifest()
         self._sync_removed_json()
         self.append_audit(
@@ -207,11 +256,13 @@ class QcStore:
         )
         return record
 
+    @_locked
     def get_instruction_override(self, episode_index: int) -> str | None:
         overrides = self.manifest.get("instruction_overrides") or {}
         value = overrides.get(str(episode_index))
         return str(value) if value is not None else None
 
+    @_locked
     def set_instruction_override(
         self,
         episode_index: int,
@@ -225,6 +276,7 @@ class QcStore:
         previous = overrides.get(key)
         resolved_operator = self._resolve_operator_id(operator_id)
         overrides[key] = new_instruction
+        self.manifest["qc_updated_at"] = _utc_now()
         self._save_manifest()
         self._append_correction_row(
             episode_index=episode_index,
@@ -260,6 +312,7 @@ class QcStore:
                 [_utc_now(), self._resolve_operator_id(operator_id), episode_index, original, corrected]
             )
 
+    @_locked
     def removed_episode_indices(self) -> set[int]:
         removed: set[int] = set()
         reviews = self.manifest.get("reviews") or {}
@@ -292,10 +345,12 @@ class QcStore:
             json.dumps(payload, indent=2, ensure_ascii=False),
         )
 
+    @_locked
     def visible_episode_indices(self, all_indices: list[int]) -> list[int]:
         removed = self.removed_episode_indices()
         return [idx for idx in all_indices if idx not in removed]
 
+    @_locked
     def export_state(self) -> dict[str, Any]:
         return {
             "sidecar_root": str(self.sidecar_root),
@@ -305,12 +360,14 @@ class QcStore:
             "audit_log_path": str(self.audit_path),
         }
 
+    @_locked
     def register_rebuild_job(self, job: dict[str, Any]) -> None:
         jobs = self.manifest.setdefault("rebuild_jobs", [])
         jobs.append(job)
         self._save_manifest()
         self.append_audit(episode_index=None, action="rebuild_started", after=job)
 
+    @_locked
     def update_rebuild_job(self, job_id: str, updates: dict[str, Any]) -> None:
         jobs = self.manifest.setdefault("rebuild_jobs", [])
         for job in jobs:
@@ -319,17 +376,24 @@ class QcStore:
                 break
         self._save_manifest()
 
+    @_locked
     def get_rebuild_job(self, job_id: str) -> dict[str, Any] | None:
         for job in self.manifest.get("rebuild_jobs") or []:
             if job.get("job_id") == job_id:
                 return dict(job)
         return None
 
+    @_locked
     def active_rebuild_job(self) -> dict[str, Any] | None:
-        for job in reversed(self.manifest.get("rebuild_jobs") or []):
-            if job.get("status") in ("queued", "running"):
-                return dict(job)
-        return None
+        return manifest_active_rebuild_job(self.manifest)
+
+    @_locked
+    def last_qc_change_at(self) -> str | None:
+        return manifest_last_qc_change_at(self.manifest)
+
+    @_locked
+    def delivery_status(self) -> dict[str, Any]:
+        return manifest_delivery_status(self.manifest)
 
     def read_audit_entries(self, limit: int = 200) -> list[dict[str, Any]]:
         if not self.audit_path.is_file():
@@ -343,6 +407,7 @@ class QcStore:
             entries.append(json.loads(line))
         return entries
 
+    @_locked
     def review_summary(
         self,
         all_episode_indices: list[int] | None = None,
@@ -350,24 +415,69 @@ class QcStore:
         total_episodes: int | None = None,
     ) -> dict[str, Any]:
         total = total_episodes if total_episodes is not None else len(all_episode_indices or [])
-        counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
-        reviews = self.manifest.get("reviews") or {}
-        reviewed_indices: set[int] = set()
-        for key, record in reviews.items():
-            try:
-                ep_idx = int(key)
-            except (TypeError, ValueError):
-                continue
-            reviewed_indices.add(ep_idx)
-            status = record.get("status") or "pending"
-            if status not in counts:
-                status = "pending"
-            counts[status] += 1
-        counts["pending"] += max(0, total - len(reviewed_indices))
-        visible = total - len(self.removed_episode_indices())
-        return {
-            "total": total,
-            "visible": visible,
-            "removed_preview": total - visible,
-            **counts,
-        }
+        return {**manifest_review_counts(self.manifest, total), "delivery": self.delivery_status()}
+
+
+def manifest_review_counts(manifest: dict[str, Any], total: int) -> dict[str, int]:
+    """Review counts for a package with `total` episodes; unreviewed episodes count as pending."""
+    counts = {"pending": 0, "approved": 0, "rejected": 0, "suspicious": 0}
+    reviewed: set[int] = set()
+    for key, record in (manifest.get("reviews") or {}).items():
+        try:
+            ep_idx = int(key)
+        except (TypeError, ValueError):
+            continue
+        reviewed.add(ep_idx)
+        status = record.get("status") or "pending"
+        counts[status if status in counts else "pending"] += 1
+    counts["pending"] += max(0, total - len(reviewed))
+    visible = total - counts["rejected"]
+    return {"total": total, "visible": visible, "removed_preview": total - visible, **counts}
+
+
+def manifest_last_qc_change_at(manifest: dict[str, Any]) -> str | None:
+    """Timestamp of the latest review/instruction change (ISO UTC, comparable as text)."""
+    stamped = manifest.get("qc_updated_at")
+    if stamped:
+        return str(stamped)
+    # Manifests written before qc_updated_at existed: fall back to review timestamps.
+    times = [str(r.get("updated_at")) for r in (manifest.get("reviews") or {}).values() if r.get("updated_at")]
+    return max(times) if times else None
+
+
+def manifest_active_rebuild_job(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    for job in reversed(manifest.get("rebuild_jobs") or []):
+        if job.get("status") in ("queued", "running"):
+            return dict(job)
+    return None
+
+
+def manifest_delivery_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Whether the latest completed delivery reflects the current QC decisions.
+
+    state: never_built | missing (output dir gone) | stale (QC changed after the job
+    started, i.e. after it snapshotted the sidecar) | current.
+    """
+    completed = [
+        job
+        for job in manifest.get("rebuild_jobs") or []
+        if job.get("status") == "completed" and job.get("output_root")
+    ]
+    last_change = manifest_last_qc_change_at(manifest)
+    if not completed:
+        return {"state": "never_built", "last_qc_change_at": last_change}
+    last = max(completed, key=lambda job: str(job.get("finished_at") or job.get("created_at") or ""))
+    snapshot_at = str(last.get("started_at") or last.get("created_at") or "")
+    if not Path(str(last["output_root"])).is_dir():
+        state = "missing"
+    elif last_change and last_change > snapshot_at:
+        state = "stale"
+    else:
+        state = "current"
+    return {
+        "state": state,
+        "output_root": last.get("output_root"),
+        "finished_at": last.get("finished_at"),
+        "kept_episodes": last.get("kept_episodes"),
+        "last_qc_change_at": last_change,
+    }

@@ -2260,6 +2260,12 @@ a.ls-btn {
 .ls-ov-stage-badge--in_review,
 .ls-ov-stage-badge--rebuilding,
 .ls-ov-badge.is-info { background: var(--ls-primary-soft); color: var(--ls-primary); border-color: #c9d1f1; }
+.ls-ov-badge.is-acceptance-ok { background: #e6f5ec; color: #1d6b3d; border-color: #b6dfc6; }
+.ls-ov-badge.is-acceptance-failed { background: #fbeceb; color: #9b2f2a; border-color: #efc4c1; }
+.ls-ov-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.ls-acceptance { color: var(--ls-muted); }
+.ls-acceptance.ok { color: #15803d; }
+.ls-acceptance.error { color: var(--ls-danger); font-weight: 600; }
 .ls-ov-stage-badge--all_removed { background: #fbeceb; color: #9b2f2a; border-color: #efc4c1; }
 
 .ls-ov-open {

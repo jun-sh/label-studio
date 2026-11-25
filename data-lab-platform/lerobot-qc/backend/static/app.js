@@ -425,6 +425,34 @@ function renderDeliveryStatus(delivery) {
   el.textContent = t(key, vars);
   el.title = delivery.output_root || "";
   if (cls) el.classList.add(cls);
+  const acceptance = renderAcceptance(delivery);
+  if (acceptance) el.append(" ", acceptance);
+}
+
+/* Result of the automatic acceptance check run at the end of the last rebuild. */
+function renderAcceptance(delivery) {
+  if (!delivery || delivery.state === "never_built" || delivery.state === "missing") return null;
+  const acceptance = delivery.acceptance;
+  const span = document.createElement("span");
+  span.className = "ls-acceptance";
+  if (!acceptance) {
+    span.textContent = t("qc_acceptance_not_run");
+    return span;
+  }
+  const problems = acceptance.problems || [];
+  const count = problems.length + (acceptance.problems_truncated || 0);
+  if (acceptance.ok) {
+    span.classList.add("ok");
+    span.textContent = t("qc_acceptance_passed", {
+      segments: acceptance.video_segments ?? 0,
+      time: formatTimestamp(acceptance.checked_at),
+    });
+  } else {
+    span.classList.add("error");
+    span.textContent = t("qc_acceptance_failed", { count, first: problems[0] || "" });
+  }
+  span.title = problems.join("\n");
+  return span;
 }
 
 function savedInstructionText() {
@@ -1236,6 +1264,7 @@ function localizeRebuildProgress(progress) {
   if (text === "writing parquet files") return t("qc_rebuild_writing_parquet");
   if (text === "recomputing stats") return t("qc_rebuild_recomputing_stats");
   if (text === "resuming after restart") return t("qc_rebuild_resuming");
+  if (text === "verifying") return t("qc_rebuild_verifying");
   return text;
 }
 
@@ -1269,6 +1298,12 @@ function renderRebuildProgress(status) {
         video: videoProgress.shortVideo,
         chunk: String(videoProgress.chunkIndex).padStart(3, "0"),
         file: videoProgress.fileIndex,
+      });
+    } else if (status.progress === "verifying") {
+      label = t("qc_rebuild_verifying_progress", {
+        current: status.progress_current,
+        total: status.progress_total,
+        pct,
       });
     } else if (isEpisodeProgress || !progressText) {
       label = t("qc_rebuild_episode_progress", {

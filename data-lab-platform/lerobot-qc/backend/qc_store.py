@@ -480,4 +480,6 @@ def manifest_delivery_status(manifest: dict[str, Any]) -> dict[str, Any]:
         "finished_at": last.get("finished_at"),
         "kept_episodes": last.get("kept_episodes"),
         "last_qc_change_at": last_change,
+        # {ok, checked_at, problems[]} from the job's verifying phase; None if not run.
+        "acceptance": last.get("acceptance"),
     }

@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 # to that job (so it may be resumed or deleted) and marks the delivery as unfinished.
 JOB_MARKER = ".qc_rebuild_job.json"
 MAX_RESUME_ATTEMPTS = int(os.environ.get("LEROBOT_QC_MAX_RESUME_ATTEMPTS", "3"))
+# Rebuilds re-encode video with ffmpeg; several at once compete for CPU and disk and all
+# slow down. Jobs beyond the limit stay "queued" until a slot frees up.
+MAX_CONCURRENT_REBUILDS = max(1, int(os.environ.get("LEROBOT_QC_MAX_CONCURRENT_REBUILDS", "1")))
+WAITING_FOR_SLOT = "waiting for a free rebuild slot"
+_rebuild_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REBUILDS)
 _resume_pending: set[str] = set()
 _resume_lock = threading.Lock()
 
@@ -1004,7 +1009,11 @@ def _launch_worker(
     """
 
     def _worker() -> None:
-        _sync_job(job_id, store, status="running", started_at=started_at or _utc_now())
+        if not _rebuild_slots.acquire(blocking=False):
+            _sync_job(job_id, store, status="queued", progress=WAITING_FOR_SLOT)
+            _rebuild_slots.acquire()
+        # started_at is the QC snapshot: taken only now, when the job reads the decisions.
+        _sync_job(job_id, store, status="running", progress=None, started_at=started_at or _utc_now())
         try:
             result = rebuild_delivery_dataset(
                 state=state,
@@ -1033,6 +1042,7 @@ def _launch_worker(
             _sync_job(job_id, store, **failed)
             store.append_audit(episode_index=None, action="rebuild_failed", after=failed)
         finally:
+            _rebuild_slots.release()
             _unregister_running_dataset(state.dataset_root, job_id)
 
     thread = threading.Thread(target=_worker, name=f"qc-rebuild-{job_id}", daemon=True)

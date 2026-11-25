@@ -68,7 +68,7 @@ curl -fsS http://10.10.10.34:8080/qc/ -o /dev/null && echo up
 docker exec data-lab-lerobot-qc-1 sh -c 'grep -l "\"status\": \"running\"" /data/qc-sidecar/*/qc_manifest.json'
 ```
 
-- 自动验收结果在审阅页交付状态后、总览页交付列徽章上；未通过时鼠标悬停可看问题列表（最多 20 条）。验收耗时约 16 ms/帧（2.7 万帧约 7 分钟）。
+- 自动验收结果在审阅页交付状态后、总览页交付列徽章上；未通过时鼠标悬停可看问题列表（最多 20 条）。验收耗时随包差异很大，实测每包 1.5–17 分钟（含深度的包更慢）。
 - 验收未通过不会让重建失败，但**该交付集不应交付**。按问题类型处理：
   - `episodes/frames != expected`、`task text mismatches`：重建期间审阅被改动过 → 重新重建。
   - `decodes as yuv420p, expected 16-bit`：源 info.json 的深度特征没有声明 `video.codec`/`video.pix_fmt`，被按 8 位重编码 → 补全源元数据后重建（清单 A4 会修复兜底）。

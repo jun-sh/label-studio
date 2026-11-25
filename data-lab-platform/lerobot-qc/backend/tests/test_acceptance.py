@@ -210,3 +210,15 @@ def test_decode_video_reports_timestamps_and_pixel_format(tmp_path: Path) -> Non
     stamps, pix_fmt = acceptance_service.decode_video(path)
     assert pix_fmt == "gray16le"
     assert np.allclose(stamps, np.arange(15) / 5.0)
+
+
+def test_depth_without_declared_codec_stays_16_bit(minimal_dataset, tmp_path: Path) -> None:  # noqa: F811
+    """Source info.json declares no video.codec/pix_fmt (the fixture's default): re-encoding
+    must still keep FFV1 gray16le, so acceptance passes."""
+    root, sidecar = minimal_dataset
+    _encode(root / f"videos/{RGB}/chunk-000/file-000.mp4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "5")
+    _encode(root / f"videos/{DEPTH}/chunk-000/file-000.mkv", "-c:v", "ffv1", "-pix_fmt", "gray16le")
+    result, _, _ = _rebuild(root, sidecar, tmp_path / "delivery")
+    assert result["acceptance"]["ok"] is True, result["acceptance"]["problems"]
+    _, pix_fmt = acceptance_service.decode_video(tmp_path / f"delivery/videos/{DEPTH}/chunk-000/file-000.mkv")
+    assert pix_fmt == "gray16le"

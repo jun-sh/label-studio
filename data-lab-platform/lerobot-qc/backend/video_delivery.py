@@ -20,6 +20,7 @@ _CODEC_MAP = {
     "h264": "libx264",
     "av1": "libsvtav1",
     "ffv1": "ffv1",
+    "hevc": "libx265",
     "libx264": "libx264",
     "libsvtav1": "libsvtav1",
 }
@@ -40,12 +41,61 @@ def video_rel_path(info: dict[str, Any], video_key: str, chunk_index: int, file_
     )
 
 
-def video_encode_params(info: dict[str, Any], video_key: str) -> tuple[str, str]:
+def probe_video_format(path: Path) -> tuple[str, str] | None:
+    """(codec_name, pix_fmt) of the first video stream, or None if ffprobe cannot tell."""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,pix_fmt",
+        "-of",
+        "compact=p=0",
+        str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("Unable to probe format of %s: %s", path, exc)
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.strip().splitlines()
+    fields = dict(part.split("=", 1) for part in (lines[0] if lines else "").split("|") if "=" in part)
+    codec, pix_fmt = fields.get("codec_name", ""), fields.get("pix_fmt", "")
+    return (codec, pix_fmt) if codec and pix_fmt and pix_fmt != "unknown" else None
+
+
+def video_encode_params(info: dict[str, Any], video_key: str, source: Path | None = None) -> tuple[str, str]:
+    """Encoder and pixel format for re-encoding a video so it keeps the source's format.
+
+    The source file itself wins over info.json: a depth feature that does not declare
+    video.codec / video.pix_fmt would otherwise fall back to h264/yuv420p and lose its
+    16-bit values. info.json, then h264/yuv420p, are used only when the file cannot be probed.
+    """
     feature_info = (info.get("features") or {}).get(video_key, {}).get("info") or {}
-    raw_codec = str(feature_info.get("video.codec") or "h264")
-    vcodec = _CODEC_MAP.get(raw_codec, raw_codec)
-    pix_fmt = str(feature_info.get("video.pix_fmt") or "yuv420p")
-    return vcodec, pix_fmt
+    declared_codec = feature_info.get("video.codec")
+    declared_pix_fmt = feature_info.get("video.pix_fmt")
+    probed = probe_video_format(source) if source is not None else None
+    if probed:
+        codec, pix_fmt = probed
+        if (declared_codec and _CODEC_MAP.get(str(declared_codec), declared_codec) != _CODEC_MAP.get(codec, codec)) or (
+            declared_pix_fmt and declared_pix_fmt != pix_fmt
+        ):
+            logger.warning(
+                "%s: info.json declares %s/%s but %s is %s/%s; keeping the file's format",
+                video_key,
+                declared_codec,
+                declared_pix_fmt,
+                source,
+                codec,
+                pix_fmt,
+            )
+    else:
+        codec, pix_fmt = str(declared_codec or "h264"), str(declared_pix_fmt or "yuv420p")
+    return _CODEC_MAP.get(codec, codec), pix_fmt
 
 
 def episodes_in_video_file(
@@ -395,7 +445,7 @@ def selective_process_videos(
                 on_progress(file_number, total_files, "resume", video_key, chunk_index, file_index)
             stats["resumed"] += 1
         else:
-            vcodec, pix_fmt = video_encode_params(info, video_key)
+            vcodec, pix_fmt = video_encode_params(info, video_key, src_path)
             if on_progress is not None:
                 on_progress(file_number, total_files, "reencode", video_key, chunk_index, file_index)
             logger.info(

@@ -331,7 +331,6 @@ services:
       args:
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         BASE_IMAGE: ${LEROBOT_QC_BASE_IMAGE:-data-lab-embodied-annotate:local}
-        INSTALL_LEROBOT: ${LEROBOT_QC_INSTALL_LEROBOT:-1}
     image: ${LEROBOT_QC_IMAGE:-data-lab-lerobot-qc:local}
     restart: unless-stopped
     expose:
@@ -355,7 +354,7 @@ services:
       - LEROBOT_QC_HOST_MEDIA_HOST_PREFIX=/media/user01
       - PYTHONPATH=/app/backend
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7863/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:7863/healthz >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

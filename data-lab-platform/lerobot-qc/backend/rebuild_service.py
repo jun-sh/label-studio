@@ -22,6 +22,7 @@ from qc_metrics import read_episode_frames
 from qc_store import QcStore, manifest_active_rebuild_job
 from depth_split import split_depth_features
 from stats_service import recompute_dataset_stats
+from acceptance_service import acceptance_enabled, check_delivery
 from video_delivery import format_video_progress, selective_process_videos
 from video_service import expected_video_duration, trim_video_for_delivery
 
@@ -701,8 +702,15 @@ def _rebuild_minimal_delivery_dataset(
         ),
     )
 
+    # Last phase, still under the job marker: a restart while verifying resumes the job
+    # (finished videos are kept) and verifies again.
+    acceptance = _run_acceptance(
+        state=state, store=store, output_root=output_root, job_id=job_id, removed=removed
+    )
+
     (output_root / JOB_MARKER).unlink(missing_ok=True)
     return {
+        "acceptance": acceptance,
         "output_root": str(output_root),
         "kept_episodes": len(kept),
         "removed_episodes": len(removed),
@@ -715,6 +723,34 @@ def _rebuild_minimal_delivery_dataset(
         "stats_recomputed": stats_recomputed,
         "depth_features": depth_features,
     }
+
+
+def _run_acceptance(
+    *,
+    state: DatasetState,
+    store: QcStore,
+    output_root: Path,
+    job_id: str,
+    removed: set[int],
+) -> dict[str, Any] | None:
+    """Verify the finished delivery; returns None when disabled via LEROBOT_QC_ACCEPTANCE."""
+    if not acceptance_enabled():
+        return None
+    _sync_job(job_id, store, progress="verifying", progress_current=0, progress_total=0, status="running")
+
+    def _report(current: int, total: int) -> None:
+        _sync_job(job_id, store, progress="verifying", progress_current=current, progress_total=total, status="running")
+
+    acceptance = check_delivery(
+        output_root,
+        state.dataset_root,
+        removed=removed,
+        overrides=dict(store.manifest.get("instruction_overrides") or {}),
+        on_progress=_report,
+    )
+    log = logger.info if acceptance["ok"] else logger.warning
+    log("Delivery acceptance %s for %s: %s", "passed" if acceptance["ok"] else "FAILED", output_root, acceptance["problems"])
+    return acceptance
 
 
 def _rebuild_legacy_delivery_dataset(

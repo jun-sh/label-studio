@@ -198,9 +198,25 @@
     return el(
       "div",
       { class: "ls-ov-delivery", title: delivery.output_root },
-      badge,
+      el("div", { class: "ls-ov-badges" }, badge, acceptanceBadge(delivery)),
       el("span", { class: "ls-ov-sub", text: `${name} · ${formatTime(delivery.finished_at)}` }),
     );
+  }
+
+  /* Automatic acceptance check of the last delivery; nothing when it never ran. */
+  function acceptanceBadge(delivery) {
+    const acceptance = delivery.acceptance;
+    if (!acceptance || delivery.state === "missing") return null;
+    const problems = acceptance.problems || [];
+    return el("span", {
+      class: `ls-ov-badge ${acceptance.ok ? "is-acceptance-ok" : "is-acceptance-failed"}`,
+      text: t(acceptance.ok ? "ov_acceptance_ok" : "ov_acceptance_failed", {
+        count: problems.length + (acceptance.problems_truncated || 0),
+      }),
+      title: acceptance.ok
+        ? t("ov_acceptance_ok_title", { time: formatTime(acceptance.checked_at) })
+        : problems.join("\n"),
+    });
   }
 
   function renderRows() {

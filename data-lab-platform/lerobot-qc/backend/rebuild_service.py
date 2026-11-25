@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 from dataset_manager import DatasetState, _load_tasks_map, load_local_dataset
 from qc_metrics import read_episode_frames
 from qc_store import QcStore, manifest_active_rebuild_job
+from depth_split import split_depth_features
 from stats_service import recompute_dataset_stats
 from video_delivery import format_video_progress, selective_process_videos
 from video_service import expected_video_duration, trim_video_for_delivery
@@ -682,6 +683,8 @@ def _rebuild_minimal_delivery_dataset(
     stats_recomputed = recompute_dataset_stats(output_root, info)
     if not stats_recomputed:
         logger.warning("Failed to fully recompute stats.json for %s", output_root)
+    # After stats: the depth stats move into the depth sidecar together with the features.
+    depth_features = split_depth_features(output_root)
 
     report_path = _write_delivery_report(
         store,
@@ -710,6 +713,7 @@ def _rebuild_minimal_delivery_dataset(
         "videos_copied": video_stats.get("copied", 0),
         "videos_reencoded": video_stats.get("reencoded", 0),
         "stats_recomputed": stats_recomputed,
+        "depth_features": depth_features,
     }
 
 
@@ -829,6 +833,7 @@ def _rebuild_legacy_delivery_dataset(
         "source_root": str(state.dataset_root),
     }
     _write_json(output_root / "meta" / "stats.json", stats)
+    depth_features = split_depth_features(output_root)
 
     removed_txt = output_root / "removed_episodes.txt"
     removed_txt.write_text("\n".join(str(x) for x in sorted(removed)) + ("\n" if removed else ""), encoding="utf-8")
@@ -860,6 +865,7 @@ def _rebuild_legacy_delivery_dataset(
         "finalized": finalized,
         "rebuild_mode": "legacy",
         "report_path": str(report_path),
+        "depth_features": depth_features,
     }
     if finalize_error:
         result["finalize_error"] = finalize_error

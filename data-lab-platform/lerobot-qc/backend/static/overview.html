@@ -3,26 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>QC Overview</title>
+  <title>QC overview · Datalab</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <header class="dl-header">
+    <a class="dl-header__trigger" id="dlHomeLink" href="/" aria-label="Datalab">
+      <img class="dl-header__logo" src="/static/datalab-logo.svg" alt="Datalab" width="142" height="22" />
+    </a>
+    <div class="dl-header__context">
+      <nav class="dl-breadcrumbs" aria-label="Breadcrumb">
+        <ol class="dl-breadcrumbs__list">
+          <li class="dl-breadcrumbs__item"><a id="ovCrumbRoot" href="./">Data QC</a></li>
+          <li class="dl-breadcrumbs__item"><span id="ovTitle">Overview</span></li>
+        </ol>
+      </nav>
+      <div class="dl-header__actions">
+        <a class="dl-header__btn" id="ovBackLink" href="./">Back to review</a>
+      </div>
+    </div>
+  </header>
   <div class="ls-app ls-ov">
-    <header class="ls-topbar">
-      <div class="ls-topbar-left">
-        <div class="ls-brand">
-          <span class="ls-brand-mark">DL</span>
-          <div>
-            <strong id="ovTitle">QC overview</strong>
-            <span class="ls-brand-sub" id="ovSub">Review progress and delivery state per package</span>
-          </div>
-        </div>
-      </div>
-      <div class="ls-topbar-actions">
-        <a class="ls-btn ls-btn-ghost" id="ovBackLink" href="./">Back to review</a>
-      </div>
-    </header>
-
     <section class="ls-panel ls-ov-controls">
       <label class="ls-ov-field">
         <span id="ovCollectionLabel">Collection</span>

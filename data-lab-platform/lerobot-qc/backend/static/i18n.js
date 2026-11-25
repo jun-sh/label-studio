@@ -6,12 +6,9 @@
 
   const MESSAGES = {
     en: {
-      brand_mark: 'DL',
-      brand_title: 'Data QC',
-      brand_sub: 'Terminal inspection',
-      embed_brand_mark: 'DL',
-      embed_brand_title: 'Data QC',
-      embed_brand_sub: 'Terminal inspection',
+      qc_crumb_root: 'Data QC',
+      qc_page_title: 'Data QC · Datalab',
+      datalab_home: 'Datalab home',
       status_disconnected: 'Disconnected',
       status_loaded: 'Loaded {name}',
       status_saved: 'Saved ✓',
@@ -192,7 +189,6 @@
       qc_rebuild_verifying_progress: 'Verifying delivery: video {current}/{total} ({pct}%)',
       qc_rebuild_confirm_unreviewed: '{pending} pending and {suspicious} suspicious episodes will be INCLUDED in the delivery as-is. Rebuild anyway?',
       ov_title: 'QC overview',
-      ov_subtitle: 'Review progress and delivery state per package',
       ov_back: 'Back to review',
       ov_collection: 'Collection',
       ov_search: 'Package',
@@ -267,7 +263,6 @@
       qc_rebuild_poll_error: 'Status poll failed: {error}',
       qc_rebuild_stale_hint: 'The rebuild was interrupted by a service restart and could not be resumed: {error}. Start a new rebuild.',
       qc_rebuild_already_running: 'A rebuild is already running.',
-      qc_home_btn: 'Home',
       qc_reject_reason_prompt: 'Removal reason (required for audit):',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Instruction saved for episode {idx}',
@@ -280,12 +275,9 @@
       qc_local_path_label: 'Dataset path (read-only)',
     },
     'zh-Hans': {
-      brand_mark: 'DL',
-      brand_title: 'Data QC',
-      brand_sub: '终端质检',
-      embed_brand_mark: 'DL',
-      embed_brand_title: 'Data QC',
-      embed_brand_sub: '终端质检',
+      qc_crumb_root: '数据质检',
+      qc_page_title: '数据质检 · Datalab',
+      datalab_home: 'Datalab 首页',
       status_disconnected: '未连接',
       status_loaded: '已加载 {name}',
       status_saved: '已保存 ✓',
@@ -466,7 +458,6 @@
       qc_rebuild_verifying_progress: '正在验收交付集：视频 {current}/{total}（{pct}%）',
       qc_rebuild_confirm_unreviewed: '还有 {pending} 条待审、{suspicious} 条可疑，它们会原样进入交付集。仍要重建吗？',
       ov_title: 'QC 总览',
-      ov_subtitle: '各 package 的审阅进度与交付集状态',
       ov_back: '返回审阅',
       ov_collection: '数据集合',
       ov_search: 'Package',
@@ -541,7 +532,6 @@
       qc_rebuild_poll_error: '状态查询失败：{error}',
       qc_rebuild_stale_hint: '重建因服务重启中断，且未能自动续跑：{error}。请重新发起重建。',
       qc_rebuild_already_running: '已有重建任务正在运行。',
-      qc_home_btn: '主页',
       qc_reject_reason_prompt: '移除原因（审计必填）：',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Episode {idx} 指令已保存',
@@ -601,21 +591,24 @@
     }
   }
 
+  /* Datalab header shared by the review and overview pages. */
+  function applyHeaderText() {
+    const home = document.getElementById('dlHomeLink');
+    if (home) home.setAttribute('aria-label', t('datalab_home'));
+    const ovRoot = document.getElementById('ovCrumbRoot');
+    if (ovRoot) ovRoot.textContent = t('qc_crumb_root');
+  }
+
   function applyStaticUI() {
     document.documentElement.lang = locale === 'zh-Hans' ? 'zh-Hans' : 'en';
 
-    const brandMark = document.querySelector('.ls-brand-mark');
-    const brandTitle = document.querySelector('.ls-brand strong');
-    const brandSub = document.querySelector('.ls-brand-sub');
-    const markKey = IS_DATALAB_EMBED ? 'embed_brand_mark' : 'brand_mark';
-    const titleKey = IS_DATALAB_EMBED ? 'embed_brand_title' : 'brand_title';
-    const subKey = IS_DATALAB_EMBED ? 'embed_brand_sub' : 'brand_sub';
-    if (brandMark) brandMark.textContent = t(markKey);
-    if (brandTitle) brandTitle.textContent = t(titleKey);
-    if (brandSub) brandSub.textContent = t(subKey);
+    applyHeaderText();
 
     const qcHomeBtn = document.getElementById('qcHomeBtn');
-    if (qcHomeBtn) qcHomeBtn.setAttribute('aria-label', t('qc_home_btn'));
+    if (qcHomeBtn) {
+      qcHomeBtn.textContent = t('qc_crumb_root');
+      document.title = t('qc_page_title');
+    }
 
     const connectToggle = document.getElementById('connectToggle');
     if (connectToggle) connectToggle.textContent = t('connect_toggle');
@@ -805,6 +798,7 @@
     getLocale: () => locale,
     setLocale,
     applyStaticUI,
+    applyHeaderText,
     applyDatalabEmbedMode,
     init() {
       applyDatalabEmbedMode();

@@ -70,6 +70,7 @@
     const back = withPassthrough(new URLSearchParams());
     if (els.collection.value) back.set("collection", els.collection.value);
     els.back.href = `./?${back}`;
+    $("ovCrumbRoot").href = els.back.href;
   }
 
   function reviewUrl(row) {
@@ -284,13 +285,13 @@
   }
 
   function applyText() {
-    document.title = t("ov_title");
+    document.title = `${t("ov_title")} · Datalab`;
+    window.LA_I18N.applyHeaderText();
     const setText = (id, key) => {
       const node = $(id);
       if (node) node.textContent = t(key);
     };
-    setText("ovTitle", "ov_title");
-    setText("ovSub", "ov_subtitle");
+    setText("ovTitle", "qc_overview_link");
     setText("ovBackLink", "ov_back");
     setText("ovCollectionLabel", "ov_collection");
     setText("ovSearchLabel", "ov_search");

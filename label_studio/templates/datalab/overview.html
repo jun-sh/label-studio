@@ -8,6 +8,16 @@ below is static and bottomjs fills it from the existing station and QC APIs.
 
 {% block divider %}{% endblock %}
 
+{# Header breadcrumb: the React bundle has no route for /overview, so pass it the upstream way
+   (APP_SETTINGS.breadcrumbs, as organizations/people_list.html does). #}
+{% block frontend_settings %}
+  {
+    breadcrumbs: [
+      { title: "{% if user.ui_locale|slice:':2' == 'zh' %}概览{% else %}Overview{% endif %}" }
+    ]
+  }
+{% endblock %}
+
 {% block content %}
 <div class="dlo" id="dl-overview-root">
   <header class="dlo-head">

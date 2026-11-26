@@ -1,0 +1,683 @@
+{% extends 'base.html' %}
+{% comment %}
+Data Lab home: pipeline overview (collection -> QC -> delivery).
+Layout follows the Foxglove Data Platform home: summary tiles, then devices (stations) and
+recent activity. The React shell renders #main-content for this non-SPA route, so the markup
+below is static and bottomjs fills it from the existing station and QC APIs.
+{% endcomment %}
+
+{% block divider %}{% endblock %}
+
+{% block content %}
+<div class="dlo" id="dl-overview-root">
+  <header class="dlo-head">
+    <div>
+      <h1 class="dlo-title" data-dlo-t="title"></h1>
+      <p class="dlo-sub" data-dlo-t="subtitle"></p>
+    </div>
+    <span class="dlo-updated" id="dlo-updated"></span>
+  </header>
+
+  <section class="dlo-tiles" id="dlo-tiles" aria-live="polite"></section>
+
+  <section class="dlo-card">
+    <div class="dlo-card__head">
+      <h2 data-dlo-t="stations"></h2>
+      <a class="dlo-link" href="/collection" data-dlo-t="open_collection"></a>
+    </div>
+    <div class="dlo-scroll"><table class="dlo-table" id="dlo-stations"></table></div>
+  </section>
+
+  <div class="dlo-grid">
+    <section class="dlo-card">
+      <div class="dlo-card__head">
+        <h2 data-dlo-t="qc_progress"></h2>
+        <a class="dlo-link" href="/qc/" data-dlo-t="open_qc"></a>
+      </div>
+      <div class="dlo-scroll"><table class="dlo-table" id="dlo-collections"></table></div>
+    </section>
+
+    <section class="dlo-card">
+      <div class="dlo-card__head">
+        <h2 data-dlo-t="deliveries"></h2>
+      </div>
+      <div class="dlo-scroll"><table class="dlo-table" id="dlo-deliveries"></table></div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block app-css %}
+{{ block.super }}
+<style nonce="{{ request.csp_nonce }}">
+  .dlo {
+    --dlo-bg: var(--color-neutral-background, #fdfdfc);
+    --dlo-surface: var(--color-neutral-surface, #f9f8f6);
+    --dlo-emphasis: var(--color-neutral-emphasis, #f0efeb);
+    --dlo-border: var(--color-neutral-border, #e1ded5);
+    --dlo-text: var(--color-neutral-content, #262522);
+    --dlo-subtle: var(--color-neutral-content-subtler, #6b6860);
+    --dlo-subtlest: var(--color-neutral-content-subtlest, #a49f95);
+    --dlo-primary: var(--color-primary-surface, #4c5fa9);
+    --dlo-positive: #2e7d5b;
+    --dlo-positive-bg: #e7f4ee;
+    --dlo-warning: #9a6a00;
+    --dlo-warning-bg: #fbf2dc;
+    --dlo-negative: var(--color-negative-content, #b3523d);
+    --dlo-negative-bg: #fbeae5;
+    box-sizing: border-box;
+    /* The shell's content area is a flex container; without min-width: 0 the nowrap tables
+       would size this column to their full width and scroll the whole page on phones. */
+    width: 100%;
+    min-width: 0;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 24px 24px 48px;
+    color: var(--dlo-text);
+    font-size: 14px;
+  }
+  .dlo *, .dlo *::before, .dlo *::after { box-sizing: border-box; }
+  .dlo-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .dlo-title { margin: 0; font-size: 28px; font-weight: 500; line-height: 1.2; }
+  .dlo-sub { margin: 4px 0 0; color: var(--dlo-subtle); }
+  .dlo-updated { color: var(--dlo-subtlest); font-size: 12px; white-space: nowrap; }
+
+  .dlo-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .dlo-tile, .dlo-card {
+    background: var(--dlo-bg);
+    border: 1px solid var(--dlo-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+  }
+  .dlo-tile { padding: 16px; min-height: 104px; }
+  .dlo-tile__label { color: var(--dlo-subtle); }
+  .dlo-tile__value { margin-top: 6px; font-size: 30px; font-weight: 500; line-height: 1.1; }
+  .dlo-tile__value small { font-size: 16px; color: var(--dlo-subtlest); font-weight: 400; }
+  .dlo-tile__hint { margin-top: 6px; color: var(--dlo-subtle); font-size: 13px; }
+  .dlo-tile--warn .dlo-tile__hint { color: var(--dlo-negative); }
+
+  .dlo-card { padding: 16px; margin-bottom: 16px; min-width: 0; }
+  .dlo-card__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .dlo-card__head h2 { margin: 0; font-size: 18px; font-weight: 500; }
+  .dlo-link { color: var(--dlo-primary); text-decoration: none; white-space: nowrap; }
+  .dlo-link:hover { color: #6d87f1; }
+
+  .dlo-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .dlo-scroll { overflow-x: auto; }
+  .dlo-table { width: 100%; border-collapse: collapse; }
+  .dlo-table th, .dlo-table td {
+    padding: 9px 8px;
+    border-bottom: 1px solid var(--dlo-border);
+    text-align: left;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .dlo-table th { color: var(--dlo-subtle); font-weight: 500; font-size: 13px; }
+  .dlo-table tr:last-child td { border-bottom: 0; }
+  .dlo-table td.num, .dlo-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .dlo-table a { color: var(--dlo-text); text-decoration: none; }
+  .dlo-table a:hover { color: var(--dlo-primary); }
+  .dlo-muted { color: var(--dlo-subtlest); }
+  .dlo-empty { padding: 16px 8px; color: var(--dlo-subtle); }
+  .dlo-error { padding: 16px 8px; color: var(--dlo-negative); }
+
+  .dlo-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--dlo-subtlest);
+    vertical-align: 1px;
+  }
+  .dlo-dot--on { background: var(--dlo-positive); }
+  .dlo-dot--live { background: #d64545; box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.18); }
+
+  .dlo-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 18px;
+    background: var(--dlo-emphasis);
+    color: var(--dlo-subtle);
+  }
+  .dlo-badge--ok { background: var(--dlo-positive-bg); color: var(--dlo-positive); }
+  .dlo-badge--warn { background: var(--dlo-warning-bg); color: var(--dlo-warning); }
+  .dlo-badge--bad { background: var(--dlo-negative-bg); color: var(--dlo-negative); }
+
+  .dlo-bar {
+    display: inline-block;
+    width: 96px;
+    height: 6px;
+    margin-right: 8px;
+    border-radius: 3px;
+    background: var(--dlo-emphasis);
+    overflow: hidden;
+    vertical-align: middle;
+  }
+  .dlo-bar > span { display: block; height: 100%; background: var(--dlo-primary); }
+
+  @media (max-width: 1024px) {
+    .dlo-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dlo-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .dlo { padding: 16px 16px 32px; }
+    .dlo-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .dlo-title { font-size: 24px; }
+    .dlo-tiles { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+{% endblock %}
+
+{% block bottomjs %}
+{{ block.super }}
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    "use strict";
+
+    var ZH = "{% if user.ui_locale|slice:':2' == 'zh' %}1{% endif %}" === "1";
+    var REFRESH_MS = 30000;
+
+    var TEXT = ZH
+      ? {
+          title: "概览",
+          subtitle: "采集 → 质检 → 交付，产线当前状态",
+          updated: "更新于 {time}",
+          stations: "采集工位",
+          open_collection: "进入采集",
+          qc_progress: "质检进度",
+          open_qc: "进入质检",
+          deliveries: "最近交付",
+          tile_online: "在线工位",
+          tile_online_hint: "{live} 台正在采集",
+          tile_derive: "派生队列",
+          tile_derive_hint: "{failed} 个失败片段",
+          tile_derive_ok: "无失败片段",
+          tile_pending: "待质检数据包",
+          tile_pending_hint: "审阅中 {n} 个",
+          tile_delivered: "已交付数据包",
+          tile_delivered_hint: "验收通过 {ok} / 已验收 {checked}",
+          col_station: "工位",
+          col_network: "网络",
+          col_link: "连接",
+          col_capture: "采集",
+          col_derive: "派生",
+          col_collection: "数据集合",
+          col_packages: "数据包",
+          col_not_started: "未开始",
+          col_in_review: "审阅中",
+          col_delivered: "已交付",
+          col_episodes: "Episode 审阅",
+          col_package: "数据包",
+          col_kept: "保留",
+          col_acceptance: "验收",
+          col_time: "交付时间",
+          online: "在线",
+          offline: "离线",
+          cap_live: "采集中",
+          cap_idle: "空闲",
+          cap_offline: "未采集",
+          cap_unknown: "未知",
+          derive_idle: "空闲",
+          derive_queue: "排队 {pending} · 进行 {active}",
+          derive_failed: "{n} 个失败",
+          acc_ok: "通过",
+          acc_bad: "未通过",
+          acc_none: "未验收",
+          stale: "需重建",
+          empty_stations: "还没有采集工位",
+          empty_collections: "还没有数据集合",
+          empty_deliveries: "还没有交付",
+          load_failed: "加载失败：{error}",
+        }
+      : {
+          title: "Overview",
+          subtitle: "Collection → QC → delivery, current pipeline state",
+          updated: "Updated {time}",
+          stations: "Collection stations",
+          open_collection: "Open collection",
+          qc_progress: "QC progress",
+          open_qc: "Open QC",
+          deliveries: "Recent deliveries",
+          tile_online: "Stations online",
+          tile_online_hint: "{live} capturing now",
+          tile_derive: "Derive queue",
+          tile_derive_hint: "{failed} failed segments",
+          tile_derive_ok: "No failed segments",
+          tile_pending: "Packages awaiting QC",
+          tile_pending_hint: "{n} in review",
+          tile_delivered: "Packages delivered",
+          tile_delivered_hint: "{ok} passed / {checked} checked",
+          col_station: "Station",
+          col_network: "Network",
+          col_link: "Link",
+          col_capture: "Capture",
+          col_derive: "Derive",
+          col_collection: "Collection",
+          col_packages: "Packages",
+          col_not_started: "Not started",
+          col_in_review: "In review",
+          col_delivered: "Delivered",
+          col_episodes: "Episodes reviewed",
+          col_package: "Package",
+          col_kept: "Kept",
+          col_acceptance: "Acceptance",
+          col_time: "Delivered at",
+          online: "Online",
+          offline: "Offline",
+          cap_live: "Capturing",
+          cap_idle: "Idle",
+          cap_offline: "Not capturing",
+          cap_unknown: "Unknown",
+          derive_idle: "Idle",
+          derive_queue: "{pending} queued · {active} running",
+          derive_failed: "{n} failed",
+          acc_ok: "Passed",
+          acc_bad: "Failed",
+          acc_none: "Not checked",
+          stale: "Needs rebuild",
+          empty_stations: "No collection stations yet",
+          empty_collections: "No collections yet",
+          empty_deliveries: "No deliveries yet",
+          load_failed: "Failed to load: {error}",
+        };
+
+    function t(key, vars) {
+      var s = TEXT[key] || key;
+      if (vars) {
+        Object.keys(vars).forEach(function (k) {
+          s = s.split("{" + k + "}").join(String(vars[k]));
+        });
+      }
+      return s;
+    }
+
+    function esc(value) {
+      return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+      });
+    }
+
+    function num(n) {
+      return Number(n || 0).toLocaleString(ZH ? "zh-CN" : "en-US");
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "";
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleString(ZH ? "zh-CN" : "en-US", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    function getJson(url) {
+      return fetch(url, { credentials: "same-origin" }).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      });
+    }
+
+    function badge(text, kind) {
+      return '<span class="dlo-badge' + (kind ? " dlo-badge--" + kind : "") + '">' + esc(text) + "</span>";
+    }
+
+    function head(cols) {
+      return (
+        "<thead><tr>" +
+        cols
+          .map(function (c) {
+            return "<th" + (c.num ? ' class="num"' : "") + ">" + esc(t(c.key)) + "</th>";
+          })
+          .join("") +
+        "</tr></thead>"
+      );
+    }
+
+    function message(cols, cls, text) {
+      return '<tbody><tr><td colspan="' + cols + '" class="' + cls + '">' + esc(text) + "</td></tr></tbody>";
+    }
+
+    // ---- data -------------------------------------------------------------------------
+
+    function loadStations() {
+      return getJson("/lerobot/api/collection/stations").then(function (body) {
+        var stations = (body && body.stations) || [];
+        return Promise.all(
+          stations.map(function (st) {
+            if (!st.stream) return Promise.resolve(null);
+            return getJson("/lerobot/api/collection/stations/" + encodeURIComponent(st.id) + "/derive-status").catch(
+              function () {
+                return null;
+              },
+            );
+          }),
+        ).then(function (derive) {
+          return stations.map(function (st, i) {
+            return { station: st, derive: derive[i] };
+          });
+        });
+      });
+    }
+
+    function loadQc() {
+      return getJson("/qc/api/datasets/collections").then(function (body) {
+        var collections = ((body && body.collections) || []).filter(function (c) {
+          return c.status === "available";
+        });
+        return Promise.all(
+          collections.map(function (c) {
+            return getJson("/qc/api/qc/overview?collection=" + encodeURIComponent(c.id)).catch(function () {
+              return null;
+            });
+          }),
+        ).then(function (overviews) {
+          return collections.map(function (c, i) {
+            return { collection: c, overview: overviews[i] };
+          });
+        });
+      });
+    }
+
+    // ---- render -----------------------------------------------------------------------
+
+    function tile(label, value, hint, warn) {
+      return (
+        '<div class="dlo-tile' + (warn ? " dlo-tile--warn" : "") + '">' +
+        '<div class="dlo-tile__label">' + esc(label) + "</div>" +
+        '<div class="dlo-tile__value">' + value + "</div>" +
+        '<div class="dlo-tile__hint">' + esc(hint) + "</div>" +
+        "</div>"
+      );
+    }
+
+    function renderTiles(stations, qc) {
+      var el = document.getElementById("dlo-tiles");
+      var html = "";
+      if (stations) {
+        var online = 0, live = 0, pending = 0, active = 0, failed = 0;
+        stations.forEach(function (row) {
+          if (row.station.online) online += 1;
+          if (row.station.captureState === "live") live += 1;
+          var q = (row.derive && row.derive.deriveQueue) || {};
+          pending += Number(q.pending || 0);
+          active += Number(q.active || 0);
+          failed += Number(q.dlq || 0) + ((row.derive && row.derive.failedSegments) || []).length;
+        });
+        html += tile(t("tile_online"), num(online) + " <small>/ " + num(stations.length) + "</small>", t("tile_online_hint", { live: live }));
+        html += tile(
+          t("tile_derive"),
+          num(pending + active),
+          failed ? t("tile_derive_hint", { failed: failed }) : t("tile_derive_ok"),
+          failed > 0,
+        );
+      }
+      if (qc) {
+        var waiting = 0, inReview = 0, delivered = 0, ok = 0, checked = 0;
+        qc.forEach(function (row) {
+          var ov = row.overview;
+          if (!ov) return;
+          var sc = ov.stage_counts || {};
+          waiting += (sc.not_started || 0) + (sc.in_review || 0) + (sc.suspicious || 0) + (sc.needs_rebuild || 0);
+          inReview += sc.in_review || 0;
+          delivered += sc.delivered || 0;
+          (ov.packages || []).forEach(function (p) {
+            var acc = p.delivery && p.delivery.acceptance;
+            if (acc) {
+              checked += 1;
+              if (acc.ok) ok += 1;
+            }
+          });
+        });
+        html += tile(t("tile_pending"), num(waiting), t("tile_pending_hint", { n: inReview }));
+        html += tile(t("tile_delivered"), num(delivered), t("tile_delivered_hint", { ok: ok, checked: checked }));
+      }
+      el.innerHTML = html;
+    }
+
+    var CAPTURE = { live: "cap_live", idle: "cap_idle", offline: "cap_offline" };
+
+    function renderStations(stations, error) {
+      var cols = [
+        { key: "col_station" },
+        { key: "col_network" },
+        { key: "col_link" },
+        { key: "col_capture" },
+        { key: "col_derive" },
+      ];
+      var el = document.getElementById("dlo-stations");
+      if (error) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        return;
+      }
+      if (!stations.length) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_stations"));
+        return;
+      }
+      var rows = stations.map(function (row) {
+        var st = row.station;
+        var name = ZH ? st.name : st.name_en || st.name;
+        var link =
+          '<span class="dlo-dot' + (st.online ? " dlo-dot--on" : "") + '"></span>' +
+          esc(st.online ? t("online") : t("offline"));
+        var cap = st.captureState === "live"
+          ? '<span class="dlo-dot dlo-dot--live"></span>' + esc(t("cap_live"))
+          : '<span class="dlo-muted">' + esc(t(CAPTURE[st.captureState] || "cap_unknown")) + "</span>";
+        var derive = '<span class="dlo-muted">—</span>';
+        if (row.derive) {
+          var q = row.derive.deriveQueue || {};
+          var failed = Number(q.dlq || 0) + (row.derive.failedSegments || []).length;
+          var busy = Number(q.pending || 0) + Number(q.active || 0);
+          derive = busy
+            ? badge(t("derive_queue", { pending: q.pending || 0, active: q.active || 0 }), "warn")
+            : '<span class="dlo-muted">' + esc(t("derive_idle")) + "</span>";
+          if (failed) derive += " " + badge(t("derive_failed", { n: failed }), "bad");
+        }
+        return (
+          "<tr>" +
+          '<td><a href="' + esc(st.viewerUrl || "/collection") + '">' + esc(name) + "</a>" +
+          ' <span class="dlo-muted">' + esc(st.id) + "</span></td>" +
+          "<td>" + esc(String(st.scope || "").toUpperCase()) + "</td>" +
+          "<td>" + link + "</td>" +
+          "<td>" + cap + "</td>" +
+          "<td>" + derive + "</td>" +
+          "</tr>"
+        );
+      });
+      el.innerHTML = head(cols) + "<tbody>" + rows.join("") + "</tbody>";
+    }
+
+    function renderCollections(qc, error) {
+      var cols = [
+        { key: "col_collection" },
+        { key: "col_packages", num: true },
+        { key: "col_not_started", num: true },
+        { key: "col_in_review", num: true },
+        { key: "col_delivered", num: true },
+        { key: "col_episodes" },
+      ];
+      var el = document.getElementById("dlo-collections");
+      if (error) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        return;
+      }
+      var rows = qc.filter(function (row) {
+        return row.overview && (row.overview.packages || []).length;
+      });
+      if (!rows.length) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_collections"));
+        return;
+      }
+      el.innerHTML =
+        head(cols) +
+        "<tbody>" +
+        rows
+          .map(function (row) {
+            var ov = row.overview;
+            var sc = ov.stage_counts || {};
+            var tot = ov.totals || {};
+            var pct = tot.episodes ? Math.round((100 * (tot.reviewed || 0)) / tot.episodes) : 0;
+            return (
+              "<tr>" +
+              '<td><a href="/qc/overview?collection=' + encodeURIComponent(row.collection.id) + '">' +
+              esc(row.collection.title || row.collection.id) + "</a></td>" +
+              '<td class="num">' + num((ov.packages || []).length) + "</td>" +
+              '<td class="num">' + num(sc.not_started) + "</td>" +
+              '<td class="num">' + num((sc.in_review || 0) + (sc.suspicious || 0)) + "</td>" +
+              '<td class="num">' + num(sc.delivered) + "</td>" +
+              '<td><span class="dlo-bar"><span style="width:' + pct + '%"></span></span>' +
+              '<span class="dlo-muted">' + num(tot.reviewed) + " / " + num(tot.episodes) + "</span></td>" +
+              "</tr>"
+            );
+          })
+          .join("") +
+        "</tbody>";
+    }
+
+    function renderDeliveries(qc, error) {
+      var cols = [
+        { key: "col_package" },
+        { key: "col_kept", num: true },
+        { key: "col_acceptance" },
+        { key: "col_time" },
+      ];
+      var el = document.getElementById("dlo-deliveries");
+      if (error) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        return;
+      }
+      var items = [];
+      qc.forEach(function (row) {
+        ((row.overview && row.overview.packages) || []).forEach(function (p) {
+          if (p.delivery && p.delivery.finished_at) items.push({ collection: row.collection, pkg: p });
+        });
+      });
+      items.sort(function (a, b) {
+        return String(b.pkg.delivery.finished_at).localeCompare(String(a.pkg.delivery.finished_at));
+      });
+      items = items.slice(0, 8);
+      if (!items.length) {
+        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_deliveries"));
+        return;
+      }
+      el.innerHTML =
+        head(cols) +
+        "<tbody>" +
+        items
+          .map(function (item) {
+            var p = item.pkg;
+            var d = p.delivery;
+            var params = new URLSearchParams({ collection: item.collection.id, package: p.id });
+            if (p.local_path) params.set("local_path", p.local_path);
+            var acc = d.acceptance;
+            var accHtml = acc ? badge(acc.ok ? t("acc_ok") : t("acc_bad"), acc.ok ? "ok" : "bad") : badge(t("acc_none"));
+            if (d.state && d.state !== "current") accHtml += " " + badge(t("stale"), "warn");
+            return (
+              "<tr>" +
+              '<td><a href="/qc/?' + esc(params.toString()) + '">' + esc(p.id) + "</a>" +
+              ' <span class="dlo-muted">' + esc(item.collection.title || item.collection.id) + "</span></td>" +
+              '<td class="num">' + num(d.kept_episodes) + "</td>" +
+              "<td>" + accHtml + "</td>" +
+              '<td class="dlo-muted">' + esc(fmtTime(d.finished_at)) + "</td>" +
+              "</tr>"
+            );
+          })
+          .join("") +
+        "</tbody>";
+    }
+
+    // ---- lifecycle --------------------------------------------------------------------
+
+    var root = null;
+    var timer = null;
+
+    function refresh() {
+      if (!root || !document.body.contains(root)) return stop();
+      var stationsP = loadStations().then(
+        function (v) { return { ok: v }; },
+        function (e) { return { err: e }; },
+      );
+      var qcP = loadQc().then(
+        function (v) { return { ok: v }; },
+        function (e) { return { err: e }; },
+      );
+      return Promise.all([stationsP, qcP]).then(function (res) {
+        if (!document.body.contains(root)) return;
+        var st = res[0], qc = res[1];
+        renderTiles(st.ok || null, qc.ok || null);
+        renderStations(st.ok || [], st.err);
+        renderCollections(qc.ok || [], qc.err);
+        renderDeliveries(qc.ok || [], qc.err);
+        document.getElementById("dlo-updated").textContent = t("updated", {
+          time: new Date().toLocaleTimeString(ZH ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }),
+        });
+      });
+    }
+
+    function stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+
+    function start(el) {
+      root = el;
+      root.querySelectorAll("[data-dlo-t]").forEach(function (node) {
+        node.textContent = t(node.getAttribute("data-dlo-t"));
+      });
+      document.title = t("title") + " · Datalab";
+      refresh();
+      stop();
+      timer = setInterval(function () {
+        if (!document.hidden) refresh();
+      }, REFRESH_MS);
+    }
+
+    // The React shell copies #main-content into the page after its bundle runs; wait for it.
+    function whenMounted() {
+      var el = document.querySelector(".app-wrapper #dl-overview-root");
+      if (el) return start(el);
+      var observer = new MutationObserver(function () {
+        var found = document.querySelector(".app-wrapper #dl-overview-root");
+        if (found) {
+          observer.disconnect();
+          start(found);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", whenMounted);
+    } else {
+      whenMounted();
+    }
+  })();
+</script>
+{% endblock %}

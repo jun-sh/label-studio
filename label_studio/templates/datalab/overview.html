@@ -160,7 +160,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 32px;
     align-items: end;
-    padding: 32px 36px;
+    padding: 24px 28px;
     margin-bottom: 16px;
     border: 1px solid var(--line);
     border-radius: 16px;
@@ -172,14 +172,15 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     box-shadow: var(--shadow);
     overflow: hidden;
   }
+  /* A sentence, not a number: sized between section titles (17px) and stat values (28px). */
   .dlo-hero__title {
-    font-size: 34px;
+    font-size: 22px;
     font-weight: 500;
-    line-height: 1.15;
-    letter-spacing: -0.025em;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
   }
   .dlo-hero__title em { font-style: normal; color: var(--accent); }
-  .dlo-hero__sub { margin-top: 10px; color: var(--muted); font-size: 15px; }
+  .dlo-hero__sub { margin-top: 6px; color: var(--muted); font-size: 13.5px; }
   .dlo-cta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
   .dlo-btn {
     display: inline-flex;
@@ -467,7 +468,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     background-size: 400% 100%;
     animation: dlo-shimmer 1.4s ease infinite;
   }
-  .dlo-skel--headline { width: 70%; height: 40px; }
+  .dlo-skel--headline { width: 60%; height: 30px; }
   .dlo-skel--stat { height: 116px; border-radius: 12px; }
   .dlo-skel--stage { height: 214px; border-radius: 12px; }
   .dlo-skel--value { width: 96px; height: 32px; border-radius: 6px; }
@@ -496,7 +497,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   @media (max-width: 560px) {
     .dlo { padding: 16px 16px 40px; }
     .dlo-hero { padding: 22px 18px; gap: 22px; }
-    .dlo-hero__title { font-size: 26px; }
+    .dlo-hero__title { font-size: 19px; }
     .dlo-stats { gap: 10px; margin-bottom: 28px; }
     .dlo-stat { flex-direction: column; gap: 10px; padding: 14px; }
     .dlo-stat__value { font-size: 24px; }

@@ -34,6 +34,7 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     re_path(r'^$', views.main, name='main'),
+    re_path(r'^overview/?$', views.overview_page, name='datalab-overview'),
     re_path(r'^data(?:/(?P<dataset>[\w-]+))?/?$', views.data_viz_page, name='data-viz'),
     re_path(r'^collection/?$', views.collection_viz_page, name='collection-viz'),
     re_path(

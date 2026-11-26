@@ -87,17 +87,149 @@ body {
 .dl-header__trigger {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   flex: 0 0 240px;
   width: 240px;
+  height: 100%;
+  margin: 0;
   padding: 0 20px;
+  border: 0;
   border-right: 1px solid var(--dl-header-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--dl-header-text);
   box-sizing: border-box;
+  cursor: pointer;
   transition: background-color 0.15s ease-out;
 }
 
-.dl-header__trigger:hover {
+.dl-header__trigger:hover,
+.dl-header__trigger.is-open {
   background: var(--dl-header-hover-bg);
 }
+
+/* Hamburger that turns into a cross while the menu is open (Datalab .lsf-hamburger). */
+.dl-hamburger {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 14px;
+}
+
+.dl-hamburger span {
+  position: absolute;
+  display: block;
+  width: 100%;
+  height: 2px;
+  background-color: currentColor;
+  transition: all 0.15s ease;
+}
+
+.dl-hamburger span:nth-child(1) {
+  top: 0;
+}
+
+.dl-hamburger span:nth-child(2) {
+  top: 50%;
+  transform: translate3d(0, -50%, 0);
+}
+
+.dl-hamburger span:nth-child(3) {
+  bottom: 0;
+}
+
+.is-open .dl-hamburger span:nth-child(1) {
+  top: 6px;
+  transform: rotate(135deg);
+}
+
+.is-open .dl-hamburger span:nth-child(2) {
+  opacity: 0;
+  transform: translate3d(-100%, -50%, 0);
+}
+
+.is-open .dl-hamburger span:nth-child(3) {
+  bottom: 6px;
+  transform: rotate(-135deg);
+}
+
+/* Floating main menu (Datalab .lsf-sidebar_floating + .lsf-main-menu). */
+.dl-menu {
+  position: fixed;
+  top: var(--dl-header-h);
+  left: 0;
+  z-index: 60;
+  width: 240px;
+  height: calc(100vh - var(--dl-header-h));
+  height: calc(100dvh - var(--dl-header-h));
+  overflow: auto;
+  padding: 8px;
+  box-sizing: border-box;
+  background: var(--dl-header-bg);
+  border-right: 1px solid var(--dl-header-border);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 20%);
+  font-family: var(--ls-font);
+}
+
+.dl-menu[hidden] {
+  display: none;
+}
+
+.dl-menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dl-menu__item {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 13px;
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: var(--dl-header-text-subtler);
+  font-size: 16px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: 0.15s ease-out;
+}
+
+.dl-menu__item:hover {
+  background: var(--ls-primary-soft);
+  color: var(--dl-header-text);
+}
+
+/* Icons are the unmodified Datalab SVGs used as masks, so they take the text colour. */
+.dl-menu__icon {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin-right: 10px;
+  opacity: 0.5;
+  background-color: currentColor;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.dl-menu__item:hover .dl-menu__icon {
+  opacity: 1;
+}
+
+.dl-menu__icon--home { -webkit-mask-image: url("icons/home.svg"); mask-image: url("icons/home.svg"); }
+.dl-menu__icon--layers2 { -webkit-mask-image: url("icons/layers2.svg"); mask-image: url("icons/layers2.svg"); }
+.dl-menu__icon--upload { -webkit-mask-image: url("icons/upload.svg"); mask-image: url("icons/upload.svg"); }
+.dl-menu__icon--edit { -webkit-mask-image: url("icons/edit.svg"); mask-image: url("icons/edit.svg"); }
+.dl-menu__icon--people { -webkit-mask-image: url("icons/people.svg"); mask-image: url("icons/people.svg"); }
 
 .dl-header__logo {
   display: block;

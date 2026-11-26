@@ -121,6 +121,8 @@ const els = {
   rebuildStatusText: document.getElementById("rebuildStatusText"),
   closeRebuildModal: document.getElementById("closeRebuildModal"),
   qcHomeBtn: document.getElementById("qcHomeBtn"),
+  crumbPackage: document.getElementById("crumbPackage"),
+  crumbPackageLabel: document.getElementById("crumbPackageLabel"),
 };
 
 const state = {
@@ -219,21 +221,22 @@ function getQcHomeUrl() {
   return base.replace(/\/$/, "") || "/qc";
 }
 
-function hasQcSubpageQuery() {
-  const params = new URLSearchParams(window.location.search);
-  return (
-    params.has("collection") ||
-    params.has("package") ||
-    params.has("local_path") ||
-    params.has("datasetPath") ||
-    params.has("episode")
-  );
-}
-
 function updateHomeButton() {
   if (!els.qcHomeBtn) return;
   els.qcHomeBtn.href = getQcHomeUrl();
-  els.qcHomeBtn.hidden = !hasQcSubpageQuery();
+}
+
+/* Second breadcrumb in the Datalab header: the package (or local dataset) being reviewed. */
+function setBreadcrumbPackage(name) {
+  if (!els.crumbPackage) return;
+  const label = String(name || "").trim();
+  els.crumbPackageLabel.textContent = label;
+  els.crumbPackageLabel.title = label;
+  els.crumbPackage.hidden = !label;
+}
+
+function datasetDisplayName(path) {
+  return String(path || "").replace(/\/+$/, "").split("/").pop() || "";
 }
 
 function readQueryParams() {
@@ -244,6 +247,7 @@ function readQueryParams() {
   state.queryPackage = params.get("package") || "";
   const episodeParam = params.get("episode");
   state.queryEpisode = episodeParam != null && episodeParam !== "" ? Number(episodeParam) : null;
+  setBreadcrumbPackage(state.queryPackage || datasetDisplayName(datasetPath));
   updateHomeButton();
 }
 
@@ -1120,6 +1124,7 @@ async function loadDataset(event) {
     state.queryEpisode = null;
     await selectEpisode(initialEpisode);
     syncUrlQuery();
+    setBreadcrumbPackage(els.packageSelect?.value || datasetDisplayName(summary.root));
     setStatus(t("status_loaded", { name: summary.root?.split("/").pop() || "dataset" }), true);
   } catch (error) {
     setStatus(t("status_disconnected"));

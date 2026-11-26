@@ -107,13 +107,3 @@ button[class*="themeToggle"],
     transition: none;
   }
 }
-
-/*
- * /data: the floating main menu (z-index 100) must stack above the visualizer layer.
- * The deployed React bundle (built June 2026) sets #datalab-viz-layer to inline z-index 150,
- * which hides the menu; the source (datalabEmbedLayer.ts) already uses 50. Enforce 50 here
- * until the bundle is rebuilt.
- */
-#datalab-viz-layer {
-  z-index: 50 !important;
-}

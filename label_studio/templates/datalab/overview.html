@@ -32,6 +32,14 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
 
   <section class="dlo-section">
     <div class="dlo-section__head">
+      <h2 data-dlo-t="trends"></h2>
+      <div class="dlo-range" id="dlo-range" role="group"></div>
+    </div>
+    <div class="dlo-charts" id="dlo-charts"></div>
+  </section>
+
+  <section class="dlo-section">
+    <div class="dlo-section__head">
       <h2 data-dlo-t="stations"></h2>
       <a class="dlo-link" href="/collection" data-dlo-t="open_collection"></a>
     </div>
@@ -314,9 +322,123 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
   .dlo-table a { color: var(--dlo-text); font-weight: 500; }
   .dlo-table a:hover { color: var(--dlo-primary); }
 
+  /* ---- trends ---- */
+  .dlo-range {
+    display: inline-flex;
+    padding: 2px;
+    border: 1px solid var(--dlo-border);
+    border-radius: 6px;
+    background: var(--dlo-surface);
+  }
+  .dlo-range button {
+    padding: 3px 10px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--dlo-subtle);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .dlo-range button[aria-pressed="true"] {
+    background: var(--dlo-bg);
+    color: var(--dlo-text);
+    font-weight: 500;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  .dlo-charts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .dlo-chart { padding: 16px; }
+  .dlo-chart__title { color: var(--dlo-subtle); }
+  .dlo-chart__value { margin-top: 2px; font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .dlo-chart__value small { font-size: 13px; font-weight: 400; color: var(--dlo-subtle); }
+  .dlo-plot { position: relative; height: 120px; margin-top: 12px; }
+  .dlo-plot__grid {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed var(--dlo-border);
+    pointer-events: none;
+  }
+  /* Gridline values sit in a right gutter so they never cover bars. */
+  .dlo-plot__grid span {
+    position: absolute;
+    right: 0;
+    top: -8px;
+    width: 34px;
+    text-align: right;
+    line-height: 16px;
+    background: var(--dlo-bg);
+    color: var(--dlo-subtlest);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dlo-bars {
+    position: absolute;
+    inset: 0 40px 0 0;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    border-bottom: 1px solid var(--dlo-border-bold, #cac5b8);
+  }
+  .dlo-bars > div {
+    flex: 1 1 0;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    min-width: 0;
+    cursor: default;
+  }
+  .dlo-bars > div > i {
+    display: block;
+    width: 100%;
+    border-radius: 4px 4px 0 0;
+    background: var(--dlo-primary);
+  }
+  .dlo-bars > div:hover > i, .dlo-bars > div:focus > i { background: #6d87f1; }
+  .dlo-bars > div:hover, .dlo-bars > div:focus { background: rgba(76, 95, 169, 0.06); outline: none; }
+  .dlo-axis {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding-right: 40px;
+    color: var(--dlo-subtlest);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .dlo-chart__empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--dlo-subtlest);
+    font-size: 13px;
+  }
+  .dlo-tip {
+    position: fixed;
+    z-index: 40;
+    min-width: 140px;
+    padding: 8px 10px;
+    border: 1px solid var(--dlo-border);
+    border-radius: 6px;
+    background: var(--dlo-bg);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+    color: var(--dlo-text);
+    font-size: 12px;
+    line-height: 1.6;
+    pointer-events: none;
+  }
+  .dlo-tip b { display: block; margin-bottom: 2px; font-weight: 500; }
+  .dlo-tip span { display: flex; justify-content: space-between; gap: 16px; color: var(--dlo-subtle); }
+  .dlo-tip span em { font-style: normal; color: var(--dlo-text); font-variant-numeric: tabular-nums; }
+
   @media (max-width: 1100px) {
     .dlo-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dlo-grid { grid-template-columns: minmax(0, 1fr); }
+    .dlo-charts { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 560px) {
     .dlo { padding: 16px 16px 32px; }
@@ -410,6 +532,20 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
           empty_stations: "还没有采集工位",
           empty_collections: "还没有数据集合",
           empty_deliveries: "还没有交付",
+          trends: "趋势",
+          range_days: "{n} 天",
+          ch_collected: "采集 episode",
+          ch_reviewed: "审阅 episode",
+          ch_delivered: "交付 episode",
+          ch_delivered_sub: "{n} 次交付",
+          ch_empty: "所选时间内没有数据",
+          tip_collected: "采集",
+          tip_reviewed: "审阅",
+          tip_approved: "通过",
+          tip_rejected: "拒绝",
+          tip_suspicious: "可疑",
+          tip_delivered: "交付 episode",
+          tip_deliveries: "交付次数",
           load_failed: "加载失败：{error}",
         }
       : {
@@ -473,6 +609,20 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
           empty_stations: "No collection stations yet",
           empty_collections: "No collections yet",
           empty_deliveries: "No deliveries yet",
+          trends: "Trends",
+          range_days: "{n} days",
+          ch_collected: "Episodes collected",
+          ch_reviewed: "Episodes reviewed",
+          ch_delivered: "Episodes delivered",
+          ch_delivered_sub: "{n} deliveries",
+          ch_empty: "No data in this range",
+          tip_collected: "Collected",
+          tip_reviewed: "Reviewed",
+          tip_approved: "Approved",
+          tip_rejected: "Rejected",
+          tip_suspicious: "Suspicious",
+          tip_delivered: "Episodes delivered",
+          tip_deliveries: "Deliveries",
           load_failed: "Failed to load: {error}",
         };
 
@@ -869,6 +1019,191 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
         "</tbody>";
     }
 
+    // ---- trends -----------------------------------------------------------------------
+
+    var RANGES = [7, 30, 90];
+    var rangeDays = 30;
+    var TZ_OFFSET = -new Date().getTimezoneOffset();
+
+    function localDay(iso) {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return null;
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+
+    // Collection: every published episode of every streaming station, by local recording day.
+    function loadCollected(stations) {
+      var ids = (stations || [])
+        .filter(function (row) {
+          return row.station.stream;
+        })
+        .map(function (row) {
+          return row.station.id;
+        });
+      return Promise.all(
+        ids.map(function (id) {
+          return getJson("/lerobot/api/stream/" + encodeURIComponent(id) + "/episode-dates.json").catch(function () {
+            return { episodes: [] };
+          });
+        }),
+      ).then(function (bodies) {
+        var byDay = {};
+        bodies.forEach(function (body) {
+          ((body && body.episodes) || []).forEach(function (ep) {
+            var day = localDay(ep.recorded_at || ep.uploaded_at);
+            if (day) byDay[day] = (byDay[day] || 0) + 1;
+          });
+        });
+        return byDay;
+      });
+    }
+
+    function loadQcTrends() {
+      return getJson("/qc/api/qc/trends?days=" + rangeDays + "&tz_offset_minutes=" + TZ_OFFSET);
+    }
+
+    function renderRange() {
+      var el = document.getElementById("dlo-range");
+      el.innerHTML = RANGES.map(function (n) {
+        return '<button type="button" data-days="' + n + '" aria-pressed="' + (n === rangeDays) + '">' + esc(t("range_days", { n: n })) + "</button>";
+      }).join("");
+    }
+
+    var tipEl = null;
+    function showTip(target, html) {
+      if (!tipEl) {
+        tipEl = document.createElement("div");
+        tipEl.className = "dlo-tip";
+        tipEl.setAttribute("role", "tooltip");
+        root.appendChild(tipEl);
+      }
+      tipEl.innerHTML = html;
+      tipEl.hidden = false;
+      var r = target.getBoundingClientRect();
+      var w = tipEl.offsetWidth;
+      var left = Math.min(window.innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2));
+      var top = r.top - tipEl.offsetHeight - 8;
+      tipEl.style.left = left + "px";
+      tipEl.style.top = (top < 8 ? r.bottom + 8 : top) + "px";
+    }
+    function hideTip() {
+      if (tipEl) tipEl.hidden = true;
+    }
+
+    // A "nice" axis maximum (1, 2, 5 x 10^n) so gridline labels are round numbers.
+    function niceMax(v) {
+      if (v <= 0) return 1;
+      var p = Math.pow(10, Math.floor(Math.log10(v)));
+      var steps = [1, 2, 5, 10];
+      for (var i = 0; i < steps.length; i++) if (steps[i] * p >= v) return steps[i] * p;
+      return 10 * p;
+    }
+
+    function fmtDay(day) {
+      var parts = day.split("-");
+      return ZH ? Number(parts[1]) + "/" + Number(parts[2]) : parts[1] + "-" + parts[2];
+    }
+
+    // series: [{date, value, tip: [[label, value], ...]}]
+    function chartHtml(key, title, headline, series) {
+      var max = 0;
+      series.forEach(function (row) {
+        if (row.value > max) max = row.value;
+      });
+      var top = niceMax(max);
+      var bars = series
+        .map(function (row, i) {
+          var h = row.value ? Math.max(2, (100 * row.value) / top) : 0;
+          return '<div tabindex="0" data-chart="' + key + '" data-i="' + i + '" aria-label="' + esc(row.date + " " + row.value) + '"><i style="height:' + h + '%"></i></div>';
+        })
+        .join("");
+      var mid = series.length > 2 ? fmtDay(series[Math.floor((series.length - 1) / 2)].date) : "";
+      return (
+        '<div class="dlo-card dlo-chart">' +
+        '<div class="dlo-chart__title">' + esc(title) + "</div>" +
+        '<div class="dlo-chart__value">' + headline + "</div>" +
+        '<div class="dlo-plot">' +
+        (max
+          ? '<div class="dlo-plot__grid" style="top:0"><span>' + num(top) + '</span></div>' +
+            '<div class="dlo-plot__grid" style="top:50%"><span>' + num(top / 2) + "</span></div>"
+          : "") +
+        '<div class="dlo-bars">' + bars + "</div>" +
+        (max ? "" : '<div class="dlo-chart__empty">' + esc(t("ch_empty")) + "</div>") +
+        "</div>" +
+        '<div class="dlo-axis"><span>' + esc(fmtDay(series[0].date)) + "</span><span>" + esc(mid) + "</span><span>" +
+        esc(fmtDay(series[series.length - 1].date)) + "</span></div>" +
+        "</div>"
+      );
+    }
+
+    var chartSeries = {};
+
+    function renderTrends(collected, qcTrends, error) {
+      var el = document.getElementById("dlo-charts");
+      if (error) {
+        el.innerHTML = '<div class="dlo-error">' + esc(t("load_failed", { error: error.message })) + "</div>";
+        return;
+      }
+      var qcRows = qcTrends.series || [];
+      var coll = qcRows.map(function (row) {
+        var n = collected[row.date] || 0;
+        return { date: row.date, value: n, tip: [[t("tip_collected"), n]] };
+      });
+      var rev = qcRows.map(function (row) {
+        return {
+          date: row.date,
+          value: row.reviewed,
+          tip: [[t("tip_reviewed"), row.reviewed], [t("tip_approved"), row.approved], [t("tip_rejected"), row.rejected], [t("tip_suspicious"), row.suspicious]],
+        };
+      });
+      var del = qcRows.map(function (row) {
+        return { date: row.date, value: row.delivered_episodes, tip: [[t("tip_delivered"), row.delivered_episodes], [t("tip_deliveries"), row.deliveries]] };
+      });
+      chartSeries = { coll: coll, rev: rev, del: del };
+      var sum = function (rows) {
+        return rows.reduce(function (acc, row) {
+          return acc + row.value;
+        }, 0);
+      };
+      var tot = qcTrends.totals || {};
+      el.innerHTML =
+        chartHtml("coll", t("ch_collected"), num(sum(coll)), coll) +
+        chartHtml("rev", t("ch_reviewed"), num(tot.reviewed), rev) +
+        chartHtml("del", t("ch_delivered"), num(tot.delivered_episodes) + " <small>" + esc(t("ch_delivered_sub", { n: tot.deliveries || 0 })) + "</small>", del);
+    }
+
+    function onBarHover(event) {
+      var bar = event.target.closest && event.target.closest(".dlo-bars > div");
+      if (!bar) return hideTip();
+      var row = (chartSeries[bar.getAttribute("data-chart")] || [])[Number(bar.getAttribute("data-i"))];
+      if (!row) return hideTip();
+      showTip(
+        bar,
+        "<b>" + esc(row.date) + "</b>" +
+          row.tip
+            .map(function (pair) {
+              return "<span>" + esc(pair[0]) + "<em>" + num(pair[1]) + "</em></span>";
+            })
+            .join(""),
+      );
+    }
+
+    function bindTrends() {
+      renderRange();
+      document.getElementById("dlo-range").addEventListener("click", function (event) {
+        var btn = event.target.closest("button[data-days]");
+        if (!btn) return;
+        rangeDays = Number(btn.getAttribute("data-days"));
+        renderRange();
+        refreshTrends();
+      });
+      var charts = document.getElementById("dlo-charts");
+      charts.addEventListener("mouseover", onBarHover);
+      charts.addEventListener("focusin", onBarHover);
+      charts.addEventListener("mouseleave", hideTip);
+      charts.addEventListener("focusout", hideTip);
+    }
+
     // ---- lifecycle --------------------------------------------------------------------
 
     var root = null;
@@ -899,6 +1234,20 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
         document.getElementById("dlo-updated").textContent = t("updated", {
           time: new Date().toLocaleTimeString(ZH ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }),
         });
+        lastStations = st.ok || lastStations;
+        return refreshTrends();
+      });
+    }
+
+    var lastStations = null;
+    var trendsSeq = 0;
+
+    // Range changes reload only the trends, not the whole page.
+    function refreshTrends() {
+      var seq = ++trendsSeq;
+      return Promise.all([settle(loadCollected(lastStations)), settle(loadQcTrends())]).then(function (tr) {
+        if (seq !== trendsSeq || !document.body.contains(root)) return;
+        renderTrends(tr[0].ok || {}, tr[1].ok || {}, tr[1].err);
       });
     }
 
@@ -913,6 +1262,7 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
         node.textContent = t(node.getAttribute("data-dlo-t"));
       });
       renderLegend();
+      bindTrends();
       refresh();
       stop();
       timer = setInterval(function () {

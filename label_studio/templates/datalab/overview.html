@@ -27,7 +27,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
 <div class="dlo" id="dl-overview-root">
   <section class="dlo-hero" aria-live="polite">
     <div class="dlo-hero__main">
-      <div class="dlo-eyebrow"><span class="dlo-pulse"></span><span data-dlo-t="eyebrow"></span></div>
       <h1 class="dlo-hero__title" id="dlo-headline"><span class="dlo-skel dlo-skel--headline"></span></h1>
       <p class="dlo-hero__sub" id="dlo-sub"></p>
     </div>
@@ -53,14 +52,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     </header>
     <div class="dlo-flow" id="dlo-flow" aria-busy="true">
       <div class="dlo-skel dlo-skel--stage"></div><div class="dlo-skel dlo-skel--stage"></div><div class="dlo-skel dlo-skel--stage"></div>
-    </div>
-    <div class="dlo-panel dlo-chart">
-      <div class="dlo-chart__head">
-        <div class="dlo-seg dlo-seg--tabs" id="dlo-metric" role="tablist"></div>
-        <div class="dlo-chart__total" id="dlo-chart-total"></div>
-      </div>
-      <div class="dlo-plot" id="dlo-plot"><div class="dlo-skel dlo-skel--plot"></div></div>
-      <div class="dlo-axis" id="dlo-axis"></div>
     </div>
   </section>
 
@@ -102,7 +93,10 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
 
     <section class="dlo-block">
       <header class="dlo-block__head">
-        <div><h2 data-dlo-t="deliveries"></h2></div>
+        <div>
+          <h2 data-dlo-t="deliveries"></h2>
+          <p data-dlo-t="deliveries_sub"></p>
+        </div>
       </header>
       <div class="dlo-panel">
         <ol class="dlo-feed" id="dlo-deliveries"></ol>
@@ -178,26 +172,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     box-shadow: var(--shadow);
     overflow: hidden;
   }
-  .dlo-eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 3px 10px 3px 8px;
-    border: 1px solid rgba(18, 17, 13, 0.08);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.7);
-    color: var(--ink-2);
-    font-size: 12px;
-  }
-  .dlo-pulse {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--good);
-    box-shadow: 0 0 0 3px rgba(31, 122, 85, 0.16);
-  }
   .dlo-hero__title {
-    margin-top: 16px;
     font-size: 34px;
     font-weight: 500;
     line-height: 1.15;
@@ -264,7 +239,8 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     margin-bottom: 14px;
   }
   .dlo-block__head h2 { font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
-  .dlo-block__head p { margin-top: 2px; color: var(--muted); font-size: 13px; }
+  /* One subtitle line of fixed height, so side-by-side headers (and the panels under them) line up. */
+  .dlo-block__head p { margin-top: 2px; min-height: 20px; color: var(--muted); font-size: 13px; line-height: 20px; }
   .dlo-link { display: inline-flex; align-items: center; gap: 2px; color: var(--accent) !important; font-weight: 500; white-space: nowrap; }
   .dlo-link:hover { color: var(--accent-2) !important; }
   .dlo-panel {
@@ -275,7 +251,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     min-width: 0;
   }
 
-  /* segmented control (range + metric tabs) */
+  /* segmented control (range) */
   .dlo-seg {
     display: inline-flex;
     padding: 3px;
@@ -350,61 +326,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   .dlo-connector { display: grid; place-items: center; color: var(--faint); }
   .dlo-connector svg { width: 18px; height: 18px; }
 
-  /* ---- main chart ---- */
-  .dlo-chart { padding: 16px 18px 12px; }
-  .dlo-chart__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .dlo-chart__total { color: var(--muted); font-size: 13px; }
-  .dlo-chart__total b { color: var(--ink); font-size: 15px; font-weight: 500; }
-  .dlo-plot { position: relative; height: 200px; margin-top: 22px; }
-  .dlo-plot__grid { position: absolute; left: 0; right: 0; border-top: 1px dashed var(--line-2); pointer-events: none; }
-  .dlo-plot__grid span {
-    position: absolute;
-    right: 0;
-    top: -8px;
-    width: 40px;
-    text-align: right;
-    line-height: 16px;
-    background: var(--panel);
-    color: var(--faint);
-    font-size: 11px;
-  }
-  .dlo-bars {
-    position: absolute;
-    inset: 0 46px 0 0;
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    border-bottom: 1px solid var(--line-2);
-  }
-  .dlo-bars > div { flex: 1 1 0; height: 100%; display: flex; align-items: flex-end; min-width: 0; border-radius: 4px 4px 0 0; }
-  .dlo-bars > div > i {
-    display: block;
-    width: 100%;
-    border-radius: 4px 4px 0 0;
-    background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  }
-  .dlo-bars > div:hover, .dlo-bars > div:focus { background: rgba(76, 95, 169, 0.07); outline: none; }
-  .dlo-bars > div:hover > i, .dlo-bars > div:focus > i { background: var(--accent-2); }
-  .dlo-axis { display: flex; justify-content: space-between; margin-top: 8px; padding-right: 46px; color: var(--faint); font-size: 11px; }
-  .dlo-plot__empty { position: absolute; inset: 0 46px 0 0; display: grid; place-items: center; color: var(--faint); font-size: 13px; }
-  .dlo-tip {
-    position: fixed;
-    z-index: 40;
-    min-width: 150px;
-    padding: 9px 11px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 12px 28px -12px rgba(18, 17, 13, 0.3);
-    color: var(--ink);
-    font-size: 12px;
-    line-height: 1.7;
-    pointer-events: none;
-    backdrop-filter: blur(6px);
-  }
-  .dlo-tip b { display: block; margin-bottom: 2px; font-weight: 500; }
-  .dlo-tip span { display: flex; justify-content: space-between; gap: 18px; color: var(--muted); }
-  .dlo-tip span em { font-style: normal; color: var(--ink); font-variant-numeric: tabular-nums; }
 
   /* ---- attention ---- */
   .dlo-alert {
@@ -530,8 +451,9 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   .dlo-feed__meta { margin-top: 2px; color: var(--muted); font-size: 12.5px; }
   .dlo-feed__meta span + span::before { content: "·"; margin: 0 6px; color: var(--faint); }
 
-  .dlo-split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-  .dlo-split .dlo-block { margin-bottom: 0; }
+  .dlo-split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 24px; align-items: stretch; }
+  .dlo-split .dlo-block { display: flex; flex-direction: column; margin-bottom: 0; }
+  .dlo-split .dlo-panel { flex: 1 1 auto; }
 
   .dlo-muted { color: var(--faint); }
   .dlo-empty, .dlo-error { padding: 18px 16px; color: var(--muted); }
@@ -548,7 +470,8 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   .dlo-skel--headline { width: 70%; height: 40px; }
   .dlo-skel--stat { height: 116px; border-radius: 12px; }
   .dlo-skel--stage { height: 214px; border-radius: 12px; }
-  .dlo-skel--plot { height: 100%; }
+  .dlo-skel--value { width: 96px; height: 32px; border-radius: 6px; }
+  .dlo-skel--spark { height: 40px; border-radius: 6px; }
   .dlo-skel--row { height: 20px; margin: 14px 16px; border-radius: 6px; }
   .dlo-skel-rows { padding: 4px 0; }
   @keyframes dlo-shimmer {
@@ -609,7 +532,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
 
     var TEXT = ZH
       ? {
-          eyebrow: "Datalab 产线 · 实时",
           hero_headline: "<em>{online} / {total}</em> 个工位在线，<em>{waiting}</em> 个数据包待质检",
           hero_sub: "采集 → 质检 → 交付 · 更新于 {time}",
           cta_collection: "进入采集",
@@ -643,10 +565,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           f_waiting: "待质检 {n} 包",
           f_deliveries: "{n} 次交付",
           f_accept: "验收 {ok}/{checked}",
-          m_collect: "采集",
-          m_review: "审阅",
-          m_deliver: "交付",
-          chart_total: "{range}合计 <b>{n}</b> episode",
           attention: "需要处理",
           all_good: "一切正常：工位无异常，派生无失败，交付均通过验收",
           al_offline: "{n} 个工位离线：{names}",
@@ -686,6 +604,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           stage_not_started: "未开始",
           stage_all_removed: "全部移除",
           deliveries: "最近交付",
+          deliveries_sub: "按交付时间倒序",
           kept: "保留 {n} episode",
           acc_ok: "验收通过",
           acc_bad: "验收未通过",
@@ -694,18 +613,9 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           empty_stations: "还没有采集工位",
           empty_collections: "还没有数据集合",
           empty_deliveries: "还没有交付",
-          empty_range: "所选时间内没有数据",
           load_failed: "加载失败：{error}",
-          tip_collected: "采集",
-          tip_reviewed: "审阅",
-          tip_approved: "通过",
-          tip_rejected: "拒绝",
-          tip_suspicious: "可疑",
-          tip_delivered: "交付 episode",
-          tip_deliveries: "交付次数",
         }
       : {
-          eyebrow: "Datalab pipeline · live",
           hero_headline: "<em>{online} / {total}</em> stations online, <em>{waiting}</em> packages awaiting QC",
           hero_sub: "Collection → QC → delivery · updated {time}",
           cta_collection: "Open collection",
@@ -739,10 +649,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           f_waiting: "{n} packages waiting",
           f_deliveries: "{n} deliveries",
           f_accept: "acceptance {ok}/{checked}",
-          m_collect: "Collected",
-          m_review: "Reviewed",
-          m_deliver: "Delivered",
-          chart_total: "<b>{n}</b> episodes · {range}",
           attention: "Needs attention",
           all_good: "All good: stations healthy, no derive failures, every delivery passed acceptance",
           al_offline: "{n} stations offline: {names}",
@@ -782,6 +688,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           stage_not_started: "Not started",
           stage_all_removed: "All removed",
           deliveries: "Recent deliveries",
+          deliveries_sub: "Newest first",
           kept: "{n} episodes kept",
           acc_ok: "Passed",
           acc_bad: "Failed",
@@ -790,15 +697,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
           empty_stations: "No collection stations yet",
           empty_collections: "No collections yet",
           empty_deliveries: "No deliveries yet",
-          empty_range: "No data in this range",
           load_failed: "Failed to load: {error}",
-          tip_collected: "Collected",
-          tip_reviewed: "Reviewed",
-          tip_approved: "Approved",
-          tip_rejected: "Rejected",
-          tip_suspicious: "Suspicious",
-          tip_delivered: "Episodes delivered",
-          tip_deliveries: "Deliveries",
         };
 
     // Bar order: finished work first, untouched last.
@@ -1063,7 +962,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     // ---- pipeline stages + main chart --------------------------------------------------
 
     var trend = null; // { coll: [...], rev: [...], del: [...], totals }
-    var metric = "coll";
 
     function sparkSvg(id, values) {
       var n = values.length;
@@ -1091,8 +989,10 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
         '<a class="dlo-panel dlo-stage" href="' + esc(o.href) + '">' +
         '<div class="dlo-stage__top"><span class="dlo-stage__name"><span class="dlo-chip">' + ICONS[o.icon] + "</span>" + esc(o.name) + "</span>" +
         '<span class="dlo-stage__range">' + esc(t("range_label", { n: rangeDays })) + "</span></div>" +
-        '<div class="dlo-stage__value num">' + num(o.value) + "<small>" + esc(t("unit_ep")) + "</small></div>" +
-        '<div class="dlo-spark">' + sparkSvg("dlo-sg-" + o.icon, o.series) + "</div>" +
+        (o.value === null
+          ? '<div class="dlo-stage__value"><span class="dlo-skel dlo-skel--value"></span></div><div class="dlo-spark"><span class="dlo-skel dlo-skel--spark"></span></div>'
+          : '<div class="dlo-stage__value num">' + num(o.value) + "<small>" + esc(t("unit_ep")) + "</small></div>" +
+            '<div class="dlo-spark">' + sparkSvg("dlo-sg-" + o.icon, o.series) + "</div>") +
         '<div class="dlo-stage__foot">' + o.foot.join("") + "</div>" +
         "</a>"
       );
@@ -1113,9 +1013,11 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       if (!trend || stations === undefined || qc === undefined) return;
       var s = summarize(stations, qc);
       var tot = trend.totals || {};
-      var collected = trend.coll.reduce(function (acc, row) {
-        return acc + row.value;
-      }, 0);
+      var collected = trend.coll.length && trend.coll[0].value === null
+        ? null
+        : trend.coll.reduce(function (acc, row) {
+            return acc + row.value;
+          }, 0);
       var arrow = '<div class="dlo-connector" aria-hidden="true">' + ICONS.chevron + "</div>";
       var html =
         stageCard({
@@ -1166,124 +1068,20 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       );
     }
 
-    var METRICS = [
-      { key: "coll", label: "m_collect" },
-      { key: "rev", label: "m_review" },
-      { key: "del", label: "m_deliver" },
-    ];
-
-    function renderMetricTabs() {
-      setHtml(
-        "dlo-metric",
-        METRICS.map(function (m) {
-          return '<button type="button" role="tab" data-metric="' + m.key + '" aria-selected="' + (m.key === metric) + '">' + esc(t(m.label)) + "</button>";
-        }).join(""),
-      );
-    }
-
-    // A "nice" axis maximum (1, 2, 5 x 10^n) so gridline labels are round numbers.
-    function niceMax(v) {
-      if (v <= 0) return 1;
-      var p = Math.pow(10, Math.floor(Math.log10(v)));
-      var steps = [1, 2, 5, 10];
-      for (var i = 0; i < steps.length; i++) if (steps[i] * p >= v) return steps[i] * p;
-      return 10 * p;
-    }
-
-    function fmtDay(day) {
-      var parts = day.split("-");
-      return ZH ? Number(parts[1]) + "/" + Number(parts[2]) : parts[1] + "-" + parts[2];
-    }
-
-    function renderChart() {
-      if (!trend) return;
-      var series = trend[metric];
-      if (!series.length) return;
-      var max = 0, total = 0;
-      series.forEach(function (row) {
-        total += row.value;
-        if (row.value > max) max = row.value;
-      });
-      var top = niceMax(max);
-      var bars = series
-        .map(function (row, i) {
-          var h = row.value ? Math.max(1.5, (100 * row.value) / top) : 0;
-          return '<div tabindex="0" data-i="' + i + '" aria-label="' + esc(row.date + " " + row.value) + '"><i style="height:' + h + '%"></i></div>';
-        })
-        .join("");
-      setHtml(
-        "dlo-plot",
-        (max
-          ? '<div class="dlo-plot__grid" style="top:0"><span class="num">' + num(top) + "</span></div>" +
-            '<div class="dlo-plot__grid" style="top:50%"><span class="num">' + num(top / 2) + "</span></div>"
-          : "") +
-          '<div class="dlo-bars">' + bars + "</div>" +
-          (max ? "" : '<div class="dlo-plot__empty">' + esc(t("empty_range")) + "</div>"),
-      );
-      var mid = series.length > 2 ? fmtDay(series[Math.floor((series.length - 1) / 2)].date) : "";
-      setHtml(
-        "dlo-axis",
-        "<span>" + esc(fmtDay(series[0].date)) + "</span><span>" + esc(mid) + "</span><span>" + esc(fmtDay(series[series.length - 1].date)) + "</span>",
-      );
-      setHtml("dlo-chart-total", t("chart_total", { n: num(total), range: esc(t("range_label", { n: rangeDays })) }));
-    }
-
     function buildTrend(collected, qcTrends) {
       var rows = qcTrends.series || [];
       return {
         totals: qcTrends.totals || {},
         coll: rows.map(function (row) {
-          var n = collected[row.date] || 0;
-          return { date: row.date, value: n, tip: [[t("tip_collected"), n]] };
+          return { date: row.date, value: collected ? collected[row.date] || 0 : null };
         }),
         rev: rows.map(function (row) {
-          return {
-            date: row.date,
-            value: row.reviewed,
-            tip: [[t("tip_reviewed"), row.reviewed], [t("tip_approved"), row.approved], [t("tip_rejected"), row.rejected], [t("tip_suspicious"), row.suspicious]],
-          };
+          return { date: row.date, value: row.reviewed };
         }),
         del: rows.map(function (row) {
-          return { date: row.date, value: row.delivered_episodes, tip: [[t("tip_delivered"), row.delivered_episodes], [t("tip_deliveries"), row.deliveries]] };
+          return { date: row.date, value: row.delivered_episodes };
         }),
       };
-    }
-
-    var tipEl = null;
-    function showTip(target, html) {
-      if (!tipEl) {
-        tipEl = document.createElement("div");
-        tipEl.className = "dlo-tip";
-        tipEl.setAttribute("role", "tooltip");
-        root.appendChild(tipEl);
-      }
-      tipEl.innerHTML = html;
-      tipEl.hidden = false;
-      var r = target.getBoundingClientRect();
-      var w = tipEl.offsetWidth;
-      var left = Math.min(window.innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2));
-      var top = r.top - tipEl.offsetHeight - 8;
-      tipEl.style.left = left + "px";
-      tipEl.style.top = (top < 8 ? r.bottom + 8 : top) + "px";
-    }
-    function hideTip() {
-      if (tipEl) tipEl.hidden = true;
-    }
-
-    function onBarHover(event) {
-      var bar = event.target.closest && event.target.closest(".dlo-bars > div");
-      if (!bar || !trend) return hideTip();
-      var row = trend[metric][Number(bar.getAttribute("data-i"))];
-      if (!row) return hideTip();
-      showTip(
-        bar,
-        "<b>" + esc(row.date) + "</b>" +
-          row.tip
-            .map(function (pair) {
-              return "<span>" + esc(pair[0]) + "<em>" + num(pair[1]) + "</em></span>";
-            })
-            .join(""),
-      );
     }
 
     // ---- attention ---------------------------------------------------------------------
@@ -1524,18 +1322,33 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     }
 
     // Range changes reload only the trends, not the whole page.
+    // QC trends (fast) and collected episodes (episode-dates.json, can take seconds) render
+    // independently: the stage cards appear with the QC numbers first and the collection card
+    // fills in when its data arrives.
+    var qcTrends = null;
+    var collectedByDay = null;
+
+    function rebuildTrend() {
+      if (!qcTrends) return;
+      trend = buildTrend(collectedByDay, qcTrends);
+      renderFlow();
+    }
+
     function refreshTrends() {
       var seq = ++trendsSeq;
-      return Promise.all([settle(loadCollected(lastStations)), settle(loadQcTrends())]).then(function (tr) {
+      var qcP = settle(loadQcTrends()).then(function (res) {
         if (seq !== trendsSeq || !document.body.contains(root)) return;
-        if (tr[1].err) {
-          setHtml("dlo-plot", '<div class="dlo-plot__empty dlo-error">' + esc(t("load_failed", { error: tr[1].err.message })) + "</div>");
-          return;
-        }
-        trend = buildTrend(tr[0].ok || {}, tr[1].ok || {});
-        renderChart();
-        renderFlow();
+        // Without QC trends the stage cards keep their skeletons; the next refresh retries.
+        if (res.err) return;
+        qcTrends = res.ok;
+        rebuildTrend();
       });
+      var collP = settle(loadCollected(lastStations)).then(function (res) {
+        if (seq !== trendsSeq || !document.body.contains(root)) return;
+        collectedByDay = res.ok || {};
+        rebuildTrend();
+      });
+      return Promise.all([qcP, collP]);
     }
 
     // Stations and QC render as soon as each arrives; neither waits for the other.
@@ -1572,18 +1385,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
         renderRange();
         refreshTrends();
       });
-      document.getElementById("dlo-metric").addEventListener("click", function (event) {
-        var btn = event.target.closest("button[data-metric]");
-        if (!btn) return;
-        metric = btn.getAttribute("data-metric");
-        renderMetricTabs();
-        renderChart();
-      });
-      var plot = document.getElementById("dlo-plot");
-      plot.addEventListener("mouseover", onBarHover);
-      plot.addEventListener("focusin", onBarHover);
-      plot.addEventListener("mouseleave", hideTip);
-      plot.addEventListener("focusout", hideTip);
       // Whole table rows are clickable (links inside still work on their own).
       root.addEventListener("click", function (event) {
         if (event.target.closest("a, button")) return;
@@ -1602,7 +1403,6 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       });
       document.getElementById("dlo-sub").textContent = t("hero_sub", { time: nowTime() });
       renderRange();
-      renderMetricTabs();
       renderLegend();
       bind();
       refresh();

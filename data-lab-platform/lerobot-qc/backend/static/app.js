@@ -849,7 +849,7 @@ function setFrame(frameIndex) {
 
 const CHART_MARGIN = { top: 14, right: 14, bottom: 32, left: 54 };
 const CHART_SERIES_PALETTE = [
-  "#576cc9", "#52a675", "#d98b3a", "#c45c7a", "#6b8f71",
+  "#4c5fa9", "#52a675", "#d98b3a", "#c45c7a", "#6b8f71",
   "#8e6cc9", "#3aa0a8", "#b86b3a", "#5c7ac4", "#a85c9a",
 ];
 
@@ -1024,7 +1024,7 @@ function splitImuStateSeries(observationState) {
 
 function drawCharts() {
   if (!state.trajectory) return;
-  drawSeriesChart(els.actionChart, state.trajectory.action, "#576cc9");
+  drawSeriesChart(els.actionChart, state.trajectory.action, "#4c5fa9");
   const { gyro, accel } = splitImuStateSeries(state.trajectory.observation_state);
   drawSeriesChart(els.gyroChart, gyro, "#52a675");
   drawSeriesChart(els.accelChart, accel, "#d98b3a");

@@ -1,19 +1,29 @@
-/* Label Studio–inspired light editor theme (Path A) */
+/*
+ * Datalab theme. Colour values are the Datalab (Label Studio) design tokens measured on
+ * /projects and /collection, e.g. --ls-primary = --color-primary-surface.
+ */
 
 :root {
-  --ls-bg: #f7f8fa;
-  --ls-surface: #ffffff;
-  --ls-surface-2: #f8f9fc;
-  --ls-border: #d8dee9;
-  --ls-border-strong: #c5cdd9;
-  --ls-text: rgba(0, 0, 0, 0.85);
-  --ls-muted: #626b7a;
-  --ls-primary: #576cc9;
-  --ls-primary-hover: #4a5eb5;
-  --ls-primary-soft: #eef1fb;
-  --ls-danger: #b93835;
+  --ls-bg: #f9f8f6; /* --color-neutral-surface */
+  --ls-surface: #fdfdfc; /* --color-neutral-background */
+  --ls-surface-2: #f9f8f6; /* --color-neutral-surface */
+  --ls-border: #e1ded5; /* --color-neutral-border */
+  --ls-border-strong: #cac5b8; /* --color-neutral-border-bold */
+  --ls-text: #262522; /* --color-neutral-content */
+  --ls-muted: #6b6860; /* --color-neutral-content-subtler */
+  --ls-primary: #4c5fa9; /* --color-primary-surface */
+  --ls-primary-hover: #576cc1; /* --color-primary-surface-hover */
+  --ls-primary-border: #37447a; /* primary button border */
+  --ls-primary-on: #f0f3fe; /* --color-primary-surface-content */
+  --ls-primary-soft: #f0f3fe; /* --color-primary-background */
+  --ls-primary-ring: #d4dbfb; /* --color-primary-focus-outline */
+  --ls-primary-rgb: 76 95 169;
+  --ls-danger: #b3523d; /* --color-negative-content */
   --ls-playhead: #ff4d4f;
-  --ls-shadow: 0 1px 3px rgb(15 23 42 / 8%);
+  --ls-shadow: 0 4px 8px rgb(0 0 0 / 5%); /* project card */
+  --ls-radius-control: 4px; /* --corner-radius-smaller */
+  --ls-radius-card: 8px;
+  --ls-font: Figtree, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --ls-timeline-h: 120px;
   --ls-ruler-h: 28px;
   --ls-video-min-h: 256px;
@@ -36,7 +46,7 @@ body {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--ls-font);
   font-size: 14px;
   color: var(--ls-text);
   background: var(--ls-bg);
@@ -68,7 +78,7 @@ body {
   background: var(--dl-header-bg);
   border-bottom: 1px solid var(--dl-header-border);
   box-sizing: border-box;
-  font-family: Figtree, sans-serif;
+  font-family: var(--ls-font);
   font-size: 16px;
   line-height: 24px;
   color: var(--dl-header-text);
@@ -444,7 +454,7 @@ input,
 select {
   padding: 8px 10px;
   border: 1px solid var(--ls-border);
-  border-radius: 6px;
+  border-radius: var(--ls-radius-control);
   background: var(--ls-surface);
   color: var(--ls-text);
   min-width: 120px;
@@ -463,8 +473,9 @@ input[type='radio'] {
 
 input:focus,
 select:focus {
-  outline: 2px solid rgb(87 108 201 / 35%);
+  outline: none;
   border-color: var(--ls-primary);
+  box-shadow: 0 0 0 2px var(--ls-primary-ring);
 }
 
 .ls-grow {
@@ -473,10 +484,14 @@ select:focus {
 }
 
 .ls-btn {
-  padding: 8px 14px;
-  border-radius: 6px;
+  padding: 4px 12px;
+  border-radius: var(--ls-radius-control);
   border: 1px solid var(--ls-border);
   background: var(--ls-surface);
+  color: var(--ls-text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 21px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -492,8 +507,9 @@ select:focus {
 
 .ls-btn-primary {
   background: var(--ls-primary);
-  border-color: var(--ls-primary);
-  color: #fff;
+  border-color: var(--ls-primary-border);
+  color: var(--ls-primary-on);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), inset 0 -1px 0 rgb(0 0 0 / 10%);
 }
 
 .ls-btn-primary:hover:not(:disabled) {
@@ -674,7 +690,7 @@ select:focus {
 
 .ls-episode-list li.active {
   background: var(--ls-primary-soft);
-  border-color: rgb(87 108 201 / 35%);
+  border-color: rgb(var(--ls-primary-rgb) / 35%);
   color: var(--ls-primary);
   font-weight: 600;
 }
@@ -770,7 +786,7 @@ select:focus {
 }
 
 .ls-video-pane-select:focus-visible {
-  box-shadow: inset 0 -2px 0 #576cc9;
+  box-shadow: inset 0 -2px 0 var(--ls-primary);
 }
 
 .ls-video-pane video {
@@ -1275,7 +1291,7 @@ body.ls-playhead-seeking .ls-playhead-handle {
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid var(--ls-border);
-  background: #fff;
+  background: var(--ls-surface);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -1339,10 +1355,10 @@ body.ls-playhead-seeking .ls-playhead-handle {
 @keyframes save-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(87 108 201 / 40%);
+    box-shadow: 0 0 0 0 rgb(var(--ls-primary-rgb) / 40%);
   }
   50% {
-    box-shadow: 0 0 0 6px rgb(87 108 201 / 0%);
+    box-shadow: 0 0 0 6px rgb(var(--ls-primary-rgb) / 0%);
   }
 }
 
@@ -1798,7 +1814,7 @@ body.ls-playhead-seeking .ls-playhead-handle {
   min-width: 320px;
   max-width: 90vw;
   padding: 16px 18px;
-  border-radius: 10px;
+  border-radius: var(--ls-radius-card);
   border: 1px solid var(--ls-border);
   background: var(--ls-surface);
   box-shadow: var(--ls-shadow);
@@ -1886,7 +1902,7 @@ body.ls-playhead-seeking .ls-playhead-handle {
 .ls-panel,
 .ls-sidebar,
 .ls-editor {
-  border-radius: 12px;
+  border-radius: var(--ls-radius-card);
 }
 
 .ls-editor,
@@ -1941,7 +1957,7 @@ body.ls-playhead-seeking .ls-playhead-handle {
 .ls-btn,
 input,
 select {
-  min-height: 36px;
+  min-height: 32px;
 }
 
 input[type="checkbox"],
@@ -2059,7 +2075,7 @@ summary:focus-visible,
 .ls-storage-panel {
   padding: 16px;
   margin-bottom: 20px;
-  border-radius: 10px;
+  border-radius: var(--ls-radius-card);
 }
 
 .ls-storage-head,
@@ -2081,7 +2097,7 @@ summary:focus-visible,
   padding: 16px;
   background: var(--ls-surface-2);
   border: 1px solid var(--ls-border);
-  border-radius: 10px;
+  border-radius: var(--ls-radius-card);
 }
 
 .ls-qc-instruction-panel textarea {
@@ -2091,7 +2107,7 @@ summary:focus-visible,
 .ls-qc-chart-block {
   min-width: 0;
   padding: 16px;
-  border-radius: 10px;
+  border-radius: var(--ls-radius-card);
 }
 
 .ls-qc-chart-block canvas {
@@ -2110,7 +2126,7 @@ summary:focus-visible,
   overflow: auto;
   overflow-wrap: anywhere;
   padding: 24px;
-  border-radius: 14px;
+  border-radius: var(--ls-radius-card);
   box-shadow: 0 20px 48px rgb(15 23 42 / 20%);
 }
 

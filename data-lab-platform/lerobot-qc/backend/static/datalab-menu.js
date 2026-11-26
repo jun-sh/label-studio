@@ -11,6 +11,7 @@
     { key: "menu_home", href: "/", icon: "home" },
     { key: "menu_data", href: "/data", icon: "layers2" },
     { key: "menu_collection", href: "/collection", icon: "upload" },
+    { key: "menu_qc", href: "/qc/", icon: "clipboard-check", current: true },
     { key: "menu_projects", href: "/projects", icon: "edit" },
     { key: "menu_organization", href: "/organization", icon: "people" },
   ];
@@ -29,6 +30,10 @@
       const link = document.createElement("a");
       link.className = "dl-menu__item";
       link.href = item.href;
+      if (item.current) {
+        link.classList.add("is-active");
+        link.setAttribute("aria-current", "page");
+      }
       const icon = document.createElement("span");
       icon.className = `dl-menu__icon dl-menu__icon--${item.icon}`;
       icon.setAttribute("aria-hidden", "true");

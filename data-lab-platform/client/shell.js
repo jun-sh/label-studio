@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "32";
+  var SHELL_VERSION = "33";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -702,6 +702,7 @@
     var menu = findSidebarMenu();
     if (!menu) return false;
 
+    syncUiLocaleStorage();
     purgeNativeDataItems(menu);
     INJECT_SPECS.forEach(function (spec) {
       ensureInjectedItem(menu, spec);
@@ -910,6 +911,27 @@
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
+  /**
+   * QC (/qc/) is a separate service that reads its language from localStorage "ui_locale".
+   * The Datalab account language is server-side, so mirror the language Datalab resolved
+   * (i18next) into that key; QC then opens in the same language as Datalab.
+   */
+  function syncUiLocaleStorage() {
+    var lng = (global.i18n && global.i18n.language) || "";
+    if (!lng && document.documentElement) {
+      lng = document.documentElement.getAttribute("data-ui-locale") || "";
+    }
+    if (!lng) return;
+    var norm = String(lng).toLowerCase().indexOf("zh") === 0 ? "zh-Hans" : "en";
+    try {
+      if (global.localStorage.getItem("ui_locale") !== norm) {
+        global.localStorage.setItem("ui_locale", norm);
+      }
+    } catch (_err) {
+      /* storage unavailable */
+    }
+  }
+
   function bindLanguageWatcher() {
     if (!document.documentElement || typeof MutationObserver === "undefined") return;
     var observer = new MutationObserver(function (mutations) {
@@ -921,6 +943,7 @@
         ) {
           scheduleMenuReconcile();
           patchDocumentTitle();
+          syncUiLocaleStorage();
           return;
         }
       }
@@ -932,6 +955,10 @@
   }
 
   function init() {
+    // i18next may initialise after this script; retry briefly so QC gets the language early.
+    syncUiLocaleStorage();
+    global.setTimeout(syncUiLocaleStorage, 500);
+    global.setTimeout(syncUiLocaleStorage, 2000);
     bindDocumentTitleWatcher();
     bindThemeChrome();
     bindCollectionNavGuard();

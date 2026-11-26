@@ -365,7 +365,9 @@ def api_list_episodes(
 
 
 @app.get("/api/datasets/collections")
-def api_list_collections() -> JSONResponse:
+def api_list_collections(include_storage: bool = True) -> JSONResponse:
+    """include_storage=false skips the per-volume storage probe (slow on USB disks) for
+    callers that only need the collection list, such as the Datalab overview page."""
     collections = list_collections_cached(include_unavailable=True)
     summaries = [
         {
@@ -380,7 +382,7 @@ def api_list_collections() -> JSONResponse:
         }
         for c in collections
     ]
-    storage = get_storage_status()
+    storage = get_storage_status() if include_storage else None
     return JSONResponse(
         {
             "collections": summaries,

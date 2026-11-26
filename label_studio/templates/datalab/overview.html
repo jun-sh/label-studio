@@ -26,16 +26,16 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
     <span class="dlo-updated" id="dlo-updated"></span>
   </header>
 
-  <section class="dlo-tiles" id="dlo-tiles" aria-live="polite"></section>
+  <section class="dlo-tiles" id="dlo-tiles" aria-live="polite" aria-busy="true"><div class="dlo-skel dlo-skel--tile"></div><div class="dlo-skel dlo-skel--tile"></div><div class="dlo-skel dlo-skel--tile"></div><div class="dlo-skel dlo-skel--tile"></div></section>
 
-  <section class="dlo-alerts" id="dlo-alerts" aria-live="polite"></section>
+  <section class="dlo-alerts" id="dlo-alerts" aria-live="polite"><div class="dlo-skel dlo-skel--alert"></div></section>
 
   <section class="dlo-section">
     <div class="dlo-section__head">
       <h2 data-dlo-t="trends"></h2>
       <div class="dlo-range" id="dlo-range" role="group"></div>
     </div>
-    <div class="dlo-charts" id="dlo-charts"></div>
+    <div class="dlo-charts" id="dlo-charts" aria-busy="true"><div class="dlo-skel dlo-skel--chart"></div><div class="dlo-skel dlo-skel--chart"></div><div class="dlo-skel dlo-skel--chart"></div></div>
   </section>
 
   <section class="dlo-section">
@@ -43,7 +43,7 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
       <h2 data-dlo-t="stations"></h2>
       <a class="dlo-link" href="/collection" data-dlo-t="open_collection"></a>
     </div>
-    <div class="dlo-stations" id="dlo-stations"></div>
+    <div class="dlo-stations" id="dlo-stations" aria-busy="true"><div class="dlo-skel dlo-skel--station"></div><div class="dlo-skel dlo-skel--station"></div><div class="dlo-skel dlo-skel--station"></div><div class="dlo-skel dlo-skel--station"></div></div>
   </section>
 
   <div class="dlo-grid">
@@ -53,14 +53,14 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
         <a class="dlo-link" href="/qc/" data-dlo-t="open_qc"></a>
       </div>
       <div class="dlo-legend" id="dlo-legend"></div>
-      <div id="dlo-collections"></div>
+      <div id="dlo-collections" aria-busy="true"><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div></div>
     </section>
 
     <section class="dlo-card">
       <div class="dlo-section__head">
         <h2 data-dlo-t="deliveries"></h2>
       </div>
-      <div class="dlo-scroll"><table class="dlo-table" id="dlo-deliveries"></table></div>
+      <div class="dlo-scroll"><table class="dlo-table" id="dlo-deliveries"></table><div id="dlo-deliveries-skel"><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div><div class="dlo-skel dlo-skel--row"></div></div></div>
     </section>
   </div>
 </div>
@@ -435,6 +435,26 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
   .dlo-tip span { display: flex; justify-content: space-between; gap: 16px; color: var(--dlo-subtle); }
   .dlo-tip span em { font-style: normal; color: var(--dlo-text); font-variant-numeric: tabular-nums; }
 
+  /* ---- loading skeletons: same footprint as the content, so nothing jumps ---- */
+  .dlo-skel {
+    border-radius: 8px;
+    background: linear-gradient(90deg, var(--dlo-emphasis) 25%, var(--dlo-surface) 37%, var(--dlo-emphasis) 63%);
+    background-size: 400% 100%;
+    animation: dlo-shimmer 1.4s ease infinite;
+  }
+  .dlo-skel--tile { height: 104px; }
+  .dlo-skel--alert { height: 46px; }
+  .dlo-skel--chart { height: 226px; }
+  .dlo-skel--station { height: 164px; }
+  .dlo-skel--row { height: 18px; margin: 14px 0; border-radius: 4px; }
+  @keyframes dlo-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dlo-skel { animation: none; }
+  }
+
   @media (max-width: 1100px) {
     .dlo-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dlo-grid { grid-template-columns: minmax(0, 1fr); }
@@ -710,7 +730,8 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
     }
 
     function loadQc() {
-      return getJson("/qc/api/datasets/collections").then(function (body) {
+      // include_storage=false: the overview does not need the per-volume storage probe.
+      return getJson("/qc/api/datasets/collections?include_storage=false").then(function (body) {
         var collections = ((body && body.collections) || []).filter(function (c) {
           return c.status === "available";
         });
@@ -772,8 +793,12 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
       );
     }
 
+    var SKEL_TILE = '<div class="dlo-skel dlo-skel--tile"></div>';
+
+    // stations / qc: undefined while loading (skeleton), null on error (tile omitted).
     function renderTiles(stations, qc, s) {
       var html = "";
+      if (stations === undefined) html += SKEL_TILE + SKEL_TILE;
       if (stations) {
         html += tile({
           icon: "stations",
@@ -792,6 +817,7 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
           state: s.failed ? "bad" : "",
         });
       }
+      if (qc === undefined) html += SKEL_TILE + SKEL_TILE;
       if (qc) {
         html += tile({
           icon: "qc",
@@ -810,7 +836,9 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
           state: s.accFailed.length ? "bad" : "",
         });
       }
-      document.getElementById("dlo-tiles").innerHTML = html;
+      var tiles = document.getElementById("dlo-tiles");
+      tiles.innerHTML = html;
+      tiles.setAttribute("aria-busy", String(stations === undefined || qc === undefined));
     }
 
     function renderAlerts(stations, qc, s) {
@@ -1220,22 +1248,54 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
       );
     }
 
+    // Latest settled results ({ok} / {err}); undefined until the first load of that half.
+    var latest = { st: undefined, qc: undefined };
+
+    function value(result) {
+      return result === undefined ? undefined : result.ok || null;
+    }
+
+    function renderSummary() {
+      var st = value(latest.st), qc = value(latest.qc);
+      var s = summarize(st, qc);
+      renderTiles(st, qc, s);
+      // Alerts need both halves, or an "all good" bar could flash before QC arrives.
+      if (latest.st !== undefined && latest.qc !== undefined) renderAlerts(st, qc, s);
+    }
+
+    function markBusy(id, busy) {
+      var el = document.getElementById(id);
+      if (el) el.setAttribute("aria-busy", String(busy));
+    }
+
+    // Stations and QC render as soon as each arrives; neither waits for the other.
     function refresh() {
       if (!root || !document.body.contains(root)) return stop();
-      return Promise.all([settle(loadStations()), settle(loadQc())]).then(function (res) {
+      var stP = settle(loadStations()).then(function (st) {
         if (!document.body.contains(root)) return;
-        var st = res[0], qc = res[1];
-        var s = summarize(st.ok, qc.ok);
-        renderTiles(st.ok || null, qc.ok || null, s);
-        renderAlerts(st.ok || null, qc.ok || null, s);
+        latest.st = st;
         renderStations(st.ok || [], st.err);
+        markBusy("dlo-stations", false);
+        renderSummary();
+        lastStations = st.ok || lastStations;
+        return refreshTrends();
+      });
+      var qcP = settle(loadQc()).then(function (qc) {
+        if (!document.body.contains(root)) return;
+        latest.qc = qc;
+        renderLegend();
         renderCollections(qc.ok || [], qc.err);
         renderDeliveries(qc.ok || [], qc.err);
+        var skel = document.getElementById("dlo-deliveries-skel");
+        if (skel) skel.remove();
+        markBusy("dlo-collections", false);
+        renderSummary();
+      });
+      return Promise.all([stP, qcP]).then(function () {
+        if (!document.body.contains(root)) return;
         document.getElementById("dlo-updated").textContent = t("updated", {
           time: new Date().toLocaleTimeString(ZH ? "zh-CN" : "en-US", { hour: "2-digit", minute: "2-digit" }),
         });
-        lastStations = st.ok || lastStations;
-        return refreshTrends();
       });
     }
 
@@ -1248,6 +1308,7 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
       return Promise.all([settle(loadCollected(lastStations)), settle(loadQcTrends())]).then(function (tr) {
         if (seq !== trendsSeq || !document.body.contains(root)) return;
         renderTrends(tr[0].ok || {}, tr[1].ok || {}, tr[1].err);
+        markBusy("dlo-charts", false);
       });
     }
 
@@ -1261,7 +1322,6 @@ from the existing station and QC APIs. Icons are Lucide (see ICONS).
       root.querySelectorAll("[data-dlo-t]").forEach(function (node) {
         node.textContent = t(node.getAttribute("data-dlo-t"));
       });
-      renderLegend();
       bindTrends();
       refresh();
       stop();

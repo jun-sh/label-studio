@@ -28,6 +28,7 @@ from dataset_sessions import DATASET_PATH_HEADER, DatasetSession, DatasetSession
 from qc_metrics import build_trajectory_payload, compute_qc_metrics
 from qc_store import QcStore
 from overview_service import build_overview
+from trends_service import MAX_DAYS, build_daily_trends
 from rebuild_service import (
     collect_interrupted_jobs,
     get_active_rebuild_job,
@@ -322,6 +323,15 @@ def api_qc_overview(collection: str = Query(..., min_length=1), refresh: bool = 
     return JSONResponse(payload)
 
 
+@app.get("/api/qc/trends")
+def api_qc_trends(
+    days: int = Query(30, ge=1, le=MAX_DAYS),
+    tz_offset_minutes: int = Query(0, ge=-14 * 60, le=14 * 60),
+) -> JSONResponse:
+    """Episodes reviewed and deliveries finished per day across all packages (read-only)."""
+    return JSONResponse(build_daily_trends(SIDECAR_ROOT, days, tz_offset_minutes))
+
+
 @app.post("/api/dataset/load")
 def api_load_dataset(req: DatasetLoadRequest) -> JSONResponse:
     try:
@@ -355,7 +365,9 @@ def api_list_episodes(
 
 
 @app.get("/api/datasets/collections")
-def api_list_collections() -> JSONResponse:
+def api_list_collections(include_storage: bool = True) -> JSONResponse:
+    """include_storage=false skips the per-volume storage probe (slow on USB disks) for
+    callers that only need the collection list, such as the Datalab overview page."""
     collections = list_collections_cached(include_unavailable=True)
     summaries = [
         {
@@ -370,7 +382,7 @@ def api_list_collections() -> JSONResponse:
         }
         for c in collections
     ]
-    storage = get_storage_status()
+    storage = get_storage_status() if include_storage else None
     return JSONResponse(
         {
             "collections": summaries,

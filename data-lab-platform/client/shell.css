@@ -107,3 +107,8 @@ button[class*="themeToggle"],
     transition: none;
   }
 }
+/* Keyboard-shortcuts help lists annotation hotkeys only: keep it on /projects pages
+   (shell.js sets data-datalab-hotkeys from the path). */
+html[data-datalab-hotkeys="0"] .lsf-menu-header__hotkeys {
+  display: none !important;
+}

@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "33";
+  var SHELL_VERSION = "34";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -881,6 +881,7 @@
 
   function bindHistory() {
     global.addEventListener("popstate", scheduleMenuReconcile);
+    global.addEventListener("popstate", syncHotkeysButton);
     var history = global.LSH;
     if (history && typeof history.listen === "function") {
       history.listen(scheduleMenuReconcile);
@@ -932,6 +933,17 @@
     }
   }
 
+  /**
+   * The header keyboard-shortcuts button only lists Label Studio annotation / data manager
+   * hotkeys, so shell.css shows it on annotation pages (/projects...) only.
+   */
+  function syncHotkeysButton() {
+    var on = /^\/projects(?:\/|$)/.test(currentPath());
+    if (document.documentElement) {
+      document.documentElement.setAttribute("data-datalab-hotkeys", on ? "1" : "0");
+    }
+  }
+
   function bindLanguageWatcher() {
     if (!document.documentElement || typeof MutationObserver === "undefined") return;
     var observer = new MutationObserver(function (mutations) {
@@ -957,6 +969,7 @@
   function init() {
     // i18next may initialise after this script; retry briefly so QC gets the language early.
     syncUiLocaleStorage();
+    syncHotkeysButton();
     global.setTimeout(syncUiLocaleStorage, 500);
     global.setTimeout(syncUiLocaleStorage, 2000);
     bindDocumentTitleWatcher();
@@ -988,6 +1001,7 @@
     var replaceState = global.history.replaceState;
     global.history.pushState = function () {
       var r = pushState.apply(this, arguments);
+      syncHotkeysButton();
       patchDocumentTitle();
       maybeTeardownCollectionChrome();
       scheduleMenuReconcile();
@@ -995,6 +1009,7 @@
     };
     global.history.replaceState = function () {
       var r = replaceState.apply(this, arguments);
+      syncHotkeysButton();
       patchDocumentTitle();
       maybeTeardownCollectionChrome();
       scheduleMenuReconcile();

@@ -1,0 +1,4 @@
+{
+  "ego-001": "<generate: openssl rand -hex 24>",
+  "ego-002": "<generate: openssl rand -hex 24>"
+}

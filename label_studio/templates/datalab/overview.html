@@ -1,9 +1,10 @@
 {% extends 'base.html' %}
 {% comment %}
 Data Lab home: pipeline overview (collection -> QC -> delivery).
-Layout follows the Foxglove Data Platform home: summary tiles, then devices (stations) and
-recent activity. The React shell renders #main-content for this non-SPA route, so the markup
-below is static and bottomjs fills it from the existing station and QC APIs.
+Layout follows the Foxglove Data Platform / Encord homes: summary tiles, an attention list,
+devices (stations) as cards, then progress and recent activity. The React shell renders
+#main-content for this non-SPA route, so the markup below is static and bottomjs fills it
+from the existing station and QC APIs. Icons are unmodified copies from web/libs/ui icons.
 {% endcomment %}
 
 {% block divider %}{% endblock %}
@@ -30,25 +31,28 @@ below is static and bottomjs fills it from the existing station and QC APIs.
 
   <section class="dlo-tiles" id="dlo-tiles" aria-live="polite"></section>
 
-  <section class="dlo-card">
-    <div class="dlo-card__head">
+  <section class="dlo-alerts" id="dlo-alerts" aria-live="polite"></section>
+
+  <section class="dlo-section">
+    <div class="dlo-section__head">
       <h2 data-dlo-t="stations"></h2>
       <a class="dlo-link" href="/collection" data-dlo-t="open_collection"></a>
     </div>
-    <div class="dlo-scroll"><table class="dlo-table" id="dlo-stations"></table></div>
+    <div class="dlo-stations" id="dlo-stations"></div>
   </section>
 
   <div class="dlo-grid">
     <section class="dlo-card">
-      <div class="dlo-card__head">
+      <div class="dlo-section__head">
         <h2 data-dlo-t="qc_progress"></h2>
         <a class="dlo-link" href="/qc/" data-dlo-t="open_qc"></a>
       </div>
-      <div class="dlo-scroll"><table class="dlo-table" id="dlo-collections"></table></div>
+      <div class="dlo-legend" id="dlo-legend"></div>
+      <div id="dlo-collections"></div>
     </section>
 
     <section class="dlo-card">
-      <div class="dlo-card__head">
+      <div class="dlo-section__head">
         <h2 data-dlo-t="deliveries"></h2>
       </div>
       <div class="dlo-scroll"><table class="dlo-table" id="dlo-deliveries"></table></div>
@@ -69,12 +73,14 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     --dlo-subtle: var(--color-neutral-content-subtler, #6b6860);
     --dlo-subtlest: var(--color-neutral-content-subtlest, #a49f95);
     --dlo-primary: var(--color-primary-surface, #4c5fa9);
+    --dlo-primary-bg: #f0f3fe;
     --dlo-positive: #2e7d5b;
     --dlo-positive-bg: #e7f4ee;
     --dlo-warning: #9a6a00;
     --dlo-warning-bg: #fbf2dc;
     --dlo-negative: var(--color-negative-content, #b3523d);
     --dlo-negative-bg: #fbeae5;
+    --dlo-live: #d64545;
     box-sizing: border-box;
     /* The shell's content area is a flex container; without min-width: 0 the nowrap tables
        would size this column to their full width and scroll the whole page on phones. */
@@ -87,6 +93,9 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     font-size: 14px;
   }
   .dlo *, .dlo *::before, .dlo *::after { box-sizing: border-box; }
+  .dlo a { text-decoration: none; }
+  .dlo svg { display: block; }
+
   .dlo-head {
     display: flex;
     align-items: flex-end;
@@ -98,36 +107,159 @@ below is static and bottomjs fills it from the existing station and QC APIs.
   .dlo-sub { margin: 4px 0 0; color: var(--dlo-subtle); }
   .dlo-updated { color: var(--dlo-subtlest); font-size: 12px; white-space: nowrap; }
 
+  /* ---- tiles ---- */
   .dlo-tiles {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 16px;
   }
-  .dlo-tile, .dlo-card {
+  .dlo-tile, .dlo-card, .dlo-station {
     background: var(--dlo-bg);
     border: 1px solid var(--dlo-border);
     border-radius: 8px;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
   }
-  .dlo-tile { padding: 16px; min-height: 104px; }
+  .dlo-tile {
+    display: flex;
+    gap: 14px;
+    padding: 16px;
+    color: var(--dlo-text);
+    transition: border-color 0.15s ease-out, box-shadow 0.15s ease-out;
+  }
+  a.dlo-tile:hover { border-color: var(--color-neutral-border-bold, #cac5b8); box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08); }
+  .dlo-tile__icon {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: var(--dlo-primary-bg);
+    color: var(--dlo-primary);
+  }
+  .dlo-tile__icon svg { width: 22px; height: 22px; }
+  .dlo-tile--warn .dlo-tile__icon { background: var(--dlo-warning-bg); color: var(--dlo-warning); }
+  .dlo-tile--bad .dlo-tile__icon { background: var(--dlo-negative-bg); color: var(--dlo-negative); }
+  .dlo-tile__body { min-width: 0; }
   .dlo-tile__label { color: var(--dlo-subtle); }
-  .dlo-tile__value { margin-top: 6px; font-size: 30px; font-weight: 500; line-height: 1.1; }
+  .dlo-tile__value { margin-top: 2px; font-size: 30px; font-weight: 500; line-height: 1.15; font-variant-numeric: tabular-nums; }
   .dlo-tile__value small { font-size: 16px; color: var(--dlo-subtlest); font-weight: 400; }
-  .dlo-tile__hint { margin-top: 6px; color: var(--dlo-subtle); font-size: 13px; }
-  .dlo-tile--warn .dlo-tile__hint { color: var(--dlo-negative); }
+  .dlo-tile__hint { margin-top: 4px; color: var(--dlo-subtle); font-size: 13px; }
+  .dlo-tile--warn .dlo-tile__hint { color: var(--dlo-warning); }
+  .dlo-tile--bad .dlo-tile__hint { color: var(--dlo-negative); }
 
-  .dlo-card { padding: 16px; margin-bottom: 16px; min-width: 0; }
-  .dlo-card__head {
+  /* ---- attention ---- */
+  .dlo-alerts { margin-bottom: 24px; }
+  .dlo-alerts:empty { display: none; }
+  .dlo-alert-list {
+    border: 1px solid var(--dlo-border);
+    border-radius: 8px;
+    background: var(--dlo-bg);
+    overflow: hidden;
+  }
+  .dlo-alert-list__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--dlo-surface);
+    border-bottom: 1px solid var(--dlo-border);
+    font-weight: 500;
+  }
+  .dlo-alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--dlo-border);
+    color: var(--dlo-text);
+  }
+  .dlo-alert:first-of-type { border-top: 0; }
+  a.dlo-alert:hover { background: var(--dlo-surface); }
+  .dlo-alert__icon { flex: 0 0 18px; width: 18px; height: 18px; color: var(--dlo-warning); }
+  .dlo-alert--bad .dlo-alert__icon { color: var(--dlo-negative); }
+  .dlo-alert__text { flex: 1 1 auto; min-width: 0; }
+  .dlo-alert__go { flex: 0 0 auto; color: var(--dlo-primary); white-space: nowrap; }
+  .dlo-allgood {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid #cfe6da;
+    border-radius: 8px;
+    background: var(--dlo-positive-bg);
+    color: var(--dlo-positive);
+  }
+  .dlo-allgood svg { width: 20px; height: 20px; }
+
+  /* ---- sections ---- */
+  .dlo-section { margin-bottom: 24px; }
+  .dlo-section__head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
   }
-  .dlo-card__head h2 { margin: 0; font-size: 18px; font-weight: 500; }
-  .dlo-link { color: var(--dlo-primary); text-decoration: none; white-space: nowrap; }
+  .dlo-section__head h2 { margin: 0; font-size: 18px; font-weight: 500; }
+  .dlo-link { color: var(--dlo-primary); white-space: nowrap; }
   .dlo-link:hover { color: #6d87f1; }
+  .dlo-card { padding: 16px; min-width: 0; }
+
+  /* ---- stations ---- */
+  .dlo-stations {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .dlo-station {
+    display: flex;
+    flex-direction: column;
+    padding: 14px 16px;
+    border-left: 3px solid var(--dlo-subtlest);
+    color: var(--dlo-text);
+    transition: box-shadow 0.15s ease-out;
+  }
+  .dlo-station:hover { box-shadow: 0 6px 14px rgba(0, 0, 0, 0.08); }
+  .dlo-station--online { border-left-color: var(--dlo-positive); }
+  .dlo-station--live { border-left-color: var(--dlo-live); }
+  .dlo-station__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .dlo-station__name { font-weight: 500; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dlo-station__id { margin-top: 2px; color: var(--dlo-subtlest); font-size: 12px; }
+  .dlo-station__rows { margin: 12px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+  .dlo-station__rows dt { color: var(--dlo-subtle); }
+  .dlo-station__rows dd { margin: 0; text-align: right; }
+  .dlo-station__go { margin-top: 12px; color: var(--dlo-primary); align-self: flex-end; }
+
+  /* ---- shared bits ---- */
+  .dlo-muted { color: var(--dlo-subtlest); }
+  .dlo-empty { padding: 16px 0; color: var(--dlo-subtle); }
+  .dlo-error { padding: 16px 0; color: var(--dlo-negative); }
+  .dlo-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--dlo-subtlest);
+    vertical-align: 1px;
+  }
+  .dlo-dot--on { background: var(--dlo-positive); }
+  .dlo-dot--live { background: var(--dlo-live); box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.18); }
+  .dlo-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 18px;
+    background: var(--dlo-emphasis);
+    color: var(--dlo-subtle);
+    white-space: nowrap;
+  }
+  .dlo-badge--ok { background: var(--dlo-positive-bg); color: var(--dlo-positive); }
+  .dlo-badge--warn { background: var(--dlo-warning-bg); color: var(--dlo-warning); }
+  .dlo-badge--bad { background: var(--dlo-negative-bg); color: var(--dlo-negative); }
 
   .dlo-grid {
     display: grid;
@@ -135,6 +267,41 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     gap: 16px;
     align-items: start;
   }
+
+  /* ---- QC progress ---- */
+  .dlo-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 8px; color: var(--dlo-subtle); font-size: 12px; }
+  .dlo-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dlo-legend i { width: 10px; height: 10px; border-radius: 2px; }
+  .dlo-coll {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--dlo-border);
+  }
+  .dlo-coll:first-child { border-top: 0; }
+  .dlo-coll__name { color: var(--dlo-text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dlo-coll__name:hover { color: var(--dlo-primary); }
+  .dlo-coll__meta { color: var(--dlo-subtle); font-size: 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .dlo-stack {
+    grid-column: 1 / -1;
+    display: flex;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--dlo-emphasis);
+  }
+  .dlo-stack > a { display: block; height: 100%; min-width: 3px; }
+  .dlo-stack > a + a { border-left: 1px solid var(--dlo-bg); }
+  .dlo-stage--delivered { background: #2e7d5b; }
+  .dlo-stage--in_review { background: #4c5fa9; }
+  .dlo-stage--suspicious { background: #d08a00; }
+  .dlo-stage--needs_rebuild { background: #c0663a; }
+  .dlo-stage--rebuilding { background: #8fa3f5; }
+  .dlo-stage--not_started { background: #d6d2c6; }
+  .dlo-stage--all_removed { background: #ebe8e1; }
+
+  /* ---- deliveries ---- */
   .dlo-scroll { overflow-x: auto; }
   .dlo-table { width: 100%; border-collapse: collapse; }
   .dlo-table th, .dlo-table td {
@@ -147,50 +314,10 @@ below is static and bottomjs fills it from the existing station and QC APIs.
   .dlo-table th { color: var(--dlo-subtle); font-weight: 500; font-size: 13px; }
   .dlo-table tr:last-child td { border-bottom: 0; }
   .dlo-table td.num, .dlo-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .dlo-table a { color: var(--dlo-text); text-decoration: none; }
+  .dlo-table a { color: var(--dlo-text); font-weight: 500; }
   .dlo-table a:hover { color: var(--dlo-primary); }
-  .dlo-muted { color: var(--dlo-subtlest); }
-  .dlo-empty { padding: 16px 8px; color: var(--dlo-subtle); }
-  .dlo-error { padding: 16px 8px; color: var(--dlo-negative); }
 
-  .dlo-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    margin-right: 6px;
-    border-radius: 50%;
-    background: var(--dlo-subtlest);
-    vertical-align: 1px;
-  }
-  .dlo-dot--on { background: var(--dlo-positive); }
-  .dlo-dot--live { background: #d64545; box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.18); }
-
-  .dlo-badge {
-    display: inline-block;
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 12px;
-    line-height: 18px;
-    background: var(--dlo-emphasis);
-    color: var(--dlo-subtle);
-  }
-  .dlo-badge--ok { background: var(--dlo-positive-bg); color: var(--dlo-positive); }
-  .dlo-badge--warn { background: var(--dlo-warning-bg); color: var(--dlo-warning); }
-  .dlo-badge--bad { background: var(--dlo-negative-bg); color: var(--dlo-negative); }
-
-  .dlo-bar {
-    display: inline-block;
-    width: 96px;
-    height: 6px;
-    margin-right: 8px;
-    border-radius: 3px;
-    background: var(--dlo-emphasis);
-    overflow: hidden;
-    vertical-align: middle;
-  }
-  .dlo-bar > span { display: block; height: 100%; background: var(--dlo-primary); }
-
-  @media (max-width: 1024px) {
+  @media (max-width: 1100px) {
     .dlo-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dlo-grid { grid-template-columns: minmax(0, 1fr); }
   }
@@ -199,6 +326,7 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     .dlo-head { flex-direction: column; align-items: flex-start; gap: 4px; }
     .dlo-title { font-size: 24px; }
     .dlo-tiles { grid-template-columns: minmax(0, 1fr); }
+    .dlo-stations { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
 {% endblock %}
@@ -212,6 +340,16 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     var ZH = "{% if user.ui_locale|slice:':2' == 'zh' %}1{% endif %}" === "1";
     var REFRESH_MS = 30000;
 
+    // Unmodified copies of web/libs/ui/src/assets/icons/*.svg (currentColor).
+    var ICONS = {
+      upload: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 4V14.6667M12 4L16.4444 8.44444M12 4L7.55556 8.44444M20 14.6667V18.2222C20 18.6937 19.8127 19.1459 19.4793 19.4793C19.1459 19.8127 18.6937 20 18.2222 20H5.77778C5.30628 20 4.8541 19.8127 4.5207 19.4793C4.1873 19.1459 4 18.6937 4 18.2222V14.6667\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      layers2: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M19.195 14.0549L20.5441 14.8148C20.6825 14.8932 20.7976 15.0069 20.8777 15.1444C20.9578 15.2818 21 15.4381 21 15.5971C21 15.7562 20.9578 15.9124 20.8777 16.0499C20.7976 16.1873 20.6825 16.3011 20.5441 16.3795L12.8994 20.759C12.6259 20.9169 12.3157 21 12 21C11.6843 21 11.3741 20.9169 11.1006 20.759L3.45594 16.3795C3.31752 16.3011 3.2024 16.1873 3.1223 16.0499C3.0422 15.9124 3 15.7562 3 15.5971C3 15.4381 3.0422 15.2818 3.1223 15.1444C3.2024 15.0069 3.31752 14.8932 3.45594 14.8148L4.805 14.0549M12.8994 13.5648C12.6259 13.7226 12.3157 13.8057 12 13.8057C11.6843 13.8057 11.3741 13.7226 11.1006 13.5648L3.45594 9.18524C3.31752 9.1068 3.2024 8.99306 3.1223 8.85561C3.0422 8.71817 3 8.56194 3 8.40286C3 8.24378 3.0422 8.08755 3.1223 7.9501C3.2024 7.81266 3.31752 7.69892 3.45594 7.62048L11.1006 3.24096C11.3741 3.08311 11.6843 3 12 3C12.3157 3 12.6259 3.08311 12.8994 3.24096L20.5441 7.62048C20.6825 7.69892 20.7976 7.81266 20.8777 7.9501C20.9578 8.08755 21 8.24378 21 8.40286C21 8.56194 20.9578 8.71817 20.8777 8.85561C20.7976 8.99306 20.6825 9.1068 20.5441 9.18524L12.8994 13.5648Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      clipboardCheck: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M15.5 4.8H17.25C17.7141 4.8 18.1592 4.98964 18.4874 5.32721C18.8156 5.66477 19 6.12261 19 6.6V19.2C19 19.6774 18.8156 20.1352 18.4874 20.4728C18.1592 20.8104 17.7141 21 17.25 21H6.75C6.28587 21 5.84075 20.8104 5.51256 20.4728C5.18437 20.1352 5 19.6774 5 19.2V6.6C5 6.12261 5.18437 5.66477 5.51256 5.32721C5.84075 4.98964 6.28587 4.8 6.75 4.8H8.5M9.375 13.8L11.125 15.6L14.625 12M9.375 3H14.625C15.1082 3 15.5 3.40294 15.5 3.9V5.7C15.5 6.19706 15.1082 6.6 14.625 6.6H9.375C8.89175 6.6 8.5 6.19706 8.5 5.7V3.9C8.5 3.40294 8.89175 3 9.375 3Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      send: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M2.79139 17.8737C2.51159 18.9929 3.62961 19.9512 4.69287 19.5035L20.7627 12.7373C21.4154 12.4625 21.4154 11.5375 20.7627 11.2627L4.69287 4.49647C3.62961 4.04878 2.51159 5.00709 2.79139 6.12631L3.92514 10.6613L12.8499 12L3.92514 13.3387L2.79139 17.8737Z\" fill=\"currentColor\"/></svg>",
+      warningCircle: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 8.4V12M12 15.6H12.009M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      checkCircle: "<svg width=\"80\" height=\"80\" viewBox=\"0 0 80 80\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"1\" y=\"1\" width=\"78\" height=\"78\" rx=\"39\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M27.5 38.5L37 48L53 32\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"square\"/></svg>",
+    };
+
     var TEXT = ZH
       ? {
           title: "概览",
@@ -222,30 +360,31 @@ below is static and bottomjs fills it from the existing station and QC APIs.
           qc_progress: "质检进度",
           open_qc: "进入质检",
           deliveries: "最近交付",
-          tile_online: "在线工位",
-          tile_online_hint: "{live} 台正在采集",
+          tile_stations: "在线工位",
+          tile_stations_live: "{n} 台正在采集",
+          tile_stations_offline: "{n} 台离线",
+          tile_stations_ok: "全部在线",
           tile_derive: "派生队列",
-          tile_derive_hint: "{failed} 个失败片段",
-          tile_derive_ok: "无失败片段",
+          tile_derive_failed: "{n} 个失败片段",
+          tile_derive_busy: "{n} 个进行中",
+          tile_derive_ok: "无积压，无失败",
           tile_pending: "待质检数据包",
-          tile_pending_hint: "审阅中 {n} 个",
+          tile_pending_hint: "审阅中 {review} · 可疑 {sus}",
           tile_delivered: "已交付数据包",
           tile_delivered_hint: "验收通过 {ok} / 已验收 {checked}",
-          col_station: "工位",
-          col_network: "网络",
-          col_link: "连接",
-          col_capture: "采集",
-          col_derive: "派生",
-          col_collection: "数据集合",
-          col_packages: "数据包",
-          col_not_started: "未开始",
-          col_in_review: "审阅中",
-          col_delivered: "已交付",
-          col_episodes: "Episode 审阅",
-          col_package: "数据包",
-          col_kept: "保留",
-          col_acceptance: "验收",
-          col_time: "交付时间",
+          tile_delivered_bad: "{n} 个验收未通过",
+          attention: "需要处理（{n}）",
+          all_good: "一切正常：工位无异常，派生无失败，交付均通过验收",
+          al_offline: "{n} 个工位离线：{names}",
+          al_failed_segments: "{name} 有 {n} 个派生失败片段",
+          al_acceptance: "数据包 {pkg} 验收未通过",
+          al_suspicious: "{coll}：{n} 个数据包有可疑 episode",
+          al_needs_rebuild: "{coll}：{n} 个数据包审阅已更新，需要重建交付集",
+          go: "查看",
+          row_link: "连接",
+          row_capture: "采集",
+          row_derive: "派生",
+          open_station: "打开工位 →",
           online: "在线",
           offline: "离线",
           cap_live: "采集中",
@@ -255,6 +394,18 @@ below is static and bottomjs fills it from the existing station and QC APIs.
           derive_idle: "空闲",
           derive_queue: "排队 {pending} · 进行 {active}",
           derive_failed: "{n} 个失败",
+          coll_meta: "{pkgs} 个数据包 · episode 已审 {reviewed} / {total}",
+          stage_delivered: "已交付",
+          stage_in_review: "审阅中",
+          stage_suspicious: "有可疑",
+          stage_needs_rebuild: "待重建",
+          stage_rebuilding: "重建中",
+          stage_not_started: "未开始",
+          stage_all_removed: "全部移除",
+          col_package: "数据包",
+          col_kept: "保留",
+          col_acceptance: "验收",
+          col_time: "交付时间",
           acc_ok: "通过",
           acc_bad: "未通过",
           acc_none: "未验收",
@@ -273,30 +424,31 @@ below is static and bottomjs fills it from the existing station and QC APIs.
           qc_progress: "QC progress",
           open_qc: "Open QC",
           deliveries: "Recent deliveries",
-          tile_online: "Stations online",
-          tile_online_hint: "{live} capturing now",
+          tile_stations: "Stations online",
+          tile_stations_live: "{n} capturing now",
+          tile_stations_offline: "{n} offline",
+          tile_stations_ok: "All online",
           tile_derive: "Derive queue",
-          tile_derive_hint: "{failed} failed segments",
-          tile_derive_ok: "No failed segments",
+          tile_derive_failed: "{n} failed segments",
+          tile_derive_busy: "{n} running",
+          tile_derive_ok: "No backlog, no failures",
           tile_pending: "Packages awaiting QC",
-          tile_pending_hint: "{n} in review",
+          tile_pending_hint: "{review} in review · {sus} suspicious",
           tile_delivered: "Packages delivered",
           tile_delivered_hint: "{ok} passed / {checked} checked",
-          col_station: "Station",
-          col_network: "Network",
-          col_link: "Link",
-          col_capture: "Capture",
-          col_derive: "Derive",
-          col_collection: "Collection",
-          col_packages: "Packages",
-          col_not_started: "Not started",
-          col_in_review: "In review",
-          col_delivered: "Delivered",
-          col_episodes: "Episodes reviewed",
-          col_package: "Package",
-          col_kept: "Kept",
-          col_acceptance: "Acceptance",
-          col_time: "Delivered at",
+          tile_delivered_bad: "{n} failed acceptance",
+          attention: "Needs attention ({n})",
+          all_good: "All good: stations healthy, no derive failures, every delivery passed acceptance",
+          al_offline: "{n} stations offline: {names}",
+          al_failed_segments: "{name} has {n} failed derive segments",
+          al_acceptance: "Package {pkg} failed acceptance",
+          al_suspicious: "{coll}: {n} packages have suspicious episodes",
+          al_needs_rebuild: "{coll}: {n} packages changed after delivery and need a rebuild",
+          go: "View",
+          row_link: "Link",
+          row_capture: "Capture",
+          row_derive: "Derive",
+          open_station: "Open station →",
           online: "Online",
           offline: "Offline",
           cap_live: "Capturing",
@@ -306,6 +458,18 @@ below is static and bottomjs fills it from the existing station and QC APIs.
           derive_idle: "Idle",
           derive_queue: "{pending} queued · {active} running",
           derive_failed: "{n} failed",
+          coll_meta: "{pkgs} packages · {reviewed} / {total} episodes reviewed",
+          stage_delivered: "Delivered",
+          stage_in_review: "In review",
+          stage_suspicious: "Suspicious",
+          stage_needs_rebuild: "Needs rebuild",
+          stage_rebuilding: "Rebuilding",
+          stage_not_started: "Not started",
+          stage_all_removed: "All removed",
+          col_package: "Package",
+          col_kept: "Kept",
+          col_acceptance: "Acceptance",
+          col_time: "Delivered at",
           acc_ok: "Passed",
           acc_bad: "Failed",
           acc_none: "Not checked",
@@ -315,6 +479,9 @@ below is static and bottomjs fills it from the existing station and QC APIs.
           empty_deliveries: "No deliveries yet",
           load_failed: "Failed to load: {error}",
         };
+
+    // Bar order: finished work first, untouched last.
+    var STAGES = ["delivered", "in_review", "suspicious", "needs_rebuild", "rebuilding", "not_started", "all_removed"];
 
     function t(key, vars) {
       var s = TEXT[key] || key;
@@ -340,12 +507,7 @@ below is static and bottomjs fills it from the existing station and QC APIs.
       if (!iso) return "";
       var d = new Date(iso);
       if (isNaN(d.getTime())) return "";
-      return d.toLocaleString(ZH ? "zh-CN" : "en-US", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+      return d.toLocaleString(ZH ? "zh-CN" : "en-US", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
     }
 
     function getJson(url) {
@@ -359,20 +521,26 @@ below is static and bottomjs fills it from the existing station and QC APIs.
       return '<span class="dlo-badge' + (kind ? " dlo-badge--" + kind : "") + '">' + esc(text) + "</span>";
     }
 
-    function head(cols) {
-      return (
-        "<thead><tr>" +
-        cols
-          .map(function (c) {
-            return "<th" + (c.num ? ' class="num"' : "") + ">" + esc(t(c.key)) + "</th>";
-          })
-          .join("") +
-        "</tr></thead>"
-      );
+    function stationName(st) {
+      return ZH ? st.name || st.id : st.name_en || st.name || st.id;
     }
 
-    function message(cols, cls, text) {
-      return '<tbody><tr><td colspan="' + cols + '" class="' + cls + '">' + esc(text) + "</td></tr></tbody>";
+    function qcPackageUrl(collectionId, p) {
+      var params = new URLSearchParams({ collection: collectionId, package: p.id });
+      if (p.local_path) params.set("local_path", p.local_path);
+      return "/qc/?" + params.toString();
+    }
+
+    function qcStageUrl(collectionId, stage) {
+      var params = new URLSearchParams({ collection: collectionId });
+      if (stage) params.set("stage", stage);
+      return "/qc/overview?" + params.toString();
+    }
+
+    function failedCount(derive) {
+      if (!derive) return 0;
+      var q = derive.deriveQueue || {};
+      return Number(q.dlq || 0) + (derive.failedSegments || []).length;
     }
 
     // ---- data -------------------------------------------------------------------------
@@ -383,11 +551,9 @@ below is static and bottomjs fills it from the existing station and QC APIs.
         return Promise.all(
           stations.map(function (st) {
             if (!st.stream) return Promise.resolve(null);
-            return getJson("/lerobot/api/collection/stations/" + encodeURIComponent(st.id) + "/derive-status").catch(
-              function () {
-                return null;
-              },
-            );
+            return getJson("/lerobot/api/collection/stations/" + encodeURIComponent(st.id) + "/derive-status").catch(function () {
+              return null;
+            });
           }),
         ).then(function (derive) {
           return stations.map(function (st, i) {
@@ -416,171 +582,257 @@ below is static and bottomjs fills it from the existing station and QC APIs.
       });
     }
 
+    function summarize(stations, qc) {
+      var s = { online: 0, live: 0, offline: [], queued: 0, active: 0, failed: 0, waiting: 0, review: 0, sus: 0, delivered: 0, ok: 0, checked: 0, accFailed: [] };
+      (stations || []).forEach(function (row) {
+        if (row.station.online) s.online += 1;
+        else s.offline.push(row.station);
+        if (row.station.captureState === "live") s.live += 1;
+        var q = (row.derive && row.derive.deriveQueue) || {};
+        s.queued += Number(q.pending || 0);
+        s.active += Number(q.active || 0);
+        s.failed += failedCount(row.derive);
+      });
+      (qc || []).forEach(function (row) {
+        var ov = row.overview;
+        if (!ov) return;
+        var sc = ov.stage_counts || {};
+        s.waiting += (sc.not_started || 0) + (sc.in_review || 0) + (sc.suspicious || 0) + (sc.needs_rebuild || 0);
+        s.review += sc.in_review || 0;
+        s.sus += sc.suspicious || 0;
+        s.delivered += sc.delivered || 0;
+        (ov.packages || []).forEach(function (p) {
+          var acc = p.delivery && p.delivery.acceptance;
+          if (!acc) return;
+          s.checked += 1;
+          if (acc.ok) s.ok += 1;
+          else s.accFailed.push({ collection: row.collection, pkg: p });
+        });
+      });
+      return s;
+    }
+
     // ---- render -----------------------------------------------------------------------
 
-    function tile(label, value, hint, warn) {
+    function tile(o) {
       return (
-        '<div class="dlo-tile' + (warn ? " dlo-tile--warn" : "") + '">' +
-        '<div class="dlo-tile__label">' + esc(label) + "</div>" +
-        '<div class="dlo-tile__value">' + value + "</div>" +
-        '<div class="dlo-tile__hint">' + esc(hint) + "</div>" +
-        "</div>"
+        '<a class="dlo-tile' + (o.state ? " dlo-tile--" + o.state : "") + '" href="' + esc(o.href) + '">' +
+        '<span class="dlo-tile__icon">' + ICONS[o.icon] + "</span>" +
+        '<span class="dlo-tile__body">' +
+        '<div class="dlo-tile__label">' + esc(o.label) + "</div>" +
+        '<div class="dlo-tile__value">' + o.value + "</div>" +
+        '<div class="dlo-tile__hint">' + esc(o.hint) + "</div>" +
+        "</span></a>"
       );
     }
 
-    function renderTiles(stations, qc) {
-      var el = document.getElementById("dlo-tiles");
+    function renderTiles(stations, qc, s) {
       var html = "";
       if (stations) {
-        var online = 0, live = 0, pending = 0, active = 0, failed = 0;
-        stations.forEach(function (row) {
-          if (row.station.online) online += 1;
-          if (row.station.captureState === "live") live += 1;
-          var q = (row.derive && row.derive.deriveQueue) || {};
-          pending += Number(q.pending || 0);
-          active += Number(q.active || 0);
-          failed += Number(q.dlq || 0) + ((row.derive && row.derive.failedSegments) || []).length;
+        html += tile({
+          icon: "upload",
+          href: "/collection",
+          label: t("tile_stations"),
+          value: num(s.online) + " <small>/ " + num(stations.length) + "</small>",
+          hint: s.live ? t("tile_stations_live", { n: s.live }) : s.offline.length ? t("tile_stations_offline", { n: s.offline.length }) : t("tile_stations_ok"),
+          state: s.offline.length && !s.live ? "warn" : "",
         });
-        html += tile(t("tile_online"), num(online) + " <small>/ " + num(stations.length) + "</small>", t("tile_online_hint", { live: live }));
-        html += tile(
-          t("tile_derive"),
-          num(pending + active),
-          failed ? t("tile_derive_hint", { failed: failed }) : t("tile_derive_ok"),
-          failed > 0,
-        );
+        html += tile({
+          icon: "layers2",
+          href: "/collection",
+          label: t("tile_derive"),
+          value: num(s.queued + s.active),
+          hint: s.failed ? t("tile_derive_failed", { n: s.failed }) : s.active ? t("tile_derive_busy", { n: s.active }) : t("tile_derive_ok"),
+          state: s.failed ? "bad" : "",
+        });
       }
       if (qc) {
-        var waiting = 0, inReview = 0, delivered = 0, ok = 0, checked = 0;
-        qc.forEach(function (row) {
-          var ov = row.overview;
-          if (!ov) return;
-          var sc = ov.stage_counts || {};
-          waiting += (sc.not_started || 0) + (sc.in_review || 0) + (sc.suspicious || 0) + (sc.needs_rebuild || 0);
-          inReview += sc.in_review || 0;
-          delivered += sc.delivered || 0;
-          (ov.packages || []).forEach(function (p) {
-            var acc = p.delivery && p.delivery.acceptance;
-            if (acc) {
-              checked += 1;
-              if (acc.ok) ok += 1;
-            }
-          });
+        html += tile({
+          icon: "clipboardCheck",
+          href: "/qc/",
+          label: t("tile_pending"),
+          value: num(s.waiting),
+          hint: t("tile_pending_hint", { review: s.review, sus: s.sus }),
+          state: s.sus ? "warn" : "",
         });
-        html += tile(t("tile_pending"), num(waiting), t("tile_pending_hint", { n: inReview }));
-        html += tile(t("tile_delivered"), num(delivered), t("tile_delivered_hint", { ok: ok, checked: checked }));
+        html += tile({
+          icon: "send",
+          href: "/qc/",
+          label: t("tile_delivered"),
+          value: num(s.delivered),
+          hint: s.accFailed.length ? t("tile_delivered_bad", { n: s.accFailed.length }) : t("tile_delivered_hint", { ok: s.ok, checked: s.checked }),
+          state: s.accFailed.length ? "bad" : "",
+        });
       }
-      el.innerHTML = html;
+      document.getElementById("dlo-tiles").innerHTML = html;
+    }
+
+    function renderAlerts(stations, qc, s) {
+      var items = [];
+      if (s.offline.length) {
+        items.push({
+          kind: "warn",
+          href: "/collection",
+          // Station ids: display names can repeat (several share one English name).
+          text: t("al_offline", {
+            n: s.offline.length,
+            names: s.offline.map(function (st) { return st.id; }).join(ZH ? "、" : ", "),
+          }),
+        });
+      }
+      (stations || []).forEach(function (row) {
+        var n = failedCount(row.derive);
+        if (n) items.push({ kind: "bad", href: row.station.viewerUrl || "/collection", text: t("al_failed_segments", { name: stationName(row.station), n: n }) });
+      });
+      s.accFailed.forEach(function (item) {
+        items.push({ kind: "bad", href: qcPackageUrl(item.collection.id, item.pkg), text: t("al_acceptance", { pkg: item.pkg.id }) });
+      });
+      (qc || []).forEach(function (row) {
+        var sc = (row.overview && row.overview.stage_counts) || {};
+        var title = row.collection.title || row.collection.id;
+        if (sc.suspicious) items.push({ kind: "warn", href: qcStageUrl(row.collection.id, "suspicious"), text: t("al_suspicious", { coll: title, n: sc.suspicious }) });
+        if (sc.needs_rebuild) items.push({ kind: "warn", href: qcStageUrl(row.collection.id, "needs_rebuild"), text: t("al_needs_rebuild", { coll: title, n: sc.needs_rebuild }) });
+      });
+      var el = document.getElementById("dlo-alerts");
+      if (!stations && !qc) {
+        el.innerHTML = "";
+        return;
+      }
+      if (!items.length) {
+        el.innerHTML = '<div class="dlo-allgood">' + ICONS.checkCircle + "<span>" + esc(t("all_good")) + "</span></div>";
+        return;
+      }
+      items.sort(function (a, b) {
+        return (a.kind === "bad" ? 0 : 1) - (b.kind === "bad" ? 0 : 1);
+      });
+      el.innerHTML =
+        '<div class="dlo-alert-list">' +
+        '<div class="dlo-alert-list__title">' + esc(t("attention", { n: items.length })) + "</div>" +
+        items
+          .map(function (it) {
+            return (
+              '<a class="dlo-alert dlo-alert--' + it.kind + '" href="' + esc(it.href) + '">' +
+              '<span class="dlo-alert__icon">' + ICONS.warningCircle + "</span>" +
+              '<span class="dlo-alert__text">' + esc(it.text) + "</span>" +
+              '<span class="dlo-alert__go">' + esc(t("go")) + " →</span></a>"
+            );
+          })
+          .join("") +
+        "</div>";
     }
 
     var CAPTURE = { live: "cap_live", idle: "cap_idle", offline: "cap_offline" };
 
     function renderStations(stations, error) {
-      var cols = [
-        { key: "col_station" },
-        { key: "col_network" },
-        { key: "col_link" },
-        { key: "col_capture" },
-        { key: "col_derive" },
-      ];
       var el = document.getElementById("dlo-stations");
       if (error) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        el.innerHTML = '<div class="dlo-error">' + esc(t("load_failed", { error: error.message })) + "</div>";
         return;
       }
       if (!stations.length) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_stations"));
+        el.innerHTML = '<div class="dlo-empty">' + esc(t("empty_stations")) + "</div>";
         return;
       }
-      var rows = stations.map(function (row) {
-        var st = row.station;
-        var name = ZH ? st.name : st.name_en || st.name;
-        var link =
-          '<span class="dlo-dot' + (st.online ? " dlo-dot--on" : "") + '"></span>' +
-          esc(st.online ? t("online") : t("offline"));
-        var cap = st.captureState === "live"
-          ? '<span class="dlo-dot dlo-dot--live"></span>' + esc(t("cap_live"))
-          : '<span class="dlo-muted">' + esc(t(CAPTURE[st.captureState] || "cap_unknown")) + "</span>";
-        var derive = '<span class="dlo-muted">—</span>';
-        if (row.derive) {
-          var q = row.derive.deriveQueue || {};
-          var failed = Number(q.dlq || 0) + (row.derive.failedSegments || []).length;
-          var busy = Number(q.pending || 0) + Number(q.active || 0);
-          derive = busy
-            ? badge(t("derive_queue", { pending: q.pending || 0, active: q.active || 0 }), "warn")
-            : '<span class="dlo-muted">' + esc(t("derive_idle")) + "</span>";
-          if (failed) derive += " " + badge(t("derive_failed", { n: failed }), "bad");
-        }
-        return (
-          "<tr>" +
-          '<td><a href="' + esc(st.viewerUrl || "/collection") + '">' + esc(name) + "</a>" +
-          ' <span class="dlo-muted">' + esc(st.id) + "</span></td>" +
-          "<td>" + esc(String(st.scope || "").toUpperCase()) + "</td>" +
-          "<td>" + link + "</td>" +
-          "<td>" + cap + "</td>" +
-          "<td>" + derive + "</td>" +
-          "</tr>"
-        );
-      });
-      el.innerHTML = head(cols) + "<tbody>" + rows.join("") + "</tbody>";
+      el.innerHTML = stations
+        .map(function (row) {
+          var st = row.station;
+          var live = st.captureState === "live";
+          var mod = live ? " dlo-station--live" : st.online ? " dlo-station--online" : "";
+          var link = '<span class="dlo-dot' + (st.online ? " dlo-dot--on" : "") + '"></span>' + esc(st.online ? t("online") : t("offline"));
+          var cap = live
+            ? '<span class="dlo-dot dlo-dot--live"></span>' + esc(t("cap_live"))
+            : '<span class="dlo-muted">' + esc(t(CAPTURE[st.captureState] || "cap_unknown")) + "</span>";
+          var derive = '<span class="dlo-muted">—</span>';
+          if (row.derive) {
+            var q = row.derive.deriveQueue || {};
+            var busy = Number(q.pending || 0) + Number(q.active || 0);
+            var failed = failedCount(row.derive);
+            derive = busy
+              ? badge(t("derive_queue", { pending: q.pending || 0, active: q.active || 0 }), "warn")
+              : '<span class="dlo-muted">' + esc(t("derive_idle")) + "</span>";
+            if (failed) derive += " " + badge(t("derive_failed", { n: failed }), "bad");
+          }
+          return (
+            '<a class="dlo-station' + mod + '" href="' + esc(st.viewerUrl || "/collection") + '">' +
+            '<div class="dlo-station__top"><span class="dlo-station__name">' + esc(stationName(st)) + "</span>" +
+            badge(String(st.scope || "").toUpperCase()) + "</div>" +
+            '<div class="dlo-station__id">' + esc(st.id) + "</div>" +
+            '<dl class="dlo-station__rows">' +
+            "<dt>" + esc(t("row_link")) + "</dt><dd>" + link + "</dd>" +
+            "<dt>" + esc(t("row_capture")) + "</dt><dd>" + cap + "</dd>" +
+            "<dt>" + esc(t("row_derive")) + "</dt><dd>" + derive + "</dd>" +
+            "</dl>" +
+            '<span class="dlo-station__go">' + esc(t("open_station")) + "</span>" +
+            "</a>"
+          );
+        })
+        .join("");
+    }
+
+    function renderLegend() {
+      document.getElementById("dlo-legend").innerHTML = STAGES.filter(function (st) {
+        return st !== "rebuilding" && st !== "all_removed";
+      })
+        .map(function (st) {
+          return '<span><i class="dlo-stage--' + st + '"></i>' + esc(t("stage_" + st)) + "</span>";
+        })
+        .join("");
     }
 
     function renderCollections(qc, error) {
-      var cols = [
-        { key: "col_collection" },
-        { key: "col_packages", num: true },
-        { key: "col_not_started", num: true },
-        { key: "col_in_review", num: true },
-        { key: "col_delivered", num: true },
-        { key: "col_episodes" },
-      ];
       var el = document.getElementById("dlo-collections");
       if (error) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        el.innerHTML = '<div class="dlo-error">' + esc(t("load_failed", { error: error.message })) + "</div>";
         return;
       }
       var rows = qc.filter(function (row) {
         return row.overview && (row.overview.packages || []).length;
       });
       if (!rows.length) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_collections"));
+        el.innerHTML = '<div class="dlo-empty">' + esc(t("empty_collections")) + "</div>";
         return;
       }
-      el.innerHTML =
-        head(cols) +
-        "<tbody>" +
-        rows
-          .map(function (row) {
-            var ov = row.overview;
-            var sc = ov.stage_counts || {};
-            var tot = ov.totals || {};
-            var pct = tot.episodes ? Math.round((100 * (tot.reviewed || 0)) / tot.episodes) : 0;
-            return (
-              "<tr>" +
-              '<td><a href="/qc/overview?collection=' + encodeURIComponent(row.collection.id) + '">' +
-              esc(row.collection.title || row.collection.id) + "</a></td>" +
-              '<td class="num">' + num((ov.packages || []).length) + "</td>" +
-              '<td class="num">' + num(sc.not_started) + "</td>" +
-              '<td class="num">' + num((sc.in_review || 0) + (sc.suspicious || 0)) + "</td>" +
-              '<td class="num">' + num(sc.delivered) + "</td>" +
-              '<td><span class="dlo-bar"><span style="width:' + pct + '%"></span></span>' +
-              '<span class="dlo-muted">' + num(tot.reviewed) + " / " + num(tot.episodes) + "</span></td>" +
-              "</tr>"
-            );
+      el.innerHTML = rows
+        .map(function (row) {
+          var ov = row.overview;
+          var sc = ov.stage_counts || {};
+          var tot = ov.totals || {};
+          var total = (ov.packages || []).length;
+          var segs = STAGES.filter(function (st) {
+            return sc[st];
           })
-          .join("") +
-        "</tbody>";
+            .map(function (st) {
+              var label = t("stage_" + st) + " " + sc[st];
+              return (
+                '<a class="dlo-stage--' + st + '" style="flex:' + sc[st] + ' 0 0" href="' + esc(qcStageUrl(row.collection.id, st)) +
+                '" title="' + esc(label) + '" aria-label="' + esc(label) + '"></a>'
+              );
+            })
+            .join("");
+          return (
+            '<div class="dlo-coll">' +
+            '<a class="dlo-coll__name" href="' + esc(qcStageUrl(row.collection.id)) + '">' + esc(row.collection.title || row.collection.id) + "</a>" +
+            '<span class="dlo-coll__meta">' + esc(t("coll_meta", { pkgs: num(total), reviewed: num(tot.reviewed), total: num(tot.episodes) })) + "</span>" +
+            '<div class="dlo-stack">' + segs + "</div>" +
+            "</div>"
+          );
+        })
+        .join("");
     }
 
     function renderDeliveries(qc, error) {
-      var cols = [
-        { key: "col_package" },
-        { key: "col_kept", num: true },
-        { key: "col_acceptance" },
-        { key: "col_time" },
-      ];
+      var cols = [{ key: "col_package" }, { key: "col_kept", num: true }, { key: "col_acceptance" }, { key: "col_time" }];
+      var headHtml =
+        "<thead><tr>" +
+        cols
+          .map(function (c) {
+            return "<th" + (c.num ? ' class="num"' : "") + ">" + esc(t(c.key)) + "</th>";
+          })
+          .join("") +
+        "</tr></thead>";
       var el = document.getElementById("dlo-deliveries");
       if (error) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-error", t("load_failed", { error: error.message }));
+        el.innerHTML = headHtml + '<tbody><tr><td colspan="4" class="dlo-error">' + esc(t("load_failed", { error: error.message })) + "</td></tr></tbody>";
         return;
       }
       var items = [];
@@ -594,24 +846,22 @@ below is static and bottomjs fills it from the existing station and QC APIs.
       });
       items = items.slice(0, 8);
       if (!items.length) {
-        el.innerHTML = head(cols) + message(cols.length, "dlo-empty", t("empty_deliveries"));
+        el.innerHTML = headHtml + '<tbody><tr><td colspan="4" class="dlo-empty">' + esc(t("empty_deliveries")) + "</td></tr></tbody>";
         return;
       }
       el.innerHTML =
-        head(cols) +
+        headHtml +
         "<tbody>" +
         items
           .map(function (item) {
             var p = item.pkg;
             var d = p.delivery;
-            var params = new URLSearchParams({ collection: item.collection.id, package: p.id });
-            if (p.local_path) params.set("local_path", p.local_path);
             var acc = d.acceptance;
             var accHtml = acc ? badge(acc.ok ? t("acc_ok") : t("acc_bad"), acc.ok ? "ok" : "bad") : badge(t("acc_none"));
             if (d.state && d.state !== "current") accHtml += " " + badge(t("stale"), "warn");
             return (
               "<tr>" +
-              '<td><a href="/qc/?' + esc(params.toString()) + '">' + esc(p.id) + "</a>" +
+              '<td><a href="' + esc(qcPackageUrl(item.collection.id, p)) + '">' + esc(p.id) + "</a>" +
               ' <span class="dlo-muted">' + esc(item.collection.title || item.collection.id) + "</span></td>" +
               '<td class="num">' + num(d.kept_episodes) + "</td>" +
               "<td>" + accHtml + "</td>" +
@@ -628,20 +878,25 @@ below is static and bottomjs fills it from the existing station and QC APIs.
     var root = null;
     var timer = null;
 
+    function settle(promise) {
+      return promise.then(
+        function (v) {
+          return { ok: v };
+        },
+        function (e) {
+          return { err: e };
+        },
+      );
+    }
+
     function refresh() {
       if (!root || !document.body.contains(root)) return stop();
-      var stationsP = loadStations().then(
-        function (v) { return { ok: v }; },
-        function (e) { return { err: e }; },
-      );
-      var qcP = loadQc().then(
-        function (v) { return { ok: v }; },
-        function (e) { return { err: e }; },
-      );
-      return Promise.all([stationsP, qcP]).then(function (res) {
+      return Promise.all([settle(loadStations()), settle(loadQc())]).then(function (res) {
         if (!document.body.contains(root)) return;
         var st = res[0], qc = res[1];
-        renderTiles(st.ok || null, qc.ok || null);
+        var s = summarize(st.ok, qc.ok);
+        renderTiles(st.ok || null, qc.ok || null, s);
+        renderAlerts(st.ok || null, qc.ok || null, s);
         renderStations(st.ok || [], st.err);
         renderCollections(qc.ok || [], qc.err);
         renderDeliveries(qc.ok || [], qc.err);
@@ -661,7 +916,7 @@ below is static and bottomjs fills it from the existing station and QC APIs.
       root.querySelectorAll("[data-dlo-t]").forEach(function (node) {
         node.textContent = t(node.getAttribute("data-dlo-t"));
       });
-      document.title = t("title") + " · Datalab";
+      renderLegend();
       refresh();
       stop();
       timer = setInterval(function () {

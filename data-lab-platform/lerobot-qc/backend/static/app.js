@@ -1270,6 +1270,7 @@ function localizeRebuildProgress(progress) {
   if (text === "recomputing stats") return t("qc_rebuild_recomputing_stats");
   if (text === "resuming after restart") return t("qc_rebuild_resuming");
   if (text === "verifying") return t("qc_rebuild_verifying");
+  if (text === "waiting for a free rebuild slot") return t("qc_rebuild_waiting_slot");
   return text;
 }
 

@@ -188,7 +188,13 @@
   function deliveryCell(row) {
     const delivery = row.delivery || {};
     if (row.rebuild_job) {
-      return el("span", { class: "ls-ov-badge is-info", text: t("ov_delivery_rebuilding", { progress: row.rebuild_job.progress || "" }) });
+      const waiting = row.rebuild_job.progress === "waiting for a free rebuild slot";
+      return el("span", {
+        class: "ls-ov-badge is-info",
+        text: waiting
+          ? t("ov_delivery_waiting_slot")
+          : t("ov_delivery_rebuilding", { progress: row.rebuild_job.progress || "" }),
+      });
     }
     const name = String(delivery.output_root || "").split("/").pop();
     const badge = el("span", {

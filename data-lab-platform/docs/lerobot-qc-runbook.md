@@ -55,6 +55,7 @@ curl -fsS http://10.10.10.34:8080/qc/ -o /dev/null && echo up
 | `LEROBOT_QC_REBUILD_MODE` | `minimal` | `minimal`（选择性重编码，可续跑）或 `legacy` |
 | `LEROBOT_QC_RESUME_REBUILDS` | `1` | `0` 时重启后不续跑中断的重建 |
 | `LEROBOT_QC_MAX_RESUME_ATTEMPTS` | `3` | 同一任务最多续跑次数，超过即标记失败 |
+| `LEROBOT_QC_MAX_CONCURRENT_REBUILDS` | `1` | 同时运行的重建数上限，超出的任务显示“排队中”，空出名额后自动开始 |
 | `LEROBOT_QC_ACCEPTANCE` | `1` | `0` 时重建后跳过自动验收 |
 | `LEROBOT_QC_ACCEPTANCE_DECODE_TIMEOUT` | `3600` | 验收时单个视频文件解码超时秒数 |
 

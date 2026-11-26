@@ -177,3 +177,55 @@ def test_normalize_episode_tasks_mixed_types_write_parquet() -> None:
     ]
     table = pa.Table.from_pandas(pd.DataFrame(rows), preserve_index=False)
     assert table.num_rows == 2
+
+
+def test_rebuilds_beyond_the_limit_wait_for_a_free_slot(tmp_path: Path, monkeypatch) -> None:
+    import threading
+
+    monkeypatch.setattr(rebuild_service, "_rebuild_slots", threading.BoundedSemaphore(1))
+    gates = {"a": threading.Event(), "b": threading.Event()}
+    running: list[str] = []
+
+    def _fake_rebuild(*, job_id: str, **_kwargs) -> dict:
+        running.append(job_id)
+        assert gates[job_id].wait(timeout=10)
+        return {"kept_episodes": 1}
+
+    stores, threads = {}, {}
+    with patch.object(rebuild_service, "rebuild_delivery_dataset", side_effect=_fake_rebuild):
+        for job_id in ("a", "b"):
+            root = tmp_path / f"ds_{job_id}"
+            root.mkdir()
+            state = MagicMock()
+            state.dataset_root = root
+            store = QcStore.open(root, tmp_path / "sidecar")
+            store.register_rebuild_job({"job_id": job_id, "status": "queued"})
+            stores[job_id] = store
+            threads[job_id] = rebuild_service._launch_worker(
+                state=state, store=store, job_id=job_id, output_root=tmp_path / f"out_{job_id}",
+                batch_id="b", mode="minimal", resume=False,
+            )
+            if job_id == "a":
+                for _ in range(100):
+                    if running:
+                        break
+                    threading.Event().wait(0.02)
+
+        queued = stores["b"].get_rebuild_job("b")
+        assert running == ["a"]
+        assert queued["status"] == "queued"
+        assert queued["progress"] == rebuild_service.WAITING_FOR_SLOT
+        assert "started_at" not in queued  # the QC snapshot is taken only once the job runs
+
+        gates["a"].set()
+        threads["a"].join(timeout=10)
+        for _ in range(100):
+            if running == ["a", "b"]:
+                break
+            threading.Event().wait(0.02)
+        assert running == ["a", "b"]
+        assert stores["b"].get_rebuild_job("b")["status"] == "running"
+        assert stores["a"].get_rebuild_job("a")["started_at"] <= stores["b"].get_rebuild_job("b")["started_at"]
+        gates["b"].set()
+        threads["b"].join(timeout=10)
+    assert [stores[j].get_rebuild_job(j)["status"] for j in ("a", "b")] == ["completed", "completed"]

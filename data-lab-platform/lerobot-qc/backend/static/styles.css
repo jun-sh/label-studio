@@ -60,6 +60,7 @@ body {
  */
 :root {
   --dl-header-h: 48px;
+  --dl-menu-active-bg: #f0efeb;
   --dl-header-bg: rgb(253 253 252);
   --dl-header-border: rgb(225 222 213);
   --dl-header-text: rgb(38 37 34);
@@ -72,7 +73,8 @@ body {
 .dl-header {
   position: sticky;
   top: 0;
-  z-index: 50;
+  /* Above the open menu (z-index 60) so its dim overlay leaves the header bright, as in Datalab. */
+  z-index: 70;
   display: flex;
   height: var(--dl-header-h);
   background: var(--dl-header-bg);
@@ -221,7 +223,14 @@ body {
   mask-repeat: no-repeat;
 }
 
-.dl-menu__item:hover .dl-menu__icon {
+.dl-menu__item.is-active {
+  background: var(--dl-menu-active-bg);
+  color: var(--dl-header-text);
+  font-weight: 500;
+}
+
+.dl-menu__item:hover .dl-menu__icon,
+.dl-menu__item.is-active .dl-menu__icon {
   opacity: 1;
 }
 
@@ -229,6 +238,7 @@ body {
 .dl-menu__icon--layers2 { -webkit-mask-image: url("icons/layers2.svg"); mask-image: url("icons/layers2.svg"); }
 .dl-menu__icon--upload { -webkit-mask-image: url("icons/upload.svg"); mask-image: url("icons/upload.svg"); }
 .dl-menu__icon--edit { -webkit-mask-image: url("icons/edit.svg"); mask-image: url("icons/edit.svg"); }
+.dl-menu__icon--clipboard-check { -webkit-mask-image: url("icons/clipboard-check.svg"); mask-image: url("icons/clipboard-check.svg"); }
 .dl-menu__icon--people { -webkit-mask-image: url("icons/people.svg"); mask-image: url("icons/people.svg"); }
 
 .dl-header__logo {

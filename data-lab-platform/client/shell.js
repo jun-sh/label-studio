@@ -40,7 +40,7 @@
     return !isCollectionChromePage();
   }
 
-  var SHELL_VERSION = "31";
+  var SHELL_VERSION = "32";
 
   if (shouldLockParentTheme()) {
     lockLightTheme();
@@ -63,6 +63,7 @@
   var MENU_IDS = {
     data: "datalab-menu-data",
     collection: "datalab-menu-collection",
+    qc: "datalab-menu-qc",
   };
 
   /** Inline SVG (Humansignal-style, currentColor) */
@@ -73,19 +74,23 @@
     collection:
       '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
       '<path d="M12 4V14.6667M12 4L16.4444 8.44444M12 4L7.55556 8.44444M20 14.6667V18.2222C20 18.6937 19.8127 19.1459 19.4793 19.4793C19.1459 19.8127 18.6937 20 18.2222 20H5.77778C5.30628 20 4.8541 19.8127 4.5207 19.4793C4.1873 19.1459 4 18.6937 4 18.2222V14.6667" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    qc:
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+      '<path d="M15.5 4.8H17.25C17.7141 4.8 18.1592 4.98964 18.4874 5.32721C18.8156 5.66477 19 6.12261 19 6.6V19.2C19 19.6774 18.8156 20.1352 18.4874 20.4728C18.1592 20.8104 17.7141 21 17.25 21H6.75C6.28587 21 5.84075 20.8104 5.51256 20.4728C5.18437 20.1352 5 19.6774 5 19.2V6.6C5 6.12261 5.18437 5.66477 5.51256 5.32721C5.84075 4.98964 6.28587 4.8 6.75 4.8H8.5M9.375 13.8L11.125 15.6L14.625 12M9.375 3H14.625C15.1082 3 15.5 3.40294 15.5 3.9V5.7C15.5 6.19706 15.1082 6.6 14.625 6.6H9.375C8.89175 6.6 8.5 6.19706 8.5 5.7V3.9C8.5 3.40294 8.89175 3 9.375 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     annotation:
       '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
       '<path d="M15 16L11 20H21V16H15ZM12.06 7.19L3 16.25V20H6.75L15.81 10.94L12.06 7.19ZM5.92 18H5V17.08L12.06 10L13 10.94L5.92 18ZM18.71 8.04C19.1 7.65 19.1 7 18.71 6.63L16.37 4.29C16.17 4.09 15.92 4 15.66 4C15.41 4 15.15 4.1 14.96 4.29L13.13 6.12L16.88 9.87L18.71 8.04Z" fill="currentColor"/></svg>',
   };
 
   var MENU_LABELS = {
-    en: { data: "Data", collection: "Collection", projects: "Annotation" },
-    zh: { data: "数据", collection: "采集", projects: "标注" },
+    en: { data: "Data", collection: "Collection", qc: "Data QC", projects: "Annotation" },
+    zh: { data: "数据", collection: "采集", qc: "质检", projects: "标注" },
   };
 
   var INJECT_SPECS = [
     { key: "data", href: "/data", match: /^\/data(?:\/[^/]+)?$/ },
     { key: "collection", href: "/collection", match: /^\/collection/ },
+    { key: "qc", href: "/qc/", match: /^\/qc(?:\/|$)/ },
   ];
 
   var state = {
@@ -644,22 +649,27 @@
 
   function isInjectOrderCorrect(menu) {
     var projectsLi = findNativeLi(menu, { href: "/projects" });
-    var dataLi = document.getElementById(MENU_IDS.data);
-    var collLi = document.getElementById(MENU_IDS.collection);
-    if (!projectsLi || !dataLi || !collLi) return false;
-    return projectsLi.previousElementSibling === collLi && collLi.previousElementSibling === dataLi;
+    if (!projectsLi) return false;
+    var next = projectsLi;
+    for (var k = INJECT_SPECS.length - 1; k >= 0; k--) {
+      var li = document.getElementById(MENU_IDS[INJECT_SPECS[k].key]);
+      if (!li || next.previousElementSibling !== li) return false;
+      next = li;
+    }
+    return true;
   }
 
-  /** Insert 数据、采集 before 标注; do not relocate React menu rows. */
+  /** Insert 数据、采集、质检 before 标注; do not relocate React menu rows. */
   function placeInjectedItems(menu) {
     var anchor = findNativeLi(menu, { href: "/projects" }) || findNativeLi(menu, { href: "/organization" });
     if (!anchor) return;
 
-    var dataLi = ensureInjectedItem(menu, INJECT_SPECS[0]);
-    var collLi = ensureInjectedItem(menu, INJECT_SPECS[1]);
-
-    menu.insertBefore(collLi, anchor);
-    menu.insertBefore(dataLi, collLi);
+    var next = anchor;
+    for (var k = INJECT_SPECS.length - 1; k >= 0; k--) {
+      var li = ensureInjectedItem(menu, INJECT_SPECS[k]);
+      menu.insertBefore(li, next);
+      next = li;
+    }
   }
 
   function syncMenuActiveState(menu) {
@@ -693,8 +703,9 @@
     if (!menu) return false;
 
     purgeNativeDataItems(menu);
-    ensureInjectedItem(menu, INJECT_SPECS[0]);
-    ensureInjectedItem(menu, INJECT_SPECS[1]);
+    INJECT_SPECS.forEach(function (spec) {
+      ensureInjectedItem(menu, spec);
+    });
     if (!isInjectOrderCorrect(menu)) {
       placeInjectedItems(menu);
     }
@@ -738,7 +749,7 @@
         for (n = 0; n < nodes.length; n++) {
           var node = nodes[n];
           if (node.nodeType !== 1) continue;
-          if (node.id === MENU_IDS.data || node.id === MENU_IDS.collection) continue;
+          if (node.id === MENU_IDS.data || node.id === MENU_IDS.collection || node.id === MENU_IDS.qc) continue;
           if (node.getAttribute && node.getAttribute("data-datalab-managed") === "1") continue;
           onlyOurNodes = false;
           break;

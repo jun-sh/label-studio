@@ -30,16 +30,17 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       <div class="dlo-eyebrow"><span class="dlo-pulse"></span><span data-dlo-t="eyebrow"></span></div>
       <h1 class="dlo-hero__title" id="dlo-headline"><span class="dlo-skel dlo-skel--headline"></span></h1>
       <p class="dlo-hero__sub" id="dlo-sub"></p>
-      <div class="dlo-cta">
+    </div>
+    <div class="dlo-cta">
         <a class="dlo-btn dlo-btn--primary" href="/collection"><span data-dlo-t="cta_collection"></span><span class="dlo-btn__icon" data-dlo-icon="arrow"></span></a>
         <a class="dlo-btn" href="/qc/" data-dlo-t="cta_qc"></a>
         <a class="dlo-btn dlo-btn--ghost" href="/data" data-dlo-t="cta_data"></a>
-      </div>
     </div>
-    <dl class="dlo-stats" id="dlo-stats">
-      <div class="dlo-skel dlo-skel--stat"></div><div class="dlo-skel dlo-skel--stat"></div>
-      <div class="dlo-skel dlo-skel--stat"></div><div class="dlo-skel dlo-skel--stat"></div>
-    </dl>
+  </section>
+
+  <section class="dlo-stats" id="dlo-stats" aria-live="polite">
+    <div class="dlo-skel dlo-skel--stat"></div><div class="dlo-skel dlo-skel--stat"></div>
+    <div class="dlo-skel dlo-skel--stat"></div><div class="dlo-skel dlo-skel--stat"></div>
   </section>
 
   <section class="dlo-block">
@@ -162,11 +163,11 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   .dlo-hero {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 32px;
     align-items: end;
-    padding: 32px;
-    margin-bottom: 36px;
+    padding: 32px 36px;
+    margin-bottom: 16px;
     border: 1px solid var(--line);
     border-radius: 16px;
     background:
@@ -204,7 +205,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   }
   .dlo-hero__title em { font-style: normal; color: var(--accent); }
   .dlo-hero__sub { margin-top: 10px; color: var(--muted); font-size: 15px; }
-  .dlo-cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+  .dlo-cta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
   .dlo-btn {
     display: inline-flex;
     align-items: center;
@@ -225,22 +226,31 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   .dlo-btn--ghost:hover { background: rgba(255, 255, 255, 0.6); border-color: transparent; color: var(--ink); }
   .dlo-btn__icon svg, .dlo-link__icon svg { width: 16px; height: 16px; }
 
+  /* Four separate, equal stat cards under the hero. */
   .dlo-stats {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    border: 1px solid rgba(18, 17, 13, 0.07);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.72);
-    backdrop-filter: blur(6px);
-    overflow: hidden;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 36px;
   }
-  .dlo-stat { padding: 16px 18px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .dlo-stat:nth-child(2n) { border-right: 0; }
-  .dlo-stat:nth-last-child(-n + 2) { border-bottom: 0; }
-  .dlo-stat dt { color: var(--muted); font-size: 12.5px; }
-  .dlo-stat dd { margin-top: 4px; font-size: 28px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
-  .dlo-stat dd small { color: var(--faint); font-size: 15px; font-weight: 400; }
-  .dlo-stat__note { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; letter-spacing: 0; }
+  .dlo-stat {
+    display: flex;
+    gap: 14px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+  }
+  .dlo-stat .dlo-chip { flex: 0 0 36px; width: 36px; height: 36px; border-radius: 10px; }
+  .dlo-stat .dlo-chip svg { width: 19px; height: 19px; }
+  .dlo-stat--warn .dlo-chip { background: var(--warn-soft); color: var(--warn); }
+  .dlo-stat--bad .dlo-chip { background: var(--bad-soft); color: var(--bad); }
+  .dlo-stat__body { min-width: 0; }
+  .dlo-stat__label { color: var(--muted); font-size: 13px; }
+  .dlo-stat__value { margin-top: 4px; font-size: 28px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
+  .dlo-stat__value small { color: var(--faint); font-size: 15px; font-weight: 400; }
+  .dlo-stat__note { margin-top: 6px; color: var(--muted); font-size: 12px; }
   .dlo-stat--warn .dlo-stat__note { color: var(--warn); }
   .dlo-stat--bad .dlo-stat__note { color: var(--bad); }
 
@@ -536,7 +546,7 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
     animation: dlo-shimmer 1.4s ease infinite;
   }
   .dlo-skel--headline { width: 70%; height: 40px; }
-  .dlo-skel--stat { height: 92px; border-radius: 0; }
+  .dlo-skel--stat { height: 116px; border-radius: 12px; }
   .dlo-skel--stage { height: 214px; border-radius: 12px; }
   .dlo-skel--plot { height: 100%; }
   .dlo-skel--row { height: 20px; margin: 14px 16px; border-radius: 6px; }
@@ -552,6 +562,8 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
 
   @media (max-width: 1100px) {
     .dlo-hero { grid-template-columns: minmax(0, 1fr); }
+    .dlo-cta { justify-content: flex-start; }
+    .dlo-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dlo-split { grid-template-columns: minmax(0, 1fr); gap: 36px; }
   }
   @media (max-width: 860px) {
@@ -560,10 +572,11 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
   }
   @media (max-width: 560px) {
     .dlo { padding: 16px 16px 40px; }
-    .dlo-hero { padding: 22px 18px; margin-bottom: 28px; gap: 22px; }
+    .dlo-hero { padding: 22px 18px; gap: 22px; }
     .dlo-hero__title { font-size: 26px; }
-    .dlo-stat { padding: 14px; }
-    .dlo-stat dd { font-size: 24px; }
+    .dlo-stats { gap: 10px; margin-bottom: 28px; }
+    .dlo-stat { flex-direction: column; gap: 10px; padding: 14px; }
+    .dlo-stat__value { font-size: 24px; }
     .dlo-block__head { flex-direction: column; align-items: flex-start; }
     .dlo-block { margin-bottom: 28px; }
   }
@@ -590,6 +603,8 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       arrow: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg>",
       chevron: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m9 18 6-6-6-6\"/></svg>",
       derive: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"8\" height=\"8\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M7 11v4a2 2 0 0 0 2 2h4\"/><rect width=\"8\" height=\"8\" x=\"13\" y=\"13\" rx=\"2\"/></svg>",
+      radio: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M16.247 7.761a6 6 0 0 1 0 8.478\"/><path d=\"M19.075 4.933a10 10 0 0 1 0 14.134\"/><path d=\"M4.925 19.067a10 10 0 0 1 0-14.134\"/><path d=\"M7.753 16.239a6 6 0 0 1 0-8.478\"/><circle cx=\"12\" cy=\"12\" r=\"2\"/></svg>",
+      live: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2\"/></svg>",
     };
 
     var TEXT = ZH
@@ -987,12 +1002,15 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
 
     // ---- hero -------------------------------------------------------------------------
 
-    function stat(label, value, note, state) {
+    function stat(icon, label, value, note, state) {
       return (
         '<div class="dlo-stat' + (state ? " dlo-stat--" + state : "") + '">' +
-        "<dt>" + esc(label) + "</dt>" +
-        '<dd class="num">' + value + '<span class="dlo-stat__note">' + esc(note) + "</span></dd>" +
-        "</div>"
+        '<span class="dlo-chip">' + ICONS[icon] + "</span>" +
+        '<div class="dlo-stat__body">' +
+        '<div class="dlo-stat__label">' + esc(label) + "</div>" +
+        '<div class="dlo-stat__value num">' + value + "</div>" +
+        '<div class="dlo-stat__note">' + esc(note) + "</div>" +
+        "</div></div>"
       );
     }
 
@@ -1008,12 +1026,14 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       if (stations === undefined) html += SKEL_STAT + SKEL_STAT;
       else {
         html += stat(
+          "radio",
           t("st_online"),
           num(s.online) + " <small>/ " + num(s.total) + "</small>",
           s.offline.length ? t("st_offline", { n: s.offline.length }) : t("st_all_online"),
           s.offline.length ? "warn" : "",
         );
         html += stat(
+          "live",
           t("st_live"),
           num(s.live),
           s.live ? t("st_live_some", { n: s.live }) : t("st_live_none"),
@@ -1023,12 +1043,14 @@ and bottomjs fills it from the existing station and QC APIs. Icons: Lucide (see 
       if (qc === undefined || stations === undefined) html += SKEL_STAT + SKEL_STAT;
       else {
         html += stat(
+          "derive",
           t("st_queue"),
           num(s.queued + s.active),
           s.failed ? t("st_queue_failed", { n: s.failed }) : s.active ? t("st_queue_busy", { n: s.active }) : t("st_queue_ok"),
           s.failed ? "bad" : "",
         );
         html += stat(
+          "ok",
           t("st_accept"),
           num(s.ok) + " <small>/ " + num(s.checked) + "</small>",
           s.accFailed.length ? t("st_accept_bad", { n: s.accFailed.length }) : t("st_accept_note", { delivered: num(s.delivered) }),

@@ -8,7 +8,12 @@
     en: {
       qc_crumb_root: 'Data QC',
       qc_page_title: 'Data QC · Datalab',
-      datalab_home: 'Datalab home',
+      datalab_menu: 'Main menu',
+      menu_home: 'Home',
+      menu_data: 'Data',
+      menu_collection: 'Collection',
+      menu_projects: 'Annotation',
+      menu_organization: 'Organization',
       status_disconnected: 'Disconnected',
       status_loaded: 'Loaded {name}',
       status_saved: 'Saved ✓',
@@ -279,7 +284,12 @@
     'zh-Hans': {
       qc_crumb_root: '数据质检',
       qc_page_title: '数据质检 · Datalab',
-      datalab_home: 'Datalab 首页',
+      datalab_menu: '主菜单',
+      menu_home: '首页',
+      menu_data: '数据',
+      menu_collection: '采集',
+      menu_projects: '标注',
+      menu_organization: '组织',
       status_disconnected: '未连接',
       status_loaded: '已加载 {name}',
       status_saved: '已保存 ✓',
@@ -597,8 +607,11 @@
 
   /* Datalab header shared by the review and overview pages. */
   function applyHeaderText() {
-    const home = document.getElementById('dlHomeLink');
-    if (home) home.setAttribute('aria-label', t('datalab_home'));
+    const menuTrigger = document.getElementById('dlMenuTrigger');
+    if (menuTrigger) menuTrigger.setAttribute('aria-label', t('datalab_menu'));
+    document.querySelectorAll('[data-dl-i18n]').forEach((node) => {
+      node.textContent = t(node.dataset.dlI18n);
+    });
     const ovRoot = document.getElementById('ovCrumbRoot');
     if (ovRoot) ovRoot.textContent = t('qc_crumb_root');
   }

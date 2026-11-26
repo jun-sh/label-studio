@@ -8,9 +8,10 @@
 </head>
 <body>
   <header class="dl-header">
-    <a class="dl-header__trigger" id="dlHomeLink" href="/" aria-label="Datalab">
+    <button type="button" class="dl-header__trigger" id="dlMenuTrigger" aria-label="Main menu" aria-expanded="false">
       <img class="dl-header__logo" src="/static/datalab-logo.svg" alt="Datalab" width="142" height="22" />
-    </a>
+      <span class="dl-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>
+    </button>
     <div class="dl-header__context">
       <nav class="dl-breadcrumbs" aria-label="Breadcrumb">
         <ol class="dl-breadcrumbs__list">
@@ -185,6 +186,7 @@
   </div>
 
   <script src="/static/i18n.js"></script>
+  <script src="/static/datalab-menu.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

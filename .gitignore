@@ -129,3 +129,6 @@ ml-services/sam2/.git/
 ml-services/label-studio-ml-backend/.git/
 ml-services/**/cache.db
 **/.git.deploy-backup/
+
+# Secrets: real values live only on the server (see *.example files)
+/data-lab-platform/lerobot-studio/config/collection-station-tokens.json

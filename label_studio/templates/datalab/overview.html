@@ -4,7 +4,7 @@ Data Lab home: pipeline overview (collection -> QC -> delivery).
 Layout follows the Foxglove Data Platform / Encord homes: summary tiles, an attention list,
 devices (stations) as cards, then progress and recent activity. The React shell renders
 #main-content for this non-SPA route, so the markup below is static and bottomjs fills it
-from the existing station and QC APIs. Icons are unmodified copies from web/libs/ui icons.
+from the existing station and QC APIs. Icons are Lucide (see ICONS).
 {% endcomment %}
 
 {% block divider %}{% endblock %}
@@ -22,10 +22,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
 {% block content %}
 <div class="dlo" id="dl-overview-root">
   <header class="dlo-head">
-    <div>
-      <h1 class="dlo-title" data-dlo-t="title"></h1>
-      <p class="dlo-sub" data-dlo-t="subtitle"></p>
-    </div>
+    <p class="dlo-sub" data-dlo-t="subtitle"></p>
     <span class="dlo-updated" id="dlo-updated"></span>
   </header>
 
@@ -96,15 +93,15 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
   .dlo a { text-decoration: none; }
   .dlo svg { display: block; }
 
+  /* No page title: the header breadcrumb already names the page. */
   .dlo-head {
     display: flex;
-    align-items: flex-end;
+    align-items: baseline;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
-  .dlo-title { margin: 0; font-size: 28px; font-weight: 500; line-height: 1.2; }
-  .dlo-sub { margin: 4px 0 0; color: var(--dlo-subtle); }
+  .dlo-sub { margin: 0; color: var(--dlo-subtle); }
   .dlo-updated { color: var(--dlo-subtlest); font-size: 12px; white-space: nowrap; }
 
   /* ---- tiles ---- */
@@ -324,7 +321,6 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
   @media (max-width: 560px) {
     .dlo { padding: 16px 16px 32px; }
     .dlo-head { flex-direction: column; align-items: flex-start; gap: 4px; }
-    .dlo-title { font-size: 24px; }
     .dlo-tiles { grid-template-columns: minmax(0, 1fr); }
     .dlo-stations { grid-template-columns: minmax(0, 1fr); }
   }
@@ -340,19 +336,20 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
     var ZH = "{% if user.ui_locale|slice:':2' == 'zh' %}1{% endif %}" === "1";
     var REFRESH_MS = 30000;
 
-    // Unmodified copies of web/libs/ui/src/assets/icons/*.svg (currentColor).
+    // Lucide icons (ISC, lucide-react 1.78 already used by lerobot-viewer-host), rendered
+    // from their icon data with Lucide's default attributes: video, workflow, scan-search,
+    // package-check, triangle-exclamation-point (triangle-alert), circle-check-big.
     var ICONS = {
-      upload: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 4V14.6667M12 4L16.4444 8.44444M12 4L7.55556 8.44444M20 14.6667V18.2222C20 18.6937 19.8127 19.1459 19.4793 19.4793C19.1459 19.8127 18.6937 20 18.2222 20H5.77778C5.30628 20 4.8541 19.8127 4.5207 19.4793C4.1873 19.1459 4 18.6937 4 18.2222V14.6667\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
-      layers2: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M19.195 14.0549L20.5441 14.8148C20.6825 14.8932 20.7976 15.0069 20.8777 15.1444C20.9578 15.2818 21 15.4381 21 15.5971C21 15.7562 20.9578 15.9124 20.8777 16.0499C20.7976 16.1873 20.6825 16.3011 20.5441 16.3795L12.8994 20.759C12.6259 20.9169 12.3157 21 12 21C11.6843 21 11.3741 20.9169 11.1006 20.759L3.45594 16.3795C3.31752 16.3011 3.2024 16.1873 3.1223 16.0499C3.0422 15.9124 3 15.7562 3 15.5971C3 15.4381 3.0422 15.2818 3.1223 15.1444C3.2024 15.0069 3.31752 14.8932 3.45594 14.8148L4.805 14.0549M12.8994 13.5648C12.6259 13.7226 12.3157 13.8057 12 13.8057C11.6843 13.8057 11.3741 13.7226 11.1006 13.5648L3.45594 9.18524C3.31752 9.1068 3.2024 8.99306 3.1223 8.85561C3.0422 8.71817 3 8.56194 3 8.40286C3 8.24378 3.0422 8.08755 3.1223 7.9501C3.2024 7.81266 3.31752 7.69892 3.45594 7.62048L11.1006 3.24096C11.3741 3.08311 11.6843 3 12 3C12.3157 3 12.6259 3.08311 12.8994 3.24096L20.5441 7.62048C20.6825 7.69892 20.7976 7.81266 20.8777 7.9501C20.9578 8.08755 21 8.24378 21 8.40286C21 8.56194 20.9578 8.71817 20.8777 8.85561C20.7976 8.99306 20.6825 9.1068 20.5441 9.18524L12.8994 13.5648Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
-      clipboardCheck: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M15.5 4.8H17.25C17.7141 4.8 18.1592 4.98964 18.4874 5.32721C18.8156 5.66477 19 6.12261 19 6.6V19.2C19 19.6774 18.8156 20.1352 18.4874 20.4728C18.1592 20.8104 17.7141 21 17.25 21H6.75C6.28587 21 5.84075 20.8104 5.51256 20.4728C5.18437 20.1352 5 19.6774 5 19.2V6.6C5 6.12261 5.18437 5.66477 5.51256 5.32721C5.84075 4.98964 6.28587 4.8 6.75 4.8H8.5M9.375 13.8L11.125 15.6L14.625 12M9.375 3H14.625C15.1082 3 15.5 3.40294 15.5 3.9V5.7C15.5 6.19706 15.1082 6.6 14.625 6.6H9.375C8.89175 6.6 8.5 6.19706 8.5 5.7V3.9C8.5 3.40294 8.89175 3 9.375 3Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
-      send: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path fill-rule=\"evenodd\" clip-rule=\"evenodd\" d=\"M2.79139 17.8737C2.51159 18.9929 3.62961 19.9512 4.69287 19.5035L20.7627 12.7373C21.4154 12.4625 21.4154 11.5375 20.7627 11.2627L4.69287 4.49647C3.62961 4.04878 2.51159 5.00709 2.79139 6.12631L3.92514 10.6613L12.8499 12L3.92514 13.3387L2.79139 17.8737Z\" fill=\"currentColor\"/></svg>",
-      warningCircle: "<svg width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 8.4V12M12 15.6H12.009M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
-      checkCircle: "<svg width=\"80\" height=\"80\" viewBox=\"0 0 80 80\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><rect x=\"1\" y=\"1\" width=\"78\" height=\"78\" rx=\"39\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M27.5 38.5L37 48L53 32\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"square\"/></svg>",
+      stations: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5\"/><rect x=\"2\" y=\"6\" width=\"14\" height=\"12\" rx=\"2\"/></svg>",
+      derive: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"8\" height=\"8\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M7 11v4a2 2 0 0 0 2 2h4\"/><rect width=\"8\" height=\"8\" x=\"13\" y=\"13\" rx=\"2\"/></svg>",
+      qc: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"m16 16-1.9-1.9\"/></svg>",
+      delivered: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 22V12\"/><path d=\"m16 17 2 2 4-4\"/><path d=\"M21 11.127V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.729l7 4a2 2 0 0 0 2 .001l1.32-.753\"/><path d=\"M3.29 7 12 12l8.71-5\"/><path d=\"m7.5 4.27 8.997 5.148\"/></svg>",
+      alert: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4\"/><path d=\"M12 17h.01\"/></svg>",
+      ok: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21.801 10A10 10 0 1 1 17 3.335\"/><path d=\"m9 11 3 3L22 4\"/></svg>",
     };
 
     var TEXT = ZH
       ? {
-          title: "概览",
           subtitle: "采集 → 质检 → 交付，产线当前状态",
           updated: "更新于 {time}",
           stations: "采集工位",
@@ -416,7 +413,6 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
           load_failed: "加载失败：{error}",
         }
       : {
-          title: "Overview",
           subtitle: "Collection → QC → delivery, current pipeline state",
           updated: "Updated {time}",
           stations: "Collection stations",
@@ -630,7 +626,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
       var html = "";
       if (stations) {
         html += tile({
-          icon: "upload",
+          icon: "stations",
           href: "/collection",
           label: t("tile_stations"),
           value: num(s.online) + " <small>/ " + num(stations.length) + "</small>",
@@ -638,7 +634,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
           state: s.offline.length && !s.live ? "warn" : "",
         });
         html += tile({
-          icon: "layers2",
+          icon: "derive",
           href: "/collection",
           label: t("tile_derive"),
           value: num(s.queued + s.active),
@@ -648,7 +644,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
       }
       if (qc) {
         html += tile({
-          icon: "clipboardCheck",
+          icon: "qc",
           href: "/qc/",
           label: t("tile_pending"),
           value: num(s.waiting),
@@ -656,7 +652,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
           state: s.sus ? "warn" : "",
         });
         html += tile({
-          icon: "send",
+          icon: "delivered",
           href: "/qc/",
           label: t("tile_delivered"),
           value: num(s.delivered),
@@ -699,7 +695,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
         return;
       }
       if (!items.length) {
-        el.innerHTML = '<div class="dlo-allgood">' + ICONS.checkCircle + "<span>" + esc(t("all_good")) + "</span></div>";
+        el.innerHTML = '<div class="dlo-allgood">' + ICONS.ok + "<span>" + esc(t("all_good")) + "</span></div>";
         return;
       }
       items.sort(function (a, b) {
@@ -712,7 +708,7 @@ from the existing station and QC APIs. Icons are unmodified copies from web/libs
           .map(function (it) {
             return (
               '<a class="dlo-alert dlo-alert--' + it.kind + '" href="' + esc(it.href) + '">' +
-              '<span class="dlo-alert__icon">' + ICONS.warningCircle + "</span>" +
+              '<span class="dlo-alert__icon">' + ICONS.alert + "</span>" +
               '<span class="dlo-alert__text">' + esc(it.text) + "</span>" +
               '<span class="dlo-alert__go">' + esc(t("go")) + " →</span></a>"
             );

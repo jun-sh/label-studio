@@ -1,0 +1,15 @@
+# Throwaway Postgres for SQL practice. Isolated from the platform DB (datalab-db-1).
+services:
+  pg:
+    image: postgres:16-alpine
+    container_name: sql-practice-pg
+    environment:
+      POSTGRES_USER: practice
+      POSTGRES_PASSWORD: practice
+      POSTGRES_DB: robodata
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - sql-practice-pgdata:/var/lib/postgresql/data
+volumes:
+  sql-practice-pgdata:

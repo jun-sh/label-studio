@@ -7,7 +7,12 @@ import { describe, it } from "node:test";
 import { readJsonl } from "./io.mjs";
 import { appendJournalEvent, rebuildManifestFromDisk, readJournal } from "./manifest.mjs";
 import { episodeChunkPaths } from "./unit-paths.mjs";
-import { appendH264AnnexBStream, buildUnitFrameMap, sliceAnnexBFromFirstIdr } from "./unit.mjs";
+import {
+  appendH264AnnexBStream,
+  buildUnitFrameMap,
+  skippableTailSegmentError,
+  sliceAnnexBFromFirstIdr,
+} from "./unit.mjs";
 import { chunkSortedIndices } from "./encode-pool.mjs";
 import { hardlinkOrCopy, publishUnitEpisode } from "./publisher.mjs";
 import { deriveLayout } from "./station-context.mjs";
@@ -156,5 +161,17 @@ describe("P2 layout flag", () => {
     assert.equal(deriveLayout(), "legacy");
     if (prev === undefined) delete process.env.DERIVE_LAYOUT;
     else process.env.DERIVE_LAYOUT = prev;
+  });
+});
+
+describe("skippableTailSegmentError", () => {
+  const noIdr = new Error("h264_trim_no_idr:camera=front_right");
+  it("skips a no-IDR error only on the last of several segments", () => {
+    assert.equal(skippableTailSegmentError(noIdr, 1, 2), "h264_trim_no_idr:camera=front_right");
+    assert.equal(skippableTailSegmentError(noIdr, 0, 2), null);
+    assert.equal(skippableTailSegmentError(noIdr, 0, 1), null);
+  });
+  it("does not skip unrelated errors", () => {
+    assert.equal(skippableTailSegmentError(new Error("h264 camera parity failed"), 2, 3), null);
   });
 });

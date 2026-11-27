@@ -2,7 +2,7 @@
 # Build the host and swap it into the lerobot container's /srv/lerobot/next (no restart needed).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-C="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
+C="${LEROBOT_CONTAINER:-datalab-lerobot-1}"
 
 cd "$HERE"
 rm -rf dist

@@ -59,7 +59,7 @@ Compare `baseline/collection-ego-002-replay-*.jpg` (old) with `baseline/next-1.7
 
 | # | Area | Old | New 1.7.0 | Path to parity |
 |---|---|---|---|---|
-| 1 | Sidebar header | `任务` / `分析` tabs, `75 Episodes`, 多选 · 编辑 · 导入 | `75 个片段`, 多选 · 编辑 | **Done** (`src/Sidebar.jsx`); buttons are visual only, not wired yet |
+| 1 | Sidebar header | `任务` / `分析` tabs, `75 Episodes`, 多选 · 编辑 · 导入 | `75 个片段`, 多选 · 编辑 | **Done** (`src/Sidebar.jsx`); 多选 / 编辑 / 导入 wired (row 10) |
 | 2 | Episode list | Collapsible date groups (11月4日 / 11月8日), time of day in label | Flat list, `# n`, no time | **Done**; search works, 高级 filter not wired |
 | 3 | Analysis tab | Totals, duration stats, task distribution | Not in sidebar | **Done** |
 
@@ -74,7 +74,8 @@ slate palette restored in `src/theme.css` for both the sidebar and the viewer.
 | 7 | Autoplay | Plays on open, "自动播放已开启" notice | Paused | `extensions` notice + selection API |
 | 8 | Episode 0 | Plays | `Column observation.imu_accel not found` | Data defect: fix `file-000`/`file-040` schema |
 | 9 | Hand keypoints, depth preview | Video overlays | None | Derived rendition + `extensions` toggle |
-| 10 | Live mode, delete, import | Overlays | None | `extensions` toolbar + shell |
+| 10 | Episode delete, import, live episode list | Overlays | Host sidebar | **Done** (`src/station.js`): 编辑 = per-row delete, 多选 = bulk delete, same API and confirm copy as `overlay-episode-delete.js`; 导入 opens the platform modal (`/_datalab/import-core.js`); `files.json` polled every 10 s, list reloads when `meta/` changes |
+| 11 | Live mode (recording pill + JPG preview) | `overlay-collection-mode.js` | None | Host panel over the viewer while the station records; not started |
 
 ## Still to do before replacing the old engine
 

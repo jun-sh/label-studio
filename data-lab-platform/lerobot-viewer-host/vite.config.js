@@ -10,5 +10,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // Pre-bundling rewrites import.meta.url and breaks the package's Parquet worker URLs (dev only).
   optimizeDeps: { exclude: ['@ioai/lerobot-studio'] },
-  server: { proxy: { '/lerobot/api': { target: PLATFORM, changeOrigin: true } } },
+  server: {
+    proxy: {
+      '/lerobot/api': { target: PLATFORM, changeOrigin: true },
+      // Platform import modal (client/import-core.js), loaded on demand by src/station.js.
+      '/_datalab': { target: PLATFORM, changeOrigin: true },
+    },
+  },
 });

@@ -14,10 +14,14 @@ import {
   List,
   Pencil,
   Search,
+  Download,
   SlidersHorizontal,
+  Square,
   SquareCheckBig,
+  Trash2,
 } from 'lucide-react';
 import { formatClock } from './episodes.js';
+import { confirmDeleteText, deleteEpisodes, openImport } from './station.js';
 
 const cx = (...c) => c.filter(Boolean).join(' ');
 const COLLAPSE_KEY = 'datalab-episode-date-collapsed';
@@ -36,7 +40,7 @@ function readCollapsed() {
   }
 }
 
-export function Sidebar({ model, selected, onSelect }) {
+export function Sidebar({ model, selected, onSelect, stationId, onChanged }) {
   const [tab, setTab] = useState('episodes');
   return (
     <div className="flex h-full w-64 min-w-0 shrink-0 flex-col overflow-x-hidden overflow-hidden border-r border-border">
@@ -69,7 +73,13 @@ export function Sidebar({ model, selected, onSelect }) {
         </div>
         <div role="tabpanel" className="mt-0 min-h-0 min-w-0 flex-1 overflow-hidden">
           {tab === 'episodes' ? (
-            <EpisodesPanel model={model} selected={selected} onSelect={onSelect} />
+            <EpisodesPanel
+              model={model}
+              selected={selected}
+              onSelect={onSelect}
+              stationId={stationId}
+              onChanged={onChanged}
+            />
           ) : (
             <AnalysisPanel model={model} />
           )}
@@ -79,8 +89,47 @@ export function Sidebar({ model, selected, onSelect }) {
   );
 }
 
-function EpisodesPanel({ model, selected, onSelect }) {
+function EpisodesPanel({ model, selected, onSelect, stationId, onChanged }) {
   const [query, setQuery] = useState('');
+  // Edit = per-row delete buttons; multi = checkboxes + bulk delete. Station sources only.
+  const [mode, setMode] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  const canEdit = Boolean(stationId);
+
+  const showToast = (text, kind = 'ok') => {
+    setToast({ text, kind });
+    setTimeout(() => setToast((t) => (t && t.text === text ? null : t)), 3200);
+  };
+  const switchMode = (next) => {
+    setMode((cur) => (cur === next ? null : next));
+    setPicked(new Set());
+  };
+  const togglePick = (idx) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  const runDelete = async (indices) => {
+    if (busy || !indices.length || !window.confirm(confirmDeleteText(indices))) return;
+    setBusy(true);
+    const list = indices.map((n) => `#${n}`).join(', ');
+    try {
+      await deleteEpisodes(stationId, indices);
+      setPicked(new Set());
+      showToast(`删除成功：${list} 已移除，正在更新列表…`);
+      await onChanged();
+    } catch (e) {
+      showToast(`删除失败：${e.message}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const startImport = () =>
+    openImport(stationId, () => onChanged()).catch(() => showToast('导入组件加载失败', 'error'));
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const fps = model.info.fps;
   const q = query.trim().toLowerCase();
@@ -118,16 +167,30 @@ function EpisodesPanel({ model, selected, onSelect }) {
             <span>Episodes</span>
           </h2>
           <div className="flex min-w-0 flex-wrap items-center gap-1 overflow-hidden">
-            <button type="button" className={TOOL_BTN} title="多选">
+            <button
+              type="button"
+              className={cx(TOOL_BTN, mode === 'multi' && 'text-foreground')}
+              title="多选"
+              aria-pressed={mode === 'multi'}
+              disabled={!canEdit}
+              onClick={() => switchMode('multi')}
+            >
               <SquareCheckBig className="h-3 w-3 shrink-0" />
-              多选
+              {mode === 'multi' ? '取消' : '多选'}
             </button>
-            <button type="button" className={TOOL_BTN} title="编辑 Episodes">
+            <button
+              type="button"
+              className={cx(TOOL_BTN, mode === 'edit' && 'text-foreground')}
+              title="编辑 Episodes"
+              aria-pressed={mode === 'edit'}
+              disabled={!canEdit}
+              onClick={() => switchMode('edit')}
+            >
               <Pencil className="mr-1 h-3 w-3 shrink-0" />
-              编辑
+              {mode === 'edit' ? '完成' : '编辑'}
             </button>
-            <button type="button" className={TOOL_BTN} title="编辑 Episodes">
-              <Pencil className="mr-1 h-3 w-3 shrink-0" />
+            <button type="button" className={TOOL_BTN} title="导入" disabled={!canEdit} onClick={startImport}>
+              <Download className="mr-1 h-3 w-3 shrink-0" />
               导入
             </button>
           </div>
@@ -175,18 +238,41 @@ function EpisodesPanel({ model, selected, onSelect }) {
                     row={r}
                     fps={fps}
                     active={r.episodeIndex === selected}
-                    onSelect={onSelect}
+                    onSelect={mode === 'multi' ? togglePick : onSelect}
+                    mode={mode}
+                    picked={picked.has(r.episodeIndex)}
+                    busy={busy}
+                    onDelete={() => runDelete([r.episodeIndex])}
                   />
                 ))}
             </div>
           );
         })}
       </div>
+      {mode === 'multi' && (
+        <div className="flex min-w-0 shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs">
+          <span className="text-muted-foreground">已选 {picked.size} 项</span>
+          <button
+            type="button"
+            className="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+            disabled={busy || picked.size === 0}
+            onClick={() => runDelete([...picked].sort((a, b) => a - b))}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            删除所选
+          </button>
+        </div>
+      )}
+      {toast && (
+        <div role="status" className="dl-toast" data-kind={toast.kind}>
+          {toast.text}
+        </div>
+      )}
     </div>
   );
 }
 
-function EpisodeRow({ row, fps, active, onSelect }) {
+function EpisodeRow({ row, fps, active, onSelect, mode, picked, busy, onDelete }) {
   const duration = formatClock(row.length, fps);
   return (
     <div
@@ -206,8 +292,14 @@ function EpisodeRow({ row, fps, active, onSelect }) {
         onKeyDown={(e) => {
           if (e.key === 'Enter') onSelect(row.episodeIndex);
         }}
-        className="flex w-full min-w-0 flex-1 flex-col overflow-hidden rounded-sm px-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
+        className="flex w-full min-w-0 flex-1 flex-row items-center gap-2 overflow-hidden rounded-sm px-3 py-2.5 text-left focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
       >
+        {mode === 'multi' &&
+          (picked ? (
+            <SquareCheckBig className="h-4 w-4 shrink-0 text-primary" aria-label="已选" />
+          ) : (
+            <Square className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="未选" />
+          ))}
         {active && <div className="absolute top-2 bottom-2 left-0 w-1 rounded-r-full bg-primary" />}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="mb-1 flex min-w-0 items-center justify-between gap-2 overflow-hidden">
@@ -241,6 +333,21 @@ function EpisodeRow({ row, fps, active, onSelect }) {
             {row.label}
           </span>
         </div>
+        {mode === 'edit' && (
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+            title={`删除 Episode ${row.episodeIndex}`}
+            aria-label={`删除 Episode ${row.episodeIndex}`}
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );

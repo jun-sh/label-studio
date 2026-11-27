@@ -18,6 +18,7 @@
   --dl-accent-foreground: 222.2 47.4% 11.2%;
   --dl-border: 214.3 31.8% 91.4%;
   --dl-ring: 222.2 84% 4.9%;
+  --dl-destructive: 0 84.2% 60.2%;
   --dl-font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
     'Segoe UI Symbol', 'Noto Color Emoji';
   --dl-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
@@ -37,6 +38,7 @@
     --dl-accent-foreground: 210 40% 98%;
     --dl-border: 217.2 32.6% 17.5%;
     --dl-ring: 212.7 26.8% 83.9%;
+    --dl-destructive: 0 62.8% 30.6%;
   }
 }
 
@@ -51,6 +53,7 @@
   --color-accent-foreground: hsl(var(--dl-accent-foreground));
   --color-border: hsl(var(--dl-border));
   --color-ring: hsl(var(--dl-ring));
+  --color-destructive: hsl(var(--dl-destructive));
   --font-sans: var(--dl-font-sans);
   --font-mono: var(--dl-font-mono);
   --radius-md: calc(0.625rem - 2px);
@@ -167,4 +170,26 @@ body {
   .dl-date-chevron {
     transition: none;
   }
+}
+
+/* Delete / import result, same placement as the old overlay toast. */
+.dl-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 50;
+  max-width: min(92vw, 420px);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  background: hsl(var(--dl-foreground));
+  color: hsl(var(--dl-background));
+}
+.dl-toast[data-kind='error'] {
+  background: hsl(var(--dl-destructive));
+  color: #fff;
 }

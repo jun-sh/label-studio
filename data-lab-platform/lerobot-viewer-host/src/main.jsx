@@ -1,7 +1,7 @@
 // Thin host around the unmodified @ioai/lerobot-studio package (MIT).
 // Customization only through its public props (showSidebar, dataSource, episodeScope, themeTokens)
 // plus the host's own sidebar; no bundle patching, no DOM injection.
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LeRobotViewer, createRemoteManifestDataSource } from '@ioai/lerobot-studio';
 import '@ioai/lerobot-studio/style.css';
@@ -40,27 +40,63 @@ async function fetchFiles(root) {
   }));
 }
 
+// Changes when episodes are added or removed (meta/ is rewritten on every ingest or delete).
+const LIVE_POLL_MS = 10000;
+const filesSignature = (files) =>
+  files
+    .filter((f) => f.logicalPath.startsWith('meta/'))
+    .map((f) => `${f.logicalPath}:${f.sizeBytes}`)
+    .sort()
+    .join('|');
+
 function App() {
   const params = new URLSearchParams(window.location.search);
+  const [src] = useState(() => parseSource(params.get('url')));
   const [state, setState] = useState({ files: null, model: null, error: null, root: null });
   const [selected, setSelected] = useState(null);
+  const sigRef = useRef('');
 
-  useEffect(() => {
-    const src = parseSource(params.get('url'));
-    if (!src) return setState((s) => ({ ...s, error: 'Missing or unsupported ?url=' }));
-    const root = sourceRoot(src);
-    (async () => {
-      const files = await fetchFiles(root);
+  const load = useCallback(
+    async (files) => {
+      const root = sourceRoot(src);
+      files ||= await fetchFiles(root);
       const model = await loadSidebarModel({
         files,
         infoUrl: `${root}/meta/info.json`,
         datesUrl: src.kind === 'stream' ? `${root}/episode-dates.json` : null,
       });
+      sigRef.current = filesSignature(files);
       setState({ files, model, error: null, root });
-      // Old viewer opened the lowest episode_index first.
-      setSelected(Math.min(...model.episodes.map((e) => e.episodeIndex)));
-    })().catch((e) => setState((s) => ({ ...s, error: String(e.message || e) })));
-  }, []);
+      // Old viewer opened the lowest episode_index first; keep the selection while it still exists.
+      const indices = model.episodes.map((e) => e.episodeIndex);
+      setSelected((cur) => (cur != null && indices.includes(cur) ? cur : indices.length ? Math.min(...indices) : null));
+    },
+    [src],
+  );
+
+  useEffect(() => {
+    if (!src) return setState((s) => ({ ...s, error: 'Missing or unsupported ?url=' }));
+    load().catch((e) => setState((s) => ({ ...s, error: String(e.message || e) })));
+  }, [src, load]);
+
+  // Live list: a station keeps recording while the page is open (old engine: stream-live-poll.js).
+  useEffect(() => {
+    if (src?.kind !== 'stream' || !state.root) return undefined;
+    let busy = false;
+    const timer = setInterval(async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        const files = await fetchFiles(state.root);
+        if (filesSignature(files) !== sigRef.current) await load(files);
+      } catch {
+        /* transient: next tick retries */
+      } finally {
+        busy = false;
+      }
+    }, LIVE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [src, state.root, load]);
 
   // One episode per data source: the host sidebar drives selection through the public episodeScope option.
   const dataSource = useMemo(() => {
@@ -72,11 +108,18 @@ function App() {
   }, [state.files, state.root, selected]);
 
   if (state.error) return <pre style={{ padding: 16 }}>{state.error}</pre>;
-  if (!state.model || !dataSource) return <div className="dl-root h-full" />;
+  if (!state.model) return <div className="dl-root h-full" />;
   return (
     <div className="dl-root flex h-full min-h-0 w-full overflow-hidden bg-background">
-      <Sidebar model={state.model} selected={selected} onSelect={setSelected} />
+      <Sidebar
+        model={state.model}
+        selected={selected}
+        onSelect={setSelected}
+        stationId={src.kind === 'stream' ? src.id : null}
+        onChanged={() => load()}
+      />
       <div className="h-full min-w-0 flex-1">
+        {dataSource && (
         <LeRobotViewer
           dataSource={dataSource}
           showSidebar={false}
@@ -85,6 +128,7 @@ function App() {
           themeTokens={{ radius: '0.625rem', fontFamily: FONT_SANS }}
           onFatalError={(e) => console.error('viewer fatal', e)}
         />
+        )}
       </div>
     </div>
   );

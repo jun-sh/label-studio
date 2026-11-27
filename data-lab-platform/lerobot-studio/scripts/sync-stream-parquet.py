@@ -1178,7 +1178,7 @@ def sync_repaired_meta_to_viewer_samples(corpus_root: Path, *, viewer_sync: bool
         print("viewer bundled sync skipped (--no-viewer-sync)")
         return
 
-    container = os.environ.get("LEROBOT_CONTAINER", "data-lab-lerobot-1")
+    container = os.environ.get("LEROBOT_CONTAINER", "datalab-lerobot-1")
     try:
         listed = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}"],

@@ -33,8 +33,8 @@ To deploy later merges:
 ```bash
 cd /media/user01/7234c6f9-112e-4b82-925d-7b86065a5f4a/workspace/data-lab
 git pull --ff-only origin main            # checkout has unrelated local edits; stop on conflict
-docker restart data-lab-lerobot-qc-1      # Python changed (check no .qc_rebuild_job.json in delivery dirs first)
-docker restart data-lab-app-1             # overview.html template
+docker restart datalab-qc-1      # Python changed (check no .qc_rebuild_job.json in delivery dirs first)
+docker restart datalab-app-1             # overview.html template
 ```
 
 ## Open items / next steps
@@ -60,4 +60,4 @@ Gotchas:
 - The working tree carries about 38 unrelated uncommitted edits (nginx, mux-exec, deploy scripts).
   Never commit them with QC work.
 - Delivery and sidecar files are root-owned. Delete them via
-  `docker exec data-lab-lerobot-qc-1 rm -rf /data/qc-delivery/<name>`.
+  `docker exec datalab-qc-1 rm -rf /data/qc-delivery/<name>`.

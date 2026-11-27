@@ -8,7 +8,7 @@ source "${SCRIPT_DIR}/ego-production-defaults.sh"
 
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 STATION="${STATION_ID:-ego-001}"
-INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+INGEST="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 HOST="${LABEL_STUDIO_HOST:-http://127.0.0.1:8080}"
 HOST="${HOST%/}"
 TOKEN="${STATION_UPLOAD_TOKEN:-dl-upload-ego-001-v1}"

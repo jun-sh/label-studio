@@ -68,7 +68,7 @@ $COMPOSE build embodied-annotate
 $COMPOSE up -d embodied-annotate nginx
 
 # 日志
-docker logs -f data-lab-embodied-annotate-1
+docker logs -f datalab-annotate-1
 
 # 健康
 curl -fsS http://10.10.10.34:8080/lerobot-annotate/ >/dev/null && echo OK
@@ -202,7 +202,7 @@ bash ml-services/sam-backendctl.sh stop
 $COMPOSE down
 
 # 仅停某个容器（示例）
-docker stop data-lab-app-1
+docker stop datalab-app-1
 ```
 
 ---
@@ -222,10 +222,10 @@ $COMPOSE down
 $COMPOSE up -d
 
 # --- 仅重启后端（改 Python 后未生效时）---
-docker restart data-lab-app-1
+docker restart datalab-app-1
 
 # --- 仅重启前端静态资源所在 nginx ---
-docker restart data-lab-nginx-1
+docker restart datalab-gateway-1
 ```
 
 ---
@@ -245,14 +245,14 @@ bash data-lab-platform/deploy-label-studio-frontend-hot.sh
 # docker exec -it data-lab-node-1 bash  # 若有 node 容器
 # yarn nx run labelstudio:build:production --skip-nx-cache
 
-docker cp web/dist/. data-lab-nginx-1:/label-studio/web/dist/
-docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
+docker cp web/dist/. datalab-gateway-1:/label-studio/web/dist/
+docker cp web/dist/. datalab-app-1:/label-studio/web/dist/
 ```
 
 | 改动类型 | 部署方式 |
 |----------|----------|
 | `web/` React 前端（具身 embed 等） | **热部署脚本** 或 `docker cp` |
-| `embodied-annotate/backend` Python/静态 | 卷挂载已 ro，**`docker restart data-lab-embodied-annotate-1`** |
+| `embodied-annotate/backend` Python/静态 | 卷挂载已 ro，**`docker restart datalab-annotate-1`** |
 | 镜像 / Python 依赖大改 | 才用 `deploy-label-studio-image.sh`（易失败，非日常） |
 
 ---
@@ -285,6 +285,6 @@ docker cp web/dist/. data-lab-app-1:/label-studio/web/dist/
 
 ## 已知注意点
 
-- **stream-ingest** 可能显示 `unhealthy`，与 SAM / 标注主链路无关；需单独查 ingest 日志：`docker logs data-lab-stream-ingest-1 --tail 50`
+- **stream-ingest** 可能显示 `unhealthy`，与 SAM / 标注主链路无关；需单独查 ingest 日志：`docker logs datalab-stream-ingest-1 --tail 50`
 - SAM 首次启动需 GPU（`DEVICE=cuda`）及 checkpoint：`ml-services/sam2/checkpoints/sam2.1_hiera_large.pt`
 - ML Backend 在 Label Studio 中注册的 URL 需为宿主机可达地址（当前为 `http://10.10.10.34:9090`）

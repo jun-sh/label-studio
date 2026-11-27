@@ -233,7 +233,7 @@ def load_derive_status_from_disk(station_id: str, root: Path) -> dict[str, Any] 
         "failedSegments": _read_mux_failure(stream),
         "source": "disk",
         "logsHint": {
-            "command": f"docker logs data-lab-stream-ingest-1 --since 2h 2>&1 | grep '{station_id}'",
+            "command": f"docker logs datalab-stream-ingest-1 --since 2h 2>&1 | grep '{station_id}'",
         },
         "sla": {
             "UPLOADED": "Raw tar.zst verified on disk",

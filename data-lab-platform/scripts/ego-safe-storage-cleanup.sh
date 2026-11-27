@@ -32,7 +32,7 @@ QC_DELIVERY="${QC_ROOT}/delivery"
 QC_REGISTRY="${QC_ROOT}/collections.registry.json"
 QC_TRIM_CACHE="${QC_ROOT}/cache/trimmed_videos"
 QC_BACKUP_DIR="${QC_ROOT}/backups"
-QC_DOCKER_CONTAINER="${LEROBOT_QC_DOCKER:-data-lab-lerobot-qc-1}"
+QC_DOCKER_CONTAINER="${LEROBOT_QC_DOCKER:-datalab-qc-1}"
 
 STATION=""
 APPLY=0

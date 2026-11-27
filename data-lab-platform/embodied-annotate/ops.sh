@@ -13,7 +13,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${SCRIPT_DIR}/../scripts/datalab-compose.sh"
 SERVICE=embodied-annotate
-CONTAINER=data-lab-embodied-annotate-1
+CONTAINER=datalab-annotate-1
 HOST="${LABEL_STUDIO_HOST:-http://127.0.0.1:8080}"
 
 usage() {

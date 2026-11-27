@@ -13,7 +13,7 @@ SAMPLES_DIR="${ROOT}/data-storage/samples"
 
 # Match stream-ingest image — bind-mounted stream-ingest.mjs requires derive/ from the same build.
 if [ -z "${LEROBOT_IMAGE:-}" ]; then
-  LEROBOT_IMAGE="$(docker inspect data-lab-stream-ingest-1 --format '{{.Config.Image}}' 2>/dev/null || true)"
+  LEROBOT_IMAGE="$(docker inspect datalab-stream-ingest-1 --format '{{.Config.Image}}' 2>/dev/null || true)"
 fi
 export LEROBOT_IMAGE="${LEROBOT_IMAGE:-data-lab-lerobot-studio:${EGO_PRODUCTION_TAG}}"
 echo "==> LEROBOT_IMAGE=${LEROBOT_IMAGE}"

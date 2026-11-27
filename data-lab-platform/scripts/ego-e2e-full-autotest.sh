@@ -62,7 +62,7 @@ rm -rf "${DATALAB}/data-storage/corpus/egodome" "${DATALAB}/data-storage/corpus/
 rm -rf "${DATALAB}/data-storage/samples/egodome"*
 rm -rf "${DATALAB}/data-storage/ego-delivery/${STATION}"
 mkdir -p "${DATALAB}/data-storage/ego-delivery/${STATION}"
-docker exec data-lab-lerobot-1 sh -c 'rm -rf /srv/bundled/egodome /srv/bundled/egodome.zip /srv/bundled/covers/egodome.webp /srv/bundled/overlays/egodome_* 2>/dev/null || true' 2>/dev/null || true
+docker exec datalab-lerobot-1 sh -c 'rm -rf /srv/bundled/egodome /srv/bundled/egodome.zip /srv/bundled/covers/egodome.webp /srv/bundled/overlays/egodome_* 2>/dev/null || true' 2>/dev/null || true
 docker start data-lab-derive-worker-1 2>/dev/null || true
 log "34 raw=$(find "$STREAM/raw/segments" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) (expect 0)"
 

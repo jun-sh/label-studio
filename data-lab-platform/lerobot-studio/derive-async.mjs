@@ -664,8 +664,8 @@ export function getDeriveStatusSummary(stationId, { sessionId: sessionFilter } =
     pipelineRunning,
     failedSegments,
     logsHint: {
-      command: `docker logs data-lab-stream-ingest-1 --since 2h 2>&1 | grep '${stationId}'`,
-      deriveFailFilter: `docker logs data-lab-stream-ingest-1 --since 2h 2>&1 | grep -E 'derive_segment_fail|derive_pipeline_fail|mux_fail|mux_retry'`,
+      command: `docker logs datalab-stream-ingest-1 --since 2h 2>&1 | grep '${stationId}'`,
+      deriveFailFilter: `docker logs datalab-stream-ingest-1 --since 2h 2>&1 | grep -E 'derive_segment_fail|derive_pipeline_fail|mux_fail|mux_retry'`,
     },
     sla: {
       UPLOADED: "Raw tar.zst verified on disk; derive in progress until READY",

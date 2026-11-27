@@ -33,7 +33,7 @@ COMPOSE_OVERLAY="${EGO_COMPOSE_OVERLAY}"
 # shellcheck source=ego-reset-34-wipe-stream.sh
 source "${SCRIPT_DIR}/ego-reset-34-wipe-stream.sh"
 
-LEROBOT_CONTAINER="${LEROBOT_CONTAINER:-data-lab-lerobot-1}"
+LEROBOT_CONTAINER="${LEROBOT_CONTAINER:-datalab-lerobot-1}"
 
 ego_reset_wipe_bundled_viewer() {
   local slug="$1"

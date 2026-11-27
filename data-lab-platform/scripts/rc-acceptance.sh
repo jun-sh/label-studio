@@ -2,7 +2,7 @@
 # JPEG/staging-mux acceptance: healthz + ingest topology + derive-async off.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CID="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+CID="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 STATION="${RC_STATION:-ego-001}"
 STREAM_ROOT="${STREAM_ROOT:-${ROOT}/data-storage/stream}"
 

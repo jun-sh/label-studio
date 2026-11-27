@@ -23,7 +23,7 @@ root_disk_pct() {
 }
 
 stream_status_json() {
-  timeout 20 docker exec data-lab-lerobot-1 wget -qO- --timeout=18 \
+  timeout 20 docker exec datalab-lerobot-1 wget -qO- --timeout=18 \
     "http://127.0.0.1:7860/lerobot/api/stream/${STATION_ID}/status" 2>/dev/null || echo "{}"
 }
 

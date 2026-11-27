@@ -3,7 +3,7 @@
 set -euo pipefail
 
 STATION="${STATION_ID:-ego-001}"
-INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+INGEST="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 
 log() { echo "[bootstrap-raw] $*"; }
 die() { echo "[bootstrap-raw] ERROR: $*" >&2; exit 1; }

@@ -21,19 +21,19 @@ echo "==> ego-release-check station=${STATION}"
 
 # --- P0-1 derive SSOT (34) ---
 if [[ "${EGO_RELEASE_SKIP_DOCKER:-0}" != "1" ]]; then
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'data-lab-stream-ingest-1'; then
-    if docker exec data-lab-stream-ingest-1 grep -q 'sliceAnnexBFromFirstIdr' /app/derive/unit.mjs 2>/dev/null; then
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'datalab-stream-ingest-1'; then
+    if docker exec datalab-stream-ingest-1 grep -q 'sliceAnnexBFromFirstIdr' /app/derive/unit.mjs 2>/dev/null; then
       ok "stream-ingest unit.mjs IDR concat"
     else
       die "stream-ingest missing sliceAnnexBFromFirstIdr — recreate stream-ingest with derive bind-mount"
     fi
-    if docker exec data-lab-stream-ingest-1 test -f /app/scripts/merge-station-imu.py 2>/dev/null; then
+    if docker exec datalab-stream-ingest-1 test -f /app/scripts/merge-station-imu.py 2>/dev/null; then
       ok "stream-ingest merge-station-imu.py"
     else
       die "stream-ingest missing merge-station-imu.py"
     fi
   else
-    die "data-lab-stream-ingest-1 not running"
+    die "datalab-stream-ingest-1 not running"
   fi
 else
   ok "docker checks skipped (EGO_RELEASE_SKIP_DOCKER=1)"

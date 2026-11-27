@@ -1,6 +1,6 @@
 # LeRobot QC 运行手册
 
-适用于当前部署形态（2026-11-25）：单机 docker-compose，服务 `lerobot-qc`，容器 `data-lab-lerobot-qc-1`。
+适用于当前部署形态（2026-11-25）：单机 docker-compose，服务 `lerobot-qc`，容器 `datalab-qc-1`。
 上线进度和待决事项见 [lerobot-qc-launch-checklist.md](lerobot-qc-launch-checklist.md)。
 
 ## 1. 组成与路径
@@ -27,7 +27,7 @@
 ```bash
 cd <仓库> && git status --short data-lab-platform/lerobot-qc   # 必须为空
 git pull --ff-only origin main
-docker restart data-lab-lerobot-qc-1     # 只改了 static/ 下的前端文件时可以不重启
+docker restart datalab-qc-1     # 只改了 static/ 下的前端文件时可以不重启
 curl -fsS http://10.10.10.34:8080/qc/ -o /dev/null && echo up
 ```
 
@@ -66,7 +66,7 @@ curl -fsS http://10.10.10.34:8080/qc/ -o /dev/null && echo up
 - 查看是否有任务在跑：
 
 ```bash
-docker exec data-lab-lerobot-qc-1 sh -c 'grep -l "\"status\": \"running\"" /data/qc-sidecar/*/qc_manifest.json'
+docker exec datalab-qc-1 sh -c 'grep -l "\"status\": \"running\"" /data/qc-sidecar/*/qc_manifest.json'
 ```
 
 - 自动验收结果在审阅页交付状态后、总览页交付列徽章上；未通过时鼠标悬停可看问题列表（最多 20 条）。验收耗时随包差异很大，实测每包 1.5–17 分钟（含深度的包更慢）。
@@ -81,9 +81,9 @@ docker exec data-lab-lerobot-qc-1 sh -c 'grep -l "\"status\": \"running\"" /data
 
 ```bash
 # sidecar 健康：路径失效、重复 sidecar（含被隐藏的审阅数）、空 sidecar、卡住的任务、输出已删除的任务
-docker exec -w /app/backend data-lab-lerobot-qc-1 python tools/qc_ops_report.py sidecars
+docker exec -w /app/backend datalab-qc-1 python tools/qc_ops_report.py sidecars
 # 对每个包最新的现存交付集跑验收，并列出没有任务引用的交付目录；有失败时退出码 1
-docker exec -w /app/backend data-lab-lerobot-qc-1 python tools/qc_ops_report.py deliveries [--package 681448]
+docker exec -w /app/backend datalab-qc-1 python tools/qc_ops_report.py deliveries [--package 681448]
 ```
 
 `deliveries` 全量跑较慢（每个包数分钟），建议后台运行。
@@ -92,7 +92,7 @@ docker exec -w /app/backend data-lab-lerobot-qc-1 python tools/qc_ops_report.py 
 
 | 现象 | 处理 |
 |---|---|
-| 页面 502/打不开 | `docker ps` 看容器状态；`docker logs --tail 100 data-lab-lerobot-qc-1`；`docker restart data-lab-lerobot-qc-1` |
+| 页面 502/打不开 | `docker ps` 看容器状态；`docker logs --tail 100 datalab-qc-1`；`docker restart datalab-qc-1` |
 | 重建失败，错误 “Service restarted …; gave up after 3 resume attempts” | 连续重启打断了任务；确认服务稳定后重新发起 |
 | 重建失败，“Output directory exists but is not owned by job” | 目标目录被别的任务或手工占用；核对后由负责人决定删除或改批次号 |
 | 打开包报找不到数据 | 外接盘未挂载或路径变化：`ls /media/user01/BookDuo_2`；必要时在存储设置里重新激活 |

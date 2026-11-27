@@ -25,7 +25,7 @@ fi
 
 PLATFORM="${ROOT}/data-lab-platform"
 DERIVE_STATUS="${PLATFORM}/scripts/ego-derive-status"
-INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 STATION="${STATION_ID:-ego-001}"
 
 usage() {

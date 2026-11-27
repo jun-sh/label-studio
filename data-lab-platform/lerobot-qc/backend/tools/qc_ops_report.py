@@ -3,8 +3,8 @@
 
 Run inside the QC container, where the paths stored in sidecars resolve:
 
-    docker exec -w /app/backend data-lab-lerobot-qc-1 python tools/qc_ops_report.py sidecars
-    docker exec -w /app/backend data-lab-lerobot-qc-1 python tools/qc_ops_report.py deliveries [--package 681448]
+    docker exec -w /app/backend datalab-qc-1 python tools/qc_ops_report.py sidecars
+    docker exec -w /app/backend datalab-qc-1 python tools/qc_ops_report.py deliveries [--package 681448]
 
 sidecars    health of the QC sidecars: dataset roots that no longer exist, several sidecars
             for one package (and reviews hidden in the ones the UI does not pick), empty

@@ -23,4 +23,4 @@ bash data-lab-platform/verify-data-page.sh || exit 1
 
 echo "    Open: ${LABEL_STUDIO_HOST}/data"
 echo "    Tail lerobot logs (Ctrl+C to stop tail)..."
-docker logs -f data-lab-lerobot-1
+docker logs -f datalab-lerobot-1

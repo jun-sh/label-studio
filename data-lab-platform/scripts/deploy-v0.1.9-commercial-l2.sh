@@ -38,7 +38,7 @@ printf 'manual\n' > "${ROOT}/data-lab-platform/.ego-derive-mode"
 docker stop data-lab-derive-worker-1 >/dev/null 2>&1 || true
 bash "${SCRIPT_DIR}/ego-mcap-bootstrap-34.sh"
 
-NGINX_CONTAINER="${NGINX_CONTAINER:-data-lab-nginx-1}"
+NGINX_CONTAINER="${NGINX_CONTAINER:-datalab-gateway-1}"
 if docker ps --format '{{.Names}}' | grep -qx "${NGINX_CONTAINER}"; then
   log "restart ${NGINX_CONTAINER} (refresh stream-ingest upstream)"
   docker restart "${NGINX_CONTAINER}" >/dev/null

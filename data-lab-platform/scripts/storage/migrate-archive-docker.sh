@@ -9,7 +9,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 STATION_ID="${STATION_ID:-ego-001}"
-CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+CONTAINER="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 COLD_IN_CONTAINER="${COLD_IN_CONTAINER:-/cold-archive}"
 MODE="${1:-enforce}"
 QUOTA_GB="${STREAM_QUOTA_GB:-20}"

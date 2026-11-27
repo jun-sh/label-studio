@@ -26,8 +26,8 @@ bash "${ROOT}/data-lab-platform/deploy-label-studio-frontend-hot.sh"
 
 log "4/4 health checks"
 curl -fsS --max-time 10 "${LABEL_STUDIO_HOST:-http://10.10.10.34:8080}/health/" >/dev/null
-docker exec data-lab-stream-ingest-1 wget -qO- http://127.0.0.1:7862/healthz >/dev/null
-docker exec data-lab-lerobot-1 wget -qO- http://127.0.0.1:7860/lerobot/ >/dev/null
+docker exec datalab-stream-ingest-1 wget -qO- http://127.0.0.1:7862/healthz >/dev/null
+docker exec datalab-lerobot-1 wget -qO- http://127.0.0.1:7860/lerobot/ >/dev/null
 bash "${ROOT}/data-lab-platform/verify-data-page.sh"
 
 log "Done — v0.1.7 deployed."

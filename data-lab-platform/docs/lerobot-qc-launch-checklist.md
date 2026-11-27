@@ -9,7 +9,7 @@
 
 ## 现状盘点摘要
 
-- 后端 FastAPI + 静态 JS，单个 uvicorn 进程，容器 `data-lab-lerobot-qc-1`；代码目录以只读方式绑定挂载自主检出目录。
+- 后端 FastAPI + 静态 JS，单个 uvicorn 进程，容器 `datalab-qc-1`；代码目录以只读方式绑定挂载自主检出目录。
 - 108 个后端测试（~11 s）；CI 由 PR #7 新增，此前所有 PR 均无检查。
 - 审阅数据：sidecar 53 份 manifest，约 12 MB，审计记录约 1.8 万条（reviewer-01、reviewer-02 为主，另有 anonymous / btn-test / verify-bot 等测试身份）。
 - 交付目录 24 GB，9 个交付集；重建任务历史 26 次完成、12 次失败，其中 15 次完成的交付目录已被手工删除。

@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=ego-production-defaults.sh
 source "${SCRIPT_DIR}/ego-production-defaults.sh"
 MODE_FILE="${ROOT}/data-lab-platform/.ego-derive-mode"
-INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+INGEST="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 WORKER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
 
 TAG="${LEROBOT_IMAGE_TAG}"
@@ -32,7 +32,7 @@ _compose_up() {
     files+=(-f "$extra_overlay")
   fi
   (cd "${ROOT}" && "${COMPOSE[@]}" "${files[@]}" up -d --force-recreate stream-ingest derive-worker lerobot)
-  local nginx_cid="${NGINX_CONTAINER:-data-lab-nginx-1}"
+  local nginx_cid="${NGINX_CONTAINER:-datalab-gateway-1}"
   if docker ps --format '{{.Names}}' | grep -q "^${nginx_cid}$"; then
     docker restart "${nginx_cid}" >/dev/null 2>&1 || true
     echo "nginx restarted (${nginx_cid})"

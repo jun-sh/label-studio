@@ -13,12 +13,12 @@ MAIN_JS="${BAKED_DIR}/apps/labelstudio/main.js"
 
 sync_baked_frontend() {
   mkdir -p "$BAKED_DIR"
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'data-lab-app-1'; then
-    if docker exec data-lab-app-1 test -f /label-studio/web/dist/apps/labelstudio/main.js \
-      && docker exec data-lab-app-1 grep -q 'embodied-annotate' /label-studio/web/dist/apps/labelstudio/main.js; then
-      echo "==> Syncing verified web/dist from data-lab-app-1 -> ${BAKED_DIR}/"
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'datalab-app-1'; then
+    if docker exec datalab-app-1 test -f /label-studio/web/dist/apps/labelstudio/main.js \
+      && docker exec datalab-app-1 grep -q 'embodied-annotate' /label-studio/web/dist/apps/labelstudio/main.js; then
+      echo "==> Syncing verified web/dist from datalab-app-1 -> ${BAKED_DIR}/"
       rm -rf "${BAKED_DIR:?}"/*
-      docker cp data-lab-app-1:/label-studio/web/dist/. "$BAKED_DIR/"
+      docker cp datalab-app-1:/label-studio/web/dist/. "$BAKED_DIR/"
       date -Iseconds > "${BAKED_DIR}/.datalab-frontend-baked"
       return 0
     fi

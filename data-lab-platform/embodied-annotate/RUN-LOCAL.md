@@ -68,7 +68,7 @@ Example collection manifest: `data-storage/embodied-annotate/datasets/limx_box_t
 ## Logs & health
 
 ```bash
-docker logs -f data-lab-embodied-annotate-1
+docker logs -f datalab-annotate-1
 curl -fsS http://10.10.10.34:8080/lerobot-annotate/ >/dev/null && echo OK
 ```
 

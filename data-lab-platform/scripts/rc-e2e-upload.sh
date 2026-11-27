@@ -3,7 +3,7 @@
 # Env: RC_STATION RC_SESSION RC_UPLOAD_LIMIT RC_CAPTURE_HOST RC_ASSERT_READY=1
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CID="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+CID="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 STATION="${RC_STATION:-ego-001}"
 SESSION="${RC_SESSION:-}"
 STREAM_ROOT="${STREAM_ROOT:-${ROOT}/data-storage/stream}"

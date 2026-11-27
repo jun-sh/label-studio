@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 STATION="${STATION_ID:-ego-001}"
-INGEST="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+INGEST="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 WORKER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
 HOST="${LABEL_STUDIO_HOST:-http://127.0.0.1:8080}"
 HOST="${HOST%/}"

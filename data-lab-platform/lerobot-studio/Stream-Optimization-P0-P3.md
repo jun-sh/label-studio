@@ -172,13 +172,13 @@ systemctl --user start/stop/restart ecs-record-oak-stream
 
 ```bash
 # 容器状态
-docker ps | grep data-lab-lerobot-1
+docker ps | grep datalab-lerobot-1
 
 # 平台日志
-docker logs -f data-lab-lerobot-1 2>&1 | grep stream-ingest
+docker logs -f datalab-lerobot-1 2>&1 | grep stream-ingest
 
 # 磁盘治理状态
-docker exec data-lab-lerobot-1 cat /srv/stream/ego-001/live/disk-housekeeping.json
+docker exec datalab-lerobot-1 cat /srv/stream/ego-001/live/disk-housekeeping.json
 
 # 流状态接口
 curl -s http://127.0.0.1:8080/lerobot/api/stream/ego-001/status | jq .
@@ -188,7 +188,7 @@ curl -s http://127.0.0.1:8080/lerobot/api/stream/ego-001/status | jq .
 
 1. 同步修改 34 配置：`collection-station-tokens.json` 或环境变量
 2. 更新 214 systemd 服务内 `STATION_UPLOAD_TOKEN`
-3. 重启双端服务：`data-lab-lerobot-1` + `ecs-record-oak-stream`
+3. 重启双端服务：`datalab-lerobot-1` + `ecs-record-oak-stream`
 
 ### 6.4 异常排查方法
 

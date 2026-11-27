@@ -96,7 +96,7 @@ docker-compose -f docker-compose.yml -f data-lab-platform/docker-compose.platfor
 首次启动 `lerobot` 会从上游下载可视化器静态资源（数分钟），可查看日志：
 
 ```bash
-docker logs -f data-lab-lerobot-1
+docker logs -f datalab-lerobot-1
 ```
 
 ### 3. 导入样例并同步配置（推荐一步完成）

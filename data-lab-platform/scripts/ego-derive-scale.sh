@@ -35,7 +35,7 @@ echo "==> scaling derive-worker to ${COUNT} replicas (DERIVE_WORKER_COUNT=${COUN
   -f "${OVERLAY_MULTI}" \
   up -d --force-recreate --scale "derive-worker=${COUNT}" stream-ingest derive-worker lerobot)
 
-nginx_cid="${NGINX_CONTAINER:-data-lab-nginx-1}"
+nginx_cid="${NGINX_CONTAINER:-datalab-gateway-1}"
 if docker ps --format '{{.Names}}' | grep -q "^${nginx_cid}$"; then
   docker restart "${nginx_cid}" >/dev/null 2>&1 || true
   echo "nginx restarted (${nginx_cid})"

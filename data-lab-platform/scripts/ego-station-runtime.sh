@@ -9,12 +9,12 @@ ego_station_runtime_env() {
   local station="${1:-}"
   case "$station" in
     ego-001|ego-lab-01|ego-field-02|ego-lan-02|ego-wan-01)
-      export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+      export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
       export DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-1}"
       ;;
     ego-002)
-      export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
-      export DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-data-lab-derive-worker-ego-002-1}"
+      export STREAM_INGEST_CONTAINER="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
+      export DERIVE_WORKER_CONTAINER="${DERIVE_WORKER_CONTAINER:-datalab-derive-worker-ego-002-1}"
       ;;
     *)
       : # unknown station — keep caller overrides

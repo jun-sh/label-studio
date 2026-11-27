@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # RC-3: healthz must stay responsive for 60s after stream-ingest restart.
 set -euo pipefail
-CID="${STREAM_INGEST_CONTAINER:-data-lab-stream-ingest-1}"
+CID="${STREAM_INGEST_CONTAINER:-datalab-stream-ingest-1}"
 echo "restart ${CID}..."
 docker restart "${CID}" >/dev/null
 sleep 2

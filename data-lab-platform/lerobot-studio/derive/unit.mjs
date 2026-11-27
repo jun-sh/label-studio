@@ -458,6 +458,16 @@ function collectSegmentSources(root, sessionId) {
   return segments;
 }
 
+const SKIPPABLE_TAIL_ERRORS = ["h264_trim_no_idr", "h264_trim_no_frames_after_align"];
+
+/** Error code when a short trailing MCAP segment may be dropped; null otherwise. */
+export function skippableTailSegmentError(err, segIndex, segmentCount) {
+  if (segmentCount < 2 || segIndex !== segmentCount - 1) return null;
+  const message = String(err?.message || err || "");
+  const code = SKIPPABLE_TAIL_ERRORS.find((c) => message.includes(c));
+  return code ? message.slice(0, 200) : null;
+}
+
 function buildUnitJson(unitRoot, stationId, sessionId, sourceSegments, gate, deriveMeta) {
   const artifacts = {};
   const relFiles = [
@@ -533,13 +543,32 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
   const unitDeviceTimestampsNs = [];
   const h264StreamsDir = path.join(tmpRoot, "_h264_streams");
 
-  for (const seg of segments) {
+  const skippedSegments = [];
+  for (const [segIndex, seg] of segments.entries()) {
     const extractDir = makeExtractDir(root, sessionId, seg.segmentId);
     extractDirs.push(extractDir);
     let frameCount = Number(seg.frameCount || 0);
     try {
       if (seg.sourceFormat === "mcap") {
-        const mat = materializeMcapExtract(seg.archivePath, extractDir);
+        let mat;
+        try {
+          mat = materializeMcapExtract(seg.archivePath, extractDir);
+        } catch (matErr) {
+          const skipCode = skippableTailSegmentError(matErr, segIndex, segments.length);
+          if (!skipCode) throw matErr;
+          // Edge rotates segments on a fixed frame budget, so the final segment can be
+          // shorter than one GOP and carry no IDR on some camera. Those few frames are
+          // not decodable on their own; drop the tail instead of failing the session.
+          skippedSegments.push({ segment_id: seg.segmentId, reason: skipCode });
+          appendJournalEvent(root, {
+            event: "derive_segment_skipped",
+            session_id: sessionId,
+            segment_id: seg.segmentId,
+            reason: skipCode,
+          });
+          cleanupExtractDir(extractDir);
+          continue;
+        }
         if (Number(mat.frame_count) > 0) {
           frameCount = Number(mat.frame_count);
         }
@@ -756,6 +785,8 @@ export async function deriveUnit(stationId, root, sessionId, options = {}) {
     frames_declared: frameMap.length,
     reconcile_warning: reconcileWarning,
     source_format: segments.some((s) => s.sourceFormat === "mcap") ? "mcap" : "tarzst",
+
+    skipped_segments: skippedSegments,
   };
   const unitJson = buildUnitJson(tmpRoot, stationId, sessionId, segments, gate, deriveMeta);
   fs.writeFileSync(path.join(tmpRoot, "unit.json"), `${JSON.stringify(unitJson, null, 2)}\n`);

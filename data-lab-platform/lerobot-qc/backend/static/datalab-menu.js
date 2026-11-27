@@ -52,7 +52,9 @@
     const trigger = document.getElementById("dlMenuTrigger");
     if (!trigger || document.getElementById("dlMainMenu")) return;
     const menu = buildMenu();
-    trigger.after(menu);
+    // Outside the header: inside it, the menu's dim overlay would also cover the header,
+    // which must stay bright above the overlay as in Datalab.
+    (trigger.closest("header") || trigger).after(menu);
     trigger.setAttribute("aria-controls", menu.id);
 
     const setOpen = (open) => {

@@ -14,6 +14,7 @@ import {
   isRemotePreviewAllowed,
   isStationLiveCached,
   resolveStreamFile,
+  stationRoot,
   streamDatasetUrl,
   streamHttpDatasetUrl,
 } from "./stream-ingest.mjs";
@@ -102,6 +103,57 @@ function readJsonBody(req) {
 function send(res, status, body, headers = {}) {
   res.writeHead(status, { "Cache-Control": "no-cache", ...headers });
   res.end(body);
+}
+
+// --- Next viewer engine: unmodified @ioai/lerobot-studio (MIT), built by lerobot-viewer-host ---
+// Served from ROOT/next without branding injection. A per-browser cookie routes /lerobot/ to it,
+// so the /collection shell URL stays identical for side-by-side comparison.
+const NEXT_ROOT = path.join(ROOT, "next");
+const NEXT_ENGINE_COOKIE = "datalab_engine";
+const DATASET_LISTING_DIRS = ["meta", "data", "videos"];
+
+function nextEngineEnabled(req) {
+  const cookie = String(req.headers.cookie || "");
+  return (
+    new RegExp(`(?:^|;\\s*)${NEXT_ENGINE_COOKIE}=next(?:;|$)`).test(cookie) &&
+    fs.existsSync(path.join(NEXT_ROOT, "index.html"))
+  );
+}
+
+function serveNextEngine(req, res, rel) {
+  const disk = safeJoin(NEXT_ROOT, rel || "/index.html");
+  if (disk && fs.existsSync(disk) && fs.statSync(disk).isFile()) {
+    if (disk.endsWith(".html")) {
+      return send(res, 200, fs.readFileSync(disk), { "Content-Type": "text/html; charset=utf-8" });
+    }
+    return serveFileWithRange(req, res, disk);
+  }
+  if (rel.startsWith("/assets/")) {
+    return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+  }
+  const index = path.join(NEXT_ROOT, "index.html");
+  if (!fs.existsSync(index)) return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+  return send(res, 200, fs.readFileSync(index), { "Content-Type": "text/html; charset=utf-8" });
+}
+
+/** Logical dataset files (meta/data/videos) that `resolve(rel)` serves, for createRemoteManifestDataSource. */
+function listDatasetFiles(root, resolve) {
+  const files = [];
+  const walk = (dir, rel) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const childRel = `${rel}/${e.name}`;
+      if (e.isDirectory()) walk(path.join(dir, e.name), childRel);
+      else if (e.isFile()) {
+        const disk = resolve(childRel);
+        if (disk) files.push({ path: childRel, size: fs.statSync(disk).size });
+      }
+    }
+  };
+  for (const d of DATASET_LISTING_DIRS) {
+    const abs = path.join(root, d);
+    if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) walk(abs, d);
+  }
+  return files;
 }
 
 function sendJson(res, status, payload) {
@@ -451,6 +503,46 @@ const server = http.createServer(async (req, res) => {
 
   if (p === "/healthz") {
     return send(res, 200, "ok\n", { "Content-Type": "text/plain" });
+  }
+
+  if (p === `${BASE}/next/enable` || p === `${BASE}/next/disable`) {
+    const on = p.endsWith("/enable");
+    const back = url.searchParams.get("next") || "";
+    const location = back.startsWith("/") && !back.startsWith("//") ? back : "/collection";
+    res.writeHead(302, {
+      "Set-Cookie": `${NEXT_ENGINE_COOKIE}=${on ? "next" : ""}; Path=${BASE}; SameSite=Lax; Max-Age=${on ? 2592000 : 0}`,
+      Location: location,
+      "Cache-Control": "no-store",
+    });
+    return res.end();
+  }
+
+  if (p.startsWith(`${BASE}/next/`)) {
+    return serveNextEngine(req, res, p.slice(`${BASE}/next`.length));
+  }
+
+  if ((p === BASE || p === `${BASE}/` || p === `${BASE}/index.html`) && nextEngineEnabled(req)) {
+    return serveNextEngine(req, res, "/index.html");
+  }
+
+  const streamFilesMatch = p.match(new RegExp(`^${BASE}/api/stream/([^/]+)/files\\.json$`));
+  if (streamFilesMatch && req.method === "GET") {
+    const stationId = decodeURIComponent(streamFilesMatch[1]);
+    ensureStreamScaffoldAvailable(stationId)
+      .then(() => {
+        const files = listDatasetFiles(stationRoot(stationId), (rel) => resolveStreamFile(stationId, rel));
+        sendJson(res, 200, { files });
+      })
+      .catch(() => send(res, 500, "Listing failed\n", { "Content-Type": "text/plain" }));
+    return;
+  }
+
+  const sampleFilesMatch = p.match(new RegExp(`^${BASE}/api/sample/([^/]+)/dataset/files\\.json$`));
+  if (sampleFilesMatch && req.method === "GET") {
+    const datasetId = decodeURIComponent(sampleFilesMatch[1]);
+    const root = sampleHttpDatasetRoots(datasetId).find((r) => fs.existsSync(r));
+    if (!root) return send(res, 404, "Not Found\n", { "Content-Type": "text/plain" });
+    return sendJson(res, 200, { files: listDatasetFiles(root, (rel) => resolveSampleDatasetFile(datasetId, rel)) });
   }
 
   if (p === `${BASE}/datasets` || p === `${BASE}/api/datasets` || p === `${BASE}/samples`) {

@@ -48,6 +48,12 @@ def collection_viz_page(request):
     return render(request, 'datalab/collection_viz.html', {'version': get_short_version()})
 
 
+@login_required
+def overview_page(request):
+    """Data Lab home: pipeline overview (stations, QC progress, recent deliveries)."""
+    return render(request, 'datalab/overview.html')
+
+
 def main(request):
     user = request.user
 

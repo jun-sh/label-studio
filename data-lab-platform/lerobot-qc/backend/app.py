@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,15 +15,27 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from dataset_catalog import datasets_root, get_collection, list_collections, resolve_package_path, validate_dataset_path
+from dataset_catalog import (
+    configure_collection_cache,
+    datasets_root,
+    get_collection,
+    list_collections_cached,
+    resolve_package_path,
+    validate_dataset_path,
+)
 from dataset_manager import DatasetState, load_local_dataset
 from dataset_sessions import DATASET_PATH_HEADER, DatasetSession, DatasetSessionRegistry
 from qc_metrics import build_trajectory_payload, compute_qc_metrics
 from qc_store import QcStore
+from overview_service import build_overview
+from trends_service import MAX_DAYS, build_daily_trends
 from rebuild_service import (
+    collect_interrupted_jobs,
     get_active_rebuild_job,
     hydrate_jobs_from_store,
     resolve_rebuild_job,
+    resume_interrupted_jobs,
+    running_job_ids,
     start_rebuild_job,
 )
 from screening_service import import_screening_payload
@@ -36,8 +51,28 @@ DEFAULT_OPERATOR = os.environ.get("LEROBOT_QC_OPERATOR", "anonymous")
 DEFAULT_EPISODE_PAGE_SIZE = max(50, min(500, int(os.environ.get("LEROBOT_QC_EPISODE_PAGE_SIZE", "200"))))
 
 configure_cache(CACHE_ROOT)
+configure_collection_cache(CACHE_ROOT / "collections")
 
-app = FastAPI(title="LeRobot QC", version="0.1.0")
+RESUME_REBUILDS_ON_STARTUP = os.environ.get("LEROBOT_QC_RESUME_REBUILDS", "1") != "0"
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    if RESUME_REBUILDS_ON_STARTUP:
+        # Reserve interrupted jobs before the first request, then resume them in the
+        # background (loading datasets from slow storage must not delay startup).
+        interrupted = collect_interrupted_jobs(SIDECAR_ROOT)
+        if interrupted:
+            threading.Thread(
+                target=resume_interrupted_jobs,
+                args=(interrupted, SIDECAR_ROOT),
+                name="qc-rebuild-resume",
+                daemon=True,
+            ).start()
+    yield
+
+
+app = FastAPI(title="LeRobot QC", version="0.1.0", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -242,12 +277,59 @@ def healthz() -> JSONResponse:
     return JSONResponse({"ok": True, "service": "lerobot-qc"})
 
 
+_STATIC_ASSET_RE = re.compile(r'(?P<attr>(?:src|href)=")/static/(?P<name>[\w.-]+\.(?:js|css))(?:\?[^"]*)?"')
+
+
+def _with_asset_versions(html: str) -> str:
+    """Append ?v=<mtime> to local JS/CSS so browsers pick up edits without a hard reload."""
+
+    def _versioned(match: re.Match[str]) -> str:
+        asset = STATIC_DIR / match.group("name")
+        if not asset.is_file():
+            return match.group(0)
+        return f'{match.group("attr")}/static/{match.group("name")}?v={int(asset.stat().st_mtime)}"'
+
+    return _STATIC_ASSET_RE.sub(_versioned, html)
+
+
+def _static_page(name: str) -> HTMLResponse:
+    page_path = STATIC_DIR / name
+    if not page_path.is_file():
+        return HTMLResponse("<h1>LeRobot QC</h1><p>Missing static UI</p>")
+    html = _with_asset_versions(page_path.read_text(encoding="utf-8"))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/")
 def root() -> HTMLResponse:
-    index_path = STATIC_DIR / "index.html"
-    if not index_path.is_file():
-        return HTMLResponse("<h1>LeRobot QC</h1><p>Missing static UI</p>")
-    return HTMLResponse(index_path.read_text(encoding="utf-8"))
+    return _static_page("index.html")
+
+
+@app.get("/overview")
+def overview_page() -> HTMLResponse:
+    return _static_page("overview.html")
+
+
+@app.get("/api/qc/overview")
+def api_qc_overview(collection: str = Query(..., min_length=1), refresh: bool = False) -> JSONResponse:
+    """Review progress and delivery state of every package in a collection (read-only).
+
+    refresh=true rescans the package list on storage instead of using the cached listing.
+    """
+    try:
+        payload = build_overview(collection, SIDECAR_ROOT, running_job_ids(), refresh=refresh)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Collection not found: {collection}") from exc
+    return JSONResponse(payload)
+
+
+@app.get("/api/qc/trends")
+def api_qc_trends(
+    days: int = Query(30, ge=1, le=MAX_DAYS),
+    tz_offset_minutes: int = Query(0, ge=-14 * 60, le=14 * 60),
+) -> JSONResponse:
+    """Episodes reviewed and deliveries finished per day across all packages (read-only)."""
+    return JSONResponse(build_daily_trends(SIDECAR_ROOT, days, tz_offset_minutes))
 
 
 @app.post("/api/dataset/load")
@@ -283,8 +365,10 @@ def api_list_episodes(
 
 
 @app.get("/api/datasets/collections")
-def api_list_collections() -> JSONResponse:
-    collections = list_collections(include_unavailable=True)
+def api_list_collections(include_storage: bool = True) -> JSONResponse:
+    """include_storage=false skips the per-volume storage probe (slow on USB disks) for
+    callers that only need the collection list, such as the Datalab overview page."""
+    collections = list_collections_cached(include_unavailable=True)
     summaries = [
         {
             "id": c.get("id"),
@@ -298,7 +382,7 @@ def api_list_collections() -> JSONResponse:
         }
         for c in collections
     ]
-    storage = get_storage_status()
+    storage = get_storage_status() if include_storage else None
     return JSONResponse(
         {
             "collections": summaries,

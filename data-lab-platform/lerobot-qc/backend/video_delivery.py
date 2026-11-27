@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-VideoProgressAction = Literal["copy", "reencode", "skip"]
+VideoProgressAction = Literal["copy", "reencode", "skip", "resume"]
 VideoProgressCallback = Callable[[int, int, VideoProgressAction, str, int, int], None]
 
 import pandas as pd
@@ -20,6 +20,7 @@ _CODEC_MAP = {
     "h264": "libx264",
     "av1": "libsvtav1",
     "ffv1": "ffv1",
+    "hevc": "libx265",
     "libx264": "libx264",
     "libsvtav1": "libsvtav1",
 }
@@ -40,12 +41,61 @@ def video_rel_path(info: dict[str, Any], video_key: str, chunk_index: int, file_
     )
 
 
-def video_encode_params(info: dict[str, Any], video_key: str) -> tuple[str, str]:
+def probe_video_format(path: Path) -> tuple[str, str] | None:
+    """(codec_name, pix_fmt) of the first video stream, or None if ffprobe cannot tell."""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,pix_fmt",
+        "-of",
+        "compact=p=0",
+        str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("Unable to probe format of %s: %s", path, exc)
+        return None
+    if result.returncode != 0:
+        return None
+    lines = result.stdout.strip().splitlines()
+    fields = dict(part.split("=", 1) for part in (lines[0] if lines else "").split("|") if "=" in part)
+    codec, pix_fmt = fields.get("codec_name", ""), fields.get("pix_fmt", "")
+    return (codec, pix_fmt) if codec and pix_fmt and pix_fmt != "unknown" else None
+
+
+def video_encode_params(info: dict[str, Any], video_key: str, source: Path | None = None) -> tuple[str, str]:
+    """Encoder and pixel format for re-encoding a video so it keeps the source's format.
+
+    The source file itself wins over info.json: a depth feature that does not declare
+    video.codec / video.pix_fmt would otherwise fall back to h264/yuv420p and lose its
+    16-bit values. info.json, then h264/yuv420p, are used only when the file cannot be probed.
+    """
     feature_info = (info.get("features") or {}).get(video_key, {}).get("info") or {}
-    raw_codec = str(feature_info.get("video.codec") or "h264")
-    vcodec = _CODEC_MAP.get(raw_codec, raw_codec)
-    pix_fmt = str(feature_info.get("video.pix_fmt") or "yuv420p")
-    return vcodec, pix_fmt
+    declared_codec = feature_info.get("video.codec")
+    declared_pix_fmt = feature_info.get("video.pix_fmt")
+    probed = probe_video_format(source) if source is not None else None
+    if probed:
+        codec, pix_fmt = probed
+        if (declared_codec and _CODEC_MAP.get(str(declared_codec), declared_codec) != _CODEC_MAP.get(codec, codec)) or (
+            declared_pix_fmt and declared_pix_fmt != pix_fmt
+        ):
+            logger.warning(
+                "%s: info.json declares %s/%s but %s is %s/%s; keeping the file's format",
+                video_key,
+                declared_codec,
+                declared_pix_fmt,
+                source,
+                codec,
+                pix_fmt,
+            )
+    else:
+        codec, pix_fmt = str(declared_codec or "h264"), str(declared_pix_fmt or "yuv420p")
+    return _CODEC_MAP.get(codec, codec), pix_fmt
 
 
 def episodes_in_video_file(
@@ -273,6 +323,27 @@ def _ffmpeg_faststart(output_path: Path) -> None:
         tmp_path.replace(output_path)
 
 
+PARTIAL_MARK = ".partial"
+
+
+def partial_video_path(final_path: Path) -> Path:
+    """In-progress name for a video output; keeps the extension so ffmpeg picks the muxer."""
+    return final_path.with_name(f"{final_path.stem}{PARTIAL_MARK}{final_path.suffix}")
+
+
+def remove_partial_videos(dst_root: Path) -> int:
+    """Delete unfinished outputs (and their ffmpeg temp siblings) left by an interrupted run."""
+    removed = 0
+    videos_dir = dst_root / "videos"
+    if not videos_dir.is_dir():
+        return 0
+    for path in videos_dir.rglob("*"):
+        if path.is_file() and (PARTIAL_MARK in path.name or ".faststart" in path.name or ".tmp" in path.name):
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 def format_video_progress(
     action: VideoProgressAction,
     video_key: str,
@@ -293,8 +364,13 @@ def selective_process_videos(
     old_to_new: dict[int, int],
     fps: float,
     on_progress: VideoProgressCallback | None = None,
+    resume: bool = False,
 ) -> tuple[dict[int, dict[str, Any]], dict[str, int]]:
     """Copy unchanged chunk files and re-encode mixed chunk files.
+
+    Each output is written under a ``.partial`` name and renamed when complete, so a final
+    file on disk is always whole. With resume=True, finished outputs from an interrupted
+    run are kept (their metadata is recomputed) and only missing files are processed.
 
     Returns:
         video_metadata: new_episode_index -> {videos/... column updates}
@@ -302,9 +378,11 @@ def selective_process_videos(
     """
     kept_set = set(kept_episode_indices)
     video_metadata: dict[int, dict[str, Any]] = {}
-    stats = {"copied": 0, "reencoded": 0, "skipped": 0}
+    stats = {"copied": 0, "reencoded": 0, "skipped": 0, "resumed": 0}
     video_files = iter_video_files(episodes_df, video_keys)
     total_files = len(video_files)
+    if resume:
+        remove_partial_videos(dst_root)
 
     for file_number, (video_key, chunk_index, file_index) in enumerate(video_files, start=1):
         all_in_file = episodes_in_video_file(episodes_df, video_key, chunk_index, file_index)
@@ -328,11 +406,20 @@ def selective_process_videos(
             else:
                 raise FileNotFoundError(f"Source video not found: {src_path}")
 
+        already_done = resume and dst_path.is_file()
+
         if set(all_in_file) == set(kept_in_file):
+            if already_done:
+                if on_progress is not None:
+                    on_progress(file_number, total_files, "resume", video_key, chunk_index, file_index)
+                stats["resumed"] += 1
+                continue
             if on_progress is not None:
                 on_progress(file_number, total_files, "copy", video_key, chunk_index, file_index)
             dst_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_path, dst_path)
+            partial = partial_video_path(dst_path)
+            shutil.copy2(src_path, partial)
+            partial.replace(dst_path)
             stats["copied"] += 1
             continue
 
@@ -353,19 +440,26 @@ def selective_process_videos(
                 )
             frame_ranges.append((from_frame, to_frame))
 
-        vcodec, pix_fmt = video_encode_params(info, video_key)
-        if on_progress is not None:
-            on_progress(file_number, total_files, "reencode", video_key, chunk_index, file_index)
-        logger.info(
-            "Re-encoding mixed video %s chunk=%s file=%s (%d kept / %d total episodes)",
-            video_key,
-            chunk_index,
-            file_index,
-            len(kept_in_file),
-            len(all_in_file),
-        )
-        keep_episodes_from_video(src_path, dst_path, frame_ranges, fps, vcodec, pix_fmt)
-        stats["reencoded"] += 1
+        if already_done:
+            if on_progress is not None:
+                on_progress(file_number, total_files, "resume", video_key, chunk_index, file_index)
+            stats["resumed"] += 1
+        else:
+            vcodec, pix_fmt = video_encode_params(info, video_key, src_path)
+            if on_progress is not None:
+                on_progress(file_number, total_files, "reencode", video_key, chunk_index, file_index)
+            logger.info(
+                "Re-encoding mixed video %s chunk=%s file=%s (%d kept / %d total episodes)",
+                video_key,
+                chunk_index,
+                file_index,
+                len(kept_in_file),
+                len(all_in_file),
+            )
+            partial = partial_video_path(dst_path)
+            keep_episodes_from_video(src_path, partial, frame_ranges, fps, vcodec, pix_fmt)
+            partial.replace(dst_path)
+            stats["reencoded"] += 1
 
         cumulative_ts = 0.0
         for old_index in sorted_keep:

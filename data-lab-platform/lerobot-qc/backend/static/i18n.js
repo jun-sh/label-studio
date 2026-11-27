@@ -6,12 +6,15 @@
 
   const MESSAGES = {
     en: {
-      brand_mark: 'DL',
-      brand_title: 'Data QC',
-      brand_sub: 'Terminal inspection',
-      embed_brand_mark: 'DL',
-      embed_brand_title: 'Data QC',
-      embed_brand_sub: 'Terminal inspection',
+      qc_crumb_root: 'Data QC',
+      qc_page_title: 'Data QC · Datalab',
+      datalab_menu: 'Main menu',
+      menu_home: 'Home',
+      menu_data: 'Data',
+      menu_collection: 'Collection',
+      menu_qc: 'Data QC',
+      menu_projects: 'Annotation',
+      menu_organization: 'Organization',
       status_disconnected: 'Disconnected',
       status_loaded: 'Loaded {name}',
       status_saved: 'Saved ✓',
@@ -180,7 +183,61 @@
       qc_btn_step_back: '◀ Frame',
       qc_btn_step_fwd: 'Frame ▶',
       qc_delivery_title: 'Delivery rebuild',
-      qc_delivery_hint: 'Physically rebuild a delivery dataset from approved episodes (sidecar removals applied).',
+      qc_delivery_hint: 'Build a new delivery dataset: drops episodes marked removed and applies instruction corrections. Pending and suspicious episodes are kept.',
+      qc_delivery_never_built: 'No delivery dataset built yet.',
+      qc_delivery_current: 'Delivery is up to date: {output} ({episodes} episodes, {time}).',
+      qc_delivery_stale: 'Reviews changed after the last rebuild ({time}). Delivery {output} is out of date — rebuild to apply.',
+      qc_delivery_missing: 'Last delivery {output} no longer exists. Rebuild to recreate it.',
+      qc_acceptance_passed: 'Acceptance check passed ({segments} video segments, {time}).',
+      qc_acceptance_failed: 'Acceptance check FAILED ({count} problems): {first}',
+      qc_acceptance_not_run: 'Not acceptance-checked.',
+      qc_rebuild_verifying: 'Verifying delivery…',
+      qc_rebuild_waiting_slot: 'Queued: waiting for another rebuild to finish…',
+      qc_rebuild_verifying_progress: 'Verifying delivery: video {current}/{total} ({pct}%)',
+      qc_rebuild_confirm_unreviewed: '{pending} pending and {suspicious} suspicious episodes will be INCLUDED in the delivery as-is. Rebuild anyway?',
+      ov_title: 'QC overview',
+      ov_back: 'Back to review',
+      ov_collection: 'Collection',
+      ov_search: 'Package',
+      ov_search_placeholder: 'Filter by package id',
+      ov_refresh: 'Refresh',
+      ov_col_package: 'Package',
+      ov_col_stage: 'Next step',
+      ov_col_progress: 'Review progress',
+      ov_col_suspicious: 'Suspicious',
+      ov_col_overrides: 'Instr. fixes',
+      ov_col_delivery: 'Delivery',
+      ov_col_last_change: 'Last review',
+      ov_stage_all: 'All',
+      ov_stage_rebuilding: 'Rebuilding',
+      ov_stage_suspicious: 'Has suspicious',
+      ov_stage_in_review: 'In review',
+      ov_stage_not_started: 'Not started',
+      ov_stage_needs_rebuild: 'Needs rebuild',
+      ov_stage_delivered: 'Delivered',
+      ov_stage_all_removed: 'All removed',
+      ov_delivery_never_built: 'Not built',
+      ov_delivery_current: 'Up to date',
+      ov_delivery_stale: 'Out of date',
+      ov_delivery_missing: 'Missing',
+      ov_delivery_rebuilding: 'Rebuilding… {progress}',
+      ov_delivery_waiting_slot: 'Queued for rebuild',
+      ov_acceptance_ok: 'Verified',
+      ov_acceptance_ok_title: 'Acceptance check passed ({time})',
+      ov_acceptance_failed: 'Check failed ({count})',
+      ov_approved: 'approved',
+      ov_rejected: 'removed',
+      ov_suspicious: 'suspicious',
+      ov_pending: 'pending',
+      ov_progress_text: '{reviewed}/{total} ({pct}%)',
+      ov_progress_aria: '{approved} approved, {rejected} removed, {suspicious} suspicious, {pending} pending',
+      ov_episodes: '{n} episodes',
+      ov_open: 'Open',
+      ov_totals: '{packages} packages · {episodes} episodes · reviewed {reviewed} ({pct}%) · approved {approved} · removed {rejected} · suspicious {suspicious} · instruction fixes {overrides}',
+      ov_loading: 'Loading…',
+      ov_empty: 'No packages match this filter.',
+      ov_load_failed: 'Failed to load overview: {error}',
+      qc_overview_link: 'Overview',
       qc_btn_rebuild: 'Rebuild',
       qc_review_progress: 'approved {approved} · rejected {rejected} · suspicious {suspicious} · pending {pending}',
       qc_filter_pending: 'Pending',
@@ -203,31 +260,38 @@
       qc_rebuild_video_action_copy: 'copying',
       qc_rebuild_video_action_reencode: 're-encoding',
       qc_rebuild_video_action_skip: 'skipping',
+      qc_rebuild_video_action_resume: 'already done before restart',
+      qc_rebuild_resuming: 'Service restarted — resuming this rebuild…',
+      qc_rebuild_reconnecting: 'Connection lost (service restarting?) — retrying…',
       qc_rebuild_writing_parquet: 'Writing parquet files…',
       qc_rebuild_recomputing_stats: 'Recomputing dataset statistics…',
       qc_rebuild_finalizing_done: 'Writing metadata…',
       qc_rebuild_output_hint: 'Output: {path}',
       qc_rebuild_failed: 'Rebuild failed: {error}',
       qc_rebuild_poll_error: 'Status poll failed: {error}',
-      qc_rebuild_stale_hint: 'Rebuild interrupted (service restarted). Close this dialog and start a new rebuild.',
+      qc_rebuild_stale_hint: 'The rebuild was interrupted by a service restart and could not be resumed: {error}. Start a new rebuild.',
       qc_rebuild_already_running: 'A rebuild is already running.',
-      qc_home_btn: 'Home',
       qc_reject_reason_prompt: 'Removal reason (required for audit):',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Instruction saved for episode {idx}',
       qc_instruction_empty: 'Instruction cannot be empty',
+      qc_instruction_unsaved: 'Unsaved',
+      qc_instruction_unsaved_confirm: 'The instruction for episode {idx} has unsaved edits. Discard them?',
       qc_action_failed: 'Action failed: {error}',
       qc_modal_close: 'Close',
       qc_load_btn: 'Load dataset',
       qc_local_path_label: 'Dataset path (read-only)',
     },
     'zh-Hans': {
-      brand_mark: 'DL',
-      brand_title: 'Data QC',
-      brand_sub: '终端质检',
-      embed_brand_mark: 'DL',
-      embed_brand_title: 'Data QC',
-      embed_brand_sub: '终端质检',
+      qc_crumb_root: '数据质检',
+      qc_page_title: '数据质检 · Datalab',
+      datalab_menu: '主菜单',
+      menu_home: '首页',
+      menu_data: '数据',
+      menu_collection: '采集',
+      menu_qc: '质检',
+      menu_projects: '标注',
+      menu_organization: '组织',
       status_disconnected: '未连接',
       status_loaded: '已加载 {name}',
       status_saved: '已保存 ✓',
@@ -396,7 +460,61 @@
       qc_btn_step_back: '◀ 上一帧',
       qc_btn_step_fwd: '下一帧 ▶',
       qc_delivery_title: '交付集重建',
-      qc_delivery_hint: '根据审阅结果物理重建交付数据集（应用 sidecar 移除列表）。',
+      qc_delivery_hint: '生成新的交付数据集：剔除标记为移除的 episode，并应用指令修正。待审和可疑的 episode 会原样保留。',
+      qc_delivery_never_built: '尚未生成交付集。',
+      qc_delivery_current: '交付集为最新：{output}（{episodes} 集，{time}）。',
+      qc_delivery_stale: '上次重建（{time}）之后审阅有改动，交付集 {output} 已过期，需要重新构建才会生效。',
+      qc_delivery_missing: '上次的交付集 {output} 已不存在，请重新构建。',
+      qc_acceptance_passed: '自动验收通过（{segments} 段视频，{time}）。',
+      qc_acceptance_failed: '自动验收未通过（{count} 个问题）：{first}',
+      qc_acceptance_not_run: '未做自动验收。',
+      qc_rebuild_verifying: '正在验收交付集…',
+      qc_rebuild_waiting_slot: '排队中：等待其他重建完成…',
+      qc_rebuild_verifying_progress: '正在验收交付集：视频 {current}/{total}（{pct}%）',
+      qc_rebuild_confirm_unreviewed: '还有 {pending} 条待审、{suspicious} 条可疑，它们会原样进入交付集。仍要重建吗？',
+      ov_title: 'QC 总览',
+      ov_back: '返回审阅',
+      ov_collection: '数据集合',
+      ov_search: 'Package',
+      ov_search_placeholder: '按 package 编号筛选',
+      ov_refresh: '刷新',
+      ov_col_package: 'Package',
+      ov_col_stage: '下一步',
+      ov_col_progress: '审阅进度',
+      ov_col_suspicious: '可疑',
+      ov_col_overrides: '指令修正',
+      ov_col_delivery: '交付集',
+      ov_col_last_change: '最近审阅',
+      ov_stage_all: '全部',
+      ov_stage_rebuilding: '重建中',
+      ov_stage_suspicious: '有可疑',
+      ov_stage_in_review: '审阅中',
+      ov_stage_not_started: '未开始',
+      ov_stage_needs_rebuild: '待重建',
+      ov_stage_delivered: '已交付',
+      ov_stage_all_removed: '全部移除',
+      ov_delivery_never_built: '未生成',
+      ov_delivery_current: '最新',
+      ov_delivery_stale: '已过期',
+      ov_delivery_missing: '已丢失',
+      ov_delivery_rebuilding: '重建中… {progress}',
+      ov_delivery_waiting_slot: '排队等待重建',
+      ov_acceptance_ok: '验收通过',
+      ov_acceptance_ok_title: '自动验收通过（{time}）',
+      ov_acceptance_failed: '验收未通过（{count}）',
+      ov_approved: '通过',
+      ov_rejected: '移除',
+      ov_suspicious: '可疑',
+      ov_pending: '待审',
+      ov_progress_text: '{reviewed}/{total}（{pct}%）',
+      ov_progress_aria: '通过 {approved}，移除 {rejected}，可疑 {suspicious}，待审 {pending}',
+      ov_episodes: '{n} 集',
+      ov_open: '打开',
+      ov_totals: '{packages} 个 package · {episodes} 集 · 已审 {reviewed}（{pct}%）· 通过 {approved} · 移除 {rejected} · 可疑 {suspicious} · 指令修正 {overrides}',
+      ov_loading: '加载中…',
+      ov_empty: '没有符合筛选条件的 package。',
+      ov_load_failed: '总览加载失败：{error}',
+      qc_overview_link: '总览',
       qc_btn_rebuild: '重新构建',
       qc_review_progress: '通过 {approved} · 移除 {rejected} · 可疑 {suspicious} · 待审 {pending}',
       qc_filter_pending: '待审',
@@ -419,19 +537,23 @@
       qc_rebuild_video_action_copy: '复制',
       qc_rebuild_video_action_reencode: '重编码',
       qc_rebuild_video_action_skip: '跳过',
+      qc_rebuild_video_action_resume: '重启前已完成',
+      qc_rebuild_resuming: '服务已重启，正在续跑本次重建…',
+      qc_rebuild_reconnecting: '连接中断（服务可能在重启），正在重试…',
       qc_rebuild_writing_parquet: '正在写入 Parquet 文件…',
       qc_rebuild_recomputing_stats: '正在重算数据集统计信息…',
       qc_rebuild_finalizing_done: '正在写入元数据…',
       qc_rebuild_output_hint: '输出：{path}',
       qc_rebuild_failed: '重建失败：{error}',
       qc_rebuild_poll_error: '状态查询失败：{error}',
-      qc_rebuild_stale_hint: '重建已中断（服务曾重启）。请关闭此对话框并重新发起重建。',
+      qc_rebuild_stale_hint: '重建因服务重启中断，且未能自动续跑：{error}。请重新发起重建。',
       qc_rebuild_already_running: '已有重建任务正在运行。',
-      qc_home_btn: '主页',
       qc_reject_reason_prompt: '移除原因（审计必填）：',
       qc_reject_reason_default: 'quality_issue',
       qc_instruction_saved: 'Episode {idx} 指令已保存',
       qc_instruction_empty: '指令不能为空',
+      qc_instruction_unsaved: '未保存',
+      qc_instruction_unsaved_confirm: 'Episode {idx} 的指令有未保存的修改，确定放弃吗？',
       qc_action_failed: '操作失败：{error}',
       qc_modal_close: '关闭',
       qc_load_btn: '加载数据集',
@@ -485,21 +607,27 @@
     }
   }
 
+  /* Datalab header shared by the review and overview pages. */
+  function applyHeaderText() {
+    const menuTrigger = document.getElementById('dlMenuTrigger');
+    if (menuTrigger) menuTrigger.setAttribute('aria-label', t('datalab_menu'));
+    document.querySelectorAll('[data-dl-i18n]').forEach((node) => {
+      node.textContent = t(node.dataset.dlI18n);
+    });
+    const ovRoot = document.getElementById('ovCrumbRoot');
+    if (ovRoot) ovRoot.textContent = t('qc_crumb_root');
+  }
+
   function applyStaticUI() {
     document.documentElement.lang = locale === 'zh-Hans' ? 'zh-Hans' : 'en';
 
-    const brandMark = document.querySelector('.ls-brand-mark');
-    const brandTitle = document.querySelector('.ls-brand strong');
-    const brandSub = document.querySelector('.ls-brand-sub');
-    const markKey = IS_DATALAB_EMBED ? 'embed_brand_mark' : 'brand_mark';
-    const titleKey = IS_DATALAB_EMBED ? 'embed_brand_title' : 'brand_title';
-    const subKey = IS_DATALAB_EMBED ? 'embed_brand_sub' : 'brand_sub';
-    if (brandMark) brandMark.textContent = t(markKey);
-    if (brandTitle) brandTitle.textContent = t(titleKey);
-    if (brandSub) brandSub.textContent = t(subKey);
+    applyHeaderText();
 
     const qcHomeBtn = document.getElementById('qcHomeBtn');
-    if (qcHomeBtn) qcHomeBtn.setAttribute('aria-label', t('qc_home_btn'));
+    if (qcHomeBtn) {
+      qcHomeBtn.textContent = t('qc_crumb_root');
+      document.title = t('qc_page_title');
+    }
 
     const connectToggle = document.getElementById('connectToggle');
     if (connectToggle) connectToggle.textContent = t('connect_toggle');
@@ -643,6 +771,8 @@
     if (stepBackBtn) stepBackBtn.textContent = t('qc_btn_step_back');
     const stepFwdBtn = document.getElementById('stepFwdBtn');
     if (stepFwdBtn) stepFwdBtn.textContent = t('qc_btn_step_fwd');
+    const overviewLink = document.getElementById('overviewLink');
+    if (overviewLink) overviewLink.textContent = t('qc_overview_link');
     const deliverySummary = document.getElementById('deliverySummary');
     if (deliverySummary) deliverySummary.textContent = t('qc_delivery_title');
     const deliveryHint = document.getElementById('deliveryHint');
@@ -687,6 +817,7 @@
     getLocale: () => locale,
     setLocale,
     applyStaticUI,
+    applyHeaderText,
     applyDatalabEmbedMode,
     init() {
       applyDatalabEmbedMode();

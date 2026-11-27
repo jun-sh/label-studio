@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from video_delivery import (
     _ffmpeg_video_encode_args,
@@ -94,7 +96,7 @@ def test_selective_process_videos_reindexes_mixed_file(mock_reencode, tmp_path: 
         fps=5.0,
     )
 
-    assert stats == {"copied": 0, "reencoded": 1, "skipped": 0}
+    assert stats == {"copied": 0, "reencoded": 1, "skipped": 0, "resumed": 0}
     assert mock_reencode.call_count == 1
     assert (dst_root / "videos/observation.images.top/chunk-000/file-000.mp4").read_bytes() == b"reencoded"
     assert metadata[0]["videos/observation.images.top/from_timestamp"] == 0.0
@@ -144,7 +146,7 @@ def test_selective_process_videos_copies_pure_file(mock_reencode, tmp_path: Path
         fps=5.0,
     )
 
-    assert stats == {"copied": 1, "reencoded": 0, "skipped": 0}
+    assert stats == {"copied": 1, "reencoded": 0, "skipped": 0, "resumed": 0}
     mock_reencode.assert_not_called()
     assert metadata == {}
     assert (dst_root / "videos/observation.images.top/chunk-000/file-001.mp4").read_bytes() == b"pure-copy"
@@ -227,7 +229,7 @@ def test_selective_process_videos_reports_progress(mock_reencode, tmp_path: Path
         on_progress=_on_progress,
     )
 
-    assert stats == {"copied": 2, "reencoded": 1, "skipped": 0}
+    assert stats == {"copied": 2, "reencoded": 1, "skipped": 0, "resumed": 0}
     assert metadata
     assert progress_events == [
         (1, 3, "copy", "observation.images.top", 0, 0),
@@ -251,3 +253,40 @@ def test_ffmpeg_video_encode_args_falls_back_to_crf() -> None:
     assert "-crf" in args
     assert "23" in args
 
+
+
+def _encode_test_video(dst: Path, *codec_args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=32x32:rate=5", "-frames:v", "3", *codec_args, str(dst)],
+        check=True,
+    )
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_encode_params_follow_source_file(tmp_path: Path) -> None:
+    from video_delivery import video_encode_params
+
+    depth = tmp_path / "depth.mkv"
+    _encode_test_video(depth, "-c:v", "ffv1", "-pix_fmt", "gray16le")
+    undeclared = {"features": {"d": {"dtype": "video", "info": {"video.is_depth_map": True}}}}
+    # Without metadata the old default (h264/yuv420p) would have dropped depth to 8 bit.
+    assert video_encode_params(undeclared, "d", depth) == ("ffv1", "gray16le")
+    wrong = {"features": {"d": {"dtype": "video", "info": {"video.codec": "h264", "video.pix_fmt": "yuv420p"}}}}
+    assert video_encode_params(wrong, "d", depth) == ("ffv1", "gray16le")
+
+    rgb = tmp_path / "rgb.mp4"
+    _encode_test_video(rgb, "-c:v", "libx264", "-pix_fmt", "yuv420p")
+    assert video_encode_params({}, "top", rgb) == ("libx264", "yuv420p")
+
+
+def test_encode_params_fall_back_to_metadata_when_unprobeable(tmp_path: Path) -> None:
+    from video_delivery import video_encode_params
+
+    garbage = tmp_path / "x.mkv"
+    garbage.write_bytes(b"not a video")
+    declared = {"features": {"d": {"info": {"video.codec": "ffv1", "video.pix_fmt": "gray16le"}}}}
+    assert video_encode_params(declared, "d", garbage) == ("ffv1", "gray16le")
+    assert video_encode_params(declared, "d") == ("ffv1", "gray16le")
+    assert video_encode_params({}, "d", tmp_path / "missing.mp4") == ("libx264", "yuv420p")

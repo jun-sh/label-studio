@@ -68,7 +68,7 @@ rm -rf "${DATALAB}/data-storage/pipeline/${STATION}"
 rm -rf "${DATALAB}/data-storage/corpus/${SLUG}" "${DATALAB}/data-storage/corpus/${SLUG}.zip"
 rm -rf "${DATALAB}/data-storage/samples/${SLUG}"*
 rm -rf "${DATALAB}/data-storage/ego-delivery/${STATION}"
-docker exec data-lab-lerobot-1 sh -c "
+docker exec datalab-lerobot-1 sh -c "
   rm -rf /srv/bundled/${SLUG} /srv/bundled/${SLUG}.zip \
     /srv/bundled/covers/${SLUG}.webp \
     /srv/bundled/overlays/${SLUG}_* 2>/dev/null || true

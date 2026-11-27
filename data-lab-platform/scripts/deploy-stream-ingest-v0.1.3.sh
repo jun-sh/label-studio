@@ -27,7 +27,7 @@ fi
   -f "${EGO_COMPOSE_OVERLAY}" \
   up -d --force-recreate stream-ingest derive-worker lerobot
 
-NGINX_CID="${NGINX_CONTAINER:-data-lab-nginx-1}"
+NGINX_CID="${NGINX_CONTAINER:-datalab-gateway-1}"
 if docker ps --format '{{.Names}}' | grep -q "^${NGINX_CID}$"; then
   docker restart "${NGINX_CID}" >/dev/null 2>&1 || true
   echo "nginx restarted (${NGINX_CID})"
@@ -35,9 +35,9 @@ fi
 
 echo "=== verify v0.1.3 (Phase D) ==="
 sleep 8
-docker exec data-lab-stream-ingest-1 printenv DERIVE_LAYOUT STREAM_SESSION_SINGLE_EPISODE DERIVE_STANDALONE
+docker exec datalab-stream-ingest-1 printenv DERIVE_LAYOUT STREAM_SESSION_SINGLE_EPISODE DERIVE_STANDALONE
 
-docker exec data-lab-stream-ingest-1 node -e "
+docker exec datalab-stream-ingest-1 node -e "
 import fs from 'node:fs';
 const checks = [
   ['/app/derive/pipeline.mjs', { must: ['runDerivePipelineUnit'], mustNot: ['buildFrameMapForDerive', 'mergeFrameMapIncremental'] }],

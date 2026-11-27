@@ -39,7 +39,7 @@ bash data-lab-platform/scripts/ego-safe-storage-cleanup.sh --qc-trim-cache --app
 优先用脚本（大量文件 + 缓存多为 **容器 root 属主**，脚本会 `docker exec` 删除）。手工等价：
 
 ```bash
-docker exec data-lab-lerobot-qc-1 find /data/cache/trimmed_videos -mindepth 1 -delete
+docker exec datalab-qc-1 find /data/cache/trimmed_videos -mindepth 1 -delete
 ```
 
 **不要**删除整个 `cache/` 以外的 QC 树。

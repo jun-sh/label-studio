@@ -1,0 +1,195 @@
+@import 'tailwindcss';
+
+/*
+ * Pixel parity with the previous Data Viewer build (2026-05): it used the shadcn "slate" palette
+ * and the system font stack. 1.7.0 ships the "neutral" palette and Geist, so the host restores
+ * the old values on both its own sidebar (.dl-root) and the viewer root (.lerobot-root).
+ * Values copied verbatim from the old bundle's #lerobot-root block.
+ */
+:root,
+.dl-root {
+  --dl-background: 0 0% 100%;
+  --dl-foreground: 222.2 84% 4.9%;
+  --dl-primary: 222.2 47.4% 11.2%;
+  --dl-primary-foreground: 210 40% 98%;
+  --dl-muted: 210 40% 96.1%;
+  --dl-muted-foreground: 215.4 16.3% 46.9%;
+  --dl-accent: 210 40% 96.1%;
+  --dl-accent-foreground: 222.2 47.4% 11.2%;
+  --dl-border: 214.3 31.8% 91.4%;
+  --dl-ring: 222.2 84% 4.9%;
+  --dl-destructive: 0 84.2% 60.2%;
+  --dl-font-sans: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --dl-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root,
+  .dl-root {
+    --dl-background: 222.2 84% 4.9%;
+    --dl-foreground: 210 40% 98%;
+    --dl-primary: 210 40% 98%;
+    --dl-primary-foreground: 222.2 47.4% 11.2%;
+    --dl-muted: 217.2 32.6% 17.5%;
+    --dl-muted-foreground: 215 20.2% 65.1%;
+    --dl-accent: 217.2 32.6% 17.5%;
+    --dl-accent-foreground: 210 40% 98%;
+    --dl-border: 217.2 32.6% 17.5%;
+    --dl-ring: 212.7 26.8% 83.9%;
+    --dl-destructive: 0 62.8% 30.6%;
+  }
+}
+
+@theme inline {
+  --color-background: hsl(var(--dl-background));
+  --color-foreground: hsl(var(--dl-foreground));
+  --color-primary: hsl(var(--dl-primary));
+  --color-primary-foreground: hsl(var(--dl-primary-foreground));
+  --color-muted: hsl(var(--dl-muted));
+  --color-muted-foreground: hsl(var(--dl-muted-foreground));
+  --color-accent: hsl(var(--dl-accent));
+  --color-accent-foreground: hsl(var(--dl-accent-foreground));
+  --color-border: hsl(var(--dl-border));
+  --color-ring: hsl(var(--dl-ring));
+  --color-destructive: hsl(var(--dl-destructive));
+  --font-sans: var(--dl-font-sans);
+  --font-mono: var(--dl-font-mono);
+  --radius-md: calc(0.625rem - 2px);
+  --radius-sm: calc(0.625rem - 4px);
+}
+
+/* Viewer theme variables (1.7.0 consumes them as complete colors). */
+.dl-root .lerobot-root {
+  --background: hsl(var(--dl-background));
+  --foreground: hsl(var(--dl-foreground));
+  --card: hsl(var(--dl-background));
+  --card-foreground: hsl(var(--dl-foreground));
+  --popover: hsl(var(--dl-background));
+  --popover-foreground: hsl(var(--dl-foreground));
+  --primary: hsl(var(--dl-primary));
+  --primary-foreground: hsl(var(--dl-primary-foreground));
+  --secondary: hsl(var(--dl-muted));
+  --secondary-foreground: hsl(var(--dl-accent-foreground));
+  --muted: hsl(var(--dl-muted));
+  --muted-foreground: hsl(var(--dl-muted-foreground));
+  --accent: hsl(var(--dl-accent));
+  --accent-foreground: hsl(var(--dl-accent-foreground));
+  --border: hsl(var(--dl-border));
+  --input: hsl(var(--dl-border));
+  --ring: hsl(var(--dl-ring));
+  --font-sans: var(--dl-font-sans);
+  --font-mono: var(--dl-font-mono);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: hsl(var(--dl-background));
+  color: hsl(var(--dl-foreground));
+  font-family: var(--dl-font-sans);
+}
+
+/* The old build left line-height at `normal` (Tailwind v4 preflight sets 1.5). */
+.dl-root {
+  font-family: var(--dl-font-sans);
+  color: hsl(var(--dl-foreground));
+  line-height: normal;
+}
+
+.dl-scroll {
+  scrollbar-width: none;
+}
+.dl-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Collapsible date groups: copied from lerobot-studio/branding/overlay-episode-groups.css. */
+.dl-date-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 8%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  color: hsl(var(--dl-muted-foreground));
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  box-sizing: border-box;
+}
+.dl-date-header:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  color: hsl(var(--dl-foreground));
+}
+.dl-date-header:focus-visible {
+  outline: 2px solid hsl(var(--dl-primary));
+  outline-offset: -2px;
+}
+.dl-date-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  opacity: 0.7;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+.dl-date-header[data-collapsed='1'] .dl-date-chevron {
+  transform: rotate(-90deg);
+}
+.dl-date-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dl-date-count {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dl-date-chevron {
+    transition: none;
+  }
+}
+
+/* Delete / import result, same placement as the old overlay toast. */
+.dl-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 50;
+  max-width: min(92vw, 420px);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  background: hsl(var(--dl-foreground));
+  color: hsl(var(--dl-background));
+}
+.dl-toast[data-kind='error'] {
+  background: hsl(var(--dl-destructive));
+  color: #fff;
+}

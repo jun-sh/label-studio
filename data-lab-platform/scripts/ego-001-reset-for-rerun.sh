@@ -75,8 +75,8 @@ log "=== 34: derived wipe via ego-reset-34-only (preserve raw/segments) ==="
 STATION_ID="${STATION}" EGO_RESET_YES=1 bash "${SCRIPT_DIR}/ego-reset-34-only.sh" --yes
 
 log "=== Docker: clear lerobot bundled egodome ==="
-if docker ps --format '{{.Names}}' | grep -q '^data-lab-lerobot-1$'; then
-  docker exec data-lab-lerobot-1 sh -c "
+if docker ps --format '{{.Names}}' | grep -q '^datalab-lerobot-1$'; then
+  docker exec datalab-lerobot-1 sh -c "
     rm -rf /srv/bundled/${SAMPLES_SLUG} /srv/bundled/${SAMPLES_SLUG}.zip \
       /srv/bundled/covers/${SAMPLES_SLUG}.webp \
       /srv/bundled/overlays/${SAMPLES_SLUG}_hand_kp2d.json \

@@ -37,7 +37,7 @@ log "=== watcher runtime ==="
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/ego-station-runtime.sh"
 ego_station_runtime_env ego-001
-test "${STREAM_INGEST_CONTAINER}" = data-lab-stream-ingest-1
+test "${STREAM_INGEST_CONTAINER}" = datalab-stream-ingest-1
 
 log "=== meta bootstrap ==="
 bash "${SCRIPT_DIR}/ego-mcap-bootstrap-34.sh" >/dev/null

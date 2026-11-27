@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pandas as pd
 import pytest
 
 import rebuild_service
@@ -15,9 +16,11 @@ def test_start_rebuild_job_does_not_duplicate_job_id_kwarg(tmp_path: Path) -> No
     state = MagicMock()
     state.dataset_root = tmp_path / "source"
     state.dataset_root.mkdir()
+    state.episodes_df = pd.DataFrame({"episode_index": [0, 1]})
     store = MagicMock()
     store.manifest = {"rebuild_jobs": []}
     store.active_rebuild_job.return_value = None
+    store.removed_episode_indices.return_value = {1}
     store.register_rebuild_job = MagicMock()
     delivery_root = tmp_path / "delivery"
     delivery_root.mkdir()
@@ -89,19 +92,56 @@ def test_start_rebuild_job_rejects_concurrent_job(tmp_path: Path) -> None:
         )
 
 
-def test_cleanup_incomplete_output_removes_partial_dir(tmp_path: Path) -> None:
-    output_root = tmp_path / "partial"
-    (output_root / "videos").mkdir(parents=True)
-    rebuild_service._cleanup_incomplete_output(output_root)
-    assert not output_root.exists()
+def _job_fixture(tmp_path: Path, removed: set[int]) -> tuple[MagicMock, MagicMock, Path]:
+    state = MagicMock()
+    state.dataset_root = tmp_path / "source"
+    state.dataset_root.mkdir()
+    state.episodes_df = pd.DataFrame({"episode_index": [0, 1, 2]})
+    store = MagicMock()
+    store.manifest = {"rebuild_jobs": []}
+    store.active_rebuild_job.return_value = None
+    store.removed_episode_indices.return_value = removed
+    delivery_root = tmp_path / "delivery"
+    delivery_root.mkdir()
+    return state, store, delivery_root
 
 
-def test_cleanup_incomplete_output_keeps_completed_dir(tmp_path: Path) -> None:
-    output_root = tmp_path / "complete"
+def test_start_rebuild_job_rejects_when_all_episodes_removed(tmp_path: Path) -> None:
+    state, store, delivery_root = _job_fixture(tmp_path, removed={0, 1, 2})
+    with pytest.raises(ValueError, match="nothing to deliver"):
+        rebuild_service.start_rebuild_job(state=state, store=store, delivery_root=delivery_root, batch_id="b")
+    assert list(delivery_root.iterdir()) == []
+    store.register_rebuild_job.assert_not_called()
+
+
+def test_failed_rebuild_removes_output_even_with_info_json(tmp_path: Path) -> None:
+    state, store, delivery_root = _job_fixture(tmp_path, removed=set())
+
+    def _fail_after_copy(*, output_root: Path, job_id: str, **_kwargs) -> None:
+        rebuild_service._write_marker(output_root, job_id)
+        (output_root / "meta").mkdir(parents=True)
+        (output_root / "meta" / "info.json").write_text("{}", encoding="utf-8")
+        raise RuntimeError("boom")
+
+    with patch.object(rebuild_service, "rebuild_delivery_dataset", side_effect=_fail_after_copy), patch.object(
+        rebuild_service, "_sync_job"
+    ):
+        job = rebuild_service.start_rebuild_job(state=state, store=store, delivery_root=delivery_root, batch_id="b")
+        for thread in [t for t in rebuild_service.threading.enumerate() if t.name == f"qc-rebuild-{job['job_id']}"]:
+            thread.join(timeout=10)
+    assert not Path(job["output_root"]).exists()
+
+
+def test_cleanup_failed_output_only_removes_dirs_owned_by_the_job(tmp_path: Path) -> None:
+    output_root = tmp_path / "existing"
     (output_root / "meta").mkdir(parents=True)
-    (output_root / "meta" / "info.json").write_text("{}", encoding="utf-8")
-    rebuild_service._cleanup_incomplete_output(output_root)
+    rebuild_service._cleanup_failed_output(output_root, "job-a")  # no marker: someone else's
     assert output_root.is_dir()
+    rebuild_service._write_marker(output_root, "job-b")
+    rebuild_service._cleanup_failed_output(output_root, "job-a")  # other job's marker
+    assert output_root.is_dir()
+    rebuild_service._cleanup_failed_output(output_root, "job-b")
+    assert not output_root.exists()
 
 
 def test_reconcile_stale_jobs_marks_orphaned_running_failed(tmp_path: Path) -> None:
@@ -137,3 +177,55 @@ def test_normalize_episode_tasks_mixed_types_write_parquet() -> None:
     ]
     table = pa.Table.from_pandas(pd.DataFrame(rows), preserve_index=False)
     assert table.num_rows == 2
+
+
+def test_rebuilds_beyond_the_limit_wait_for_a_free_slot(tmp_path: Path, monkeypatch) -> None:
+    import threading
+
+    monkeypatch.setattr(rebuild_service, "_rebuild_slots", threading.BoundedSemaphore(1))
+    gates = {"a": threading.Event(), "b": threading.Event()}
+    running: list[str] = []
+
+    def _fake_rebuild(*, job_id: str, **_kwargs) -> dict:
+        running.append(job_id)
+        assert gates[job_id].wait(timeout=10)
+        return {"kept_episodes": 1}
+
+    stores, threads = {}, {}
+    with patch.object(rebuild_service, "rebuild_delivery_dataset", side_effect=_fake_rebuild):
+        for job_id in ("a", "b"):
+            root = tmp_path / f"ds_{job_id}"
+            root.mkdir()
+            state = MagicMock()
+            state.dataset_root = root
+            store = QcStore.open(root, tmp_path / "sidecar")
+            store.register_rebuild_job({"job_id": job_id, "status": "queued"})
+            stores[job_id] = store
+            threads[job_id] = rebuild_service._launch_worker(
+                state=state, store=store, job_id=job_id, output_root=tmp_path / f"out_{job_id}",
+                batch_id="b", mode="minimal", resume=False,
+            )
+            if job_id == "a":
+                for _ in range(100):
+                    if running:
+                        break
+                    threading.Event().wait(0.02)
+
+        queued = stores["b"].get_rebuild_job("b")
+        assert running == ["a"]
+        assert queued["status"] == "queued"
+        assert queued["progress"] == rebuild_service.WAITING_FOR_SLOT
+        assert "started_at" not in queued  # the QC snapshot is taken only once the job runs
+
+        gates["a"].set()
+        threads["a"].join(timeout=10)
+        for _ in range(100):
+            if running == ["a", "b"]:
+                break
+            threading.Event().wait(0.02)
+        assert running == ["a", "b"]
+        assert stores["b"].get_rebuild_job("b")["status"] == "running"
+        assert stores["a"].get_rebuild_job("a")["started_at"] <= stores["b"].get_rebuild_job("b")["started_at"]
+        gates["b"].set()
+        threads["b"].join(timeout=10)
+    assert [stores[j].get_rebuild_job(j)["status"] for j in ("a", "b")] == ["completed", "completed"]

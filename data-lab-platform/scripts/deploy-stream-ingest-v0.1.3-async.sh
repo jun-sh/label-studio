@@ -17,7 +17,7 @@ LEROBOT_IMAGE_TAG="${TAG}" bash "${ROOT}/data-lab-platform/scripts/ego-derive-mo
 
 echo "=== verify async v0.1.3 ==="
 sleep 5
-docker exec data-lab-stream-ingest-1 printenv DERIVE_ASYNC DERIVE_ASYNC_EGO_001 DERIVE_LAYOUT
+docker exec datalab-stream-ingest-1 printenv DERIVE_ASYNC DERIVE_ASYNC_EGO_001 DERIVE_LAYOUT
 docker ps --format '{{.Names}} {{.Status}} {{.Image}}' | grep -E 'stream-ingest|derive-worker|lerobot'
 
 curl -sf --max-time 20 'http://127.0.0.1:8080/lerobot/api/collection/stations/ego-001/derive-status' \

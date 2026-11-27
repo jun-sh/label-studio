@@ -63,8 +63,8 @@ def v3_dataset(tmp_path: Path) -> Path:
         pa.Table.from_pandas(episodes, preserve_index=False),
         root / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
     )
-    tasks = pd.DataFrame([{"task_index": 0, "task": "pick the cube"}])
-    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=False), root / "meta" / "tasks.parquet")
+    tasks = pd.DataFrame({"task_index": [0]}, index=pd.Index(["pick the cube"], name="task"))
+    pq.write_table(pa.Table.from_pandas(tasks, preserve_index=True), root / "meta" / "tasks.parquet")
     (root / "videos" / "observation.images.top" / "chunk-000" / "file-000.mp4").write_bytes(b"")
     return root
 
@@ -94,6 +94,7 @@ def test_review_summary_uses_total_count(v3_dataset: Path) -> None:
 
 def test_load_and_paginate_episodes(v3_dataset: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(qc_app, "validate_dataset_path", lambda path: Path(path).resolve())
+    monkeypatch.setattr(qc_app, "SIDECAR_ROOT", v3_dataset.parent / "sidecar")
     client = TestClient(qc_app.app)
 
     load_res = client.post(

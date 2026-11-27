@@ -18,7 +18,7 @@ log "log: ${LOG}"
 log ">>> derive mode → manual (P-Ops-1)"
 bash "${SCRIPT_DIR}/ego-derive-mode.sh" manual 2>&1 | tee -a "$LOG"
 
-gate="$(docker exec data-lab-stream-ingest-1 printenv EGO_DERIVE_COMMERCIAL_GATE 2>/dev/null || echo "0")"
+gate="$(docker exec datalab-stream-ingest-1 printenv EGO_DERIVE_COMMERCIAL_GATE 2>/dev/null || echo "0")"
 log "EGO_DERIVE_COMMERCIAL_GATE=${gate} (0=legacy tolerant)"
 
 STREAM="${DATALAB}/data-storage/stream/${STATION}"

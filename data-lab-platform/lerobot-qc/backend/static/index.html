@@ -3,45 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Data QC</title>
+  <title>Data QC · Datalab</title>
   <link rel="stylesheet" href="/static/styles.css?v=20260929" />
 </head>
 <body>
-  <div id="app" class="ls-app">
-    <header class="ls-topbar">
-      <div class="ls-topbar-left">
-        <a id="qcHomeBtn" class="ls-qc-home-btn" href="/qc" hidden aria-label="Home">
-          <svg class="ls-qc-home-icon" viewBox="0 0 16 16" aria-hidden="true">
-            <path
-              d="M2 7.25 8 2.5 14 7.25V13.5a.75.75 0 0 1-.75.75H3.25A.75.75 0 0 1 2.5 13.5V7.25Z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.25"
-              stroke-linejoin="round"
-            />
-            <path
-              d="M6.25 14.25V9.5h3.5v4.75"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.25"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </a>
-        <div class="ls-brand">
-          <span class="ls-brand-mark">DL</span>
-          <div>
-            <strong id="brandTitle">Data QC</strong>
-            <span class="ls-brand-sub" id="brandSub">Terminal inspection</span>
-          </div>
-        </div>
-      </div>
-      <div class="ls-topbar-actions">
+  <header class="dl-header">
+    <button type="button" class="dl-header__trigger" id="dlMenuTrigger" aria-label="Main menu" aria-expanded="false">
+      <img class="dl-header__logo" src="/static/datalab-logo.svg" alt="Datalab" width="142" height="22" />
+      <span class="dl-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>
+    </button>
+    <div class="dl-header__context">
+      <nav class="dl-breadcrumbs" aria-label="Breadcrumb">
+        <ol class="dl-breadcrumbs__list">
+          <li class="dl-breadcrumbs__item"><a id="qcHomeBtn" href="/qc">Data QC</a></li>
+          <li class="dl-breadcrumbs__item" id="crumbPackage" hidden><span id="crumbPackageLabel"></span></li>
+        </ol>
+      </nav>
+      <div class="dl-header__actions">
+        <a class="dl-header__btn" id="overviewLink" href="overview">Overview</a>
         <span class="ls-status" id="status" role="status" aria-live="polite">Disconnected</span>
       </div>
-    </header>
-
+    </div>
+  </header>
+  <div id="app" class="ls-app">
     <section class="ls-panel ls-connect" id="connectPanel">
       <button type="button" class="ls-connect-toggle" id="connectToggle" aria-expanded="true" aria-controls="connectForm">
         Connect dataset
@@ -135,6 +119,7 @@
           <textarea id="instructionInput" rows="3" placeholder="VLM-generated task text" disabled></textarea>
           <div class="ls-qc-instruction-actions">
             <button type="button" id="saveInstructionBtn" class="ls-btn ls-btn-primary" disabled>Save instruction</button>
+            <span id="instructionDirty" class="ls-helper ls-instruction-dirty" hidden></span>
             <div class="ls-qc-review-actions">
               <button type="button" id="restoreEpisodeBtn" class="ls-btn ls-btn-ghost" hidden>Restore removal</button>
               <button type="button" id="approveBtn" class="ls-btn ls-btn-primary" disabled>Mark approved</button>
@@ -166,7 +151,8 @@
         <details class="ls-advanced ls-export-panel" id="deliveryPanel" open>
           <summary id="deliverySummary">Delivery rebuild</summary>
           <div class="ls-advanced-body">
-            <p class="ls-skill-hint" id="deliveryHint">Physically rebuild a delivery dataset from approved episodes (sidecar removals applied).</p>
+            <p class="ls-skill-hint" id="deliveryHint">Build a new delivery dataset: drops episodes marked removed and applies instruction corrections. Pending and suspicious episodes are kept.</p>
+            <p class="ls-helper" id="deliveryStatus" aria-live="polite"></p>
             <div class="ls-form-row ls-export-row">
               <button type="button" id="rebuildBtn" class="ls-btn ls-btn-primary" disabled>Rebuild</button>
             </div>
@@ -200,6 +186,7 @@
   </div>
 
   <script src="/static/i18n.js"></script>
+  <script src="/static/datalab-menu.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

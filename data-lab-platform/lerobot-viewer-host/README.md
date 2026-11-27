@@ -1,7 +1,7 @@
 # lerobot-viewer-host
 
 Thin React host around the **unmodified** [`@ioai/lerobot-studio`](https://github.com/ioai-tech/lerobot-studio)
-npm package (MIT, pinned `1.7.0`). Replaces the old flow (download a 2026-05 prebuilt bundle from
+npm package (MIT, pinned `1.7.2`). Replaces the old flow (download a 2026-05 prebuilt bundle from
 io-ai.tech, then sed-patch it and inject ~10k lines of runtime overlay).
 
 Rule: customize only through the package's public props. No bundle patching, no DOM injection.
@@ -57,7 +57,7 @@ Source URLs: `?url=stream://<station>`, `?url=sample://<id>`, or `?url=https://.
 
 Compare `baseline/collection-ego-002-replay-*.jpg` (old) with `baseline/next-1.7.0-ego-002-replay.jpg` (new).
 
-| # | Area | Old | New 1.7.0 | Path to parity |
+| # | Area | Old | New (1.7.0 baseline) | Path to parity |
 |---|---|---|---|---|
 | 1 | Sidebar header | `任务` / `分析` tabs, `75 Episodes`, 多选 · 编辑 · 导入 | `75 个片段`, 多选 · 编辑 | **Done** (`src/Sidebar.jsx`); 多选 / 编辑 / 导入 wired (row 10) |
 | 2 | Episode list | Collapsible date groups (11月4日 / 11月8日), time of day in label | Flat list, `# n`, no time | **Done**; search works, 高级 filter not wired |
@@ -69,13 +69,14 @@ x / y / width / height, font size / weight and color. The old sidebar was upstre
 `SidebarTabs` (not exported by the npm package), so it is replicated from that DOM, with the old
 slate palette restored in `src/theme.css` for both the sidebar and the viewer.
 | 4 | Camera layout | 4 cameras in one row, dark letterbox | 2×2 grid | No prop; upstream feature request or fork |
-| 5 | Chart | `已选 205`, 指令 / 状态 toggles | `已选 54`, per-axis legend chips | Check defaults; likely upstream feature request |
+| 5 | Chart | `已选 205`, 指令 / 状态 toggles | `已选 54`, per-axis legend chips | **Done upstream** in 1.7.2: one plot, every dimension drawn by default, filter menu instead of legend chips |
 | 6 | Raw panel | Numeric fields first | Video fields first | Upstream ordering; feature request |
 | 7 | Autoplay | Plays on open, "自动播放已开启" notice | Paused | `extensions` notice + selection API |
 | 8 | Episode 0 | Plays | `Column observation.imu_accel not found` | Data defect: fix `file-000`/`file-040` schema |
 | 9 | Hand keypoints, depth preview | Video overlays | None | Derived rendition + `extensions` toggle |
 | 10 | Episode delete, import, live episode list | Overlays | Host sidebar | **Done** (`src/station.js`): 编辑 = per-row delete, 多选 = bulk delete, same API and confirm copy as `overlay-episode-delete.js`; 导入 opens the platform modal (`/_datalab/import-core.js`); `files.json` polled every 10 s, list reloads when `meta/` changes |
-| 11 | Live mode (recording pill + JPG preview) | `overlay-collection-mode.js` | None | Host panel over the viewer while the station records; not started |
+| 11 | 实时 mode (JPG preview) | `overlay-collection-mode.js` | Host panel | **Done** (`src/bridge.js`, `src/LivePreview.jsx`): the /collection shell's `datalab-collection-mode` message swaps the viewer for a camera grid polled every 500 ms (100 ms stagger, `preview/wake` first); same online + idle rule, blocked reason shown otherwise |
+| 12 | Light / dark from the shell | `overlay-collection-theme.js` | Followed the system | **Done** (`src/bridge.js`): `datalab-lerobot-theme` sets `html[data-theme]` for sidebar and viewer and writes `localStorage.theme` for the shell |
 
 ## Still to do before replacing the old engine
 

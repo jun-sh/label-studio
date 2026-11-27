@@ -25,9 +25,10 @@
     'Courier New', monospace;
 }
 
+/* Dark: follows the system unless the /collection shell picked a theme (html[data-theme], src/bridge.js). */
 @media (prefers-color-scheme: dark) {
-  :root,
-  .dl-root {
+  :root:not([data-theme='light']),
+  :root:not([data-theme='light']) .dl-root {
     --dl-background: 222.2 84% 4.9%;
     --dl-foreground: 210 40% 98%;
     --dl-primary: 210 40% 98%;
@@ -40,6 +41,21 @@
     --dl-ring: 212.7 26.8% 83.9%;
     --dl-destructive: 0 62.8% 30.6%;
   }
+}
+
+:root[data-theme='dark'],
+:root[data-theme='dark'] .dl-root {
+  --dl-background: 222.2 84% 4.9%;
+  --dl-foreground: 210 40% 98%;
+  --dl-primary: 210 40% 98%;
+  --dl-primary-foreground: 222.2 47.4% 11.2%;
+  --dl-muted: 217.2 32.6% 17.5%;
+  --dl-muted-foreground: 215 20.2% 65.1%;
+  --dl-accent: 217.2 32.6% 17.5%;
+  --dl-accent-foreground: 210 40% 98%;
+  --dl-border: 217.2 32.6% 17.5%;
+  --dl-ring: 212.7 26.8% 83.9%;
+  --dl-destructive: 0 62.8% 30.6%;
 }
 
 @theme inline {
@@ -192,4 +208,13 @@ body {
 .dl-toast[data-kind='error'] {
   background: hsl(var(--dl-destructive));
   color: #fff;
+}
+
+/* 实时 grid: 2 × 2 for the four ego cameras, one row for one or two. */
+.dl-live {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+}
+.dl-live[data-count='1'] {
+  grid-template-columns: minmax(0, 1fr);
 }

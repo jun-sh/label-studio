@@ -8,6 +8,8 @@ import '@ioai/lerobot-studio/style.css';
 import './theme.css';
 import { Sidebar } from './Sidebar.jsx';
 import { loadSidebarModel } from './episodes.js';
+import { previewBlockedLabel, useCollectionBridge } from './bridge.js';
+import { LivePreview, previewCameras } from './LivePreview.jsx';
 
 const API_BASE = '/lerobot/api';
 const FONT_SANS =
@@ -55,6 +57,8 @@ function App() {
   const [state, setState] = useState({ files: null, model: null, error: null, root: null });
   const [selected, setSelected] = useState(null);
   const sigRef = useRef('');
+  const { theme, live } = useCollectionBridge();
+  const cameras = useMemo(() => previewCameras(state.model?.info), [state.model?.info]);
 
   const load = useCallback(
     async (files) => {
@@ -107,6 +111,9 @@ function App() {
     });
   }, [state.files, state.root, selected]);
 
+  // 实时 replaces the viewer (unmounting it also stops its camera downloads); 回放 brings it back.
+  const showLive = src?.kind === 'stream' && live.mode === 'preview';
+
   if (state.error) return <pre style={{ padding: 16 }}>{state.error}</pre>;
   if (!state.model) return <div className="dl-root h-full" />;
   return (
@@ -119,11 +126,14 @@ function App() {
         onChanged={() => load()}
       />
       <div className="h-full min-w-0 flex-1">
-        {dataSource && (
+        {showLive && (
+          <LivePreview stationId={src.id} cameras={cameras} blockedLabel={previewBlockedLabel(live)} />
+        )}
+        {!showLive && dataSource && (
         <LeRobotViewer
           dataSource={dataSource}
           showSidebar={false}
-          theme="system"
+          theme={theme}
           language={params.get('lang') || 'zh'}
           themeTokens={{ radius: '0.625rem', fontFamily: FONT_SANS }}
           onFatalError={(e) => console.error('viewer fatal', e)}

@@ -136,8 +136,9 @@ def minimal_dataset(tmp_path: Path) -> tuple[Path, Path]:
             "index": list(range(15)),
             "timestamp": np.arange(15, dtype=np.float32) / 5.0,
             "task_index": [0] * 10 + [1] * 5,
-            "action": [[0.0, 0.1] for _ in range(15)],
-            "observation.state": [[1.0, 2.0] for _ in range(15)],
+            # Distinct per frame so no two episodes are duplicates of each other.
+            "action": [[0.0, 0.1 * i] for i in range(15)],
+            "observation.state": [[1.0, 2.0 + i] for i in range(15)],
         }
     )
     pq.write_table(

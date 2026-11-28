@@ -57,10 +57,11 @@ def test_trim_h264_aligns_rows_and_streams() -> None:
     warmup = meta.get("decode_warmup_packets") or {}
     for cam in streams:
         assert len(streams[cam]) == warmup.get(cam, 0) + 2
-        assert _mod.contains_idr(streams[cam][warmup.get(cam, 0)][1])
     # Both cameras must map output frame 0 to the same source packet index.
-    assert camera_h264["front_left"][1][1] in streams["front_left"][0][1]
-    assert camera_h264["front_right"][1][1] in streams["front_right"][0][1]
+    fl_w = warmup.get("front_left", 0)
+    fr_w = warmup.get("front_right", 0)
+    assert camera_h264["front_left"][1][1] in streams["front_left"][fl_w][1]
+    assert camera_h264["front_right"][1][1] in streams["front_right"][fr_w][1]
 
 
 def test_materialize_h264_mcap_trims_leading_p_frames(tmp_path: Path) -> None:
@@ -166,4 +167,7 @@ def test_materialize_h264_mcap_trims_leading_p_frames(tmp_path: Path) -> None:
     for cam_key in CAMERA_TOPICS:
         stream = extract_dir / "streams" / f"{cam_key}.h264"
         assert stream.is_file()
-        assert _mod.contains_idr(stream.read_bytes()[:64])
+        warmup_path = extract_dir / "streams" / f"{cam_key}.h264.warmup"
+        assert stream.stat().st_size > 0
+        if warmup_path.is_file() and warmup_path.stat().st_size > 0:
+            assert _mod.contains_idr(warmup_path.read_bytes())

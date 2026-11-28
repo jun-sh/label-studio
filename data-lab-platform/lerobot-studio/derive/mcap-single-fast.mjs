@@ -20,7 +20,7 @@ export function isMcapSingleFastCandidate(segments) {
 export function fastMp4FrameProbeOptions({ muxMode = "remux" } = {}) {
   return {
     defaultFps: DEFAULT_FPS,
-    // Ingest state + MCAP summary already bound frame count; skip ffprobe -count_frames.
+    // Legacy: metadata frame count (post-normalize tail trim aligns MP4 length).
     exact: false,
     muxMode,
   };

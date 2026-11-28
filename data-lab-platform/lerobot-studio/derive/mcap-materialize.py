@@ -386,12 +386,19 @@ def materialize_mcap_archive(archive_path: Path, extract_dir: Path) -> dict[str,
             raise RuntimeError(f"h264 trim produced no rows for {archive_path}")
         streams_dir = extract_dir / "streams"
         streams_dir.mkdir(parents=True, exist_ok=True)
+        warmup_counts = (trim_meta or {}).get("decode_warmup_packets") or {}
         for cam_key, items in camera_h264.items():
             items.sort(key=lambda item: item[0])
+            warmup_n = int(warmup_counts.get(cam_key, 0) or 0)
             stream_path = streams_dir / f"{cam_key}.h264"
             with open(stream_path, "wb") as fp:
-                for _ts, packet in items:
+                for _ts, packet in items[warmup_n:]:
                     fp.write(packet)
+            if warmup_n > 0:
+                warmup_path = streams_dir / f"{cam_key}.h264.warmup"
+                with open(warmup_path, "wb") as fp:
+                    for _ts, packet in items[:warmup_n]:
+                        fp.write(packet)
     else:
         for cam_key, items in camera_jpegs.items():
             items.sort(key=lambda item: item[0])

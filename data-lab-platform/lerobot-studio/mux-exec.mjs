@@ -389,11 +389,18 @@ export function splitAnnexBAccessUnits(buf) {
 export function buildSetptsExprFromPtsSec(ptsSec) {
   if (!ptsSec?.length) return "0";
   if (ptsSec.length === 1) return String(ptsSec[0]);
-  let expr = Number(ptsSec[ptsSec.length - 1]).toFixed(9);
-  for (let i = ptsSec.length - 2; i >= 0; i -= 1) {
-    expr = `if(eq(n\\,${i})\\,${Number(ptsSec[i]).toFixed(9)}\\,${expr})`;
+  const span = ptsSec[ptsSec.length - 1] - ptsSec[0];
+  if (span <= 0) return "0";
+  const fps = (ptsSec.length - 1) / span;
+  // Nested if(eq(n,i),...) exceeds ffmpeg expr limits on long episodes; linear PTS keeps 1:1 frame count.
+  if (ptsSec.length <= 64) {
+    let expr = Number(ptsSec[ptsSec.length - 1]).toFixed(9);
+    for (let i = ptsSec.length - 2; i >= 0; i -= 1) {
+      expr = `if(eq(n\\,${i})\\,${Number(ptsSec[i]).toFixed(9)}\\,${expr})`;
+    }
+    return expr;
   }
-  return expr;
+  return `N/(${fps.toFixed(6)}*TB)`;
 }
 
 export function relativePtsSecFromTimestampsNs(timestampsNs) {
@@ -413,17 +420,84 @@ export function effectiveFpsFromTimestampsNs(timestampsNs) {
 
 function alignAccessUnitsToTimestamps(accessUnits, timestampsNs, skipFrames = 0) {
   const skip = Math.max(0, Number(skipFrames || 0));
+  // Skip decode-warmup access units only; timestamps_ns are already content-aligned (post trim rows).
   let units = accessUnits.slice(skip);
-  let ts = timestampsNs.slice(skip);
+  const ts = timestampsNs;
   const n = Math.min(units.length, ts.length);
   if (n < 2) return null;
-  if (units.length !== ts.length) {
+  if (units.length > n) {
     units = units.slice(0, n);
-    ts = ts.slice(0, n);
   }
-  const ptsSec = relativePtsSecFromTimestampsNs(ts);
+  const tsUse = ts.slice(0, n);
+  const ptsSec = relativePtsSecFromTimestampsNs(tsUse);
   if (!ptsSec || ptsSec.length !== n) return null;
   return { accessUnits: units, ptsSec, frameCount: n };
+}
+
+/** Trim MP4 to exactly frameCount frames from the start (stream copy when possible). */
+export async function trimMp4ToFrameCount(srcPath, destPath, frameCount) {
+  const n = Math.max(0, Math.floor(Number(frameCount) || 0));
+  if (!srcPath || !fs.existsSync(srcPath)) {
+    return { ok: false, error: "mp4_missing", backend: "legacy" };
+  }
+  if (n <= 0) {
+    return { ok: false, error: "invalid_frame_count", backend: "legacy" };
+  }
+  const existing = probeMp4FrameCount(srcPath, { exact: true });
+  if (existing > 0 && existing === n) {
+    if (path.resolve(srcPath) !== path.resolve(destPath)) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+    return { ok: true, frameCount: n, skipped: true, backend: "legacy" };
+  }
+  if (existing > 0 && existing < n) {
+    return { ok: false, error: "mp4_shorter_than_target", existing, target: n, backend: "legacy" };
+  }
+  const tmpPath = `${destPath}.trim-count.tmp.mp4`;
+  const args = [
+    "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-i",
+    srcPath,
+    "-frames:v",
+    String(n),
+    "-c:v",
+    "copy",
+    "-movflags",
+    "+faststart",
+    tmpPath,
+  ];
+  let res = await spawnFfmpeg(args);
+  if (!res.ok || !fs.existsSync(tmpPath)) {
+    const reArgs = [
+      "-y",
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      srcPath,
+      "-frames:v",
+      String(n),
+      ...x264OutputArgs(),
+      "-movflags",
+      "+faststart",
+      tmpPath,
+    ];
+    res = await spawnFfmpeg(reArgs);
+  }
+  if (res.ok && fs.existsSync(tmpPath)) {
+    fs.renameSync(tmpPath, destPath);
+  }
+  const verified = probeMp4FrameCount(destPath, { exact: true });
+  return {
+    ...res,
+    ok: res.ok && fs.existsSync(destPath) && verified === n,
+    frameCount: verified,
+    target: n,
+    backend: "legacy",
+  };
 }
 
 export async function trimMp4LeadingFrames(srcPath, destPath, { skipFrames = 0, fps = 30 } = {}) {
@@ -507,6 +581,7 @@ export async function remuxH264AnnexBToMp4DevicePts(
   }
 
   const accessUnits = splitAnnexBAccessUnits(fs.readFileSync(h264Path));
+  const skip = Math.max(0, Number(skipFrames || 0));
   const aligned = alignAccessUnitsToTimestamps(accessUnits, tsInput, skipFrames);
   if (!aligned) {
     const eff = effectiveFpsFromTimestampsNs(tsInput) || fpsFallback;
@@ -517,9 +592,14 @@ export async function remuxH264AnnexBToMp4DevicePts(
   const filterPath = `${destPath}.device-pts.filter.txt`;
   const tmpDest = `${destPath}.device-pts.tmp.mp4`;
   try {
-    fs.writeFileSync(tmpH264, Buffer.concat(aligned.accessUnits));
+    // Feed full elementary stream (incl. decode warmup) so the decoder sees reference chain; drop warmup via select.
+    fs.writeFileSync(tmpH264, Buffer.concat(accessUnits));
     const setptsExpr = buildSetptsExprFromPtsSec(aligned.ptsSec);
-    fs.writeFileSync(filterPath, `[0:v]setpts='${setptsExpr}'[vout]\n`, "utf8");
+    const vf =
+      skip > 0
+        ? `[0:v]select='gte(n\\,${skip})',setpts='${setptsExpr}'[vout]`
+        : `[0:v]setpts='${setptsExpr}'[vout]`;
+    fs.writeFileSync(filterPath, `${vf}\n`, "utf8");
 
     const args = [
       "-y",
@@ -535,6 +615,8 @@ export async function remuxH264AnnexBToMp4DevicePts(
       "-map",
       "[vout]",
       ...x264OutputArgs(),
+      "-frames:v",
+      String(aligned.frameCount),
       "-vsync",
       "0",
       "-movflags",

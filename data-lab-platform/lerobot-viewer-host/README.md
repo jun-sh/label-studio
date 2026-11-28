@@ -60,7 +60,7 @@ Compare `baseline/collection-ego-002-replay-*.jpg` (old) with `baseline/next-1.7
 | # | Area | Old | New (1.7.0 baseline) | Path to parity |
 |---|---|---|---|---|
 | 1 | Sidebar header | `任务` / `分析` tabs, `75 Episodes`, 多选 · 编辑 · 导入 | `75 个片段`, 多选 · 编辑 | **Done** (`src/Sidebar.jsx`); 多选 / 编辑 / 导入 wired (row 10) |
-| 2 | Episode list | Collapsible date groups (11月4日 / 11月8日), time of day in label | Flat list, `# n`, no time | **Done**; search works, 高级 filter not wired |
+| 2 | Episode list | Collapsible date groups (11月4日 / 11月8日), time of day in label | Flat list, `# n`, no time | **Done**; search, 高级 duration range (seconds, `src/filter.js`, same rule as the old build) |
 | 3 | Analysis tab | Totals, duration stats, task distribution | Not in sidebar | **Done** |
 
 Rows 1–3 verified 2026-11-24 with `tools/measure-sidebar.js` on both engines (1440×900): every landmark
@@ -71,7 +71,7 @@ slate palette restored in `src/theme.css` for both the sidebar and the viewer.
 | 4 | Camera layout | 4 cameras in one row, dark letterbox | 2×2 grid | No prop; upstream feature request or fork |
 | 5 | Chart | `已选 205`, 指令 / 状态 toggles | `已选 54`, per-axis legend chips | **Done upstream** in 1.7.2: one plot, every dimension drawn by default, filter menu instead of legend chips |
 | 6 | Raw panel | Numeric fields first | Video fields first | Upstream ordering; feature request |
-| 7 | Autoplay | Plays on open, "自动播放已开启" notice | Paused | `extensions` notice + selection API |
+| 7 | Autoplay | Plays on open, "自动播放已开启" notice | Paused | Not possible in 1.7.2: no play prop or imperative player API (`initialSelection` lands paused); upstream feature request |
 | 8 | Episode 0 | Plays | `Column observation.imu_accel not found` | Data defect: fix `file-000`/`file-040` schema |
 | 9 | Hand keypoints, depth preview | Video overlays | None | Derived rendition + `extensions` toggle |
 | 10 | Episode delete, import, live episode list | Overlays | Host sidebar | **Done** (`src/station.js`): 编辑 = per-row delete, 多选 = bulk delete, same API and confirm copy as `overlay-episode-delete.js`; 导入 opens the platform modal (`/_datalab/import-core.js`); `files.json` polled every 10 s, list reloads when `meta/` changes |

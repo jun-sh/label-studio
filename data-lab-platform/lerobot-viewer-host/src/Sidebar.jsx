@@ -21,6 +21,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { formatClock } from './episodes.js';
+import { matchesEpisode } from './filter.js';
 import { confirmDeleteText, deleteEpisodes, openImport } from './station.js';
 
 const cx = (...c) => c.filter(Boolean).join(' ');
@@ -31,6 +32,10 @@ const TAB =
 // `[&_svg]:size-4` came from the old shadcn Button base: it overrides the icons' own h-3 w-3.
 const TOOL_BTN =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:bg-accent rounded-md h-7 shrink-0 px-1 text-xs font-medium text-muted-foreground hover:text-foreground';
+
+// Copied from the old build's duration inputs (shadcn Input + `h-8 … px-2 text-xs`).
+const DURATION_INPUT =
+  'flex h-8 w-full min-w-0 flex-1 basis-0 rounded-md border border-border bg-muted/50 px-2 py-1 text-xs text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
 function readCollapsed() {
   try {
@@ -91,6 +96,10 @@ export function Sidebar({ model, selected, onSelect, stationId, onChanged }) {
 
 function EpisodesPanel({ model, selected, onSelect, stationId, onChanged }) {
   const [query, setQuery] = useState('');
+  // 高级: duration range in seconds, as in the old build.
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [minS, setMinS] = useState('');
+  const [maxS, setMaxS] = useState('');
   // Edit = per-row delete buttons; multi = checkboxes + bulk delete. Station sources only.
   const [mode, setMode] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
@@ -132,19 +141,12 @@ function EpisodesPanel({ model, selected, onSelect, stationId, onChanged }) {
     openImport(stationId, () => onChanged()).catch(() => showToast('导入组件加载失败', 'error'));
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const fps = model.info.fps;
-  const q = query.trim().toLowerCase();
-  const groups = useMemo(
-    () =>
-      model.groups
-        .map((g) => ({
-          ...g,
-          rows: q
-            ? g.rows.filter((r) => r.label.toLowerCase().includes(q) || `# ${r.episodeIndex}`.includes(q))
-            : g.rows,
-        }))
-        .filter((g) => g.rows.length),
-    [model.groups, q],
-  );
+  const groups = useMemo(() => {
+    const filter = { query, minS, maxS, fps };
+    return model.groups
+      .map((g) => ({ ...g, rows: g.rows.filter((r) => matchesEpisode(r, filter)) }))
+      .filter((g) => g.rows.length);
+  }, [model.groups, query, minS, maxS, fps]);
   // Old overlay default: every group collapsed except the last one; user choice kept per tab session.
   const isCollapsed = (date, i) =>
     collapsed[date] != null ? collapsed[date] : groups.length > 1 && i < groups.length - 1;
@@ -208,14 +210,47 @@ function EpisodesPanel({ model, selected, onSelect, stationId, onChanged }) {
           {/* Old layout squeezed this h-9 w-9 button to 16px wide (search field is flex-1 basis-0). */}
           <button
             type="button"
-            className="inline-flex h-9 w-4 shrink-0 items-center justify-center gap-2 rounded-md p-0 text-sm font-medium whitespace-nowrap text-foreground ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground [&_svg]:size-4"
+            className={cx(
+              'inline-flex h-9 w-4 shrink-0 items-center justify-center gap-2 rounded-md p-0 text-sm font-medium whitespace-nowrap ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground [&_svg]:size-4',
+              showAdvanced ? 'bg-muted text-primary' : 'text-foreground',
+            )}
             title="高级"
+            aria-pressed={showAdvanced}
+            onClick={() => setShowAdvanced((v) => !v)}
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
           </button>
         </div>
+        {showAdvanced && (
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              placeholder="时长（秒）"
+              title="时长（秒）"
+              aria-label="时长（秒）最小"
+              className={DURATION_INPUT}
+              value={minS}
+              onChange={(e) => setMinS(e.target.value)}
+            />
+            <span className="shrink-0 text-xs text-muted-foreground">-</span>
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              aria-label="时长（秒）最大"
+              className={DURATION_INPUT}
+              value={maxS}
+              onChange={(e) => setMaxS(e.target.value)}
+            />
+          </div>
+        )}
       </div>
       <div className="dl-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+        {!groups.length && model.rows.length > 0 && (
+          <p className="px-3 py-6 text-center text-xs text-muted-foreground">没有匹配的 Episode</p>
+        )}
         {groups.map((g, i) => {
           const folded = isCollapsed(g.date, i);
           return (

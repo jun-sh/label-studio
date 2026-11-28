@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 7870",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node --test src/*.test.mjs"
   },
   "dependencies": {
     "@ioai/lerobot-studio": "1.7.2",

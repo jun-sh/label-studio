@@ -8,6 +8,7 @@ Checks:
 - per kept episode the task text (frame task_index -> meta/tasks.parquet) equals the
   instruction override if any, else the source task text
 - frame_index contiguous per episode, global index contiguous
+- no two delivered episodes carry identical state/action data (upstream double exports)
 - every RGB (info.json video_path) and depth (meta/depth_features.json video_paths) segment
   exists and its decoded timestamps cover from_timestamp + k/fps within 0.5/fps;
   depth decodes to a 16-bit pixel format
@@ -28,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 from depth_split import DEPTH_SIDECAR
+from episode_fingerprint import find_duplicate_episodes
 
 DEFAULT_VIDEO_PATH = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 MAX_PROBLEMS = 20
@@ -197,6 +199,15 @@ def _check(
     bad_eps = sorted(set(frames.loc[frames["frame_index"].to_numpy() != expected_fi, "episode_index"].tolist()))
     if bad_eps:
         problems.add(f"frame_index not contiguous in {len(bad_eps)} episodes (e.g. {bad_eps[:5]})")
+
+    # -- exact duplicate episodes
+    dup_groups = find_duplicate_episodes(out)
+    summary["duplicate_groups"] = len(dup_groups)
+    if dup_groups:
+        problems.add(
+            f"{len(dup_groups)} groups of identical episodes "
+            f"({sum(len(g) for g in dup_groups)} episodes, e.g. {dup_groups[:3]})"
+        )
 
     # -- stats
     stats_path = out / "meta" / "stats.json"

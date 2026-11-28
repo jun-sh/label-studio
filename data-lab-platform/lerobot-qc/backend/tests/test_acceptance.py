@@ -121,6 +121,26 @@ def test_acceptance_detects_broken_delivery(video_dataset, tmp_path: Path) -> No
     assert "depth" not in text  # depth segments still fine
 
 
+def test_acceptance_detects_duplicate_episodes(video_dataset, tmp_path: Path) -> None:
+    root, sidecar = video_dataset
+    out = tmp_path / "delivery"
+    _rebuild(root, sidecar, out)
+    assert _check(out, root)["duplicate_groups"] == 0
+
+    data_path = out / "data/chunk-000/file-000.parquet"
+    data = pd.read_parquet(data_path)
+    first = data[data["episode_index"] == 0]
+    mask = data["episode_index"] == 1
+    for col in ("action", "observation.state"):
+        data.loc[mask, col] = pd.Series(first[col].tolist(), index=data.index[mask])
+    pq.write_table(pa.Table.from_pandas(data, preserve_index=False), data_path)
+
+    acceptance = _check(out, root)
+    assert acceptance["ok"] is False
+    assert acceptance["duplicate_groups"] == 1
+    assert "1 groups of identical episodes (2 episodes, e.g. [[0, 1]])" in acceptance["problems"]
+
+
 def test_acceptance_detects_wrong_counts_and_short_video(video_dataset, tmp_path: Path) -> None:
     root, sidecar = video_dataset
     out = tmp_path / "delivery"

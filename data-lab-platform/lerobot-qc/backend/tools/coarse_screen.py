@@ -20,6 +20,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from fastapi import HTTPException
 
 from dataset_manager import load_local_dataset  # noqa: E402
+from episode_fingerprint import find_duplicate_episodes  # noqa: E402
 from qc_metrics import compute_qc_metrics, dt_max_threshold_ms, read_episode_frames  # noqa: E402
 
 
@@ -130,6 +131,24 @@ def build_screening_report(
                 }
             )
 
+    # Exact duplicates: keep the lowest index of each group, auto-reject the other copies.
+    dup_groups = find_duplicate_episodes(Path(state.dataset_root))
+    rejected_by_idx = {x["episode_index"]: x for x in auto_reject_episodes}
+    for group in dup_groups:
+        keep = group[0]
+        for ep_idx in group[1:]:
+            reason = f"duplicate_of_{keep}"
+            entry = rejected_by_idx.get(ep_idx)
+            if entry is None:
+                suspicious_episodes = [x for x in suspicious_episodes if x["episode_index"] != ep_idx]
+                entry = {"episode_index": ep_idx, "reason": reason, "flags": []}
+                auto_reject_episodes.append(entry)
+                rejected_by_idx[ep_idx] = entry
+            else:
+                entry["reason"] = f"{entry['reason']}; {reason}"
+            entry["flags"] = sorted(set(entry["flags"]) | {"duplicate_episode"})
+    auto_reject_episodes.sort(key=lambda x: x["episode_index"])
+
     flagged_indices = {x["episode_index"] for x in suspicious_episodes} | {
         x["episode_index"] for x in auto_reject_episodes
     }
@@ -159,7 +178,9 @@ def build_screening_report(
         "sample_rate": rate,
         "suspicious_episodes": suspicious_episodes,
         "auto_reject_episodes": auto_reject_episodes,
+        "duplicate_groups": dup_groups,
         "summary": {
+            "duplicate_group_count": len(dup_groups),
             "auto_reject_count": len(auto_reject_episodes),
             "suspicious_count": len(suspicious_episodes),
             "random_sample_count": len(random_sample),
@@ -196,6 +217,7 @@ def main() -> None:
         print(
             f"auto_reject={report['summary']['auto_reject_count']} "
             f"suspicious={report['summary']['suspicious_count']} "
+            f"duplicate_groups={report['summary']['duplicate_group_count']} "
             f"random_sample={report['summary']['random_sample_count']}"
         )
     else:

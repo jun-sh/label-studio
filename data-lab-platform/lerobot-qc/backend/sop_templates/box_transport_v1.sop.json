@@ -1,0 +1,17 @@
+{
+  "sop_id": "box_transport_v1",
+  "description": "One box per cycle, per embodied-annotate/docs/431132-phase-boundary-spec.md. Step time limits are unset until a takt baseline is agreed.",
+  "steps": [
+    {"id": "reach", "required": true},
+    {"id": "pre_grasp", "required": true},
+    {"id": "contact", "required": true},
+    {"id": "lift", "required": true},
+    {"id": "transport", "required": true},
+    {"id": "place", "required": true},
+    {"id": "release", "required": true}
+  ],
+  "ignore_labels": ["idle"],
+  "min_segment_s": 0.2,
+  "cycle_max_s": null,
+  "edge_tolerance_s": 1.0
+}
